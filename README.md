@@ -16,6 +16,8 @@ It is designed for administrators running their own repositories on a small priv
 - CLI for status, health and service management
 - Rust setup preflight for configuration, directories and host dependencies
 - Cross-platform Rust release artifacts for Linux, Windows and macOS
+- Versioned updater with checksum verification, dependency compatibility checks and rollback
+- Version-pinned GHCR runner images with digest validation
 - No Kubernetes required
 
 ## Default profile
@@ -167,7 +169,10 @@ For a configured host:
 gitrun doctor
 gitrun health
 gitrun-rs setup
+gitrun-rs update
 ```
+
+The updater resolves the latest GitHub release, selects the native precompiled artifact, verifies its SHA-256 checksum, preserves configuration/state, creates a rollback backup, validates the new installation with `doctor`, and updates the version-pinned runner image only when its digest is not already present. If the runner or Docker refresh fails, the previous installation and preserved state/configuration are restored. Set `GITRUN_REPOSITORY`, `GITRUN_UPDATE_DIR`, `GITRUN_INSTALL_DIR`, `GITRUN_BACKUP_DIR` and `GITRUN_COMPOSE_FILE` to control update locations. `gitrun-rs rollback <backup.json>` restores a recorded backup.
 
 Static validation does not contact GitHub and does not prove that live runners are healthy.
 

@@ -1158,9 +1158,9 @@ impl eframe::App for SetupWizard {
                 Ok(Ok(())) => {
                     self.busy = false;
                     self.status = "GitRun is installed. Launching the dashboard…".into();
-                    if let Ok(executable) = std::env::current_exe() {
-                        let _ = Command::new(executable).arg("dashboard").spawn();
-                    }
+                    let _ = Command::new("sg")
+                        .args(["docker", "-c", "/usr/local/bin/gitrun dashboard"])
+                        .spawn();
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 Ok(Err(error)) => {

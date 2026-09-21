@@ -1313,6 +1313,8 @@ mod tests {
             log_dir: "/var/log/gitrun".into(),
             auto_container_update: true,
             container_update_time: "03:00".into(),
+            auto_container_recovery: true,
+            container_recovery_cooldown: 60,
         };
         let original = "GITHUB_TOKEN=secret\nGITRUN_MIN_RUNNERS=3\nCUSTOM=value\n";
         let path = std::env::temp_dir().join(format!(

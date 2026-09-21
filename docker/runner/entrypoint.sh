@@ -11,29 +11,25 @@ RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,Linux,X64,gitrun}"
 RUNNER_EPHEMERAL="${RUNNER_EPHEMERAL:-false}"
 RUNNER_DISABLE_UPDATE="${RUNNER_DISABLE_UPDATE:-false}"
 
-cleanup() {
-    if [[ -f .runner ]]; then
-        ./config.sh remove --token "${RUNNER_TOKEN}" >/dev/null 2>&1 || true
+if [[ ! -f .runner ]]; then
+    args=(
+        --url "${RUNNER_URL}"
+        --token "${RUNNER_TOKEN}"
+        --name "${RUNNER_NAME}"
+        --labels "${RUNNER_LABELS}"
+        --unattended
+        --replace
+    )
+
+    if [[ "${RUNNER_EPHEMERAL}" == "true" ]]; then
+        args+=(--ephemeral)
     fi
-}
-trap cleanup EXIT INT TERM
 
-args=(
-    --url "${RUNNER_URL}"
-    --token "${RUNNER_TOKEN}"
-    --name "${RUNNER_NAME}"
-    --labels "${RUNNER_LABELS}"
-    --unattended
-    --replace
-)
+    if [[ "${RUNNER_DISABLE_UPDATE}" == "true" ]]; then
+        args+=(--disableupdate)
+    fi
 
-if [[ "${RUNNER_EPHEMERAL}" == "true" ]]; then
-    args+=(--ephemeral)
+    ./config.sh "${args[@]}"
 fi
 
-if [[ "${RUNNER_DISABLE_UPDATE}" == "true" ]]; then
-    args+=(--disableupdate)
-fi
-
-./config.sh "${args[@]}"
 exec ./run.sh

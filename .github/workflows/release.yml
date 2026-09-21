@@ -54,9 +54,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-v2-
 
       - name: Build GitRun
         run: cargo build --locked --release -p gitrun-cli --bin gitrun

@@ -117,8 +117,9 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let backup_root = PathBuf::from(
         std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()),
     );
+    let service_config = std::env::var("GITRUN_SERVICE_CONFIG").ok().map(PathBuf::from);
 
-    let paths = UpdatePaths { install_dir, state_dir, config_dir, backup_root };
+    let paths = UpdatePaths { install_dir, state_dir, config_dir, service_config, backup_root };
     let backup = apply_update(&paths, &archive, &target, &manifest.version, true)?;
     if let Some(image) = &plan.runner_image {
         if let Err(error) = update_runner_image(image) {
@@ -148,7 +149,8 @@ fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
     let backup_root = backup.install_backup.parent().and_then(Path::parent).map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("./backups"));
-    let paths = UpdatePaths { install_dir, state_dir, config_dir, backup_root };
+    let service_config = std::env::var("GITRUN_SERVICE_CONFIG").ok().map(PathBuf::from);
+    let paths = UpdatePaths { install_dir, state_dir, config_dir, service_config, backup_root };
     rollback(&paths, &backup)?;
     println!("GitRun rollback: PASS");
     Ok(())

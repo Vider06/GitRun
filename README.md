@@ -14,6 +14,7 @@ It is designed for administrators running their own repositories on a small priv
 - Automatic restart after host reboot
 - Linux, macOS and Windows setup scripts
 - CLI for status, health and service management
+- Rust setup preflight for configuration, directories and host dependencies
 - No Kubernetes required
 
 ## Default profile
@@ -164,6 +165,7 @@ For a configured host:
 ```bash
 gitrun doctor
 gitrun health
+gitrun-rs setup
 ```
 
 Static validation does not contact GitHub and does not prove that live runners are healthy.

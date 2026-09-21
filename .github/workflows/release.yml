@@ -1,13 +1,15 @@
-name: GitRun Version Deploy
+name: GitRun Release
 
 on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (for example v2.0.0)"
+        description: "Release version (for example v0.4.0)"
         required: true
         type: string
 
@@ -19,14 +21,13 @@ concurrency:
   group: gitrun-release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  RELEASE_TARGET: x86_64-unknown-linux-gnu
-
 jobs:
-  build:
-    name: Build Linux x86_64
+  release:
+    name: Build and publish GitRun
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 60
+    env:
+      DOCKER_CONFIG: /tmp/gitrun-docker-config
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,7 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ github.event.inputs.version || github.ref_name }}"
-          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+          [[ "$version" =~ ^v[0-9]+.[0-9]+.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
             echo "Invalid release version: $version" >&2
             exit 1
           }
@@ -47,188 +48,25 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build Linux release
-        run: cargo build --release -p gitrun-cli -p gitrun-dashboard
+      - name: Cache Rust build and dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-bin: false
+          cache-workspace-crates: false
+          cache-on-failure: true
+          save-if: true
 
-      - name: Package release
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          TARGET: ${{ env.RELEASE_TARGET }}
+      - name: Build GitRun
+        run: cargo build --release -p gitrun-cli --bin gitrun
+
+      - name: Verify single executable
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf dist
-          mkdir -p dist/package
-          cp target/release/gitrun-rs dist/package/gitrun-rs
-          cp target/release/gitrun-dashboard dist/package/gitrun-dashboard
-          cp LICENSE README.md config/config.example.env dist/package/
-          tar -C dist/package -czf "dist/GitRun-$VERSION-$TARGET.tar.gz" .
-          sha256sum "dist/GitRun-$VERSION-$TARGET.tar.gz" > "dist/GitRun-$VERSION-$TARGET.sha256"
-
-      - name: Upload release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: GitRun-${{ env.RELEASE_TARGET }}
-          path: dist/*
-          if-no-files-found: error
-
-  runner-image:
-    name: Publish runner image
-    needs: build
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
-    timeout-minutes: 30
-    env:
-      DOCKER_CONFIG: /tmp/gitrun-docker-config
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${{ github.event.inputs.version || github.ref_name }}"
-          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
-            echo "Invalid release version: $version" >&2
-            exit 1
-          }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Build and push runner image
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/runner/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/vider06/gitrun-runner:${{ steps.version.outputs.version }}
-            ghcr.io/vider06/gitrun-runner:latest
-
-  publish:
-    name: Publish GitHub release
-    needs: [build, runner-image]
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: GitRun-${{ env.RELEASE_TARGET }}
-          path: dist
-
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${{ github.event.inputs.version || github.ref_name }}"
-          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
-            echo "Invalid release version: $version" >&2
-            exit 1
-          }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Build manifest and verify checksums
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          TARGET: ${{ env.RELEASE_TARGET }}
-          RUNNER_DIGEST: ${{ needs.runner-image.outputs.digest }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REPOSITORY_OWNER: vider06
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import glob
-          import hashlib
-          import json
-          import os
-          import subprocess
-
-          version = os.environ["VERSION"]
-          target = os.environ["TARGET"]
-          artifacts = []
-
-          for path in sorted(glob.glob("dist/GitRun-*")):
-              if path.endswith(".sha256"):
-                  continue
-              name = os.path.basename(path)
-              prefix = f"GitRun-{version}-"
-              if not name.startswith(prefix):
-                  raise SystemExit(f"unexpected release artifact: {name}")
-              artifact_target = name[len(prefix):]
-              if artifact_target.endswith(".tar.gz"):
-                  artifact_target = artifact_target[:-7]
-              elif artifact_target.endswith(".zip"):
-                  artifact_target = artifact_target[:-4]
-              artifacts.append({
-                  "target": artifact_target,
-                  "file": name,
-                  "sha256": hashlib.sha256(open(path, "rb").read()).hexdigest(),
-              })
-
-          if len(artifacts) != 1 or artifacts[0]["target"] != target:
-              raise SystemExit(f"expected exactly one {target} artifact, found: {artifacts}")
-
-          manifest = {
-              "name": "GitRun",
-              "version": version,
-              "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "artifacts": artifacts,
-              "dependencies": [
-                  {"name": "Git", "minimum_version": "2.40.0", "installation_method": "system-package-manager"},
-                  {"name": "Docker", "minimum_version": "24.0.0", "installation_method": "system-package-manager"},
-                  {"name": "Node.js", "minimum_version": "22.0.0", "installation_method": "system-package-manager"},
-                  {"name": "Python", "minimum_version": "3.10.0", "installation_method": "system-package-manager"},
-              ],
-              "runner_image": {
-                  "reference": f"ghcr.io/{os.environ['GITHUB_REPOSITORY_OWNER']}/gitrun-runner:{version}",
-                  "digest": os.environ["RUNNER_DIGEST"],
-                  "minimum_version": version,
-              },
-          }
-
-          with open("dist/release-manifest.json", "w", encoding="utf-8") as handle:
-              json.dump(manifest, handle, indent=2)
-              handle.write("\n")
-          PY
-
-          cp "dist/GitRun-$VERSION-$TARGET.sha256" dist/SHA256SUMS
-          (cd dist && sha256sum -c SHA256SUMS)
-
-      - name: Validate release manifest
-        env:
-          EXPECTED_TARGET: ${{ env.RELEASE_TARGET }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-
-          with open("dist/release-manifest.json", encoding="utf-8") as handle:
-              manifest = json.load(handle)
-
-          assert manifest["name"] == "GitRun"
-          assert manifest["artifacts"]
-          assert manifest["artifacts"][0]["target"] == os.environ["EXPECTED_TARGET"]
-          assert manifest["runner_image"]["digest"].startswith("sha256:")
-          print("release manifest: PASS")
-          PY
+          test -x target/release/gitrun
+          file target/release/gitrun || true
+          ls -lh target/release/gitrun
 
       - name: Publish GitHub release
         env:
@@ -237,4 +75,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$VERSION"             "dist/GitRun-$VERSION-${{ env.RELEASE_TARGET }}.tar.gz"             "dist/GitRun-$VERSION-${{ env.RELEASE_TARGET }}.sha256"             dist/release-manifest.json             dist/SHA256SUMS             --title "GitRun $VERSION"             --generate-notes
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" target/release/gitrun --clobber
+          else
+            gh release create "$VERSION" target/release/gitrun               --title "GitRun $VERSION"               --generate-notes
+          fi

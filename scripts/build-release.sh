@@ -9,22 +9,20 @@ VERSION="${2:-$(git describe --tags --always --dirty)}"
 
 cargo build --release -p gitrun-cli --target "$TARGET"
 
-mkdir -p dist/release
+mkdir -p dist/release/package
+rm -f dist/release/GitRun-* dist/release/package/*
 BINARY="gitrun-rs"
-case "$TARGET" in
-  *windows*) BINARY="gitrun-rs.exe" ;;
-esac
-cp "target/$TARGET/release/$BINARY" "dist/release/$BINARY"
-cp LICENSE README.md config/config.example.env dist/release/
-python3 - "$VERSION" "$TARGET" <<'PY'
+case "$TARGET" in *windows*) BINARY="gitrun-rs.exe";; esac
+cp "target/$TARGET/release/$BINARY" dist/release/package/
+cp LICENSE README.md config/config.example.env dist/release/package/
+ARCHIVE="dist/release/GitRun-$VERSION-$TARGET.tar.gz"
+tar -C dist/release/package -czf "$ARCHIVE" .
+SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+printf '%s  %s\n' "$SHA" "$(basename "$ARCHIVE")" > "$ARCHIVE.sha256"
+python3 - "$VERSION" "$TARGET" "$(basename "$ARCHIVE")" "$SHA" <<'PY'
 import json, pathlib, subprocess, sys
-version, target = sys.argv[1:3]
-manifest = {
-    "name": "GitRun",
-    "version": version,
-    "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-    "artifacts": [{"target": target, "file": "gitrun-rs" if "windows" not in target else "gitrun-rs.exe", "sha256": ""}],
-}
-pathlib.Path("dist/release/release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+version,target,file_name,sha256=sys.argv[1:]
+manifest={"name":"GitRun","version":version,"git_commit":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"artifacts":[{"target":target,"file":file_name,"sha256":sha256}]}
+pathlib.Path("dist/release/release-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
 PY
-echo "GitRun release build complete: $TARGET"
+echo "GitRun release build complete: $TARGET -> $ARCHIVE"

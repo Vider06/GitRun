@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: write\n  packages: write
 
 concurrency:
   group: gitrun-release-${{ github.ref }}

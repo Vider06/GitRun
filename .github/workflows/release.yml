@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (for example v0.4.0)"
+        description: "Release version (for example v0.4.1)"
         required: true
         type: string
 
@@ -61,13 +61,23 @@ jobs:
       - name: Build GitRun
         run: cargo build --release -p gitrun-cli --bin gitrun
 
-      - name: Verify single executable
+      - name: Build Ubuntu package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./scripts/build-deb.sh "$VERSION" target/release/gitrun "${RUNNER_TEMP}/gitrun.deb"
+
+      - name: Verify release package
         shell: bash
         run: |
           set -euo pipefail
           test -x target/release/gitrun
-          file target/release/gitrun || true
-          ls -lh target/release/gitrun
+          test -f "${RUNNER_TEMP}/gitrun.deb"
+          dpkg-deb --info "${RUNNER_TEMP}/gitrun.deb"
+          dpkg-deb --contents "${RUNNER_TEMP}/gitrun.deb" | grep -F "/usr/local/bin/gitrun"
+          ls -lh "${RUNNER_TEMP}/gitrun.deb"
 
       - name: Publish GitHub release
         env:
@@ -76,8 +86,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          package="${RUNNER_TEMP}/gitrun.deb"
           if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release upload "$VERSION" target/release/gitrun --clobber
+            gh release upload "$VERSION" "$package" --clobber
           else
-            gh release create "$VERSION" target/release/gitrun               --title "GitRun $VERSION"               --generate-notes
+            gh release create "$VERSION" "$package" \
+              --title "GitRun $VERSION" \
+              --generate-notes
           fi

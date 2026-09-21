@@ -35,6 +35,7 @@ for path in [
     "scripts/build-release.sh",
     "scripts/build-release.ps1",
     "scripts/verify-release.sh",
+    "scripts/build-deb.sh",
     ".github/workflows/release.yml",
     "SECURITY.md",
     "docs/ROADMAP_PHASES.md",
@@ -99,9 +100,16 @@ for required in [
     "gh release create",
     "cargo build --release -p gitrun-cli --bin gitrun",
     "test -x target/release/gitrun",
+    "./scripts/build-deb.sh",
+    "dpkg-deb --info",
+    "gh release upload",
+    "gitrun.deb",
 ]:
     if required not in release_workflow:
         errors.append(f"release workflow requirement missing: {required}")
+
+if "gh release upload \"$VERSION\" target/release/gitrun" in release_workflow:
+    errors.append("release workflow still uploads the raw binary directly")
 
 if "ubuntu-latest" in release_workflow or "windows-latest" in release_workflow or "macos-" in release_workflow:
     errors.append("release workflow still references GitHub-hosted OS runners")
@@ -121,12 +129,11 @@ for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR
     if required not in compose:
         errors.append(f"compose portability setting missing: {required}")
 
-if subprocess.run(["bash", "-n", str(ROOT / "bin/gitrun")], capture_output=True, text=True).returncode != 0:
-    errors.append("shell syntax: bin/gitrun")
-
 for script in [
+    "bin/gitrun",
     "scripts/install-linux.sh", "scripts/install-macos.sh",
-    "scripts/install-server.sh", "scripts/build-release.sh", "scripts/verify-release.sh",
+    "scripts/install-server.sh", "scripts/build-release.sh",
+    "scripts/verify-release.sh", "scripts/build-deb.sh",
 ]:
     if subprocess.run(["bash", "-n", str(ROOT / script)], capture_output=True, text=True).returncode != 0:
         errors.append(f"shell syntax: {script}")

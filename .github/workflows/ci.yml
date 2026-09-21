@@ -115,6 +115,26 @@ jobs:
           test -x bin/gitrun
           ./bin/gitrun --help >/dev/null || true
 
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Dependency review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+      - name: Secret pattern scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!docs/ROADMAP_PHASES.md' ':!SECURITY.md'; then
+            echo "Potential credential material found in tracked source."
+            exit 1
+          fi
+
   powershell:
     name: PowerShell validation
     needs: detect
@@ -203,7 +223,7 @@ jobs:
   summary:
     name: Verification summary
     if: always()
-    needs: [detect, python, rust, shell, powershell, docker, repository]
+    needs: [detect, python, rust, shell, security, powershell, docker, repository]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce required gates
@@ -212,12 +232,13 @@ jobs:
           PYTHON_RESULT: ${{ needs.python.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           SHELL_RESULT: ${{ needs.shell.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
           POWERSHELL_RESULT: ${{ needs.powershell.result }}
           DOCKER_RESULT: ${{ needs.docker.result }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}
         run: |
           set -euo pipefail
-          for result in "$PYTHON_RESULT" "$RUST_RESULT" "$SHELL_RESULT" "$POWERSHELL_RESULT" "$DOCKER_RESULT" "$REPOSITORY_RESULT"; do
+          for result in "$PYTHON_RESULT" "$RUST_RESULT" "$SHELL_RESULT" "$SECURITY_RESULT" "$POWERSHELL_RESULT" "$DOCKER_RESULT" "$REPOSITORY_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) echo "Verification gate failed: $result"; exit 1 ;;

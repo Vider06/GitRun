@@ -9,7 +9,7 @@ use std::{
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const MANAGED_CONFIG_KEYS: [&str; 10] = [
+const MANAGED_CONFIG_KEYS: [&str; 12] = [
     "GITRUN_REPOSITORIES",
     "GITRUN_MIN_RUNNERS",
     "GITRUN_MAX_RUNNERS",

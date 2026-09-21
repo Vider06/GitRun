@@ -183,6 +183,59 @@ impl Dashboard {
         });
     }
 
+    fn render_configuration(&self, ui: &mut egui::Ui) {
+        ui.heading("Configuration");
+
+        if let Some(config) = &self.snapshot.config {
+            egui::Grid::new("configuration")
+                .striped(true)
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.strong("Repositories");
+                    ui.label(if config.repositories.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        config.repositories.join(", ")
+                    });
+                    ui.end_row();
+
+                    ui.strong("Runner image");
+                    ui.monospace(&config.runner_image);
+                    ui.end_row();
+
+                    ui.strong("Runner labels");
+                    ui.monospace(&config.runner_labels);
+                    ui.end_row();
+
+                    ui.strong("Pool");
+                    ui.label(format!("{}..{}", config.min_runners, config.max_runners));
+                    ui.end_row();
+
+                    ui.strong("Idle timeout");
+                    ui.label(format!("{} seconds", config.idle_timeout));
+                    ui.end_row();
+
+                    ui.strong("Poll interval");
+                    ui.label(format!("{} seconds", config.poll_interval));
+                    ui.end_row();
+
+                    ui.strong("Ephemeral");
+                    ui.label(if config.ephemeral { "enabled" } else { "disabled" });
+                    ui.end_row();
+
+                    ui.strong("State directory");
+                    ui.monospace(&config.state_dir);
+                    ui.end_row();
+
+                    ui.strong("Log directory");
+                    ui.monospace(&config.log_dir);
+                    ui.end_row();
+                });
+        } else {
+            ui.label("Configuration unavailable.");
+        }
+    }
+
     fn render_health(&self, ui: &mut egui::Ui) {
         ui.heading("Health & recovery");
 
@@ -288,6 +341,8 @@ impl eframe::App for Dashboard {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 self.render_overview(ui);
+                ui.add_space(18.0);
+                self.render_configuration(ui);
                 ui.add_space(18.0);
                 self.render_health(ui);
                 ui.add_space(18.0);

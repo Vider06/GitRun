@@ -152,7 +152,7 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateEr
 
 pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
     let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
-    let manifest = client.get(url).send()?.error_for_status()?.json()?;
+    let manifest: ReleaseManifest = client.get(url).send()?.error_for_status()?.json()?;
     manifest.validate()?;
     Ok(manifest)
 }
@@ -271,7 +271,7 @@ pub fn apply_update(paths: &UpdatePaths, archive: impl AsRef<Path>, target: &str
     }
     if let Some(service_config) = &paths.service_config {
         if service_config.is_file() {
-            if let Some(parent) = service_config_backup.as_ref().and_then(Path::parent) { fs::create_dir_all(parent)?; }
+            if let Some(parent) = service_config_backup.as_ref().and_then(|path| path.parent()) { fs::create_dir_all(parent)?; }
             fs::copy(service_config, service_config_backup.as_ref().expect("service config backup path"))?;
         } else if service_config.is_dir() {
             copy_dir(service_config, service_config_backup.as_ref().expect("service config backup path"))?;
@@ -279,7 +279,7 @@ pub fn apply_update(paths: &UpdatePaths, archive: impl AsRef<Path>, target: &str
     }
 
     let staging = backup_dir.join("staging");
-    if let Err(error) = extract_archive(archive.as_ref(), &staging)
+    if let Err(error) = extract_archive(archive.as_ref(), target, &staging)
         .and_then(|_| atomic_install(&staging, &paths.install_dir))
         .and_then(|_| if health_check { health_check_binary(&paths.install_dir, paths.config_dir.as_deref()) } else { Ok(()) })
     {

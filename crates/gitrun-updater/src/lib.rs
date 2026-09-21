@@ -310,6 +310,28 @@ pub fn rollback(paths: &UpdatePaths, backup: &BackupRecord) -> Result<(), Update
     )
 }
 
+pub fn pin_runner_image(config_file: impl AsRef<Path>, image: &RunnerImage) -> Result<(), UpdateError> {
+    let path = config_file.as_ref();
+    let content = fs::read_to_string(path)?;
+    let mut found = false;
+    let mut lines = Vec::new();
+    for line in content.lines() {
+        if line.trim_start().starts_with("GITRUN_RUNNER_IMAGE=") {
+            lines.push(format!("GITRUN_RUNNER_IMAGE={}", image.reference));
+            found = true;
+        } else {
+            lines.push(line.to_owned());
+        }
+    }
+    if !found {
+        lines.push(format!("GITRUN_RUNNER_IMAGE={}", image.reference));
+    }
+    let mut output = lines.join("\n");
+    output.push('\n');
+    fs::write(path, output)?;
+    Ok(())
+}
+
 pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
     let inspect = Command::new("docker").args(["image", "inspect", "--format", "{{json .RepoDigests}}", &image.reference]).output();
     let local_digest = inspect.ok().and_then(|output| if output.status.success() {

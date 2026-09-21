@@ -114,7 +114,8 @@ def create_runner(repo:str, permanent: bool=False)->None:
          "--cpus",os.getenv("GITRUN_CONTAINER_CPUS","1"),"--memory",os.getenv("GITRUN_CONTAINER_MEMORY","1g"),"--pids-limit",os.getenv("GITRUN_CONTAINER_PIDS","1024"),
          "--restart","unless-stopped","--read-only","--tmpfs","/tmp:rw,nosuid,nodev,size=256m",
          "--volume","/var/run/docker.sock:/var/run/docker.sock",
-         "--group-add",str(os.stat("/var/run/docker.sock").st_gid),
+         "--group-add",docker_socket_gid,
+         *shared_args,
          "-e",f"RUNNER_URL=https://github.com/{repo}","-e",f"RUNNER_TOKEN={registration}","-e",f"RUNNER_NAME={name}",
          "-e",f"RUNNER_LABELS={labels}","-e",f"RUNNER_EPHEMERAL={os.getenv('GITRUN_EPHEMERAL','false')}","-e",f"RUNNER_DISABLE_UPDATE={os.getenv('GITRUN_DISABLE_UPDATE','false')}",image]
     result=docker(*cmd,check=False)

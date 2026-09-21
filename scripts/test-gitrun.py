@@ -131,7 +131,7 @@ if 'name = "gitrun"' not in cli_manifest:
     errors.append("Rust CLI binary target gitrun missing")
 
 runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")
-for required in ["docker-ce-cli", "docker-compose-plugin", "powershell", "packages.microsoft.com/config/debian/12", "rustup.sh"]:
+for required in ["docker-ce-cli", "docker-compose-plugin", "powershell", "gh", "packages.microsoft.com/config/debian/12", "https://sh.rustup.rs"]:
     if required not in runner_image:
         errors.append(f"runner image CI dependency missing: {required}")
 

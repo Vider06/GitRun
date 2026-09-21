@@ -16,7 +16,7 @@ RUN apt-get update \
        libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev \
        libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev \
        libfontconfig1-dev unzip xz-utils \
-       gnupg lsb-release \
+       gnupg lsb-release gh \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && chmod a+r /etc/apt/keyrings/docker.gpg \

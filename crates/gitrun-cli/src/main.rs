@@ -12,11 +12,30 @@ fn parse_u32_arg(args: &[String], index: usize, name: &str) -> Result<u32, Strin
         .and_then(|value| value.parse::<u32>().map_err(|_| format!("invalid {name}: {value}")))
 }
 
+fn load_config() -> Result<Config, gitrun_core::ConfigError> {
+    if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
+        return Config::from_env_file(path);
+    }
+    Config::from_env()
+}
+
+fn setup_config_dir() -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("GITRUN_CONFIG_DIR") {
+        return path.into();
+    }
+    if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            return parent.to_path_buf();
+        }
+    }
+    "config".into()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str).unwrap_or("help") {
         "version" if args.len() == 1 => println!("GitRun Rust core 0.2.0"),
-        "config" if args.len() == 1 => match Config::from_env() {
+        "config" if args.len() == 1 => match load_config() {
             Ok(config) => println!("{}", serde_json::to_string_pretty(&config).unwrap()),
             Err(error) => {
                 eprintln!("configuration error: {error}");
@@ -46,8 +65,7 @@ fn main() {
         }
         "setup" if args.len() == 1 => match Config::from_env() {
             Ok(config) => {
-                let config_dir =
-                    std::env::var("GITRUN_CONFIG_DIR").unwrap_or_else(|_| "config".into());
+                let config_dir = setup_config_dir();
                 match prepare_directories(&config, config_dir) {
                     Ok(report) => {
                         let failed = report

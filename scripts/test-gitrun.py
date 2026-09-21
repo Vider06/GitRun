@@ -102,7 +102,7 @@ release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="
 for required in [
     "runs-on: [self-hosted, Linux, X64, gitrun-temporary]",
     "gh release create",
-    "cargo build --release -p gitrun-cli --bin gitrun",
+    "cargo build --locked --release -p gitrun-cli --bin gitrun",
     "test -x target/release/gitrun",
     "./scripts/build-deb.sh",
     "dpkg-deb --info",

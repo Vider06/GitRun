@@ -217,13 +217,13 @@ jobs:
           docker_dir="$RUNNER_TEMP/gitrun-docker"
           mkdir -p "$docker_dir"
           curl -fsSL -o "$RUNNER_TEMP/docker.tgz" \
-            "https://download.docker.com/linux/static/stable/x86_64/docker-\${docker_version}.tgz"
+            "https://download.docker.com/linux/static/stable/x86_64/docker-${docker_version}.tgz"
           tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP"
           install -m 0755 "$RUNNER_TEMP/docker/docker" "$docker_dir/docker"
           rm -rf "$RUNNER_TEMP/docker" "$RUNNER_TEMP/docker.tgz"
           mkdir -p "$DOCKER_CONFIG/cli-plugins"
           curl -fsSL -o "$DOCKER_CONFIG/cli-plugins/docker-compose" \
-            "https://github.com/docker/compose/releases/download/v\${compose_version}/docker-compose-linux-x86_64"
+            "https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-x86_64"
           echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum -c -
           chmod 0755 "$DOCKER_CONFIG/cli-plugins/docker-compose"
           echo "$docker_dir" >> "$GITHUB_PATH"

@@ -159,7 +159,13 @@ fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str).unwrap_or("help") {
-        "version" if args.len() == 1 => {\n            let version = std::env::var("GITRUN_VERSION").ok().or_else(|| std::fs::read_to_string("version.txt").ok().map(|v| v.trim().to_owned())).unwrap_or_else(|| "0.0.0".into());\n            println!("GitRun Rust core {version}");\n        },
+        "version" if args.len() == 1 => {
+            let version = std::env::var("GITRUN_VERSION")
+                .ok()
+                .or_else(|| std::fs::read_to_string("version.txt").ok().map(|v| v.trim().to_owned()))
+                .unwrap_or_else(|| "0.0.0".into());
+            println!("GitRun Rust core {version}");
+        },
         "config" if args.len() == 1 => match load_config() {
             Ok(config) => println!("{}", serde_json::to_string_pretty(&config).unwrap()),
             Err(error) => { eprintln!("configuration error: {error}"); std::process::exit(2); }

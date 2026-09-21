@@ -1,5 +1,5 @@
 use gitrun_core::{Config, Runner};
-use gitrun_setup::{check_dependencies, prepare_directories};
+use gitrun_setup::prepare_directories;
 
 fn help() {
     println!("GitRun Rust control plane");
@@ -18,7 +18,10 @@ fn main() {
         "version" if args.len() == 1 => println!("GitRun Rust core 0.2.0"),
         "config" if args.len() == 1 => match Config::from_env() {
             Ok(config) => println!("{}", serde_json::to_string_pretty(&config).unwrap()),
-            Err(error) => { eprintln!("configuration error: {error}"); std::process::exit(2); }
+            Err(error) => {
+                eprintln!("configuration error: {error}");
+                std::process::exit(2);
+            }
         },
         "desired" if args.len() == 5 => {
             let values = [
@@ -31,36 +34,73 @@ fn main() {
                 eprintln!("{error}");
                 std::process::exit(2);
             }
-            println!("{}", Runner::desired_count(
-                values[0].as_ref().unwrap().to_owned(),
-                values[1].as_ref().unwrap().to_owned(),
-                values[2].as_ref().unwrap().to_owned(),
-                values[3].as_ref().unwrap().to_owned(),
-            ));
-        },
+            println!(
+                "{}",
+                Runner::desired_count(
+                    *values[0].as_ref().unwrap(),
+                    *values[1].as_ref().unwrap(),
+                    *values[2].as_ref().unwrap(),
+                    *values[3].as_ref().unwrap(),
+                )
+            );
+        }
         "setup" if args.len() == 1 => match Config::from_env() {
             Ok(config) => {
-                let config_dir = std::env::var("GITRUN_CONFIG_DIR").unwrap_or_else(|_| "config".into());
+                let config_dir =
+                    std::env::var("GITRUN_CONFIG_DIR").unwrap_or_else(|_| "config".into());
                 match prepare_directories(&config, config_dir) {
                     Ok(report) => {
-                        for dependency in report.dependencies {
-                            println!("{}: {}", dependency.name, if dependency.available { "available" } else { "missing" });
+                        let failed = report
+                            .dependencies
+                            .iter()
+                            .filter(|dependency| !dependency.available)
+                            .count();
+
+                        for dependency in &report.dependencies {
+                            let state = if dependency.available {
+                                "available"
+                            } else {
+                                "missing"
+                            };
+                            println!("{}: {state}", dependency.name);
                         }
                         println!("config: {}", report.config_dir.display());
                         println!("state: {}", report.state_dir.display());
                         println!("logs: {}", report.log_dir.display());
-                        if check_dependencies().iter().any(|dependency| !dependency.available) { std::process::exit(1); }
+
+                        if failed != 0 {
+                            eprintln!("GitRun setup: FAIL — {failed} dependency check(s) failed");
+                            std::process::exit(1);
+                        }
+                        println!("GitRun setup: PASS");
                     }
-                    Err(error) => { eprintln!("GitRun setup: FAIL — {error}"); std::process::exit(1); }
+                    Err(error) => {
+                        eprintln!("GitRun setup: FAIL — {error}");
+                        std::process::exit(1);
+                    }
                 }
             }
-            Err(error) => { eprintln!("GitRun setup: FAIL — {error}"); std::process::exit(1); }
+            Err(error) => {
+                eprintln!("GitRun setup: FAIL — {error}");
+                std::process::exit(1);
+            }
         },
         "doctor" if args.len() == 1 => match Config::from_env() {
-            Ok(config) => println!("GitRun doctor: PASS ({} repositories, pool {}..{})", config.repositories.len(), config.min_runners, config.max_runners),
-            Err(error) => { eprintln!("GitRun doctor: FAIL — {error}"); std::process::exit(1); }
+            Ok(config) => println!(
+                "GitRun doctor: PASS ({} repositories, pool {}..{})",
+                config.repositories.len(),
+                config.min_runners,
+                config.max_runners
+            ),
+            Err(error) => {
+                eprintln!("GitRun doctor: FAIL — {error}");
+                std::process::exit(1);
+            }
         },
         "help" if args.len() == 1 => help(),
-        _ => { help(); std::process::exit(2); }
+        _ => {
+            help();
+            std::process::exit(2);
+        }
     }
 }

@@ -445,7 +445,8 @@ fn compare_versions(a: &str, b: &str) -> Result<std::cmp::Ordering, UpdateError>
 
 fn is_version(value: &str) -> bool {
     let trimmed = value.trim_start_matches('v');
-    trimmed.split('.').count() == 3 && trimmed.split('.').all(|p| p.chars().all(|c| c.is_ascii_digit()))
+    let base = trimmed.split(['-', '+']).next().unwrap_or(trimmed);
+    base.split('.').count() == 3 && base.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 fn is_sha256(value: &str) -> bool { value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()) }
 fn is_sha256_digest(value: &str) -> bool { value.starts_with("sha256:") && value.len() == 71 && value[7..].chars().all(|c| c.is_ascii_hexdigit()) }

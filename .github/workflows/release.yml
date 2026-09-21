@@ -55,7 +55,7 @@ jobs:
         run: echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
       - name: Build
         shell: bash
-        run: cargo build --release -p gitrun-cli --target "${{ matrix.target }}"
+        run: cargo build --release -p gitrun-cli -p gitrun-dashboard --target "${{ matrix.target }}"
       - name: Package Unix
         if: runner.os != 'Windows'
         shell: bash
@@ -66,6 +66,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/package
           cp "target/$TARGET/release/gitrun-rs" dist/package/gitrun-rs
+          cp "target/$TARGET/release/gitrun-dashboard" dist/package/gitrun-dashboard
           cp LICENSE README.md config/config.example.env dist/package/
           tar -C dist/package -czf "dist/GitRun-$VERSION-$TARGET.tar.gz" .
           sha256sum "dist/GitRun-$VERSION-$TARGET.tar.gz" > "dist/GitRun-$VERSION-$TARGET.sha256"
@@ -78,6 +79,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist/package | Out-Null
           Copy-Item "target/$env:TARGET/release/gitrun-rs.exe" dist/package/gitrun-rs.exe
+          Copy-Item "target/$env:TARGET/release/gitrun-dashboard.exe" dist/package/gitrun-dashboard.exe
           Copy-Item LICENSE,README.md,config/config.example.env dist/package/
           Compress-Archive -Path dist/package/* -DestinationPath "dist/GitRun-$env:VERSION-$env:TARGET.zip" -Force
           (Get-FileHash "dist/GitRun-$env:VERSION-$env:TARGET.zip" -Algorithm SHA256).Hash.ToLower() + "  GitRun-$env:VERSION-$env:TARGET.zip" |

@@ -238,18 +238,19 @@ def remove_runner(repo: str, name: str) -> None:
     try:
         runners = list_runners(repo)
         runner = next((item for item in runners if item.get("name") == name), None)
-        if runner and runner.get("id"):
+        runner_id = runner.get("id") if runner else None
+        if runner_id:
             try:
-                api_request("DELETE", f"/repos/{owner}/{repository}/actions/runners/{runner.get(\"id\")}")
+                api_request("DELETE", f"/repos/{owner}/{repository}/actions/runners/{runner_id}")
             except RuntimeError as exc:
                 if "GitHub API 404" not in str(exc):
                     raise
     finally:
         result = docker("rm", "-f", name, check=False)
-    if result.returncode == 0:
+        if result.returncode == 0:
         log.info("Removed runner %s", name)
-    else:
-        log.warning("Could not remove runner %s: %s", name, result.stderr.strip())
+        else:
+            log.warning("Could not remove runner %s: %s", name, result.stderr.strip())
 
 
 def reconcile(repo_cfg: RepoConfig) -> None:

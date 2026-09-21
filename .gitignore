@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+data/
+logs/
+run/
+state/
+*.log
+.DS_Store

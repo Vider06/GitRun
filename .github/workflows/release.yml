@@ -27,6 +27,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 60
     env:
+      RELEASE_TARGET: x86_64-unknown-linux-gnu
       DOCKER_CONFIG: /tmp/gitrun-docker-config
     steps:
       - uses: actions/checkout@v7

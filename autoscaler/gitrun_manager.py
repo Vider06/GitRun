@@ -88,6 +88,14 @@ def container_is_permanent(name: str) -> bool:
     result = docker("inspect", "-f", '{{index .Config.Labels "gitrun.dynamic"}}', name, check=False)
     return result.returncode == 0 and result.stdout.strip().lower() != "true"
 
+def restart_container(name: str) -> bool:
+    result = docker("restart", name, check=False)
+    if result.returncode:
+        log.warning("Could not restart runner container %s: %s", name, result.stderr.strip())
+        return False
+    log.warning("Restarted runner container %s for automatic recovery", name)
+    return True
+
 def state_path()->Path:return Path(os.getenv("GITRUN_STATE_DIR","/var/lib/gitrun"))/"state.json"
 def load_state()->dict:
     try:return json.loads(state_path().read_text(encoding="utf-8"))
@@ -120,13 +128,46 @@ def reconcile(cfg:RepoConfig)->None:
     while current < desired:
         create_runner(repo, permanent=False)
         current += 1
-    state=load_state();idle=state.setdefault("idle_since",{});by_name={r.get("name"):r for r in runners};now=datetime.now(timezone.utc)
+    state=load_state();idle=state.setdefault("idle_since",{});recovery=state.setdefault("container_recovery",{});by_name={r.get("name"):r for r in runners};now=datetime.now(timezone.utc)
+    recovery_cooldown=max(15,env_int("GITRUN_CONTAINER_RECOVERY_COOLDOWN",60))
+    for name in list(containers):
+        container_state=container_status(name)
+        runner=by_name.get(name)
+        if (
+            env_bool("GITRUN_AUTO_CONTAINER_RECOVERY",True)
+            and queued > 0
+            and container_state.get("Status") == "running"
+            and runner
+            and runner.get("status") != "online"
+            and not runner.get("busy")
+        ):
+            stamp=recovery.get(name)
+            try:age=(now-datetime.fromisoformat(stamp)).total_seconds() if stamp else recovery_cooldown
+            except ValueError:age=recovery_cooldown
+            if age >= recovery_cooldown and restart_container(name):
+                recovery[name]=now.isoformat()
+        elif (
+            env_bool("GITRUN_AUTO_CONTAINER_RECOVERY",True)
+            and queued > 0
+            and container_state.get("Status") == "running"
+            and runner is None
+        ):
+            permanent=container_is_permanent(name)
+            log.warning("Runner %s is missing from GitHub; recreating managed container", name)
+            remove_runner(repo,name)
+            containers.remove(name)
+            current -= 1
+            create_runner(repo,permanent=permanent)
+            current += 1
+            recovery.pop(name,None)
     for name in containers:
         runner=by_name.get(name)
         if runner and runner.get("busy"):idle.pop(name,None)
         elif runner and runner.get("status")=="online":idle.setdefault(name,now.isoformat())
     for name in list(idle):
         if name not in containers:idle.pop(name,None)
+    for name in list(recovery):
+        if name not in containers:recovery.pop(name,None)
     if os.getenv("GITRUN_EPHEMERAL","false").lower()!="true" and current>cfg.minimum:
         removable=current-cfg.minimum;timeout=env_int("GITRUN_IDLE_TIMEOUT",120);candidates=[]
         for name,stamp in idle.items():

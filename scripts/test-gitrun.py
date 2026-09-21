@@ -76,7 +76,9 @@ manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
 for required in [
     "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
     "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
-    "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME", "gtuu_schedule_loop",
+    "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME",
+    "GITRUN_AUTO_CONTAINER_RECOVERY", "GITRUN_CONTAINER_RECOVERY_COOLDOWN", "restart_container", "container_recovery",
+    "gtuu_schedule_loop",
 ]:
     if required not in manager:
         errors.append(f"autoscaler feature missing: {required}")
@@ -90,6 +92,8 @@ for key, expected in [
     ("GITRUN_CONTAINER_MEMORY", "1g"),
     ("GITRUN_AUTO_CONTAINER_UPDATE", "false"),
     ("GITRUN_CONTAINER_UPDATE_TIME", "03:00"),
+    ("GITRUN_AUTO_CONTAINER_RECOVERY", "true"),
+    ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", "60"),
 ]:
     if f"{key}={expected}" not in config:
         errors.append(f"config default mismatch: {key}={expected}")

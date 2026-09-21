@@ -12,6 +12,7 @@ It is designed for administrators running their own repositories on a small priv
 - CPU, memory and PID limits
 - Persistent or ephemeral runner modes
 - Automatic restart after host reboot
+- Automatic container recovery when queued jobs have no online managed runner
 - Linux, macOS and Windows setup scripts
 - CLI for status, health and service management
 - Rust setup preflight for configuration, directories and host dependencies
@@ -89,6 +90,8 @@ GITRUN_MIN_RUNNERS=3
 GITRUN_MAX_RUNNERS=8
 GITRUN_IDLE_TIMEOUT=120
 GITRUN_POLL_INTERVAL=5
+GITRUN_AUTO_CONTAINER_RECOVERY=true
+GITRUN_CONTAINER_RECOVERY_COOLDOWN=60
 ```
 
 The GitHub token must have enough repository permissions to manage self-hosted runners and read Actions workflow/job state for every configured repository.
@@ -107,6 +110,8 @@ desired = min(desired, maximum)
 ```
 
 Extra persistent runners are removed only after the configured idle grace period.
+
+When a self-hosted job is queued and a managed runner container is still running but its GitHub runner is offline, GitRun can restart that container automatically. If the container exists but its runner registration is missing, GitRun recreates the container. Recovery skips runners reported as busy and uses a cooldown to prevent restart loops. Disable it with `GITRUN_AUTO_CONTAINER_RECOVERY=false`.
 
 Ephemeral mode is available when runners should be replaced after each job:
 

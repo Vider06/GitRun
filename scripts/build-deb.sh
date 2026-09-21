@@ -33,9 +33,12 @@ root="$workdir/root"
 mkdir -p \
   "$root/DEBIAN" \
   "$root/usr/local/bin" \
+  "$root/usr/share/gitrun" \
   "$root/usr/share/applications"
 
 install -m 0755 "$BINARY" "$root/usr/local/bin/gitrun"
+
+printf '%s\n' "$VERSION" > "$root/usr/share/gitrun/version.txt"
 
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: gitrun

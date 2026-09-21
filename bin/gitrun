@@ -147,7 +147,7 @@ cmd_status() {
         return 1
     fi
 
-    docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.RunningFor}}'
+    docker ps --filter 'label=gitrun.runner=true' --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.RunningFor}}'
 }
 
 cmd_runners() {
@@ -171,6 +171,11 @@ cmd_logs() {
 
     if [[ -n "$target" ]]; then
         docker logs --tail 200 "$target"
+        return
+    fi
+
+    if docker ps -a --format '{{.Names}}' | grep -Fxq gitrun-manager; then
+        docker logs --tail 200 gitrun-manager
         return
     fi
 
@@ -232,6 +237,15 @@ cmd_health() {
         failed=1
     else
         echo "[PASS] Runner capacity: $GITRUN_MIN_RUNNERS..$GITRUN_MAX_RUNNERS"
+    fi
+
+    if docker_available; then
+        if docker ps -a --format '{{.Names}}' | grep -Fxq gitrun-manager; then
+            echo "[PASS] GitRun manager container"
+        else
+            echo "[FAIL] GitRun manager container missing"
+            failed=1
+        fi
     fi
 
     if (( failed )); then

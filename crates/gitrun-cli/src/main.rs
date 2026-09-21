@@ -155,7 +155,7 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\\'', "'\\''"))
+    format!("'{}'", value.replace("'", "'\\''"))
 }
 
 fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
@@ -169,25 +169,16 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
             let executable = executable.to_string_lossy();
 
             let emergency_command = format!(
-                r#"printf '%s\\n\\n' 'GitRun dashboard failed:'; printf '%s\\n\\n' {}; printf '%s\\n' 'GitRun CLI:'; {} version; printf '%s\\n' 'GitRun doctor:'; {} doctor; printf '%s\\n' 'Press Enter to close.'; read -r"#,
+                "printf '%s\\n\\n' 'GitRun dashboard failed:'; printf '%s\\n\\n' {}; printf '%s\\n' 'GitRun CLI:'; {} version; printf '%s\\n' 'GitRun doctor:'; {} doctor; printf '%s\\n' 'Press Enter to close.'; read -r",
                 shell_quote(&error_message),
                 shell_quote(&executable),
                 shell_quote(&executable),
             );
 
             let candidates: [(&str, &[&str]); 3] = [
-                (
-                    "x-terminal-emulator",
-                    &["-e", "sh", "-c", &emergency_command],
-                ),
-                (
-                    "gnome-terminal",
-                    &["--", "sh", "-c", &emergency_command],
-                ),
-                (
-                    "konsole",
-                    &["-e", "sh", "-c", &emergency_command],
-                ),
+                ("x-terminal-emulator", &["-e", "sh", "-c", &emergency_command]),
+                ("gnome-terminal", &["--", "sh", "-c", &emergency_command]),
+                ("konsole", &["-e", "sh", "-c", &emergency_command]),
             ];
 
             for (program, args) in candidates {
@@ -206,6 +197,7 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 }
+
 
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;

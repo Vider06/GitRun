@@ -95,7 +95,7 @@ pub fn bootstrap_linux(
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err(SetupError::UnsupportedPlatform);
     }
-    if unsafe { libc::geteuid() } != 0 {
+    if !running_as_root() {
         return Err(SetupError::NotRoot);
     }
 
@@ -243,7 +243,7 @@ fn valid_repo(value: &str) -> bool {
         && repo.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
 }
 
-fn command_exists(name: &str) -> bool {
+fn running_as_root() -> bool {\n    Command::new("id").args(["-u"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)\n}\n\nfn command_exists(name: &str) -> bool {
     Command::new("sh")
         .args(["-c", &format!("command -v {name} >/dev/null 2>&1")])
         .status()

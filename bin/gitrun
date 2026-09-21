@@ -6,6 +6,8 @@ CONFIG_FILE="${GITRUN_CONFIG:-${GITRUN_CONFIG_FILE:-/etc/gitrun/gitrun.env}}"
 STATE_DIR="${GITRUN_STATE_DIR:-/var/lib/gitrun}"
 LOG_DIR="${GITRUN_LOG_DIR:-/var/log/gitrun}"
 COMPOSE_FILE="${GITRUN_COMPOSE_FILE:-/opt/gitrun/docker-compose.yml}"
+GTUU_SCRIPT="${GITRUN_GTUU_SCRIPT:-/opt/gitrun/gitrun_updater_utility.py}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 load_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -60,6 +62,7 @@ Lifecycle:
   start                    Start the GitRun stack.
   stop                     Stop the GitRun stack.
   restart                  Restart the GitRun stack.
+  update [--only-containers] Update GitRun itself, or run GTUU for permanent runners.
 
 Configuration:
   connect <owner/repo>     Add a repository to GitRun.
@@ -302,6 +305,33 @@ cmd_repositories() {
     fi
 }
 
+cmd_update() {
+    local mode="${1:-}"
+    if [[ "$mode" == "--only-containers" ]]; then
+        if [[ -f "$GTUU_SCRIPT" ]]; then
+            exec python3 "$GTUU_SCRIPT" --only-containers
+        elif [[ -f "$ROOT_DIR/autoscaler/gitrun_updater_utility.py" ]]; then
+            exec python3 "$ROOT_DIR/autoscaler/gitrun_updater_utility.py" --only-containers
+        else
+            die "GTUU utility not found. Expected: $GTUU_SCRIPT"
+        fi
+    fi
+
+    if [[ -n "$mode" ]]; then
+        die "Usage: gitrun update [--only-containers]"
+    fi
+
+    local rust_cli="${GITRUN_RUST_CLI:-}"
+    if [[ -z "$rust_cli" && -x "/opt/gitrun/gitrun-rs" ]]; then
+        rust_cli="/opt/gitrun/gitrun-rs"
+    fi
+    if [[ -z "$rust_cli" ]] && have gitrun-rs; then
+        rust_cli="$(command -v gitrun-rs)"
+    fi
+    [[ -n "$rust_cli" ]] || die "GitRun Rust updater is not installed. Use 'gitrun update --only-containers' for GTUU."
+    exec "$rust_cli" update
+}
+
 cmd_service() {
     local action="${1:-status}"
     case "$action" in
@@ -363,5 +393,6 @@ case "$command" in
     connect) cmd_connect "$@" ;;
     repositories|repos) cmd_repositories ;;
     service) cmd_service "$@" ;;
+    update) cmd_update "$@" ;;
     *) die "Unknown command: $command. Run 'gitrun help'." ;;
 esac

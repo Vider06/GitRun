@@ -27,6 +27,7 @@ for path in [
     "docker/manager/Dockerfile",
     "systemd/gitrun.service",
     "autoscaler/gitrun_manager.py",
+    "autoscaler/gitrun_updater_utility.py",
     "scripts/install-server.sh",
     "scripts/install-linux.sh",
     "scripts/install-macos.sh",
@@ -56,12 +57,13 @@ for path in [
     require(path)
 
 check_python("autoscaler/gitrun_manager.py")
+check_python("autoscaler/gitrun_updater_utility.py")
 
 cli = (ROOT / "bin/gitrun").read_text(encoding="utf-8")
 for command in [
     "overview", "status", "runners", "health", "doctor", "logs",
     "last-crash", "usage", "connect", "repositories", "service",
-    "start", "stop", "restart",
+    "start", "stop", "restart", "update",
 ]:
     if f"{command})" not in cli and f"{command}|repos)" not in cli:
         errors.append(f"CLI command missing: {command}")
@@ -70,7 +72,7 @@ manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
 for required in [
     "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
     "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
-    "docker", "def docker(*args",
+    "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME", "gtuu_schedule_loop",
 ]:
     if required not in manager:
         errors.append(f"autoscaler feature missing: {required}")
@@ -82,6 +84,8 @@ for key, expected in [
     ("GITRUN_IDLE_TIMEOUT", "120"),
     ("GITRUN_CONTAINER_CPUS", "1"),
     ("GITRUN_CONTAINER_MEMORY", "1g"),
+    ("GITRUN_AUTO_CONTAINER_UPDATE", "false"),
+    ("GITRUN_CONTAINER_UPDATE_TIME", "03:00"),
 ]:
     if f"{key}={expected}" not in config:
         errors.append(f"config default mismatch: {key}={expected}")

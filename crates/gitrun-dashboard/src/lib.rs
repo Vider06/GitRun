@@ -9,7 +9,7 @@ use std::{
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const MANAGED_CONFIG_KEYS: [&str; 12] = [
+const MANAGED_CONFIG_KEYS: [&str; 14] = [
     "GITRUN_REPOSITORIES",
     "GITRUN_MIN_RUNNERS",
     "GITRUN_MAX_RUNNERS",
@@ -22,6 +22,8 @@ const MANAGED_CONFIG_KEYS: [&str; 12] = [
     "GITRUN_LOG_DIR",
     "GITRUN_AUTO_CONTAINER_UPDATE",
     "GITRUN_CONTAINER_UPDATE_TIME",
+    "GITRUN_AUTO_CONTAINER_RECOVERY",
+    "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +99,8 @@ struct ConfigDraft {
     log_dir: String,
     auto_container_update: bool,
     container_update_time: String,
+    auto_container_recovery: bool,
+    container_recovery_cooldown: u64,
 }
 
 impl From<&Config> for ConfigDraft {
@@ -114,6 +118,8 @@ impl From<&Config> for ConfigDraft {
             log_dir: config.log_dir.clone(),
             auto_container_update: config.auto_container_update,
             container_update_time: config.container_update_time.clone(),
+            auto_container_recovery: config.auto_container_recovery,
+            container_recovery_cooldown: config.container_recovery_cooldown,
         }
     }
 }
@@ -141,6 +147,8 @@ impl ConfigDraft {
             log_dir: self.log_dir.trim().to_owned(),
             auto_container_update: self.auto_container_update,
             container_update_time: self.container_update_time.trim().to_owned(),
+            auto_container_recovery: self.auto_container_recovery,
+            container_recovery_cooldown: self.container_recovery_cooldown,
         };
         config.validate().map_err(|error| error.to_string())?;
         Ok(config)
@@ -536,6 +544,21 @@ impl Dashboard {
                 }
                 ui.end_row();
 
+                ui.strong("Automatic container recovery");
+                if ui.checkbox(&mut settings.auto_container_recovery, "").changed() {
+                    self.settings_dirty = true;
+                }
+                ui.end_row();
+
+                ui.strong("Container recovery cooldown");
+                if ui
+                    .add(egui::DragValue::new(&mut settings.container_recovery_cooldown).range(15..=86_400).speed(1))
+                    .changed()
+                {
+                    self.settings_dirty = true;
+                }
+                ui.end_row();
+
                 ui.strong("Automatic container updates");
                 if ui.checkbox(&mut settings.auto_container_update, "").changed() {
                     self.settings_dirty = true;
@@ -892,6 +915,8 @@ fn config_env_values(config: &Config) -> BTreeMap<&'static str, String> {
         ("GITRUN_LOG_DIR", config.log_dir.clone()),
         ("GITRUN_AUTO_CONTAINER_UPDATE", config.auto_container_update.to_string()),
         ("GITRUN_CONTAINER_UPDATE_TIME", config.container_update_time.clone()),
+        ("GITRUN_AUTO_CONTAINER_RECOVERY", config.auto_container_recovery.to_string()),
+        ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", config.container_recovery_cooldown.to_string()),
     ])
 }
 

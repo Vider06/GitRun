@@ -168,6 +168,22 @@ def registration_token(repo: str) -> str:
     )["token"]
 
 
+def shared_cache_volume() -> str:
+    return os.getenv("GITRUN_SHARED_CACHE_VOLUME", "gitrun-runner-shared").strip() or "gitrun-runner-shared"
+
+def shared_cache_slug(repo: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]", "_", repo)
+
+def ensure_shared_cache_volume() -> str:
+    name = shared_cache_volume()
+    inspected = docker("volume", "inspect", name, check=False)
+    if inspected.returncode == 0:
+        return name
+    created = docker("volume", "create", "--label", "gitrun.shared=true", name, check=False)
+    if created.returncode:
+        raise RuntimeError(created.stderr.strip() or f"unable to create shared runner volume {name}")
+    return name
+
 def create_replacement(repo: str, old_name: str, image: str, permanent: bool) -> str:
     safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", old_name)
     replacement = f"{safe}-gtuu-{os.getpid()}-{int(time.time()) % 100000}"
@@ -175,6 +191,9 @@ def create_replacement(repo: str, old_name: str, image: str, permanent: bool) ->
     labels = os.getenv("GITRUN_RUNNER_LABELS", "self-hosted,Linux,X64")
     ephemeral = os.getenv("GITRUN_EPHEMERAL", "false")
     disable_update = os.getenv("GITRUN_DISABLE_UPDATE", "false")
+    shared_volume = ensure_shared_cache_volume()
+    shared_slug = shared_cache_slug(repo)
+    docker_socket_gid = str(os.stat("/var/run/docker.sock").st_gid)
 
     docker_labels = [
         "--label",
@@ -206,6 +225,24 @@ def create_replacement(repo: str, old_name: str, image: str, permanent: bool) ->
         "--read-only",
         "--tmpfs",
         "/tmp:rw,nosuid,nodev,size=256m",
+        "--volume",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "--group-add",
+        docker_socket_gid,
+        "--mount",
+        f"type=volume,source={shared_volume},target=/var/lib/gitrun/shared",
+        "-e",
+        "GITRUN_SHARED_CACHE_DIR=/var/lib/gitrun/shared",
+        "-e",
+        "CARGO_HOME=/var/lib/gitrun/shared/cargo",
+        "-e",
+        f"CARGO_TARGET_DIR=/var/lib/gitrun/shared/cargo-target/{shared_slug}",
+        "-e",
+        "PIP_CACHE_DIR=/var/lib/gitrun/shared/pip",
+        "-e",
+        "NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm",
+        "-e",
+        "DOCKER_CONFIG=/tmp/docker-config",
         "-e",
         f"RUNNER_URL=https://github.com/{repo}",
         "-e",

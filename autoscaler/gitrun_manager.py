@@ -64,6 +64,38 @@ def queued_jobs(repo:str)->int:
     return count
 def docker(*args:str,check=True):
     return subprocess.run(["docker",*args],text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=check)
+SHARED_CACHE_VOLUME_DEFAULT = "gitrun-runner-shared"
+
+def shared_cache_volume() -> str:
+    return os.getenv("GITRUN_SHARED_CACHE_VOLUME", SHARED_CACHE_VOLUME_DEFAULT).strip() or SHARED_CACHE_VOLUME_DEFAULT
+
+def shared_cache_slug(repo: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]", "_", repo)
+
+def ensure_shared_cache_volume() -> str:
+    name = shared_cache_volume()
+    inspected = docker("volume", "inspect", name, check=False)
+    if inspected.returncode == 0:
+        return name
+    created = docker("volume", "create", "--label", "gitrun.shared=true", name, check=False)
+    if created.returncode:
+        raise RuntimeError(created.stderr.strip() or f"unable to create shared runner volume {name}")
+    log.info("Created shared runner cache volume %s", name)
+    return name
+
+def shared_runner_args(repo: str) -> list[str]:
+    volume = ensure_shared_cache_volume()
+    slug = shared_cache_slug(repo)
+    return [
+        "--mount", f"type=volume,source={volume},target=/var/lib/gitrun/shared",
+        "-e", "GITRUN_SHARED_CACHE_DIR=/var/lib/gitrun/shared",
+        "-e", "CARGO_HOME=/var/lib/gitrun/shared/cargo",
+        "-e", f"CARGO_TARGET_DIR=/var/lib/gitrun/shared/cargo-target/{slug}",
+        "-e", "PIP_CACHE_DIR=/var/lib/gitrun/shared/pip",
+        "-e", "NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm",
+        "-e", "DOCKER_CONFIG=/tmp/docker-config",
+    ]
+
 def managed_containers(repo:str)->list[str]:
     r=docker("ps","-a","--filter","label=gitrun.runner=true","--filter",f"label=gitrun.repo={repo}","--format","{{.Names}}")
     return [x for x in r.stdout.splitlines() if x.strip()]
@@ -75,6 +107,8 @@ def create_runner(repo:str, permanent: bool=False)->None:
     registration=registration_token(repo); safe=re.sub(r"[^a-zA-Z0-9_.-]","-",repo); name=f"gitrun-{safe}-{uuid4().hex[:8]}"
     image=os.getenv("GITRUN_RUNNER_IMAGE","gitrun-runner:latest")
     labels=os.getenv("GITRUN_RUNNER_LABELS","self-hosted,Linux,X64")
+    shared_args=shared_runner_args(repo)
+    docker_socket_gid=str(os.stat("/var/run/docker.sock").st_gid)
     cmd=["run","-d","--name",name,"--label","gitrun.runner=true","--label",f"gitrun.repo={repo}","--label","gitrun.managed=true",
          "--label",f"gitrun.permanent={str(permanent).lower()}","--label",f"gitrun.dynamic={str(not permanent).lower()}",
          "--cpus",os.getenv("GITRUN_CONTAINER_CPUS","1"),"--memory",os.getenv("GITRUN_CONTAINER_MEMORY","1g"),"--pids-limit",os.getenv("GITRUN_CONTAINER_PIDS","1024"),

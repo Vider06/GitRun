@@ -78,6 +78,7 @@ for required in [
     "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
     "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME",
     "GITRUN_AUTO_CONTAINER_RECOVERY", "GITRUN_CONTAINER_RECOVERY_COOLDOWN", "restart_container", "container_recovery",
+    "GITRUN_SHARED_CACHE_VOLUME", "shared_cache_volume", "ensure_shared_cache_volume", "CARGO_HOME", "CARGO_TARGET_DIR",
     "gtuu_schedule_loop",
 ]:
     if required not in manager:
@@ -94,6 +95,7 @@ for key, expected in [
     ("GITRUN_CONTAINER_UPDATE_TIME", "03:00"),
     ("GITRUN_AUTO_CONTAINER_RECOVERY", "true"),
     ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", "60"),
+    ("GITRUN_SHARED_CACHE_VOLUME", "gitrun-runner-shared"),
 ]:
     if f"{key}={expected}" not in config:
         errors.append(f"config default mismatch: {key}={expected}")
@@ -129,7 +131,7 @@ if 'name = "gitrun"' not in cli_manifest:
     errors.append("Rust CLI binary target gitrun missing")
 
 runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")
-for required in ["docker.io", "powershell", "packages.microsoft.com/config/debian/12"]:
+for required in ["docker-ce-cli", "docker-compose-plugin", "powershell", "packages.microsoft.com/config/debian/12", "rustup.sh"]:
     if required not in runner_image:
         errors.append(f"runner image CI dependency missing: {required}")
 

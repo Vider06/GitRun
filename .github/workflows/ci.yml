@@ -143,8 +143,8 @@ jobs:
           fi
       - name: CLI smoke checks
         run: |
-          test -x bin/gitrun
-          ./bin/gitrun --help >/dev/null || true
+          test -f bin/gitrun
+          bash bin/gitrun --help >/dev/null
 
   security:
     name: Security audit

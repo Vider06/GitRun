@@ -77,6 +77,8 @@ jobs:
     needs: build
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 30
+    env:
+      DOCKER_CONFIG: /tmp/gitrun-docker-config
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       version: ${{ steps.version.outputs.version }}
@@ -110,8 +112,8 @@ jobs:
           file: docker/runner/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/gitrun-runner:${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/gitrun-runner:latest
+            ghcr.io/vider06/gitrun-runner:${{ steps.version.outputs.version }}
+            ghcr.io/vider06/gitrun-runner:latest
 
   publish:
     name: Publish GitHub release
@@ -147,7 +149,7 @@ jobs:
           TARGET: ${{ env.RELEASE_TARGET }}
           RUNNER_DIGEST: ${{ needs.runner-image.outputs.digest }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: vider06
         shell: bash
         run: |
           set -euo pipefail

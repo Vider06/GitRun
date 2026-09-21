@@ -35,6 +35,7 @@ for path in [
     "scripts/build-release.sh",
     "scripts/build-release.ps1",
     "scripts/verify-release.sh",
+    ".github/workflows/release.yml",
     "SECURITY.md",
     "docs/ROADMAP_PHASES.md",
     "docs/RUST_MIGRATION.md",
@@ -89,6 +90,22 @@ for key, expected in [
 ]:
     if f"{key}={expected}" not in config:
         errors.append(f"config default mismatch: {key}={expected}")
+
+release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+for required in [
+    "runs-on: [self-hosted, Linux, X64, gitrun-temporary]",
+    "RELEASE_TARGET: x86_64-unknown-linux-gnu",
+    "docker/build-push-action@v6",
+    "gh release create",
+]:
+    if required not in release_workflow:
+        errors.append(f"release workflow requirement missing: {required}")
+
+if "ubuntu-latest" in release_workflow or "windows-latest" in release_workflow or "macos-" in release_workflow:
+    errors.append("release workflow still references GitHub-hosted OS runners")
+
+if "x86_64-unknown-linux-gnu" not in release_workflow:
+    errors.append("release workflow Linux x86_64 target missing")
 
 compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR", "GITRUN_LOG_DIR"]:

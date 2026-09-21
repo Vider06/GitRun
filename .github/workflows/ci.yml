@@ -144,7 +144,7 @@ jobs:
       - name: CLI smoke checks
         run: |
           test -f bin/gitrun
-          bash bin/gitrun --help >/dev/null
+          GITRUN_CONFIG_FILE=/dev/null bash bin/gitrun --help >/dev/null
 
   security:
     name: Security audit

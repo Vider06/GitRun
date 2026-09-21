@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 fn help() {
     println!("GitRun Rust control plane");
-    println!("Usage: gitrun-rs <version|config|desired|doctor|setup|update|rollback|help>");
+    println!("Usage: gitrun-rs <version|config|desired|doctor|setup|update|rollback|dashboard|help>");
     println!("  update [manifest-url]  check, download, verify, stage and apply the newest release");
     println!("  rollback <backup.json> restore a previously backed-up installation");
 }
@@ -147,6 +147,25 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
+    let current = std::env::current_exe()?;
+    let sibling = current
+        .parent()
+        .ok_or_else(|| "gitrun-rs executable has no parent directory")?
+        .join(if cfg!(windows) { "gitrun-dashboard.exe" } else { "gitrun-dashboard" });
+
+    if !sibling.is_file() {
+        return Err(format!("dashboard executable not found: {}", sibling.display()).into());
+    }
+
+    let status = std::process::Command::new(sibling).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("dashboard exited with status {status}").into())
+    }
+}
+
 fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     let backup: BackupRecord = serde_json::from_str(&raw)?;
@@ -218,7 +237,7 @@ fn main() {
         "update" if args.len() <= 2 => {
             if let Err(error) = update_command(&args) { eprintln!("GitRun update: FAIL — {error}"); std::process::exit(1); }
         }
-        "rollback" if args.len() == 2 => {
+        "dashboard" if args.len() == 1 => {\n            if let Err(error) = dashboard_command() { eprintln!("GitRun dashboard: FAIL — {error}"); std::process::exit(1); }\n        }\n        "rollback" if args.len() == 2 => {
             if let Err(error) = rollback_command(&args[1]) { eprintln!("GitRun rollback: FAIL — {error}"); std::process::exit(1); }
         }
         "help" if args.len() == 1 => help(),

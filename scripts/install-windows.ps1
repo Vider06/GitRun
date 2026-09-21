@@ -1,4 +1,3 @@
-# GitRun Windows installer
 $ErrorActionPreference = "Stop"
 $RepoUrl = if ($env:GITRUN_REPO_URL) {$env:GITRUN_REPO_URL} else {"https://github.com/Vider06/GitRun.git"}
 $InstallDir = if ($env:GITRUN_INSTALL_DIR) {$env:GITRUN_INSTALL_DIR} else {Join-Path $HOME ".gitrun"}

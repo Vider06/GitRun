@@ -1,8 +1,9 @@
 use gitrun_core::{Config, Runner};
+use gitrun_setup::{check_dependencies, prepare_directories};
 
 fn help() {
     println!("GitRun Rust control plane");
-    println!("Usage: gitrun-rs <version|config|desired|doctor|help>");
+    println!("Usage: gitrun-rs <version|config|desired|doctor|setup|help>");
 }
 
 fn parse_u32_arg(args: &[String], index: usize, name: &str) -> Result<u32, String> {
@@ -37,7 +38,7 @@ fn main() {
                 values[3].as_ref().unwrap().to_owned(),
             ));
         },
-        "doctor" if args.len() == 1 => match Config::from_env() {
+        "setup" if args.len() == 1 => match Config::from_env() {\n            Ok(config) => {\n                let config_dir = std::env::var("GITRUN_CONFIG_DIR").unwrap_or_else(|_| "config".into());\n                match prepare_directories(&config, config_dir) {\n                    Ok(report) => {\n                        for dependency in report.dependencies {\n                            println!("{}: {}", dependency.name, if dependency.available { "available" } else { "missing" });\n                        }\n                        println!("config: {}", report.config_dir.display());\n                        println!("state: {}", report.state_dir.display());\n                        println!("logs: {}", report.log_dir.display());\n                        if check_dependencies().iter().any(|dependency| !dependency.available) { std::process::exit(1); }\n                    }\n                    Err(error) => { eprintln!("GitRun setup: FAIL — {error}"); std::process::exit(1); }\n                }\n            }\n            Err(error) => { eprintln!("GitRun setup: FAIL — {error}"); std::process::exit(1); }\n        },\n        "doctor" if args.len() == 1 => match Config::from_env() {
             Ok(config) => println!("GitRun doctor: PASS ({} repositories, pool {}..{})", config.repositories.len(), config.min_runners, config.max_runners),
             Err(error) => { eprintln!("GitRun doctor: FAIL — {error}"); std::process::exit(1); }
         },

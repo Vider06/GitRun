@@ -2,7 +2,7 @@ use gitrun_core::{Config, Runner};
 use gitrun_setup::prepare_directories;
 use gitrun_updater::{
     apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest, latest_manifest,
-    refresh_docker_stack, rollback, update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
+    pin_runner_image, refresh_docker_stack, rollback, update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
 };
 use std::path::{Path, PathBuf};
 
@@ -125,6 +125,12 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(error) = update_runner_image(image) {
             rollback(&paths, &backup)?;
             return Err(format!("runner update failed; GitRun was rolled back: {error}").into());
+        }
+        if let Ok(config_file) = std::env::var("GITRUN_CONFIG_FILE") {
+            if let Err(error) = pin_runner_image(config_file, image) {
+                rollback(&paths, &backup)?;
+                return Err(format!("runner configuration update failed; GitRun was rolled back: {error}").into());
+            }
         }
     }
     if let Ok(compose) = std::env::var("GITRUN_COMPOSE_FILE") {

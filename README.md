@@ -18,6 +18,7 @@ It is designed for administrators running their own repositories on a small priv
 - Cross-platform Rust release artifacts for Linux, Windows and macOS
 - Versioned updater with checksum verification, dependency compatibility checks and rollback
 - Version-pinned GHCR runner images with digest validation
+- Native egui dashboard for configuration, health and runner pool visibility
 - No Kubernetes required
 
 ## Default profile
@@ -170,9 +171,10 @@ gitrun doctor
 gitrun health
 gitrun-rs setup
 gitrun-rs update
+gitrun-rs dashboard
 ```
 
-The updater resolves the latest GitHub release, selects the native precompiled artifact, verifies its SHA-256 checksum, preserves configuration/state, creates a rollback backup, validates the new installation with `doctor`, and updates the version-pinned runner image only when its digest is not already present. If the runner or Docker refresh fails, the previous installation and preserved state/configuration are restored. Set `GITRUN_REPOSITORY`, `GITRUN_UPDATE_DIR`, `GITRUN_INSTALL_DIR`, `GITRUN_BACKUP_DIR`, `GITRUN_CONFIG_DIR`, `GITRUN_SERVICE_CONFIG` and `GITRUN_COMPOSE_FILE` to control update locations and preserved service configuration. `gitrun-rs rollback <backup.json>` restores a recorded backup.
+The updater resolves the latest GitHub release, selects the native precompiled artifact, verifies its SHA-256 checksum, preserves configuration/state, creates a rollback backup, validates the new installation with `doctor`, and updates the version-pinned runner image only when its digest is not already present. `gitrun-rs dashboard` launches the native read-only egui dashboard; it reads the configured GitRun state and managed Docker runner metadata, refreshing automatically every five seconds. If the runner or Docker refresh fails, the previous installation and preserved state/configuration are restored. Set `GITRUN_REPOSITORY`, `GITRUN_UPDATE_DIR`, `GITRUN_INSTALL_DIR`, `GITRUN_BACKUP_DIR`, `GITRUN_CONFIG_DIR`, `GITRUN_SERVICE_CONFIG` and `GITRUN_COMPOSE_FILE` to control update locations and preserved service configuration. `gitrun-rs rollback <backup.json>` restores a recorded backup.
 
 Static validation does not contact GitHub and does not prove that live runners are healthy.
 
@@ -186,7 +188,7 @@ GitRun is transitioning from its original Python/Docker control plane toward a R
 - Rust CLI foundation for configuration and runner-pool operations.
 - Updater and recovery primitives with explicit staging semantics.
 - Cross-platform release build entry points.
-- A native egui dashboard shell.
+- A native egui dashboard for configuration, health/recovery, repositories and Docker runner state.
 - Workspace-wide Rust formatting, clippy and test gates in CI.
 
 The existing Python/Docker manager remains the deployment-compatible path during migration. The Rust components are intentionally additive; the manager API and runner lifecycle are migrated only after each replacement is independently verified.

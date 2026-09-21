@@ -73,9 +73,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-v2-
       - name: Format
         run: cargo fmt --all
       - name: Format check
@@ -84,6 +84,8 @@ jobs:
         run: cargo check --workspace --all-targets --all-features --locked
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Release build
+        run: cargo build --workspace --all-features --release --locked
       - name: Tests
         run: cargo test --workspace --all-features --locked
 

@@ -80,19 +80,6 @@ jobs:
             ${{ runner.os }}-cargo-
       - name: Format
         run: cargo fmt --all
-      - name: Commit formatting
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- '*.rs' 'Cargo.toml' 'crates/*/Cargo.toml'
-          git commit -m "style: cargo fmt [skip ci]"
-          git push origin "HEAD:$GITHUB_HEAD_REF"
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Check
@@ -117,9 +104,9 @@ jobs:
             exit 0
           fi
           version="v0.11.0"
-          archive="shellcheck-${version}.tar.xz"
+          archive="shellcheck-${version}.linux.x86_64.tar.xz"
           curl -fsSL -o "$archive" \
-            "https://github.com/koalaman/shellcheck/releases/download/${version}/shellcheck-${version}.linux.x86_64.tar.xz"
+            "https://github.com/koalaman/shellcheck/releases/download/${version}/${archive}"
           python3 - "$archive" "$RUNNER_TEMP/shellcheck" <<'PY'
           import pathlib
           import sys
@@ -136,7 +123,7 @@ jobs:
               destination.write_bytes(source.read())
           destination.chmod(0o755)
           PY
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP:$PATH"
           shellcheck --version
       - name: Syntax check
         shell: bash
@@ -206,6 +193,8 @@ jobs:
     if: needs.detect.outputs.docker == 'true'
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 20
+    env:
+      DOCKER_HOST: unix:///var/run/docker.sock
     steps:
       - uses: actions/checkout@v7
       - name: Prepare CI environment

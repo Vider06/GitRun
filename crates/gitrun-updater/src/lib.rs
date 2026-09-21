@@ -283,7 +283,7 @@ pub fn apply_update(paths: &UpdatePaths, archive: impl AsRef<Path>, target: &str
         .and_then(|_| atomic_install(&staging, &paths.install_dir))
         .and_then(|_| if health_check { health_check_binary(&paths.install_dir, paths.config_dir.as_deref()) } else { Ok(()) })
     {
-        rollback_install(paths, &install_backup, &state_backup, config_backup.as_deref())?;
+        rollback_install(paths, &install_backup, &state_backup, config_backup.as_deref(), paths.service_config.as_deref(), service_config_backup.as_deref())?;
         return Err(UpdateError::RolledBack(error.to_string()));
     }
 

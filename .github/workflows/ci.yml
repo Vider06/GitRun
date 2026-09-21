@@ -83,11 +83,11 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Check
-        run: cargo check --workspace --all-targets --all-features
+        run: cargo check --workspace --all-targets --all-features --locked
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --locked
 
   shell:
     name: Shell validation

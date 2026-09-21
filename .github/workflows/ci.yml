@@ -142,8 +142,11 @@ jobs:
             shellcheck $files
           fi
       - name: CLI smoke checks
+        env:
+          GITRUN_CONFIG: ${{ runner.temp }}/gitrun-ci.env
         run: |
           test -f bin/gitrun
+          : > "$GITRUN_CONFIG"
           bash bin/gitrun --help >/dev/null
 
   security:

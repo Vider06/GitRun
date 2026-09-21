@@ -48,7 +48,7 @@ def repositories() -> list[RepoConfig]:
 
     result: list[RepoConfig] = []
     default_min = env_int("GITRUN_MIN_RUNNERS", 3)
-    default_max = env_int("GITRUN_MAX_RUNNERS", 20)
+    default_max = env_int("GITRUN_MAX_RUNNERS", 8)
 
     for item in raw.split(","):
         repo = item.strip()

@@ -2,29 +2,42 @@
 
 GitRun is a lightweight control plane for Docker-based GitHub Actions self-hosted runners.
 
+It is designed for administrators running their own repositories on a small private server. GitRun handles runner lifecycle, autoscaling, health checks and host integration without Kubernetes.
+
 ## Features
 
-- Docker-based runner management
-- Repository-level autoscaling
-- Configurable warm pool and idle timeout
-- Multi-repository support
+- Docker-based GitHub Actions runners
+- Automatic scaling with configurable warm and maximum pools
+- Multiple repositories from one installation
 - CPU, memory and PID limits
-- Automatic recovery after host or container restart
-- Linux, macOS and Windows installers
-- Small CLI for status, health and lifecycle management
+- Persistent or ephemeral runner modes
+- Automatic restart after host reboot
+- Linux, macOS and Windows setup scripts
+- CLI for status, health and service management
 - No Kubernetes required
 
 ## Default profile
 
-The default configuration targets a small 8 GB server:
+The default configuration is intended for a small 8 GB server:
 
-- 3 warm runners per repository
-- 8 runners maximum per repository
+- 3 warm runners per configured repository
+- 8 runners maximum per configured repository
 - 120-second idle grace period
 - 5-second GitHub polling interval
 - 1 CPU and 1 GB memory per runner
 
-Repository-level runners are dedicated to their repository. Multiple repositories can share one GitRun installation, with a separate pool for each repository.
+Multiple repositories can share one installation. Each repository currently has its own runner pool.
+
+## Requirements
+
+The current release uses:
+
+- Docker Engine with Compose v2 on Linux
+- Docker Desktop on macOS and Windows
+- Git
+- Python 3 for the local installer helpers
+
+The manager and runner dependencies are contained in their Docker images. GitRun does not require Node.js, Python packages or Rust on the host beyond what the installer itself needs.
 
 ## Installation
 
@@ -47,9 +60,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install-windows.ps1
 ```
 
-The installers set up the local Docker environment, clone or update GitRun, create the configuration, and start the manager. Runner registration is handled automatically.
+The platform installers check for the required host tools, install missing system dependencies when supported, clone or update GitRun, create the local configuration and start the manager.
 
-For a permanent server installation:
+For a permanent Linux server installation:
 
 ```bash
 git clone https://github.com/Vider06/GitRun.git /opt/gitrun-source
@@ -61,7 +74,7 @@ sudo systemctl start gitrun
 
 ## Configuration
 
-Copy `config/config.example.env` to your local configuration file and set:
+Start from `config/config.example.env`:
 
 ```env
 GITHUB_TOKEN=
@@ -73,49 +86,49 @@ GITRUN_IDLE_TIMEOUT=120
 GITRUN_POLL_INTERVAL=5
 ```
 
-The GitHub token must have sufficient permissions to manage self-hosted runners and read Actions workflow/job state for every configured repository.
+The GitHub token must have enough repository permissions to manage self-hosted runners and read Actions workflow/job state for every configured repository.
 
-Registration tokens are generated on demand and expire after one hour.
+GitHub runner registration tokens are generated on demand and expire after one hour. The long-lived GitHub token is used only by the manager.
 
 ## Autoscaling
 
-For each configured repository, GitRun calculates:
+For each repository:
 
 ```text
 desired = max(minimum, busy runners + queued self-hosted jobs)
 desired = min(desired, maximum)
 ```
 
-Extra persistent runners are removed only after they have remained idle for the configured grace period.
+Extra persistent runners are removed only after the configured idle grace period.
 
-Ephemeral mode is also available:
+Ephemeral mode is available when runners should be replaced after each job:
 
 ```env
 GITRUN_EPHEMERAL=true
 ```
 
-Ephemeral runners are useful when stronger job isolation is required.
-
 ## Networking
 
-GitHub Actions runners normally establish outbound HTTPS connections to GitHub. GitRun does not require inbound router port forwarding.
+Runners establish outbound HTTPS connections to GitHub. GitRun does not require inbound router port forwarding for normal operation.
 
-Do not expose the Docker daemon or GitRun's host environment directly to the Internet.
+Do not expose the Docker daemon or the GitRun host directly to the public Internet.
 
 ## Resource limits
 
-Runner containers are constrained with Docker CPU, memory and PID limits. These are configurable through the environment file.
+Runner containers have configurable CPU, memory and PID limits. The default profile allows up to 8 GB of theoretical runner memory per repository, so the defaults should be adjusted when several repositories share a small host.
 
-The default 8-runner profile allows up to 8 GB of theoretical runner memory across containers. Actual host usage also includes Docker, the manager, the operating system and other services.
+Actual host usage also includes Docker, the manager, the operating system and other services.
 
 ## Security
 
-- Never commit `GITHUB_TOKEN`.
-- Keep the runtime environment file private and mode `0600` on Linux.
+- Never commit `GITHUB_TOKEN` or other credentials.
+- Keep runtime environment files private.
 - Treat access to the Docker socket as host-level administrative access.
-- Prefer ephemeral runners for untrusted workloads.
-- Do not expose Docker or runner management interfaces to the public Internet.
-- Review repository runner permissions before connecting additional repositories.
+- Prefer ephemeral runners for workloads that should not persist between jobs.
+- Review repository permissions before connecting a repository.
+- Keep GitRun and runner images updated.
+
+See [SECURITY.md](SECURITY.md) for deployment guidance and security reporting.
 
 ## CLI
 
@@ -124,11 +137,13 @@ gitrun overview
 gitrun status
 gitrun repositories
 gitrun runners
+gitrun jobs
 gitrun health
 gitrun doctor
 gitrun logs
 gitrun last-crash
 gitrun usage
+gitrun config
 gitrun connect owner/repository
 gitrun service status
 gitrun start
@@ -138,31 +153,23 @@ gitrun restart
 
 ## Checks
 
-Run the static validation with:
+Run the repository's static validation with:
 
 ```bash
 python3 scripts/test-gitrun.py
 ```
 
-For a configured host, use:
+For a configured host:
 
 ```bash
 gitrun doctor
 gitrun health
 ```
 
-The static check does not contact GitHub and does not prove that live runners are healthy.
+Static validation does not contact GitHub and does not prove that live runners are healthy.
 
-## Roadmap
+## Current architecture
 
-- GitHub App authentication
-- Per-repository pool settings
-- Rich terminal dashboard
-- Runner history and diagnostics
-- Image update command
-- Per-repository labels and runner groups
-- Just-in-time runner support
-- Metrics
-- Optional web dashboard
+The current release is a Python/Docker control plane. A Rust core, native desktop GUI, cross-platform packaging and an integrated update/recovery system are planned as the next major development phase.
 
-GitRun is intentionally designed as a small host control plane for single-server Docker deployments rather than a Kubernetes-based runner platform.
+The project is intentionally kept small and host-oriented rather than built as a Kubernetes platform.

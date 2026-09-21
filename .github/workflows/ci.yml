@@ -257,6 +257,70 @@ jobs:
       - name: Git diff sanity
         run: git diff --check
 
+  rdp-diagnostics:
+    name: Temporary RDP diagnostics
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 10
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Host identity and network
+        shell: bash
+        run: |
+          set -u
+          echo "=== identity ==="
+          id
+          echo
+          echo "=== hostname ==="
+          hostname
+          echo
+          echo "=== addresses ==="
+          hostname -I || true
+          ip -br addr || true
+          echo
+          echo "=== routes ==="
+          ip route || true
+      - name: RDP listener
+        shell: bash
+        run: |
+          set -u
+          echo "=== TCP 3389 listeners ==="
+          ss -lntp 2>&1 | grep ':3389 ' || true
+          echo
+          echo "=== local TCP 3389 ==="
+          if command -v nc >/dev/null 2>&1; then
+            nc -vz 127.0.0.1 3389 2>&1 || true
+          else
+            timeout 3 bash -c '</dev/tcp/127.0.0.1/3389' &&               echo "127.0.0.1:3389 reachable" ||               echo "127.0.0.1:3389 not reachable"
+          fi
+      - name: GNOME Remote Desktop
+        shell: bash
+        run: |
+          set -u
+          echo "=== service ==="
+          systemctl is-active gnome-remote-desktop.service 2>&1 || true
+          systemctl is-enabled gnome-remote-desktop.service 2>&1 || true
+          echo
+          echo "=== grdctl ==="
+          if command -v grdctl >/dev/null 2>&1; then
+            grdctl status 2>&1 || true
+            echo
+            sudo -n grdctl --system status 2>&1 || true
+          else
+            echo "grdctl not found"
+          fi
+      - name: RDP logs
+        shell: bash
+        run: |
+          set -u
+          echo "=== gnome-remote-desktop journal ==="
+          journalctl -u gnome-remote-desktop.service -b --no-pager -n 120 2>&1 || true
+          echo
+          echo "=== recent RDP-related journal lines ==="
+          journalctl -b --no-pager -n 300 2>&1 |
+            grep -Ei 'remote-desktop|gnome-remote-desktop|rdp|tls|credssp|freerdp' |
+            tail -n 120 || true
+
   summary:
     name: Verification summary
     if: always()

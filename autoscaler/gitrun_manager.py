@@ -196,9 +196,9 @@ def create_runner(repo: str) -> None:
         "--label", "gitrun.runner=true",
         "--label", f"gitrun.repo={repo}",
         "--label", "gitrun.managed=true",
-        "--cpus", os.getenv("GITRUN_CONTAINER_CPUS", "2"),
-        "--memory", os.getenv("GITRUN_CONTAINER_MEMORY", "4g"),
-        "--pids-limit", os.getenv("GITRUN_CONTAINER_PIDS", "2048"),
+        "--cpus", os.getenv("GITRUN_CONTAINER_CPUS", "1"),
+        "--memory", os.getenv("GITRUN_CONTAINER_MEMORY", "1g"),
+        "--pids-limit", os.getenv("GITRUN_CONTAINER_PIDS", "1024"),
         "--restart", "unless-stopped",
         "-e", f"RUNNER_URL=https://github.com/{repo}",
         "-e", f"RUNNER_TOKEN={registration}",
@@ -257,7 +257,6 @@ def reconcile(repo_cfg: RepoConfig) -> None:
         repo, len(containers), len(online), len(busy), queued, desired,
     )
 
-    # Remove exited containers so they cannot block capacity.
     for name in list(containers):
         state = container_status(name)
         if state.get("Status") == "exited":

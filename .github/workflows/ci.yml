@@ -1,0 +1,50 @@
+name: GitRun CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Static validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: python3 -m py_compile autoscaler/gitrun_manager.py scripts/test-gitrun.py
+      - name: Shell syntax
+        run: |
+          bash -n bin/gitrun
+          bash -n scripts/install.sh
+          bash -n scripts/install-server.sh
+          bash -n scripts/install-linux.sh
+          bash -n scripts/install-macos.sh
+      - name: GitRun static check
+        run: python3 scripts/test-gitrun.py
+
+  compose:
+    name: Compose validation and image builds
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare CI environment
+        run: |
+          cp config/config.example.env /tmp/gitrun.env
+          sed -i 's|^GITHUB_TOKEN=.*|GITHUB_TOKEN=ci-placeholder|' /tmp/gitrun.env
+          sed -i 's|^GITRUN_REPOSITORIES=.*|GITRUN_REPOSITORIES=Vider06/GitRun|' /tmp/gitrun.env
+      - name: Validate Compose
+        env:
+          GITRUN_CONFIG_FILE: /tmp/gitrun.env
+          GITRUN_DOCKER_SOCKET: /var/run/docker.sock
+          GITRUN_STATE_DIR: /tmp/gitrun-state
+          GITRUN_LOG_DIR: /tmp/gitrun-logs
+        run: docker compose config -q
+      - name: Build manager image
+        run: docker build -f docker/manager/Dockerfile -t gitrun-manager:ci .
+      - name: Build runner image
+        run: docker build -f docker/runner/Dockerfile -t gitrun-runner:ci .

@@ -7,13 +7,16 @@ TARGET="${1:-}"
 VERSION="${2:-$(git describe --tags --always --dirty)}"
 [[ -n "$TARGET" ]] || TARGET="$(rustc -vV | awk '/host:/ {print $2}')"
 
-cargo build --release -p gitrun-cli --target "$TARGET"
+cargo build --release -p gitrun-cli -p gitrun-dashboard --target "$TARGET"
 
 mkdir -p dist/release/package
 rm -f dist/release/GitRun-* dist/release/package/*
 BINARY="gitrun-rs"
 case "$TARGET" in *windows*) BINARY="gitrun-rs.exe";; esac
 cp "target/$TARGET/release/$BINARY" dist/release/package/
+DASHBOARD_BINARY="gitrun-dashboard"
+case "$TARGET" in *windows*) DASHBOARD_BINARY="gitrun-dashboard.exe";; esac
+cp "target/$TARGET/release/$DASHBOARD_BINARY" dist/release/package/
 cp LICENSE README.md config/config.example.env dist/release/package/
 ARCHIVE="dist/release/GitRun-$VERSION-$TARGET.tar.gz"
 tar -C dist/release/package -czf "$ARCHIVE" .

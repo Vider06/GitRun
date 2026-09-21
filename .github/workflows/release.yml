@@ -173,12 +173,12 @@ jobs:
           }
           with open("dist/release-manifest.json","w",encoding="utf-8") as f:
               json.dump(manifest,f,indent=2); f.write("\n")
-          cat=None
           PY
           cat dist/GitRun-*.sha256 > dist/SHA256SUMS
           (cd dist && sha256sum -c SHA256SUMS)
       - name: Validate release manifest
-        run: python3 - <<'PY'
+        run: |
+          python3 - <<'PY'
           import json
           m=json.load(open("dist/release-manifest.json",encoding="utf-8"))
           assert m["name"]=="GitRun" and m["artifacts"] and m["runner_image"]["digest"].startswith("sha256:")

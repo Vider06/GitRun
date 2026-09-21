@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GitRun Release Manifest",
+  "type": "object",
+  "required": ["name", "version", "git_commit", "artifacts"],
+  "properties": {
+    "name": { "const": "GitRun" },
+    "version": { "type": "string", "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+([.-][0-9A-Za-z.-]+)?$" },
+    "git_commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "file", "sha256"],
+        "properties": {
+          "target": { "type": "string", "minLength": 1 },
+          "file": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -44,6 +44,8 @@ for path in [
     "crates/gitrun-core/src/state.rs",
     "crates/gitrun-cli/Cargo.toml",
     "crates/gitrun-cli/src/main.rs",
+    "crates/gitrun-setup/Cargo.toml",
+    "crates/gitrun-setup/src/lib.rs",
     "crates/gitrun-updater/Cargo.toml",
     "crates/gitrun-updater/src/lib.rs",
     "crates/gitrun-recovery/Cargo.toml",
@@ -68,6 +70,7 @@ manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
 for required in [
     "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
     "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
+    "docker", "docker info",
 ]:
     if required not in manager:
         errors.append(f"autoscaler feature missing: {required}")

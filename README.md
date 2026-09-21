@@ -18,7 +18,7 @@ It is designed for administrators running their own repositories on a small priv
 - Cross-platform Rust release artifacts for Linux, Windows and macOS
 - Versioned updater with checksum verification, dependency compatibility checks and rollback
 - Version-pinned GHCR runner images with digest validation
-- Native egui dashboard for configuration, health and runner pool visibility
+- Native egui operator dashboard for configuration, health, runner pools and local controls
 - No Kubernetes required
 
 ## Default profile
@@ -95,6 +95,8 @@ The GitHub token must have enough repository permissions to manage self-hosted r
 
 GitHub runner registration tokens are generated on demand and expire after one hour. The long-lived GitHub token is used only by the manager.
 
+The native dashboard can edit and persist the non-secret `GITRUN_*` settings when `GITRUN_CONFIG_FILE` points to the runtime env file. `GITHUB_TOKEN` and unknown environment keys are preserved but never displayed by the dashboard.
+
 ## Autoscaling
 
 For each repository:
@@ -132,6 +134,7 @@ Actual host usage also includes Docker, the manager, the operating system and ot
 - Prefer ephemeral runners for workloads that should not persist between jobs.
 - Review repository permissions before connecting a repository.
 - Keep GitRun and runner images updated.
+- Dashboard service and Docker controls execute with the privileges of the account running the dashboard.
 
 See [SECURITY.md](SECURITY.md) for deployment guidance and security reporting.
 
@@ -156,6 +159,23 @@ gitrun stop
 gitrun restart
 ```
 
+## Dashboard
+
+Launch the native dashboard with:
+
+```bash
+gitrun-rs dashboard
+```
+
+The dashboard refreshes every five seconds and provides:
+
+- configuration editing and persistence for non-secret GitRun settings;
+- Linux systemd Start, Stop and Restart controls for the GitRun service;
+- Docker Start, Stop and Restart controls for managed runner containers;
+- pool, repository, health, crash and runner-container visibility.
+
+Stopping a runner manually can be superseded by the autoscaler's next reconciliation when the configured pool requires that runner. Service controls require the dashboard process to have permission to control the configured systemd unit.
+
 ## Checks
 
 Run the repository's static validation with:
@@ -174,7 +194,7 @@ gitrun-rs update
 gitrun-rs dashboard
 ```
 
-The updater resolves the latest GitHub release, selects the native precompiled artifact, verifies its SHA-256 checksum, preserves configuration/state, creates a rollback backup, validates the new installation with `doctor`, and updates the version-pinned runner image only when its digest is not already present. `gitrun-rs dashboard` launches the native read-only egui dashboard; it reads the configured GitRun state and managed Docker runner metadata, refreshing automatically every five seconds. If the runner or Docker refresh fails, the previous installation and preserved state/configuration are restored. Set `GITRUN_REPOSITORY`, `GITRUN_UPDATE_DIR`, `GITRUN_INSTALL_DIR`, `GITRUN_BACKUP_DIR`, `GITRUN_CONFIG_DIR`, `GITRUN_SERVICE_CONFIG` and `GITRUN_COMPOSE_FILE` to control update locations and preserved service configuration. `gitrun-rs rollback <backup.json>` restores a recorded backup.
+The updater resolves the latest GitHub release, selects the native precompiled artifact, verifies its SHA-256 checksum, preserves configuration/state, creates a rollback backup, validates the new installation with `doctor`, and updates the version-pinned runner image only when its digest is not already present. Set `GITRUN_REPOSITORY`, `GITRUN_UPDATE_DIR`, `GITRUN_INSTALL_DIR`, `GITRUN_BACKUP_DIR`, `GITRUN_CONFIG_DIR`, `GITRUN_SERVICE_CONFIG` and `GITRUN_COMPOSE_FILE` to control update locations and preserved service configuration. `gitrun-rs rollback <backup.json>` restores a recorded backup.
 
 Static validation does not contact GitHub and does not prove that live runners are healthy.
 
@@ -188,10 +208,9 @@ GitRun is transitioning from its original Python/Docker control plane toward a R
 - Rust CLI foundation for configuration and runner-pool operations.
 - Updater and recovery primitives with explicit staging semantics.
 - Cross-platform release build entry points.
-- A native egui dashboard for configuration, health/recovery, repositories and Docker runner state.
+- A native egui operator dashboard for configuration, health/recovery, repositories, Docker runner state and local controls.
 - Workspace-wide Rust formatting, clippy and test gates in CI.
 
 The existing Python/Docker manager remains the deployment-compatible path during migration. The Rust components are intentionally additive; the manager API and runner lifecycle are migrated only after each replacement is independently verified.
 
 See [docs/ROADMAP_PHASES.md](docs/ROADMAP_PHASES.md) and [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).
-

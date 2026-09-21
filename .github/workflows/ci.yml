@@ -198,8 +198,9 @@ jobs:
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 20
     env:
-      # The permanent GitRun host runner exposes the native Docker Engine socket.
+      # Managed runner containers expose the native Docker Engine socket.
       DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_CONFIG: /tmp/gitrun-docker-config
     steps:
       - uses: actions/checkout@v7
       - name: Prepare CI environment

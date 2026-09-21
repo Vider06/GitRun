@@ -10,6 +10,7 @@ It is designed for administrators running their own repositories on a small priv
 - Automatic scaling with configurable warm and maximum pools
 - Multiple repositories from one installation
 - CPU, memory and PID limits
+- CI-ready runner images with Docker CLI and PowerShell
 - Persistent or ephemeral runner modes
 - Automatic restart after host reboot
 - Automatic container recovery when queued jobs have no online managed runner
@@ -43,7 +44,7 @@ The current release uses:
 - Git
 - Python 3 for the local installer helpers
 
-The manager and runner dependencies are contained in their Docker images. GitRun does not require Node.js, Python packages or Rust on the host beyond what the installer itself needs.
+The manager and runner dependencies are contained in their Docker images. Runner images include the Docker CLI and PowerShell; managed runners receive the host Docker socket for Docker-backed CI jobs. GitRun does not require Node.js, Python packages or Rust on the host beyond what the installer itself needs.
 
 ## Installation
 

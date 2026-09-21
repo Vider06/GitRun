@@ -128,6 +128,11 @@ cli_manifest = (ROOT / "crates/gitrun-cli/Cargo.toml").read_text(encoding="utf-8
 if 'name = "gitrun"' not in cli_manifest:
     errors.append("Rust CLI binary target gitrun missing")
 
+runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")
+for required in ["docker.io", "powershell", "packages.microsoft.com/config/debian/12"]:
+    if required not in runner_image:
+        errors.append(f"runner image CI dependency missing: {required}")
+
 compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR", "GITRUN_LOG_DIR"]:
     if required not in compose:

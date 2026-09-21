@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
 gitrun-setup = { path = "../gitrun-setup" }
+gitrun-updater = { path = "../gitrun-updater" }
 serde_json = "1"

@@ -268,9 +268,8 @@ def update_container(repo: str, name: str, image: str, new_image_id: str) -> str
         print(f"GTUU: replacement {replacement} did not become online", file=sys.stderr)
         return "offline"
 
-    remove_container(replacement)
-    # The runner's registration name is now served by the replacement
-    # container. Give it the stable container name expected by operators.
+    # The replacement is now serving the same GitHub runner registration.
+    # Give it the stable container name expected by operators.
     rename = docker("rename", replacement, name, check=False)
     if rename.returncode:
         raise RuntimeError(rename.stderr.strip() or f"unable to rename replacement {replacement}")

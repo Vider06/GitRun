@@ -17,3 +17,6 @@ The native Rust/egui dashboard is now an operator UI rather than read-only telem
 
 ## Phase 6 — Integration and finalization
 Workspace-wide formatting/check/test gates and an additive migration contract so the current Python/Docker deployment is not broken.
+
+## Scheduled runner maintenance — GTUU
+The GitRun Updater Utility (GTUU) provides a single maintenance path for permanent warm runner containers. It can be invoked manually with `gitrun update --only-containers`, exposed by the Rust dashboard, or scheduled at a configured daily time. GTUU pulls the configured runner image, compares image IDs, skips busy permanent runners, and replaces outdated permanent runners strictly one at a time. Dynamic runners are not proactively rotated; they use the current configured image when the autoscaler recreates them.

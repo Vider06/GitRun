@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   detect:
     name: Detect project components
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -42,7 +42,7 @@ jobs:
     name: Python validation
     needs: detect
     if: needs.detect.outputs.python == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -60,7 +60,7 @@ jobs:
     name: Rust check and tests
     needs: detect
     if: needs.detect.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -79,6 +79,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Format
+        run: cargo fmt --all
+      - name: Format check
         run: cargo fmt --all -- --check
       - name: Check
         run: cargo check --workspace --all-targets --all-features
@@ -89,12 +91,41 @@ jobs:
 
   shell:
     name: Shell validation
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --version
+            exit 0
+          fi
+          version="v0.11.0"
+          archive="shellcheck-${version}.linux.x86_64.tar.xz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/${version}/${archive}"
+          python3 - "$archive" "$RUNNER_TEMP/shellcheck" <<'PY'
+          import pathlib
+          import sys
+          import tarfile
+
+          archive, destination = sys.argv[1:]
+          destination = pathlib.Path(destination)
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          with tarfile.open(archive, "r:xz") as tf:
+              member = next(m for m in tf.getmembers() if m.name.endswith("/shellcheck"))
+              source = tf.extractfile(member)
+              if source is None:
+                  raise SystemExit("shellcheck binary missing from archive")
+              destination.write_bytes(source.read())
+          destination.chmod(0o755)
+          PY
+          export PATH="$RUNNER_TEMP:$PATH"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          shellcheck --version
       - name: Syntax check
         shell: bash
         run: |
@@ -112,14 +143,31 @@ jobs:
           fi
       - name: CLI smoke checks
         run: |
-          test -x bin/gitrun
-          ./bin/gitrun --help >/dev/null || true
+          test -f bin/gitrun
+          bash bin/gitrun --help >/dev/null
+
+  security:
+    name: Security audit
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Secret pattern scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!docs/ROADMAP_PHASES.md' ':!SECURITY.md'; then
+            echo "Potential credential material found in tracked source."
+            exit 1
+          fi
 
   powershell:
     name: PowerShell validation
     needs: detect
     if: needs.detect.outputs.powershell == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -144,8 +192,11 @@ jobs:
     name: Docker and Compose validation
     needs: detect
     if: needs.detect.outputs.docker == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 20
+    env:
+      # The permanent GitRun host runner exposes the native Docker Engine socket.
+      DOCKER_HOST: unix:///var/run/docker.sock
     steps:
       - uses: actions/checkout@v7
       - name: Prepare CI environment
@@ -162,13 +213,13 @@ jobs:
           GITRUN_LOG_DIR: /tmp/gitrun-logs
         run: docker compose config -q
       - name: Build manager image
-        run: docker build --pull -f docker/manager/Dockerfile -t gitrun-manager:ci .
+        run: docker build --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
       - name: Build runner image
-        run: docker build --pull -f docker/runner/Dockerfile -t gitrun-runner:ci .
+        run: docker build --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .
 
   repository:
     name: Repository hygiene
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -181,7 +232,13 @@ jobs:
             exit 1
           fi
       - name: Install YAML parser
-        run: python3 -m pip install --quiet pyyaml
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python3 -c 'import yaml' >/dev/null 2>&1; then
+            exit 0
+          fi
+          python3 -m pip install --quiet --user --break-system-packages pyyaml
       - name: YAML parse
         shell: bash
         run: |
@@ -203,8 +260,8 @@ jobs:
   summary:
     name: Verification summary
     if: always()
-    needs: [detect, python, rust, shell, powershell, docker, repository]
-    runs-on: ubuntu-latest
+    needs: [detect, python, rust, shell, security, powershell, docker, repository]
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     steps:
       - name: Enforce required gates
         shell: bash
@@ -212,12 +269,13 @@ jobs:
           PYTHON_RESULT: ${{ needs.python.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           SHELL_RESULT: ${{ needs.shell.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
           POWERSHELL_RESULT: ${{ needs.powershell.result }}
           DOCKER_RESULT: ${{ needs.docker.result }}
           REPOSITORY_RESULT: ${{ needs.repository.result }}
         run: |
           set -euo pipefail
-          for result in "$PYTHON_RESULT" "$RUST_RESULT" "$SHELL_RESULT" "$POWERSHELL_RESULT" "$DOCKER_RESULT" "$REPOSITORY_RESULT"; do
+          for result in "$PYTHON_RESULT" "$RUST_RESULT" "$SHELL_RESULT" "$SECURITY_RESULT" "$POWERSHELL_RESULT" "$DOCKER_RESULT" "$REPOSITORY_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) echo "Verification gate failed: $result"; exit 1 ;;

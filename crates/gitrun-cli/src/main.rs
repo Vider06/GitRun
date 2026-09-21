@@ -63,7 +63,7 @@ fn main() {
                 )
             );
         }
-        "setup" if args.len() == 1 => match Config::from_env() {
+        "setup" if args.len() == 1 => match load_config() {
             Ok(config) => {
                 let config_dir = setup_config_dir();
                 match prepare_directories(&config, config_dir) {
@@ -103,7 +103,7 @@ fn main() {
                 std::process::exit(1);
             }
         },
-        "doctor" if args.len() == 1 => match Config::from_env() {
+        "doctor" if args.len() == 1 => match load_config() {
             Ok(config) => println!(
                 "GitRun doctor: PASS ({} repositories, pool {}..{})",
                 config.repositories.len(),

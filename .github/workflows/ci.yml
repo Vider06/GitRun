@@ -46,13 +46,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.x'
+      - name: Verify Python runtime
+        run: python3 --version
       - name: Compile Python sources
         run: |
-          python -m compileall -q .
+          python3 -m compileall -q .
       - name: Run project static checks
         run: python3 scripts/test-gitrun.py
 
@@ -209,6 +207,30 @@ jobs:
           sed -i 's|^GITHUB_TOKEN=.*|GITHUB_TOKEN=ci-placeholder|' /tmp/gitrun.env
           sed -i 's|^GITRUN_REPOSITORIES=.*|GITRUN_REPOSITORIES=Vider06/GitRun|' /tmp/gitrun.env
           mkdir -p /tmp/gitrun-state /tmp/gitrun-logs
+
+      - name: Ensure Docker CLI and Compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker_version="29.8.1"
+          compose_version="5.5.1"
+          docker_dir="$RUNNER_TEMP/gitrun-docker"
+          mkdir -p "$docker_dir"
+          curl -fsSL -o "$RUNNER_TEMP/docker.tgz" \
+            "https://download.docker.com/linux/static/stable/x86_64/docker-\${docker_version}.tgz"
+          tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/docker/docker" "$docker_dir/docker"
+          rm -rf "$RUNNER_TEMP/docker" "$RUNNER_TEMP/docker.tgz"
+          mkdir -p "$DOCKER_CONFIG/cli-plugins"
+          curl -fsSL -o "$DOCKER_CONFIG/cli-plugins/docker-compose" \
+            "https://github.com/docker/compose/releases/download/v\${compose_version}/docker-compose-linux-x86_64"
+          echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum -c -
+          chmod 0755 "$DOCKER_CONFIG/cli-plugins/docker-compose"
+          echo "$docker_dir" >> "$GITHUB_PATH"
+          "$docker_dir/docker" --version
+          "$docker_dir/docker" compose version
+          test -S /var/run/docker.sock
+
       - name: Validate Compose
         env:
           GITRUN_CONFIG_FILE: /tmp/gitrun.env

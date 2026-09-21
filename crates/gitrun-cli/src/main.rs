@@ -97,7 +97,12 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let updated_dependencies = update_incompatible_dependencies(&plan)?;\n    if !updated_dependencies.is_empty() {\n        println!("dependencies updated: {}", updated_dependencies.join(", "));\n    }\n\n    let work_root = PathBuf::from(
+    let updated_dependencies = update_incompatible_dependencies(&plan)?;
+    if !updated_dependencies.is_empty() {
+        println!("dependencies updated: {}", updated_dependencies.join(", "));
+    }
+
+    let work_root = PathBuf::from(
         std::env::var("GITRUN_UPDATE_DIR")
             .unwrap_or_else(|_| ".gitrun-update".into()),
     );

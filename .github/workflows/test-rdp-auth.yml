@@ -1,0 +1,52 @@
+name: Test RDP authentication
+
+on:
+  push:
+    branches:
+      - fix/setup-chown-uid
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    timeout-minutes: 5
+    env:
+      SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+      RDP_USERNAME: vider06
+    steps:
+      - name: Test local RDP authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v xfreerdp >/dev/null 2>&1; then
+            client=xfreerdp
+          elif command -v xfreerdp3 >/dev/null 2>&1; then
+            client=xfreerdp3
+          else
+            echo "No FreeRDP client installed."
+            exit 2
+          fi
+
+          set +e
+          output=$(
+            "$client" /v:127.0.0.1:3389               /u:"$RDP_USERNAME"               /p:"$RDP_PASSWORD"               /network:auto               /cert:ignore               /timeout:5000               2>&1
+          )
+          rc=$?
+          set -e
+
+          printf '%s\n' "$output" | sed -E 's/(password|passwd|p)=([^[:space:]]+)/\1=*** /Ig'
+
+          if printf '%s\n' "$output" | grep -Eiq 'authentication failed|logon failure|ERRCONNECT_LOGON_FAILURE|STATUS_LOGON_FAILURE'; then
+            echo "RDP server rejected the supplied credentials."
+            exit 1
+          fi
+
+          if (( rc == 0 )); then
+            echo "RDP authentication/session test completed successfully."
+            exit 0
+          fi
+
+          echo "RDP client exited with code $rc; inspect output above."
+          exit "$rc"

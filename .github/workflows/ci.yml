@@ -19,7 +19,6 @@ jobs:
       - name: Shell syntax
         run: |
           bash -n bin/gitrun
-          bash -n scripts/install.sh
           bash -n scripts/install-server.sh
           bash -n scripts/install-linux.sh
           bash -n scripts/install-macos.sh

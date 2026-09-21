@@ -20,6 +20,8 @@ const MANAGED_CONFIG_KEYS: [&str; 10] = [
     "GITRUN_EPHEMERAL",
     "GITRUN_STATE_DIR",
     "GITRUN_LOG_DIR",
+    "GITRUN_AUTO_CONTAINER_UPDATE",
+    "GITRUN_CONTAINER_UPDATE_TIME",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +95,8 @@ struct ConfigDraft {
     ephemeral: bool,
     state_dir: String,
     log_dir: String,
+    auto_container_update: bool,
+    container_update_time: String,
 }
 
 impl From<&Config> for ConfigDraft {
@@ -108,6 +112,8 @@ impl From<&Config> for ConfigDraft {
             ephemeral: config.ephemeral,
             state_dir: config.state_dir.clone(),
             log_dir: config.log_dir.clone(),
+            auto_container_update: config.auto_container_update,
+            container_update_time: config.container_update_time.clone(),
         }
     }
 }
@@ -133,6 +139,8 @@ impl ConfigDraft {
             ephemeral: self.ephemeral,
             state_dir: self.state_dir.trim().to_owned(),
             log_dir: self.log_dir.trim().to_owned(),
+            auto_container_update: self.auto_container_update,
+            container_update_time: self.container_update_time.trim().to_owned(),
         };
         config.validate().map_err(|error| error.to_string())?;
         Ok(config)
@@ -251,6 +259,39 @@ impl Dashboard {
                 self.refresh();
             }
             Err(error) => self.set_action_message(false, error),
+        }
+    }
+
+    fn run_container_update(&mut self) {
+        let cli = env::var("GITRUN_CLI").unwrap_or_else(|_| "gitrun".into());
+        match Command::new(&cli)
+            .args(["update", "--only-containers"])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let detail = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                self.set_action_message(
+                    true,
+                    if detail.is_empty() {
+                        "GTUU container update completed.".into()
+                    } else {
+                        detail
+                    },
+                );
+                self.refresh();
+            }
+            Ok(output) => {
+                let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                self.set_action_message(
+                    false,
+                    if detail.is_empty() {
+                        "GTUU container update failed.".into()
+                    } else {
+                        detail
+                    },
+                );
+            }
+            Err(error) => self.set_action_message(false, format!("unable to start GTUU: {error}")),
         }
     }
 
@@ -495,6 +536,25 @@ impl Dashboard {
                 }
                 ui.end_row();
 
+                ui.strong("Automatic container updates");
+                if ui.checkbox(&mut settings.auto_container_update, "").changed() {
+                    self.settings_dirty = true;
+                }
+                ui.end_row();
+
+                ui.strong("Container update time");
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut settings.container_update_time)
+                            .desired_width(120.0)
+                            .hint_text("03:00"),
+                    )
+                    .changed()
+                {
+                    self.settings_dirty = true;
+                }
+                ui.end_row();
+
                 ui.strong("State directory");
                 if ui
                     .add(
@@ -554,6 +614,10 @@ impl Dashboard {
                     ),
                     Err(error) => self.set_action_message(false, error),
                 }
+            }
+
+            if ui.button("Update containers now").clicked() {
+                self.run_container_update();
             }
 
             if ui.button("Discard edits").clicked() {
@@ -826,6 +890,8 @@ fn config_env_values(config: &Config) -> BTreeMap<&'static str, String> {
         ("GITRUN_EPHEMERAL", config.ephemeral.to_string()),
         ("GITRUN_STATE_DIR", config.state_dir.clone()),
         ("GITRUN_LOG_DIR", config.log_dir.clone()),
+        ("GITRUN_AUTO_CONTAINER_UPDATE", config.auto_container_update.to_string()),
+        ("GITRUN_CONTAINER_UPDATE_TIME", config.container_update_time.clone()),
     ])
 }
 
@@ -1044,6 +1110,8 @@ mod tests {
             ephemeral: true,
             state_dir: "/var/lib/gitrun".into(),
             log_dir: "/var/log/gitrun".into(),
+            auto_container_update: true,
+            container_update_time: "03:00".into(),
         };
         let original = "GITHUB_TOKEN=secret\nGITRUN_MIN_RUNNERS=3\nCUSTOM=value\n";
         let path = std::env::temp_dir().join(format!(

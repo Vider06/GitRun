@@ -233,8 +233,19 @@ def save_state(state: dict) -> None:
     path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def remove_runner(name: str) -> None:
-    result = docker("rm", "-f", name, check=False)
+def remove_runner(repo: str, name: str) -> None:
+    owner, repository = split_repo(repo)
+    try:
+        runners = list_runners(repo)
+        runner = next((item for item in runners if item.get("name") == name), None)
+        if runner and runner.get("id"):
+            try:
+                api_request("DELETE", f"/repos/{owner}/{repository}/actions/runners/{runner.get(\"id\")}")
+            except RuntimeError as exc:
+                if "GitHub API 404" not in str(exc):
+                    raise
+    finally:
+        result = docker("rm", "-f", name, check=False)
     if result.returncode == 0:
         log.info("Removed runner %s", name)
     else:
@@ -261,7 +272,7 @@ def reconcile(repo_cfg: RepoConfig) -> None:
         state = container_status(name)
         if state.get("Status") == "exited":
             log.warning("Removing exited runner container %s", name)
-            remove_runner(name)
+            remove_runner(repo, name)
             containers.remove(name)
 
     current = len(containers)
@@ -312,7 +323,7 @@ def reconcile(repo_cfg: RepoConfig) -> None:
     for name, _idle_age in sorted(candidates, key=lambda x: x[1], reverse=True):
         if removable <= 0:
             break
-        remove_runner(name)
+        remove_runner(repo, name)
         idle_since.pop(name, None)
         removable -= 1
 

@@ -1,0 +1,155 @@
+name: GitRun Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example v2.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gitrun-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup ARM64 Linux linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Configure ARM64 Linux linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: bash
+        run: cargo build --release -p gitrun-cli --target "${{ matrix.target }}"
+
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package
+          cp "target/$TARGET/release/gitrun-rs" dist/package/gitrun-rs
+          cp LICENSE README.md config/config.example.env dist/package/
+          tar -C dist/package -czf "dist/GitRun-$VERSION-$TARGET.tar.gz" .
+          sha256sum "dist/GitRun-$VERSION-$TARGET.tar.gz" > "dist/GitRun-$VERSION-$TARGET.sha256"
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          New-Item -ItemType Directory -Force dist/package | Out-Null
+          Copy-Item "target/$env:TARGET/release/gitrun-rs.exe" dist/package/gitrun-rs.exe
+          Copy-Item LICENSE,README.md,config/config.example.env dist/package/
+          Compress-Archive -Path dist/package/* -DestinationPath "dist/GitRun-$env:VERSION-$env:TARGET.zip" -Force
+          (Get-FileHash "dist/GitRun-$env:VERSION-$env:TARGET.zip" -Algorithm SHA256).Hash.ToLower() + "  GitRun-$env:VERSION-$env:TARGET.zip" |
+            Set-Content "dist/GitRun-$env:VERSION-$env:TARGET.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GitRun-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: GitRun-*
+          path: dist
+          merge-multiple: true
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ github.event.inputs.version || github.ref_name }}"
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "Invalid release version: $version" >&2
+            exit 1
+          }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build manifest and verify checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, hashlib, json, os, subprocess
+          version=os.environ["VERSION"]
+          artifacts=[]
+          for path in sorted(glob.glob("dist/GitRun-*")):
+              if path.endswith(".sha256"):
+                  continue
+              name=os.path.basename(path)
+              target=name[len("GitRun-"+version+"-"):]
+              if target.endswith(".tar.gz"):
+                  target=target[:-7]
+              elif target.endswith(".zip"):
+                  target=target[:-4]
+              artifacts.append({"target":target,"file":name,"sha256":hashlib.sha256(open(path,"rb").read()).hexdigest()})
+          manifest={"name":"GitRun","version":version,"git_commit":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"artifacts":artifacts}
+          with open("dist/release-manifest.json","w",encoding="utf-8") as f:
+              json.dump(manifest,f,indent=2)
+              f.write("\n")
+          PY
+          cat dist/GitRun-*.sha256 > dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$VERSION" dist/GitRun-* dist/release-manifest.json dist/SHA256SUMS             --title "GitRun $VERSION"             --generate-notes

@@ -8,8 +8,12 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("invalid integer for {key}: {value}")]
     Integer { key: String, value: String },
+    #[error("invalid boolean for {key}: {value}")]
+    Boolean { key: String, value: String },
     #[error("invalid repository: {0}")]
     Repository(String),
+    #[error("invalid configuration: {0}")]
+    Invalid(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,16 +45,14 @@ impl Default for Config {
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         let mut c = Self::default();
-        if let Ok(raw) = env::var("GITRUN_REPOSITORIES") {
-            c.repositories = parse_repositories(&raw)?;
-        }
+        if let Ok(raw) = env::var("GITRUN_REPOSITORIES") { c.repositories = parse_repositories(&raw)?; }
         c.min_runners = env_u32("GITRUN_MIN_RUNNERS", c.min_runners)?;
         c.max_runners = env_u32("GITRUN_MAX_RUNNERS", c.max_runners)?;
         c.idle_timeout = env_u64("GITRUN_IDLE_TIMEOUT", c.idle_timeout)?;
         c.poll_interval = env_u64("GITRUN_POLL_INTERVAL", c.poll_interval)?;
         c.runner_image = env::var("GITRUN_RUNNER_IMAGE").unwrap_or(c.runner_image);
         c.runner_labels = env::var("GITRUN_RUNNER_LABELS").unwrap_or(c.runner_labels);
-        c.ephemeral = env_bool("GITRUN_EPHEMERAL", c.ephemeral);
+        c.ephemeral = env_bool("GITRUN_EPHEMERAL", c.ephemeral)?;
         c.state_dir = env::var("GITRUN_STATE_DIR").unwrap_or(c.state_dir);
         c.log_dir = env::var("GITRUN_LOG_DIR").unwrap_or(c.log_dir);
         c.validate()?;
@@ -59,18 +61,38 @@ impl Config {
 
     pub fn from_env_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let content = fs::read_to_string(path)?;
-        for line in content.lines() {
-            let line = line.trim();
+        let mut values = Vec::new();
+        for raw in content.lines() {
+            let line = raw.trim();
             if line.is_empty() || line.starts_with('#') { continue; }
-            if let Some((key, value)) = line.split_once('=') { env::set_var(key.trim(), value.trim()); }
+            let Some((key, value)) = line.split_once('=') else {
+                return Err(ConfigError::Invalid(format!("invalid env line: {line}")));
+            };
+            values.push((key.trim().to_owned(), unquote(value.trim())));
         }
-        Self::from_env()
+        let get = |key: &str| values.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        let mut c = Self::default();
+        if let Some(raw) = get("GITRUN_REPOSITORIES") { c.repositories = parse_repositories(&raw)?; }
+        c.min_runners = value_u32(&get("GITRUN_MIN_RUNNERS"), "GITRUN_MIN_RUNNERS", c.min_runners)?;
+        c.max_runners = value_u32(&get("GITRUN_MAX_RUNNERS"), "GITRUN_MAX_RUNNERS", c.max_runners)?;
+        c.idle_timeout = value_u64(&get("GITRUN_IDLE_TIMEOUT"), "GITRUN_IDLE_TIMEOUT", c.idle_timeout)?;
+        c.poll_interval = value_u64(&get("GITRUN_POLL_INTERVAL"), "GITRUN_POLL_INTERVAL", c.poll_interval)?;
+        if let Some(v) = get("GITRUN_RUNNER_IMAGE") { c.runner_image = v; }
+        if let Some(v) = get("GITRUN_RUNNER_LABELS") { c.runner_labels = v; }
+        if let Some(v) = get("GITRUN_EPHEMERAL") { c.ephemeral = parse_bool("GITRUN_EPHEMERAL", &v)?; }
+        if let Some(v) = get("GITRUN_STATE_DIR") { c.state_dir = v; }
+        if let Some(v) = get("GITRUN_LOG_DIR") { c.log_dir = v; }
+        c.validate()?;
+        Ok(c)
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.max_runners < self.min_runners || self.min_runners == 0 {
-            return Err(ConfigError::Integer { key: "GITRUN_MIN/MAX_RUNNERS".into(), value: format!("{}..{}", self.min_runners, self.max_runners) });
+        if self.min_runners == 0 || self.max_runners < self.min_runners {
+            return Err(ConfigError::Invalid(format!("runner bounds are invalid: {}..{}", self.min_runners, self.max_runners)));
         }
+        if self.poll_interval == 0 { return Err(ConfigError::Invalid("poll interval must be greater than zero".into())); }
+        if self.runner_image.trim().is_empty() { return Err(ConfigError::Invalid("runner image must not be empty".into())); }
+        if self.runner_labels.trim().is_empty() { return Err(ConfigError::Invalid("runner labels must not be empty".into())); }
         for repo in &self.repositories {
             if !is_repository(repo) { return Err(ConfigError::Repository(repo.clone())); }
         }
@@ -83,28 +105,58 @@ fn parse_repositories(raw: &str) -> Result<Vec<String>, ConfigError> {
         if is_repository(repo) { Ok(repo.to_owned()) } else { Err(ConfigError::Repository(repo.to_owned())) }
     }).collect()
 }
-
 fn is_repository(value: &str) -> bool {
     let mut parts = value.split('/');
     matches!((parts.next(), parts.next(), parts.next()), (Some(a), Some(b), None) if !a.is_empty() && !b.is_empty())
 }
-fn env_u32(key: &str, default: u32) -> Result<u32, ConfigError> {
-    match env::var(key) { Ok(v) => v.parse().map_err(|_| ConfigError::Integer { key: key.into(), value: v }), Err(_) => Ok(default) }
+fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, ConfigError> {
+    match value { Some(v) => v.parse().map_err(|_| ConfigError::Integer { key: key.into(), value: v.clone() }), None => Ok(default) }
 }
-fn env_u64(key: &str, default: u64) -> Result<u64, ConfigError> {
-    match env::var(key) { Ok(v) => v.parse().map_err(|_| ConfigError::Integer { key: key.into(), value: v }), Err(_) => Ok(default) }
+fn value_u64(value: &Option<String>, key: &str, default: u64) -> Result<u64, ConfigError> {
+    match value { Some(v) => v.parse().map_err(|_| ConfigError::Integer { key: key.into(), value: v.clone() }), None => Ok(default) }
 }
-fn env_bool(key: &str, default: bool) -> bool {
-    env::var(key).map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")).unwrap_or(default)
+fn env_u32(key: &str, default: u32) -> Result<u32, ConfigError> { value_u32(&env::var(key).ok(), key, default) }
+fn env_u64(key: &str, default: u64) -> Result<u64, ConfigError> { value_u64(&env::var(key).ok(), key, default) }
+fn parse_bool(key: &str, value: &str) -> Result<bool, ConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(ConfigError::Boolean { key: key.into(), value: value.into() }),
+    }
+}
+fn env_bool(key: &str, default: bool) -> Result<bool, ConfigError> {
+    match env::var(key) { Ok(v) => parse_bool(key, &v), Err(_) => Ok(default) }
+}
+fn unquote(value: &str) -> String {
+    if value.len() >= 2 {
+        let b = value.as_bytes();
+        if (b[0] == b'"' && b[value.len()-1] == b'"') || (b[0] == b'\'' && b[value.len()-1] == b'\'') {
+            return value[1..value.len()-1].to_owned();
+        }
+    }
+    value.to_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
     #[test]
     fn repository_validation_is_strict() {
         assert!(is_repository("owner/repo"));
         assert!(!is_repository("owner"));
         assert!(!is_repository("owner/repo/extra"));
     }
+    #[test]
+    fn env_file_does_not_mutate_process_environment() {
+        let path = std::env::temp_dir().join(format!("gitrun-config-{}.env", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::write(&path, "GITRUN_MIN_RUNNERS=2\nGITRUN_MAX_RUNNERS=4\nGITRUN_EPHEMERAL=true\n").unwrap();
+        let config = Config::from_env_file(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(config.min_runners, 2);
+        assert_eq!(config.max_runners, 4);
+        assert!(config.ephemeral);
+    }
+    #[test]
+    fn invalid_boolean_is_rejected() { assert!(parse_bool("TEST", "maybe").is_err()); }
 }

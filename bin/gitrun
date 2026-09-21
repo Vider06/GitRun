@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="GitRun"
-CONFIG_FILE="${GITRUN_CONFIG:-/etc/gitrun/gitrun.env}"
+CONFIG_FILE="${GITRUN_CONFIG:-${GITRUN_CONFIG_FILE:-/etc/gitrun/gitrun.env}}"
 STATE_DIR="${GITRUN_STATE_DIR:-/var/lib/gitrun}"
 LOG_DIR="${GITRUN_LOG_DIR:-/var/log/gitrun}"
 COMPOSE_FILE="${GITRUN_COMPOSE_FILE:-/opt/gitrun/docker-compose.yml}"
@@ -14,7 +14,7 @@ load_config() {
     fi
 
     : "${GITRUN_MIN_RUNNERS:=3}"
-    : "${GITRUN_MAX_RUNNERS:=20}"
+    : "${GITRUN_MAX_RUNNERS:=8}"
     : "${GITRUN_IDLE_TIMEOUT:=120}"
     : "${GITRUN_POLL_INTERVAL:=5}"
     : "${GITRUN_DEFAULT_REPOSITORY:=}"
@@ -50,7 +50,7 @@ Core:
   overview                 Show the global GitRun overview.
   status                   Show Docker/container status.
   runners                 Show managed runner containers.
-  jobs                     Show queued/running runner-related containers.
+  jobs                    Show managed runner containers/jobs.
   health                   Run a health check.
   doctor                   Diagnose GitRun host dependencies.
   logs [runner]            Show GitRun or runner logs.
@@ -70,9 +70,8 @@ Configuration:
 
 Notes:
   - GitRun manages self-hosted runners through Docker.
-  - The target pool is 3 warm runners minimum, up to 20.
+  - The default pool is 3 warm runners, up to 8.
   - Extra runners remain alive for 120 seconds after becoming idle.
-  - The default pool is 3 warm runners and a hard maximum of 20.
 EOF
 }
 
@@ -92,7 +91,7 @@ GitRun configuration
   max runners:      $GITRUN_MAX_RUNNERS
   idle timeout:     $GITRUN_IDLE_TIMEOUT s
   poll interval:    $GITRUN_POLL_INTERVAL s
-  default repo:     ${GITRUN_DEFAULT_REPOSITORY:-<none>}
+  repositories:     ${GITRUN_REPOSITORIES:-<none>}
 EOF
 }
 
@@ -260,19 +259,19 @@ cmd_overview() {
     echo
     echo "GitRun"
     echo "=============================================="
-    echo "Repository: ${GITRUN_DEFAULT_REPOSITORY:-<none>}"
-    echo "Pool:       $GITRUN_MIN_RUNNERS .. $GITRUN_MAX_RUNNERS"
-    echo "Warm time:  $GITRUN_IDLE_TIMEOUT seconds"
-    echo "Polling:    $GITRUN_POLL_INTERVAL seconds"
+    echo "Repositories: ${GITRUN_REPOSITORIES:-<none>}"
+    echo "Pool:         $GITRUN_MIN_RUNNERS .. $GITRUN_MAX_RUNNERS"
+    echo "Warm time:    $GITRUN_IDLE_TIMEOUT seconds"
+    echo "Polling:      $GITRUN_POLL_INTERVAL seconds"
     echo
 
     if docker_available; then
         local total running
         total="$(docker ps -a --filter 'label=gitrun.runner=true' -q | wc -l)"
         running="$(docker ps --filter 'label=gitrun.runner=true' -q | wc -l)"
-        echo "Runners:    $running active / $total known"
+        echo "Runners:      $running active / $total known"
     else
-        echo "Runners:    Docker unavailable"
+        echo "Runners:      Docker unavailable"
     fi
     echo
 }
@@ -291,8 +290,6 @@ cmd_restart() {
     [[ -f "$COMPOSE_FILE" ]] || die "Compose file not found: $COMPOSE_FILE"
     docker compose -f "$COMPOSE_FILE" restart
 }
-
-
 
 cmd_repositories() {
     load_config
@@ -324,6 +321,7 @@ cmd_connect() {
     touch "$CONFIG_FILE"
 
     if grep -q '^GITRUN_REPOSITORIES=' "$CONFIG_FILE"; then
+        local current
         current="$(grep '^GITRUN_REPOSITORIES=' "$CONFIG_FILE" | head -n1 | cut -d= -f2-)"
         if ! tr ',' '\n' <<< "$current" | grep -Fxq "$repo"; then
             if [[ -n "$current" ]]; then

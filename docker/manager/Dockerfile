@@ -6,5 +6,6 @@ RUN apt-get update \
 
 WORKDIR /opt/gitrun
 COPY autoscaler/gitrun_manager.py /opt/gitrun/gitrun_manager.py
+COPY autoscaler/gitrun_updater_utility.py /opt/gitrun/gitrun_updater_utility.py
 
 CMD ["python3", "/opt/gitrun/gitrun_manager.py"]

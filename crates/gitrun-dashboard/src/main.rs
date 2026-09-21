@@ -9,7 +9,7 @@ use std::{
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const MANAGED_CONFIG_KEYS: [&str; 9] = [
+const MANAGED_CONFIG_KEYS: [&str; 10] = [
     "GITRUN_REPOSITORIES",
     "GITRUN_MIN_RUNNERS",
     "GITRUN_MAX_RUNNERS",
@@ -19,6 +19,7 @@ const MANAGED_CONFIG_KEYS: [&str; 9] = [
     "GITRUN_RUNNER_LABELS",
     "GITRUN_EPHEMERAL",
     "GITRUN_STATE_DIR",
+    "GITRUN_LOG_DIR",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -507,7 +508,15 @@ impl Dashboard {
                 ui.end_row();
 
                 ui.strong("Log directory");
-                ui.label(&settings.log_dir);
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut settings.log_dir)
+                            .desired_width(420.0),
+                    )
+                    .changed()
+                {
+                    self.settings_dirty = true;
+                }
                 ui.end_row();
             });
 
@@ -816,6 +825,7 @@ fn config_env_values(config: &Config) -> BTreeMap<&'static str, String> {
         ("GITRUN_RUNNER_LABELS", config.runner_labels.clone()),
         ("GITRUN_EPHEMERAL", config.ephemeral.to_string()),
         ("GITRUN_STATE_DIR", config.state_dir.clone()),
+        ("GITRUN_LOG_DIR", config.log_dir.clone()),
     ])
 }
 

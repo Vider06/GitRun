@@ -156,7 +156,7 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
     let current = std::env::current_exe()?;
     let sibling = current
         .parent()
-        .ok_or_else(|| "gitrun-rs executable has no parent directory")?
+        .ok_or("gitrun-rs executable has no parent directory")?
         .join(if cfg!(windows) { "gitrun-dashboard.exe" } else { "gitrun-dashboard" });
 
     if !sibling.is_file() {

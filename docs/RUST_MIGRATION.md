@@ -5,7 +5,7 @@ The Rust workspace is additive. The existing Python autoscaler remains authorita
 Migration order:
 1. configuration and state;
 2. runner lifecycle;
-3. updater and recovery;
+3. updater and recovery (release artifacts, checksum verification, dependency compatibility, version-pinned runner images, rollback);
 4. CLI delegation;
 5. manager API;
 6. dashboard integration.

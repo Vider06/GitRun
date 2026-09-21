@@ -25,7 +25,7 @@ RUN curl -fsSL -o runner.tar.gz \
     && ./bin/installdependencies.sh \
     && chown -R runner:runner /home/runner/actions-runner
 
-COPY --chown=runner:runner entrypoint.sh /entrypoint.sh
+COPY --chown=runner:runner docker/runner/entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh
 
 USER runner

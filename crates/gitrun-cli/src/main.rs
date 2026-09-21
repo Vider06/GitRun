@@ -163,12 +163,19 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
         Ok(()) => Ok(()),
         Err(error) => {
             let error_message = error.to_string();
-            let executable = std::env::current_exe()
-                .map_err(|current_error| format!("{error_message}; unable to locate GitRun CLI: {current_error}"))?;
+            let executable = std::env::current_exe().map_err(|current_error| {
+                format!("{error_message}; unable to locate GitRun CLI: {current_error}")
+            })?;
             let executable = executable.to_string_lossy();
 
             let emergency_command = format!(
-                "printf '%s\\n\\n' 'GitRun dashboard failed:'; printf '%s\\n\\n' {}; printf '%s\\n' 'GitRun CLI:'; {} version; printf '%s\\n' 'GitRun doctor:'; {} doctor; printf '%s\\n' 'Press Enter to close.'; read -r",
+                "printf '%s\\n\\n' 'GitRun dashboard failed:'; \
+                 printf '%s\\n\\n' {}; \
+                 printf '%s\\n' 'GitRun CLI:'; \
+                 {} version; \
+                 printf '%s\\n' 'GitRun doctor:'; \
+                 {} doctor; \
+                 printf '%s\\n' 'Press Enter to close.'; read -r",
                 shell_quote(&error_message),
                 shell_quote(&executable),
                 shell_quote(&executable),

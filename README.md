@@ -171,17 +171,17 @@ Do not expose the Docker daemon, GitRun API, or runner ports to the Internet.
 
 ## Resource limits
 
-Runner containers have configurable CPU, memory and PID limits:
+Runner containers have configurable CPU, memory and PID limits. The default profile is tuned for an 8 GB mini-server:
 
 ~~~env
-GITRUN_CONTAINER_CPUS=2
-GITRUN_CONTAINER_MEMORY=4g
-GITRUN_CONTAINER_PIDS=2048
+GITRUN_CONTAINER_CPUS=1
+GITRUN_CONTAINER_MEMORY=1g
+GITRUN_CONTAINER_PIDS=1024
 ~~~
 
-These are hard per-container limits, not reservations. Twenty containers with a 4 GiB limit could theoretically be allowed to consume up to 80 GiB, so the maximum of 20 is a logical scaling cap, not a promise that the server can actually run 20 heavy builds concurrently. Docker recommends applying resource limits to reduce the risk of host-wide OOM conditions. citeturn5search0
+With the default maximum of 8 runners, the configured memory caps add up to 8 GiB of theoretical container memory. These are hard per-container limits, not reservations, so actual host memory use also includes Docker, the manager, the OS and other services. Docker recommends applying resource limits to reduce the risk of host-wide OOM conditions. citeturn5search0
 
-The values must therefore be tuned to the actual mini-server hardware.
+The values remain configurable in the environment file and should be reduced if the server has less available memory.
 
 ## Docker startup
 
@@ -197,7 +197,7 @@ gitrun doctor
 gitrun health
 ~~~
 
-The static check does not contact GitHub and does not claim that live runners are healthy. Live health is only established after the server is configured and GitHub reports the runners as online/idle. GitHub exposes those runner states through the self-hosted runner APIs. citeturn2search0
+The static check validates required files, Python syntax, CLI/config expectations, Compose portability settings and shell syntax. It does not contact GitHub and does not claim that live runners are healthy. Live health is only established after the server is configured and GitHub reports the runners as online/idle. GitHub exposes those runner states through the self-hosted runner APIs. citeturn2search0
 
 ## Billing
 

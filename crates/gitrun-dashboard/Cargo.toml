@@ -1,0 +1,8 @@
+[package]
+name = "gitrun-dashboard"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.31"
+gitrun-core = { path = "../gitrun-core" }

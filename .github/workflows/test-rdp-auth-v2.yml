@@ -1,0 +1,61 @@
+name: Test RDP authentication v2
+
+on:
+  push:
+    branches:
+      - fix/setup-chown-uid
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    timeout-minutes: 10
+    env:
+      SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+      RDP_USERNAME: vider06
+    steps:
+      - name: Install FreeRDP client
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v xfreerdp >/dev/null 2>&1 || command -v xfreerdp3 >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo -S -p '' apt-get update <<< "$SUDO_PASSWORD"
+          sudo -S -p '' apt-get install -y freerdp2-x11 <<< "$SUDO_PASSWORD" ||           sudo -S -p '' apt-get install -y freerdp3-x11 <<< "$SUDO_PASSWORD"
+
+      - name: Test local RDP authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v xfreerdp >/dev/null 2>&1; then
+            client=xfreerdp
+          elif command -v xfreerdp3 >/dev/null 2>&1; then
+            client=xfreerdp3
+          else
+            echo "FreeRDP client is still unavailable."
+            exit 2
+          fi
+
+          set +e
+          output=$(printf '%s\n' "$RDP_PASSWORD" |             "$client" /v:127.0.0.1:3389               /u:"$RDP_USERNAME"               /from-stdin:force               /network:auto               /cert:ignore               /timeout:5000               2>&1)
+          rc=$?
+          set -e
+
+          printf '%s\n' "$output"
+
+          if printf '%s\n' "$output" | grep -Eiq 'ERRCONNECT_LOGON_FAILURE|STATUS_LOGON_FAILURE|authentication failed|logon failure'; then
+            echo "RDP server rejected the supplied credentials."
+            exit 1
+          fi
+
+          if printf '%s\n' "$output" | grep -Eiq 'authentication only|authentication succeeded|connected'; then
+            echo "RDP authentication appears to have succeeded."
+            exit 0
+          fi
+
+          echo "FreeRDP exit code: $rc"
+          exit "$rc"

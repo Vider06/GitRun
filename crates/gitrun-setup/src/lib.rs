@@ -242,7 +242,7 @@ fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
 
 fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {
     run_command(
-        Command::new("chown").arg(format!("{uid}:")).arg(path),
+        Command::new("chown").arg(uid.to_string()).arg(path),
     )
 }
 

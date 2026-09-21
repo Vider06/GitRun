@@ -18,6 +18,7 @@ def check_python(path: str):
         errors.append(f"python syntax {path}: {exc}")
 
 for path in [
+    "Cargo.toml",
     "bin/gitrun",
     "config/config.example.env",
     "docker-compose.yml",
@@ -30,6 +31,27 @@ for path in [
     "scripts/install-linux.sh",
     "scripts/install-macos.sh",
     "scripts/install-windows.ps1",
+    "scripts/build-release.sh",
+    "scripts/build-release.ps1",
+    "scripts/verify-release.sh",
+    "SECURITY.md",
+    "docs/ROADMAP_PHASES.md",
+    "docs/RUST_MIGRATION.md",
+    "crates/gitrun-core/Cargo.toml",
+    "crates/gitrun-core/src/lib.rs",
+    "crates/gitrun-core/src/config.rs",
+    "crates/gitrun-core/src/runner.rs",
+    "crates/gitrun-core/src/state.rs",
+    "crates/gitrun-cli/Cargo.toml",
+    "crates/gitrun-cli/src/main.rs",
+    "crates/gitrun-setup/Cargo.toml",
+    "crates/gitrun-setup/src/lib.rs",
+    "crates/gitrun-updater/Cargo.toml",
+    "crates/gitrun-updater/src/lib.rs",
+    "crates/gitrun-recovery/Cargo.toml",
+    "crates/gitrun-recovery/src/lib.rs",
+    "crates/gitrun-dashboard/Cargo.toml",
+    "crates/gitrun-dashboard/src/main.rs",
 ]:
     require(path)
 
@@ -48,6 +70,7 @@ manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
 for required in [
     "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
     "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
+    "docker", "def docker(*args",
 ]:
     if required not in manager:
         errors.append(f"autoscaler feature missing: {required}")
@@ -68,10 +91,12 @@ for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR
     if required not in compose:
         errors.append(f"compose portability setting missing: {required}")
 
+if subprocess.run(["bash", "-n", str(ROOT / "bin/gitrun")], capture_output=True, text=True).returncode != 0:
+    errors.append("shell syntax: bin/gitrun")
+
 for script in [
-    "scripts/install-linux.sh",
-    "scripts/install-macos.sh",
-    "scripts/install-server.sh",
+    "scripts/install-linux.sh", "scripts/install-macos.sh",
+    "scripts/install-server.sh", "scripts/build-release.sh", "scripts/verify-release.sh",
 ]:
     if subprocess.run(["bash", "-n", str(ROOT / script)], capture_output=True, text=True).returncode != 0:
         errors.append(f"shell syntax: {script}")

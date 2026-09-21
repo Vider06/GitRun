@@ -1,0 +1,10 @@
+[package]
+name = "gitrun-dashboard"
+version = "0.3.0"
+edition = "2021"
+license = "MIT"
+description = "Native egui operator dashboard for GitRun"
+
+[dependencies]
+eframe = "0.31"
+gitrun-core = { path = "../gitrun-core" }

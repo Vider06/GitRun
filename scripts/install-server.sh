@@ -12,9 +12,20 @@ command -v docker >/dev/null 2>&1 || {
     echo "Docker is required. Install Docker Engine first." >&2
     exit 1
 }
+docker info >/dev/null 2>&1 || {
+    echo "Docker daemon is not reachable." >&2
+    exit 1
+}
+docker compose version >/dev/null 2>&1 || {
+    echo "Docker Compose v2 is required." >&2
+    exit 1
+}
+command -v git >/dev/null 2>&1 || {
+    echo "Git is required." >&2
+    exit 1
+}
 
 install -d /opt/gitrun /etc/gitrun /var/lib/gitrun /var/log/gitrun /usr/local/bin
-
 cp -a "$ROOT/autoscaler" /opt/gitrun/
 cp -a "$ROOT/docker" /opt/gitrun/
 cp "$ROOT/docker-compose.yml" /opt/gitrun/
@@ -29,6 +40,8 @@ fi
 
 docker build -t gitrun-runner:latest /opt/gitrun/docker/runner
 docker build -t gitrun-manager:latest /opt/gitrun/docker/manager
+
+docker compose --env-file /etc/gitrun/gitrun.env -f /opt/gitrun/docker-compose.yml config -q
 
 systemctl daemon-reload
 systemctl enable gitrun.service

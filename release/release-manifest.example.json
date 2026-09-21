@@ -1,0 +1,40 @@
+{
+  "name": "GitRun",
+  "version": "0.3.0",
+  "git_commit": "abcdef1234567",
+  "repository": "Vider06/GitRun",
+  "artifacts": [
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "file": "GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "REPLACE_WITH_SHA256"
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "Git",
+      "minimum_version": "2.40.0",
+      "installation_method": "system-package-manager"
+    },
+    {
+      "name": "Docker",
+      "minimum_version": "24.0.0",
+      "installation_method": "system-package-manager"
+    },
+    {
+      "name": "Node.js",
+      "minimum_version": "22.0.0",
+      "installation_method": "system-package-manager"
+    },
+    {
+      "name": "Python",
+      "minimum_version": "3.10.0",
+      "installation_method": "system-package-manager"
+    }
+  ],
+  "runner_image": {
+    "reference": "ghcr.io/vider06/gitrun-runner:0.3.0",
+    "digest": "sha256:REPLACE_WITH_64_HEX_DIGEST",
+    "minimum_version": "0.3.0"
+  }
+}

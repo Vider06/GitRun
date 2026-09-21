@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
 REPO_URL="${GITRUN_REPO_URL:-https://github.com/Vider06/GitRun.git}"
 INSTALL_DIR="${GITRUN_INSTALL_DIR:-$HOME/.gitrun}"
-CONFIG_DIR="$INSTALL_DIR/config"; ENV_FILE="$CONFIG_DIR/gitrun.env"
+CONFIG_DIR="$INSTALL_DIR/config"
+ENV_FILE="$CONFIG_DIR/gitrun.env"
 
 if ! command -v docker >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
@@ -13,17 +15,21 @@ if ! command -v docker >/dev/null 2>&1; then
     sudo dnf install -y docker docker-compose-plugin git python3
     sudo systemctl enable --now docker
   else
-    echo "Install Docker + Compose for this Linux distribution, then rerun."
+    echo "Install Docker + Compose for this Linux distribution, then rerun." >&2
     exit 1
   fi
 fi
 
-command -v docker >/dev/null 2>&1 || { echo "Docker is required."; exit 1; }
-docker compose version >/dev/null 2>&1 || {
-  echo "Docker Compose plugin is required. Install Docker Compose v2, then rerun." >&2
+command -v docker >/dev/null 2>&1 || { echo "Docker is required." >&2; exit 1; }
+docker info >/dev/null 2>&1 || {
+  echo "Docker daemon is not reachable. Start Docker and rerun." >&2
   exit 1
 }
-command -v git >/dev/null 2>&1 || { echo "Git is required."; exit 1; }
+docker compose version >/dev/null 2>&1 || {
+  echo "Docker Compose v2 is required. Install the Compose plugin, then rerun." >&2
+  exit 1
+}
+command -v git >/dev/null 2>&1 || { echo "Git is required." >&2; exit 1; }
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   git -C "$INSTALL_DIR" pull --ff-only
@@ -34,24 +40,30 @@ fi
 mkdir -p "$CONFIG_DIR" "$INSTALL_DIR/state" "$INSTALL_DIR/logs"
 [[ -f "$ENV_FILE" ]] || { cp "$INSTALL_DIR/config/config.example.env" "$ENV_FILE"; chmod 600 "$ENV_FILE"; }
 
-read -rp "GitHub token: " GITHUB_TOKEN
+read -rsp "GitHub token: " GITHUB_TOKEN
+echo
 read -rp "Repositories (comma separated): " GITRUN_REPOSITORIES
 [[ -n "$GITHUB_TOKEN" ]] || { echo "GitHub token is required." >&2; exit 1; }
 [[ -n "$GITRUN_REPOSITORIES" ]] || { echo "At least one repository is required." >&2; exit 1; }
 
-python3 - "$ENV_FILE" "$GITHUB_TOKEN" "$GITRUN_REPOSITORIES" <<'PY'
+GITHUB_TOKEN="$GITHUB_TOKEN" GITRUN_REPOSITORIES="$GITRUN_REPOSITORIES" python3 - "$ENV_FILE" <<'PY'
 from pathlib import Path
+import os
 import sys
-p=Path(sys.argv[1])
-lines=[]
+
+p = Path(sys.argv[1])
+token = os.environ["GITHUB_TOKEN"]
+repositories = os.environ["GITRUN_REPOSITORIES"]
+lines = []
 for line in p.read_text(encoding="utf-8").splitlines():
     if line.startswith("GITHUB_TOKEN="):
-        line="GITHUB_TOKEN="+sys.argv[2]
+        line = "GITHUB_TOKEN=" + token
     elif line.startswith("GITRUN_REPOSITORIES="):
-        line="GITRUN_REPOSITORIES="+sys.argv[3]
+        line = "GITRUN_REPOSITORIES=" + repositories
     lines.append(line)
-p.write_text("\n".join(lines)+"\n", encoding="utf-8")
+p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
+unset GITHUB_TOKEN
 chmod 600 "$ENV_FILE"
 
 export GITRUN_CONFIG_FILE="$ENV_FILE"

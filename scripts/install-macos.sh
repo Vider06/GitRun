@@ -15,6 +15,8 @@ mkdir -p "$CONFIG_DIR"
 [[ -f "$ENV_FILE" ]] || { cp "$INSTALL_DIR/config/config.example.env" "$ENV_FILE"; chmod 600 "$ENV_FILE"; }
 read -rp "GitHub token: " GITHUB_TOKEN
 read -rp "Repositories (comma separated): " GITRUN_REPOSITORIES
+[[ -n "$GITHUB_TOKEN" ]] || { echo "GitHub token is required." >&2; exit 1; }
+[[ -n "$GITRUN_REPOSITORIES" ]] || { echo "At least one repository is required." >&2; exit 1; }
 python3 - "$ENV_FILE" "$GITHUB_TOKEN" "$GITRUN_REPOSITORIES" <<'PY'
 from pathlib import Path
 import sys
@@ -29,5 +31,6 @@ export GITRUN_CONFIG_FILE="$ENV_FILE"
 export GITRUN_STATE_DIR="$INSTALL_DIR/state"
 export GITRUN_LOG_DIR="$INSTALL_DIR/logs"
 mkdir -p "$GITRUN_STATE_DIR" "$GITRUN_LOG_DIR"
+docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" config -q
 docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" up -d --build
 echo "GitRun installed and started."

@@ -10,7 +10,7 @@ pub enum StateError {
     Json(#[from] serde_json::Error),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct HealthReport { pub healthy: bool, pub checked_at: u64, pub message: String }
 
 #[derive(Debug, Clone)]
@@ -28,9 +28,9 @@ impl StateStore {
             checked_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
             message: message.into(),
         };
-        let tmp = self.root.join("health.json.tmp");
+        let tmp = self.root.join(format!("health.json.tmp.{}", std::process::id()));
         fs::write(&tmp, serde_json::to_vec_pretty(&report)?)?;
-        fs::rename(tmp, self.health_path())?;
+        fs::rename(&tmp, self.health_path())?;
         Ok(())
     }
     pub fn record_crash(&self, message: impl Into<String>) -> Result<(), StateError> {
@@ -45,5 +45,30 @@ impl StateStore {
             Err(e) => Err(e.into()),
         }
     }
+    pub fn read_last_crash(&self) -> Result<Option<String>, StateError> {
+        match fs::read_to_string(self.crash_path()) {
+            Ok(value) => Ok(Some(value)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
     pub fn root(&self) -> &Path { &self.root }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    #[test]
+    fn health_and_crash_state_round_trip() {
+        let root = std::env::temp_dir().join(format!("gitrun-state-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let store = StateStore::new(&root);
+        store.write_health(true, "ok").unwrap();
+        store.record_crash("example failure").unwrap();
+        let health = store.read_health().unwrap().unwrap();
+        assert!(health.healthy);
+        assert_eq!(health.message, "ok");
+        assert_eq!(store.read_last_crash().unwrap().as_deref(), Some("example failure"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -55,7 +55,7 @@ cat > "$root/usr/share/applications/gitrun.desktop" <<'DESKTOP'
 Type=Application
 Name=GitRun
 Comment=GitHub Actions runner manager
-Exec=/usr/local/bin/gitrun
+Exec=/usr/local/bin/gitrun dashboard
 Terminal=false
 Categories=Development;Utility;
 DESKTOP

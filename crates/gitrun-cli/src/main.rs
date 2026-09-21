@@ -154,9 +154,50 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
-    gitrun_dashboard::run().map_err(|error| error.into())
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace("'", "'\\''"))
 }
+
+fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
+    match gitrun_dashboard::run() {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let error_message = error.to_string();
+            let executable = std::env::current_exe().map_err(|current_error| {
+                format!("{error_message}; unable to locate GitRun CLI: {current_error}")
+            })?;
+            let executable = executable.to_string_lossy();
+
+            let emergency_command = format!(
+                "printf '%s\\n\\n' 'GitRun dashboard failed:'; printf '%s\\n\\n' {}; printf '%s\\n' 'GitRun CLI:'; {} version; printf '%s\\n' 'GitRun doctor:'; {} doctor; printf '%s\\n' 'Press Enter to close.'; read -r",
+                shell_quote(&error_message),
+                shell_quote(&executable),
+                shell_quote(&executable),
+            );
+
+            let candidates: [(&str, &[&str]); 3] = [
+                ("x-terminal-emulator", &["-e", "sh", "-c", &emergency_command]),
+                ("gnome-terminal", &["--", "sh", "-c", &emergency_command]),
+                ("konsole", &["-e", "sh", "-c", &emergency_command]),
+            ];
+
+            for (program, args) in candidates {
+                if std::process::Command::new(program).args(args).spawn().is_ok() {
+                    return Err(format!(
+                        "dashboard failed; emergency GitRun CLI opened in {program}"
+                    )
+                    .into());
+                }
+            }
+
+            Err(format!(
+                "dashboard failed: {error_message}; no supported terminal emulator was available"
+            )
+            .into())
+        }
+    }
+}
+
 
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;

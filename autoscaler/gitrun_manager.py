@@ -130,36 +130,40 @@ def reconcile(cfg:RepoConfig)->None:
         current += 1
     state=load_state();idle=state.setdefault("idle_since",{});recovery=state.setdefault("container_recovery",{});by_name={r.get("name"):r for r in runners};now=datetime.now(timezone.utc)
     recovery_cooldown=max(15,env_int("GITRUN_CONTAINER_RECOVERY_COOLDOWN",60))
-    for name in list(containers):
-        container_state=container_status(name)
-        runner=by_name.get(name)
-        if (
-            env_bool("GITRUN_AUTO_CONTAINER_RECOVERY",True)
-            and queued > 0
-            and container_state.get("Status") == "running"
-            and runner
-            and runner.get("status") != "online"
-            and not runner.get("busy")
-        ):
-            stamp=recovery.get(name)
-            try:age=(now-datetime.fromisoformat(stamp)).total_seconds() if stamp else recovery_cooldown
-            except ValueError:age=recovery_cooldown
-            if age >= recovery_cooldown and restart_container(name):
-                recovery[name]=now.isoformat()
-        elif (
-            env_bool("GITRUN_AUTO_CONTAINER_RECOVERY",True)
-            and queued > 0
-            and container_state.get("Status") == "running"
-            and runner is None
-        ):
-            permanent=container_is_permanent(name)
-            log.warning("Runner %s is missing from GitHub; recreating managed container", name)
-            remove_runner(repo,name)
-            containers.remove(name)
-            current -= 1
-            create_runner(repo,permanent=permanent)
-            current += 1
-            recovery.pop(name,None)
+    current=len(containers)
+    if env_bool("GITRUN_AUTO_CONTAINER_RECOVERY",True) and queued > 0:
+        for name in list(containers):
+            container_state=container_status(name)
+            runner=by_name.get(name)
+            if container_state.get("Status") != "running":
+                continue
+            if runner and runner.get("busy"):
+                continue
+            if runner and runner.get("status") != "online":
+                stamp=recovery.get(name)
+                try:age=(now-datetime.fromisoformat(stamp)).total_seconds() if stamp else recovery_cooldown
+                except ValueError:age=recovery_cooldown
+                if age >= recovery_cooldown and restart_container(name):
+                    recovery[name]=now.isoformat()
+            elif runner is None:
+                permanent=container_is_permanent(name)
+                log.warning("Runner %s is missing from GitHub; recreating managed container", name)
+                remove_runner(repo,name)
+                containers.remove(name)
+                current -= 1
+                create_runner(repo,permanent=permanent)
+                current += 1
+                recovery.pop(name,None)
+    current=len(containers)
+    permanent_count=sum(1 for name in containers if container_is_permanent(name))
+    while current < desired and permanent_count < cfg.minimum:
+        create_runner(repo, permanent=True)
+        current += 1
+        permanent_count += 1
+    while current < desired:
+        create_runner(repo, permanent=False)
+        current += 1
+    by_name={r.get("name"):r for r in runners}
     for name in containers:
         runner=by_name.get(name)
         if runner and runner.get("busy"):idle.pop(name,None)

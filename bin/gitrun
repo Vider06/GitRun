@@ -63,7 +63,8 @@ Lifecycle:
   restart                  Restart the GitRun stack.
 
 Configuration:
-  connect <owner/repo>     Select/configure a repository.
+  connect <owner/repo>     Add a repository to GitRun.
+  repositories             List configured repositories.
   config                   Print current effective configuration.
   version                  Show GitRun version.
 
@@ -71,6 +72,7 @@ Notes:
   - GitRun manages self-hosted runners through Docker.
   - The target pool is 3 warm runners minimum, up to 20.
   - Extra runners remain alive for 120 seconds after becoming idle.
+  - The default pool is 3 warm runners and a hard maximum of 20.
 EOF
 }
 
@@ -276,6 +278,30 @@ cmd_restart() {
     docker compose -f "$COMPOSE_FILE" restart
 }
 
+
+
+cmd_repositories() {
+    load_config
+    echo "Configured repositories:"
+    if [[ -n "${GITRUN_REPOSITORIES:-}" ]]; then
+        tr ',' '\n' <<< "$GITRUN_REPOSITORIES"
+    elif [[ -n "${GITRUN_DEFAULT_REPOSITORY:-}" ]]; then
+        echo "$GITRUN_DEFAULT_REPOSITORY"
+    else
+        echo "<none>"
+    fi
+}
+
+cmd_service() {
+    local action="${1:-status}"
+    case "$action" in
+        status|start|stop|restart|enable|disable)
+            sudo systemctl "$action" gitrun.service
+            ;;
+        *) die "Usage: gitrun service {status|start|stop|restart|enable|disable}" ;;
+    esac
+}
+
 cmd_connect() {
     local repo="${1:-}"
     [[ "$repo" =~ ^[^/]+/[^/]+$ ]] || die "Usage: gitrun connect <owner/repo>"
@@ -283,14 +309,23 @@ cmd_connect() {
     mkdir -p "$(dirname "$CONFIG_FILE")"
     touch "$CONFIG_FILE"
 
-    if grep -q '^GITRUN_DEFAULT_REPOSITORY=' "$CONFIG_FILE"; then
-        sed -i "s|^GITRUN_DEFAULT_REPOSITORY=.*|GITRUN_DEFAULT_REPOSITORY=$repo|" "$CONFIG_FILE"
+    if grep -q '^GITRUN_REPOSITORIES=' "$CONFIG_FILE"; then
+        current="$(grep '^GITRUN_REPOSITORIES=' "$CONFIG_FILE" | head -n1 | cut -d= -f2-)"
+        if ! tr ',' '\n' <<< "$current" | grep -Fxq "$repo"; then
+            if [[ -n "$current" ]]; then
+                current="$current,$repo"
+            else
+                current="$repo"
+            fi
+            sed -i "s|^GITRUN_REPOSITORIES=.*|GITRUN_REPOSITORIES=$current|" "$CONFIG_FILE"
+        fi
     else
-        printf '\nGITRUN_DEFAULT_REPOSITORY=%s\n' "$repo" >> "$CONFIG_FILE"
+        printf '\nGITRUN_REPOSITORIES=%s\n' "$repo" >> "$CONFIG_FILE"
     fi
 
-    echo "Default repository set to: $repo"
-    echo "Next: configure GitHub credentials and runner provisioning."
+    echo "Repository connected: $repo"
+    echo "Run: gitrun repositories"
+    echo "Then: sudo systemctl restart gitrun.service"
 }
 
 load_config
@@ -315,5 +350,7 @@ case "$command" in
     stop) cmd_stop ;;
     restart) cmd_restart ;;
     connect) cmd_connect "$@" ;;
+    repositories|repos) cmd_repositories ;;
+    service) cmd_service "$@" ;;
     *) die "Unknown command: $command. Run 'gitrun help'." ;;
 esac

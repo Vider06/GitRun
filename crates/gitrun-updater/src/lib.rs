@@ -77,6 +77,7 @@ pub struct UpdatePaths {
     pub install_dir: PathBuf,
     pub state_dir: PathBuf,
     pub config_dir: Option<PathBuf>,
+    pub service_config: Option<PathBuf>,
     pub backup_root: PathBuf,
 }
 
@@ -87,6 +88,7 @@ pub struct BackupRecord {
     pub install_backup: PathBuf,
     pub state_backup: Option<PathBuf>,
     pub config_backup: Option<PathBuf>,
+    pub service_config_backup: Option<PathBuf>,
 }
 
 #[derive(Debug, Error)]
@@ -254,6 +256,7 @@ pub fn apply_update(paths: &UpdatePaths, archive: impl AsRef<Path>, target: &str
     let install_backup = backup_dir.join("install");
     let state_backup = backup_dir.join("state");
     let config_backup = paths.config_dir.as_ref().map(|_| backup_dir.join("config"));
+    let service_config_backup = paths.service_config.as_ref().map(|_| backup_dir.join("service-config"));
 
     if paths.install_dir.exists() {
         fs::rename(&paths.install_dir, &install_backup)?;
@@ -264,6 +267,14 @@ pub fn apply_update(paths: &UpdatePaths, archive: impl AsRef<Path>, target: &str
     if let Some(config_dir) = &paths.config_dir {
         if config_dir.exists() {
             copy_dir(config_dir, config_backup.as_ref().expect("config backup path"))?;
+        }
+    }
+    if let Some(service_config) = &paths.service_config {
+        if service_config.is_file() {
+            if let Some(parent) = service_config_backup.as_ref().and_then(Path::parent) { fs::create_dir_all(parent)?; }
+            fs::copy(service_config, service_config_backup.as_ref().expect("service config backup path"))?;
+        } else if service_config.is_dir() {
+            copy_dir(service_config, service_config_backup.as_ref().expect("service config backup path"))?;
         }
     }
 
@@ -282,6 +293,7 @@ pub fn apply_update(paths: &UpdatePaths, archive: impl AsRef<Path>, target: &str
         install_backup,
         state_backup: if state_backup.exists() { Some(state_backup) } else { None },
         config_backup,
+        service_config_backup,
     };
     fs::write(backup_dir.join("backup.json"), serde_json::to_vec_pretty(&record)?)?;
     Ok(record)
@@ -293,6 +305,8 @@ pub fn rollback(paths: &UpdatePaths, backup: &BackupRecord) -> Result<(), Update
         &backup.install_backup,
         backup.state_backup.as_deref().unwrap_or_else(|| Path::new("")),
         backup.config_backup.as_deref(),
+        paths.service_config.as_deref(),
+        backup.service_config_backup.as_deref(),
     )
 }
 
@@ -476,7 +490,7 @@ fn atomic_install(staging: &Path, install_dir: &Path) -> Result<(), UpdateError>
     Ok(())
 }
 
-fn rollback_install(paths: &UpdatePaths, install_backup: &Path, state_backup: &Path, config_backup: Option<&Path>) -> Result<(), UpdateError> {
+fn rollback_install(paths: &UpdatePaths, install_backup: &Path, state_backup: &Path, config_backup: Option<&Path>, service_config: Option<&Path>, service_config_backup: Option<&Path>) -> Result<(), UpdateError> {
     if paths.install_dir.exists() { fs::remove_dir_all(&paths.install_dir)?; }
     if install_backup.exists() { fs::rename(install_backup, &paths.install_dir)?; }
     if paths.state_dir.exists() { fs::remove_dir_all(&paths.state_dir)?; }
@@ -484,6 +498,17 @@ fn rollback_install(paths: &UpdatePaths, install_backup: &Path, state_backup: &P
     if let (Some(config), Some(backup)) = (&paths.config_dir, config_backup) {
         if config.exists() { fs::remove_dir_all(config)?; }
         if backup.exists() { copy_dir(backup, config)?; }
+    }
+    if let (Some(service), Some(backup)) = (service_config, service_config_backup) {
+        if service.exists() {
+            if service.is_dir() { fs::remove_dir_all(service)?; } else { fs::remove_file(service)?; }
+        }
+        if backup.is_file() {
+            if let Some(parent) = service.parent() { fs::create_dir_all(parent)?; }
+            fs::copy(backup, service)?;
+        } else if backup.is_dir() {
+            copy_dir(backup, service)?;
+        }
     }
     Ok(())
 }

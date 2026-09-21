@@ -365,13 +365,13 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
     if command.0 == "apt-get" {
         let mut apt = Command::new("apt-get");
         apt.args(["update"]);
-        if std::env::var_os("EUID").as_deref() != Some(std::ffi::OsStr::new("0")) {
+        if !is_root() {
             apt = Command::new("sudo");
             apt.args(["apt-get", "update"]);
         }
         run_command(&mut apt)?;
     }
-    let mut update = if command.0 == "apt-get" && std::env::var_os("EUID").as_deref() != Some(std::ffi::OsStr::new("0")) {
+    let mut update = if command.0 == "apt-get" && !is_root() {
         let mut sudo = Command::new("sudo");
         sudo.arg("apt-get").args(&command.1);
         sudo
@@ -395,6 +395,15 @@ pub fn dependency_status(name: &str, minimum_version: &str) -> DependencyStatus 
         compatible,
         action: if compatible { "skip".into() } else { "update".into() },
     }
+}
+
+fn is_root() -> bool {
+    if cfg!(windows) {
+        return false;
+    }
+    Command::new("id").args(["-u"]).output()
+        .map(|output| output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "0")
+        .unwrap_or(false)
 }
 
 fn command_version(name: &str) -> Option<String> {

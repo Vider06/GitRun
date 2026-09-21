@@ -1,0 +1,29 @@
+name: Configure RDP credentials auth method
+
+on:
+  push:
+    branches:
+      - fix/setup-chown-uid
+
+permissions:
+  contents: read
+
+jobs:
+  fix:
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    timeout-minutes: 5
+    env:
+      SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+      RDP_USERNAME: vider06
+    steps:
+      - name: Configure RDP authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -S -p '' grdctl --system rdp set-auth-methods credentials <<< "$SUDO_PASSWORD"
+          sudo -S -p '' grdctl --system rdp set-credentials "$RDP_USERNAME" "$RDP_PASSWORD" <<< "$SUDO_PASSWORD"
+          sudo -S -p '' grdctl --system rdp enable <<< "$SUDO_PASSWORD"
+          sudo -S -p '' systemctl restart gnome-remote-desktop.service <<< "$SUDO_PASSWORD"
+          echo "RDP authentication mode configured."
+          sudo -S -p '' grdctl --system status <<< "$SUDO_PASSWORD"

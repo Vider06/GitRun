@@ -155,7 +155,42 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
-    gitrun_dashboard::run().map_err(|error| error.into())
+    match gitrun_dashboard::run() {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let error_message = error.to_string();
+            let executable = std::env::current_exe()
+                .map_err(|current_error| format!("{error_message}; unable to locate GitRun CLI: {current_error}"))?;
+
+            let emergency_command = format!(
+                "echo 'GitRun dashboard failed:'; echo '{}'; echo; echo 'GitRun CLI:'; \
+                \"{}\" version; echo; \
+                \"{}\" doctor; echo; echo 'Press Enter to close.'; read -r",
+                error_message.replace('\\'', "'\\''"),
+                executable.display(),
+                executable.display(),
+            );
+
+            let terminal = [
+                ("x-terminal-emulator", vec!["-e", "sh", "-c", &emergency_command]),
+                ("gnome-terminal", vec!["--", "sh", "-c", &emergency_command]),
+                ("konsole", vec!["-e", "sh", "-c", &emergency_command]),
+                ("xfce4-terminal", vec!["--command", &format!("sh -c '{}'", emergency_command.replace('\\'', "'\\''"))]),
+            ];
+
+            for (program, args) in terminal {
+                if std::process::Command::new(program).args(args).spawn().is_ok() {
+                    return Err(format!(
+                        "dashboard failed; emergency GitRun CLI opened in {program}"
+                    ).into());
+                }
+            }
+
+            Err(format!(
+                "dashboard failed: {error_message}; no supported terminal emulator was available"
+            ).into())
+        }
+    }
 }
 
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {

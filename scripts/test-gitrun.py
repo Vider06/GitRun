@@ -70,7 +70,7 @@ manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
 for required in [
     "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
     "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
-    "docker", "subprocess.run([\"docker\",*args",
+    "docker", "def docker(*args",
 ]:
     if required not in manager:
         errors.append(f"autoscaler feature missing: {required}")

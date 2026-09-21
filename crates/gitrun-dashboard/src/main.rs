@@ -95,6 +95,10 @@ impl Dashboard {
             None => Config::from_env().err().map(|error| error.to_string()),
         };
 
+        if let Some(config) = &self.snapshot.config {
+            self.state_dir = PathBuf::from(&config.state_dir);
+        }
+
         let state_store = StateStore::new(&self.state_dir);
         self.snapshot.health = state_store.read_health().ok().flatten();
         self.snapshot.crash = state_store.read_last_crash().ok().flatten();
@@ -105,7 +109,7 @@ impl Dashboard {
         self.refreshing = false;
     }
 
-    fn render_header(&self, ui: &mut egui::Ui) {
+    fn render_header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("GitRun");
             ui.label("Rust dashboard · read-only");

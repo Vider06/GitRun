@@ -8,15 +8,15 @@ GitRun is designed for a single Ubuntu server and does not require Kubernetes.
 
 Default pool:
 
-- 3 warm runners
-- 8 hard maximum (default profile for an 8 GB mini-server)
+- 3 warm runners per configured repository
+- 8 hard maximum per configured repository (default profile for an 8 GB mini-server)
 - extra runners are retained for 120 seconds after they actually become idle
 - multiple private repositories can share one GitRun installation
 - runner containers have CPU, memory and PID limits
 - Docker restart policies provide boot/crash recovery
 - systemd starts the GitRun manager after host reboot
 
-The autoscaler polls GitHub every 5 seconds by default. It counts queued jobs that target self-hosted runners and scales the repository pool up to the configured maximum.
+The autoscaler polls GitHub every 5 seconds by default. It counts queued jobs that target self-hosted runners and scales each repository-level runner pool up to its configured maximum. Repository-level runners are dedicated to one repository; a truly shared pool across repositories would require organization-level runners/runner groups.
 
 ## CLI
 
@@ -108,6 +108,7 @@ For each configured repository:
 ~~~text
 minimum = 3
 maximum = 8
+(per configured repository)
 
 queued self-hosted jobs:
   0  -> keep 3

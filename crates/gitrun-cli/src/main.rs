@@ -237,7 +237,13 @@ fn main() {
         "update" if args.len() <= 2 => {
             if let Err(error) = update_command(&args) { eprintln!("GitRun update: FAIL — {error}"); std::process::exit(1); }
         }
-        "dashboard" if args.len() == 1 => {\n            if let Err(error) = dashboard_command() { eprintln!("GitRun dashboard: FAIL — {error}"); std::process::exit(1); }\n        }\n        "rollback" if args.len() == 2 => {
+        "dashboard" if args.len() == 1 => {
+            if let Err(error) = dashboard_command() {
+                eprintln!("GitRun dashboard: FAIL — {error}");
+                std::process::exit(1);
+            }
+        }
+        "rollback" if args.len() == 2 => {
             if let Err(error) = rollback_command(&args[1]) { eprintln!("GitRun rollback: FAIL — {error}"); std::process::exit(1); }
         }
         "help" if args.len() == 1 => help(),

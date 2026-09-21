@@ -13,11 +13,12 @@ command -v docker >/dev/null 2>&1 || {
     exit 1
 }
 
-install -d /opt/gitrun /etc/gitrun /var/lib/gitrun /var/log/gitrun
+install -d /opt/gitrun /etc/gitrun /var/lib/gitrun /var/log/gitrun /usr/local/bin
 
 cp -a "$ROOT/autoscaler" /opt/gitrun/
 cp -a "$ROOT/docker" /opt/gitrun/
 cp "$ROOT/docker-compose.yml" /opt/gitrun/
+install -m 0755 "$ROOT/bin/gitrun" /usr/local/bin/gitrun
 cp "$ROOT/systemd/gitrun.service" /etc/systemd/system/gitrun.service
 
 if [[ ! -f /etc/gitrun/gitrun.env ]]; then
@@ -34,6 +35,12 @@ systemctl enable gitrun.service
 
 echo
 echo "GitRun server installation complete."
-echo "Edit: /etc/gitrun/gitrun.env"
-echo "Then run: sudo systemctl start gitrun"
-echo "Health:    sudo gitrun doctor"
+echo "CLI:       /usr/local/bin/gitrun"
+echo "Config:    /etc/gitrun/gitrun.env"
+echo "State:     /var/lib/gitrun"
+echo "Logs:      /var/log/gitrun"
+echo
+echo "Edit /etc/gitrun/gitrun.env, then:"
+echo "  sudo systemctl start gitrun"
+echo "  gitrun doctor"
+echo "  gitrun overview"

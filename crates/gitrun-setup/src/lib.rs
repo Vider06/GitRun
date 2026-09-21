@@ -148,6 +148,7 @@ pub fn bootstrap_linux(
         chown_path(&config_path, uid)?;
         chown_path(&state_dir, uid)?;
         chown_path(&log_dir, uid)?;
+        add_user_to_docker_group(uid)?;
     }
 
     build_image("gitrun-manager:latest", &root, &root.join("docker/manager/Dockerfile"))?;
@@ -225,6 +226,18 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
     fs::write(path, content)?;
     fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
     Ok(())
+}
+
+fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
+    let user = Command::new("getent")
+        .args(["passwd", &uid.to_string()])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|line| line.split(':').next().map(str::to_owned))
+        .ok_or_else(|| SetupError::Command(format!("unable to resolve username for uid {uid}")))?;
+    run_command(Command::new("usermod").args(["-aG", "docker", &user]))
 }
 
 fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {

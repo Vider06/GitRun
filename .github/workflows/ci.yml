@@ -180,6 +180,8 @@ jobs:
             echo "Potential secret/config file tracked by Git."
             exit 1
           fi
+      - name: Install YAML parser
+        run: python3 -m pip install --quiet pyyaml
       - name: YAML parse
         shell: bash
         run: |

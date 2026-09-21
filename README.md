@@ -9,7 +9,7 @@ GitRun is designed for a single Ubuntu server and does not require Kubernetes.
 Default pool:
 
 - 3 warm runners
-- 20 hard maximum
+- 8 hard maximum (default profile for an 8 GB mini-server)
 - extra runners are retained for 120 seconds after they actually become idle
 - multiple private repositories can share one GitRun installation
 - runner containers have CPU, memory and PID limits
@@ -43,6 +43,32 @@ gitrun stop
 gitrun restart
 ~~~
 
+## One-command installation
+
+Cross-platform installers are included:
+
+~~~text
+scripts/install-linux.sh
+scripts/install-macos.sh
+scripts/install-windows.ps1
+~~~
+
+They install/launch the required Docker environment, clone or update GitRun, ask for the GitHub API token and repositories, write the local configuration, and start the manager. No manual runner registration is required.
+
+~~~bash
+./scripts/install-linux.sh
+./scripts/install-macos.sh
+~~~
+
+On Windows PowerShell:
+
+~~~powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\install-windows.ps1
+~~~
+
+The Linux installer also enables Docker at boot. Windows/macOS require Docker Desktop to be allowed to start with the operating system if automatic startup after reboot is desired.
+
 ## Server installation
 
 On the Ubuntu server:
@@ -57,7 +83,7 @@ gitrun doctor
 gitrun overview
 ~~~
 
-The installer installs the CLI, installs the GitRun manager and runner sources under /opt/gitrun, builds both images, creates /etc/gitrun/gitrun.env, enables gitrun.service, and creates persistent state/log directories.
+The server installer installs the CLI, installs the GitRun manager and runner sources under /opt/gitrun, builds both images, creates /etc/gitrun/gitrun.env, enables gitrun.service, and creates persistent state/log directories.
 
 ## GitHub authentication
 
@@ -81,7 +107,7 @@ For each configured repository:
 
 ~~~text
 minimum = 3
-maximum = 20
+maximum = 8
 
 queued self-hosted jobs:
   0  -> keep 3
@@ -89,8 +115,10 @@ queued self-hosted jobs:
   2  -> keep 3
   3  -> scale toward 3+
   ...
-  17 -> scale toward 20
-  18+ -> cap at 20
+  5 -> scale toward 5
+  6 -> scale toward 6
+  7 -> scale toward 7
+  8+ -> cap at 8
 ~~~
 
 The exact desired count is:

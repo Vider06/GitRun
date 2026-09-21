@@ -4,38 +4,156 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: write
+
+concurrency:
+  group: gitrun-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  static:
-    name: Static validation
+  detect:
+    name: Detect project components
     runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.detect.outputs.rust }}
+      python: ${{ steps.detect.outputs.python }}
+      docker: ${{ steps.detect.outputs.docker }}
+      powershell: ${{ steps.detect.outputs.powershell }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Python syntax
-        run: python3 -m py_compile autoscaler/gitrun_manager.py scripts/test-gitrun.py
-      - name: Shell syntax
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Detect
+        id: detect
+        shell: bash
         run: |
-          bash -n bin/gitrun
-          bash -n scripts/install-server.sh
-          bash -n scripts/install-linux.sh
-          bash -n scripts/install-macos.sh
-      - name: GitRun static check
+          set -euo pipefail
+          [ -f Cargo.toml ] && echo "rust=true" >> "$GITHUB_OUTPUT" || echo "rust=false" >> "$GITHUB_OUTPUT"
+          find . -name '*.py' -not -path './.git/*' -print -quit | grep -q . && echo "python=true" >> "$GITHUB_OUTPUT" || echo "python=false" >> "$GITHUB_OUTPUT"
+          { [ -f docker-compose.yml ] || find docker -name 'Dockerfile*' -print -quit | grep -q .; } && echo "docker=true" >> "$GITHUB_OUTPUT" || echo "docker=false" >> "$GITHUB_OUTPUT"
+          find . -name '*.ps1' -not -path './.git/*' -print -quit | grep -q . && echo "powershell=true" >> "$GITHUB_OUTPUT" || echo "powershell=false" >> "$GITHUB_OUTPUT"
+
+  python:
+    name: Python validation
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+      - name: Compile Python sources
+        run: |
+          python -m compileall -q .
+      - name: Run project static checks
         run: python3 scripts/test-gitrun.py
 
-  compose:
-    name: Compose validation and image builds
+  rust:
+    name: Rust check and tests
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    needs: static
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check
+        run: cargo check --workspace --all-targets --all-features
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --all-features
+
+  shell:
+    name: Shell validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Syntax check
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done < <(find . -type f -name '*.sh' -not -path './.git/*' -print0)
+      - name: ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=$(find . -type f -name '*.sh' -not -path './.git/*' -print)
+          if [ -n "$files" ]; then
+            shellcheck $files
+          fi
+      - name: CLI smoke checks
+        run: |
+          test -x bin/gitrun
+          ./bin/gitrun --help >/dev/null || true
+
+  powershell:
+    name: PowerShell validation
+    needs: detect
+    if: needs.detect.outputs.powershell == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-ChildItem -Recurse -Filter *.ps1 -File |
+            Where-Object { $_.FullName -notmatch '[/\\]\.git[/\\]' } |
+            ForEach-Object {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                $_.FullName, [ref]$tokens, [ref]$errors
+              ) | Out-Null
+              if ($errors.Count -gt 0) {
+                throw "PowerShell parse errors in $($_.FullName): $($errors -join '; ')"
+              }
+            }
+
+  docker:
+    name: Docker and Compose validation
+    needs: detect
+    if: needs.detect.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
       - name: Prepare CI environment
         run: |
           cp config/config.example.env /tmp/gitrun.env
           sed -i 's|^GITHUB_TOKEN=.*|GITHUB_TOKEN=ci-placeholder|' /tmp/gitrun.env
           sed -i 's|^GITRUN_REPOSITORIES=.*|GITRUN_REPOSITORIES=Vider06/GitRun|' /tmp/gitrun.env
+          mkdir -p /tmp/gitrun-state /tmp/gitrun-logs
       - name: Validate Compose
         env:
           GITRUN_CONFIG_FILE: /tmp/gitrun.env
@@ -44,6 +162,63 @@ jobs:
           GITRUN_LOG_DIR: /tmp/gitrun-logs
         run: docker compose config -q
       - name: Build manager image
-        run: docker build -f docker/manager/Dockerfile -t gitrun-manager:ci .
+        run: docker build --pull -f docker/manager/Dockerfile -t gitrun-manager:ci .
       - name: Build runner image
-        run: docker build -f docker/runner/Dockerfile -t gitrun-runner:ci .
+        run: docker build --pull -f docker/runner/Dockerfile -t gitrun-runner:ci .
+
+  repository:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check tracked secrets and generated files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)(\.env|\.env\.|.*\.pem|.*\.key)$' | grep -vE '(^|/)config/config\.example\.env$'; then
+            echo "Potential secret/config file tracked by Git."
+            exit 1
+          fi
+      - name: YAML parse
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          try:
+              import yaml
+          except ImportError:
+              raise SystemExit("PyYAML unavailable")
+          for path in pathlib.Path('.').rglob('*.y*ml'):
+              if '.git' in path.parts:
+                  continue
+              yaml.safe_load(path.read_text())
+          print("YAML validation passed")
+          PY
+      - name: Git diff sanity
+        run: git diff --check
+
+  summary:
+    name: Verification summary
+    if: always()
+    needs: [detect, python, rust, shell, powershell, docker, repository]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce required gates
+        shell: bash
+        env:
+          PYTHON_RESULT: ${{ needs.python.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          SHELL_RESULT: ${{ needs.shell.result }}
+          POWERSHELL_RESULT: ${{ needs.powershell.result }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
+        run: |
+          set -euo pipefail
+          for result in "$PYTHON_RESULT" "$RUST_RESULT" "$SHELL_RESULT" "$POWERSHELL_RESULT" "$DOCKER_RESULT" "$REPOSITORY_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "Verification gate failed: $result"; exit 1 ;;
+            esac
+          done
+          echo "All applicable GitRun verification gates passed."

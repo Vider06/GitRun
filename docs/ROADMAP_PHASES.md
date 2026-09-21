@@ -10,7 +10,7 @@ A real Rust setup/preflight layer is now wired into the CLI. It validates the sh
 Cross-platform Rust release packaging is implemented for Linux x64/ARM64, Windows x64, and macOS x64/ARM64. The release workflow builds the native `gitrun-rs` executable for each target, packages the executable with the license/readme/example configuration, publishes SHA-256 checksums and an aggregate release manifest, and can run from version tags or manual dispatch. Local Bash/PowerShell release builders produce target-specific archives and checksums, while workspace verification checks Rust formatting/checks/tests plus release metadata and packaging scripts.
 
 ## Phase 4 — Updater and recovery
-Versioned manifests, safe pending-update staging, startup health state, and crash recording.
+A real release updater is now implemented around the Phase 3 precompiled artifacts. It resolves the latest GitHub Release with a `version.txt` fallback, selects the native OS/architecture artifact, rejects equal/older versions, stages updates atomically, downloads and verifies SHA-256 checksums, preserves configuration/state, creates versioned backups, performs a post-install health check, and exposes explicit rollback/recovery. Dependency requirements for Git, Docker, Node.js and Python are inspected with installed-version/compatibility decisions so compatible components are skipped. Runner updates use a versioned GHCR image and pinned digest; the Docker stack refresh path uses `docker compose up --no-build` so the updater never clones or rebuilds the GitRun release locally. Failed runner/Docker refreshes restore the previous GitRun installation and preserved state/config.
 
 ## Phase 5 — Dashboard
 Native Rust/egui read-only dashboard shell for configuration and pool state.

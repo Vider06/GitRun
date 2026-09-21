@@ -125,7 +125,12 @@ def queued_jobs(repo: str) -> int:
                 "GET",
                 f"/repos/{owner}/{name}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100",
             ).get("jobs", [])
-            count += sum(1 for job in jobs if job.get("status") == "queued")
+            for job in jobs:
+                if job.get("status") != "queued":
+                    continue
+                labels = {str(label).lower() for label in job.get("labels", [])}
+                if "self-hosted" in labels:
+                    count += 1
         except Exception:
             log.exception("Unable to inspect queued jobs for %s run %s", repo, run.get("id"))
     return count
@@ -183,7 +188,7 @@ def create_runner(repo: str) -> None:
     safe_repo = re.sub(r"[^a-zA-Z0-9_.-]", "-", repo)
     name = f"gitrun-{safe_repo}-{uuid4().hex[:8]}"
     image = os.getenv("GITRUN_RUNNER_IMAGE", "gitrun-runner:latest")
-    labels = os.getenv("GITRUNNER_LABELS", "self-hosted,Linux,X64,gitrun")
+    labels = os.getenv("GITRUN_RUNNER_LABELS", "self-hosted,Linux,X64")
 
     command = [
         "run", "-d",
@@ -210,6 +215,24 @@ def create_runner(repo: str) -> None:
     log.info("Created runner %s for %s", name, repo)
 
 
+def state_path() -> Path:
+    return Path(os.getenv("GITRUN_STATE_DIR", "/var/lib/gitrun")) / "state.json"
+
+
+def load_state() -> dict:
+    path = state_path()
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"idle_since": {}}
+
+
+def save_state(state: dict) -> None:
+    path = state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
 def remove_runner(name: str) -> None:
     result = docker("rm", "-f", name, check=False)
     if result.returncode == 0:
@@ -234,54 +257,67 @@ def reconcile(repo_cfg: RepoConfig) -> None:
         repo, len(containers), len(online), len(busy), queued, desired,
     )
 
-    # A container may still be starting while GitHub has not registered it.
-    # Keep the target based on local containers as well.
+    # Remove exited containers so they cannot block capacity.
+    for name in list(containers):
+        state = container_status(name)
+        if state.get("Status") == "exited":
+            log.warning("Removing exited runner container %s", name)
+            remove_runner(name)
+            containers.remove(name)
+
     current = len(containers)
 
     while current < desired:
         create_runner(repo)
         current += 1
 
-    if os.getenv("GITRUN_EPHEMERAL", "false").lower() == "true":
-        # Ephemeral runners unregister after one job. Remove exited containers
-        # after preserving their logs externally.
-        for name in containers:
-            state = container_status(name)
-            if state.get("Status") == "exited":
-                log.info("Ephemeral runner exited: %s", name)
-                remove_runner(name)
-        return
-
-    # Persistent warm pool: retain the minimum; remove excess containers only
-    # after they have been idle for the configured grace period.
-    idle_timeout = env_int("GITRUN_IDLE_TIMEOUT", 120)
-    now = datetime.now(timezone.utc)
-
-    if current <= repo_cfg.minimum:
-        return
-
-    # GitHub's runner API is authoritative for busy/idle state. Containers
-    # that are offline or unregistered are candidates for replacement/removal.
+    state = load_state()
+    idle_since = state.setdefault("idle_since", {})
     by_name = {r.get("name"): r for r in runners}
-    candidates: list[tuple[str, datetime]] = []
+    now = datetime.now(timezone.utc)
 
     for name in containers:
         runner = by_name.get(name)
         if runner and runner.get("busy"):
-            continue
-        started = container_started_at(name)
-        if started is None:
-            continue
-        candidates.append((name, started))
+            idle_since.pop(name, None)
+        elif runner and runner.get("status") == "online":
+            idle_since.setdefault(name, now.isoformat())
 
+    for name in list(idle_since):
+        if name not in containers:
+            idle_since.pop(name, None)
+
+    save_state(state)
+
+    if os.getenv("GITRUN_EPHEMERAL", "false").lower() == "true":
+        return
+
+    if current <= repo_cfg.minimum:
+        return
+
+    idle_timeout = env_int("GITRUN_IDLE_TIMEOUT", 120)
     removable = max(0, current - repo_cfg.minimum)
-    for name, started in sorted(candidates, key=lambda x: x[1]):
+    candidates: list[tuple[str, float]] = []
+
+    for name in containers:
+        stamp = idle_since.get(name)
+        if not stamp:
+            continue
+        try:
+            idle_age = (now - datetime.fromisoformat(stamp)).total_seconds()
+        except ValueError:
+            continue
+        if idle_age >= idle_timeout:
+            candidates.append((name, idle_age))
+
+    for name, _idle_age in sorted(candidates, key=lambda x: x[1], reverse=True):
         if removable <= 0:
             break
-        age = (now - started).total_seconds()
-        if age >= idle_timeout:
-            remove_runner(name)
-            removable -= 1
+        remove_runner(name)
+        idle_since.pop(name, None)
+        removable -= 1
+
+    save_state(state)
 
 
 def write_crash(exc: BaseException) -> None:

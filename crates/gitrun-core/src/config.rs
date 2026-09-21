@@ -30,6 +30,8 @@ pub struct Config {
     pub log_dir: String,
     pub auto_container_update: bool,
     pub container_update_time: String,
+    pub auto_container_recovery: bool,
+    pub container_recovery_cooldown: u64,
 }
 
 impl Default for Config {
@@ -41,6 +43,7 @@ impl Default for Config {
             runner_labels: "self-hosted,Linux,X64".into(), ephemeral: false,
             state_dir: "/var/lib/gitrun".into(), log_dir: "/var/log/gitrun".into(),
             auto_container_update: false, container_update_time: "03:00".into(),
+            auto_container_recovery: true, container_recovery_cooldown: 60,
         }
     }
 }
@@ -60,6 +63,8 @@ impl Config {
         c.log_dir = env::var("GITRUN_LOG_DIR").unwrap_or(c.log_dir);
         c.auto_container_update = env_bool("GITRUN_AUTO_CONTAINER_UPDATE", c.auto_container_update)?;
         c.container_update_time = env::var("GITRUN_CONTAINER_UPDATE_TIME").unwrap_or(c.container_update_time);
+        c.auto_container_recovery = env_bool("GITRUN_AUTO_CONTAINER_RECOVERY", c.auto_container_recovery)?;
+        c.container_recovery_cooldown = env_u64("GITRUN_CONTAINER_RECOVERY_COOLDOWN", c.container_recovery_cooldown)?;
         c.validate()?;
         Ok(c)
     }
@@ -89,6 +94,8 @@ impl Config {
         if let Some(v) = get("GITRUN_LOG_DIR") { c.log_dir = v; }
         if let Some(v) = get("GITRUN_AUTO_CONTAINER_UPDATE") { c.auto_container_update = parse_bool("GITRUN_AUTO_CONTAINER_UPDATE", &v)?; }
         if let Some(v) = get("GITRUN_CONTAINER_UPDATE_TIME") { c.container_update_time = v; }
+        if let Some(v) = get("GITRUN_AUTO_CONTAINER_RECOVERY") { c.auto_container_recovery = parse_bool("GITRUN_AUTO_CONTAINER_RECOVERY", &v)?; }
+        c.container_recovery_cooldown = value_u64(&get("GITRUN_CONTAINER_RECOVERY_COOLDOWN"), "GITRUN_CONTAINER_RECOVERY_COOLDOWN", c.container_recovery_cooldown)?;
         c.validate()?;
         Ok(c)
     }
@@ -98,6 +105,7 @@ impl Config {
             return Err(ConfigError::Invalid(format!("runner bounds are invalid: {}..{}", self.min_runners, self.max_runners)));
         }
         if self.poll_interval == 0 { return Err(ConfigError::Invalid("poll interval must be greater than zero".into())); }
+        if self.container_recovery_cooldown == 0 { return Err(ConfigError::Invalid("container recovery cooldown must be greater than zero".into())); }
         if self.runner_image.trim().is_empty() { return Err(ConfigError::Invalid("runner image must not be empty".into())); }
         if self.runner_labels.trim().is_empty() { return Err(ConfigError::Invalid("runner labels must not be empty".into())); }
         validate_time(&self.container_update_time)?;
@@ -175,12 +183,14 @@ mod tests {
     #[test]
     fn env_file_does_not_mutate_process_environment() {
         let path = std::env::temp_dir().join(format!("gitrun-config-{}.env", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
-        fs::write(&path, "GITRUN_MIN_RUNNERS=2\nGITRUN_MAX_RUNNERS=4\nGITRUN_EPHEMERAL=true\n").unwrap();
+        fs::write(&path, "GITRUN_MIN_RUNNERS=2\nGITRUN_MAX_RUNNERS=4\nGITRUN_EPHEMERAL=true\nGITRUN_AUTO_CONTAINER_RECOVERY=false\nGITRUN_CONTAINER_RECOVERY_COOLDOWN=90\n").unwrap();
         let config = Config::from_env_file(&path).unwrap();
         fs::remove_file(path).unwrap();
         assert_eq!(config.min_runners, 2);
         assert_eq!(config.max_runners, 4);
         assert!(config.ephemeral);
+        assert!(!config.auto_container_recovery);
+        assert_eq!(config.container_recovery_cooldown, 90);
     }
     #[test]
     fn invalid_boolean_is_rejected() { assert!(parse_bool("TEST", "maybe").is_err()); }

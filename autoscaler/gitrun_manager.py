@@ -64,6 +64,38 @@ def queued_jobs(repo:str)->int:
     return count
 def docker(*args:str,check=True):
     return subprocess.run(["docker",*args],text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=check)
+SHARED_CACHE_VOLUME_DEFAULT = "gitrun-runner-shared"
+
+def shared_cache_volume() -> str:
+    return os.getenv("GITRUN_SHARED_CACHE_VOLUME", SHARED_CACHE_VOLUME_DEFAULT).strip() or SHARED_CACHE_VOLUME_DEFAULT
+
+def shared_cache_slug(repo: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]", "_", repo)
+
+def ensure_shared_cache_volume() -> str:
+    name = shared_cache_volume()
+    inspected = docker("volume", "inspect", name, check=False)
+    if inspected.returncode == 0:
+        return name
+    created = docker("volume", "create", "--label", "gitrun.shared=true", name, check=False)
+    if created.returncode:
+        raise RuntimeError(created.stderr.strip() or f"unable to create shared runner volume {name}")
+    log.info("Created shared runner cache volume %s", name)
+    return name
+
+def shared_runner_args(repo: str) -> list[str]:
+    volume = ensure_shared_cache_volume()
+    slug = shared_cache_slug(repo)
+    return [
+        "--mount", f"type=volume,source={volume},target=/var/lib/gitrun/shared",
+        "-e", "GITRUN_SHARED_CACHE_DIR=/var/lib/gitrun/shared",
+        "-e", "CARGO_HOME=/var/lib/gitrun/shared/cargo",
+        "-e", f"CARGO_TARGET_DIR=/var/lib/gitrun/shared/cargo-target/{slug}",
+        "-e", "PIP_CACHE_DIR=/var/lib/gitrun/shared/pip",
+        "-e", "NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm",
+        "-e", "DOCKER_CONFIG=/tmp/docker-config",
+    ]
+
 def managed_containers(repo:str)->list[str]:
     r=docker("ps","-a","--filter","label=gitrun.runner=true","--filter",f"label=gitrun.repo={repo}","--format","{{.Names}}")
     return [x for x in r.stdout.splitlines() if x.strip()]
@@ -75,10 +107,15 @@ def create_runner(repo:str, permanent: bool=False)->None:
     registration=registration_token(repo); safe=re.sub(r"[^a-zA-Z0-9_.-]","-",repo); name=f"gitrun-{safe}-{uuid4().hex[:8]}"
     image=os.getenv("GITRUN_RUNNER_IMAGE","gitrun-runner:latest")
     labels=os.getenv("GITRUN_RUNNER_LABELS","self-hosted,Linux,X64")
+    shared_args=shared_runner_args(repo)
+    docker_socket_gid=str(os.stat("/var/run/docker.sock").st_gid)
     cmd=["run","-d","--name",name,"--label","gitrun.runner=true","--label",f"gitrun.repo={repo}","--label","gitrun.managed=true",
          "--label",f"gitrun.permanent={str(permanent).lower()}","--label",f"gitrun.dynamic={str(not permanent).lower()}",
          "--cpus",os.getenv("GITRUN_CONTAINER_CPUS","1"),"--memory",os.getenv("GITRUN_CONTAINER_MEMORY","1g"),"--pids-limit",os.getenv("GITRUN_CONTAINER_PIDS","1024"),
          "--restart","unless-stopped","--read-only","--tmpfs","/tmp:rw,nosuid,nodev,size=256m",
+         "--volume","/var/run/docker.sock:/var/run/docker.sock",
+         "--group-add",docker_socket_gid,
+         *shared_args,
          "-e",f"RUNNER_URL=https://github.com/{repo}","-e",f"RUNNER_TOKEN={registration}","-e",f"RUNNER_NAME={name}",
          "-e",f"RUNNER_LABELS={labels}","-e",f"RUNNER_EPHEMERAL={os.getenv('GITRUN_EPHEMERAL','false')}","-e",f"RUNNER_DISABLE_UPDATE={os.getenv('GITRUN_DISABLE_UPDATE','false')}",image]
     result=docker(*cmd,check=False)
@@ -87,6 +124,14 @@ def create_runner(repo:str, permanent: bool=False)->None:
 def container_is_permanent(name: str) -> bool:
     result = docker("inspect", "-f", '{{index .Config.Labels "gitrun.dynamic"}}', name, check=False)
     return result.returncode == 0 and result.stdout.strip().lower() != "true"
+
+def restart_container(name: str) -> bool:
+    result = docker("restart", name, check=False)
+    if result.returncode:
+        log.warning("Could not restart runner container %s: %s", name, result.stderr.strip())
+        return False
+    log.warning("Restarted runner container %s for automatic recovery", name)
+    return True
 
 def state_path()->Path:return Path(os.getenv("GITRUN_STATE_DIR","/var/lib/gitrun"))/"state.json"
 def load_state()->dict:
@@ -120,13 +165,50 @@ def reconcile(cfg:RepoConfig)->None:
     while current < desired:
         create_runner(repo, permanent=False)
         current += 1
-    state=load_state();idle=state.setdefault("idle_since",{});by_name={r.get("name"):r for r in runners};now=datetime.now(timezone.utc)
+    state=load_state();idle=state.setdefault("idle_since",{});recovery=state.setdefault("container_recovery",{});by_name={r.get("name"):r for r in runners};now=datetime.now(timezone.utc)
+    recovery_cooldown=max(15,env_int("GITRUN_CONTAINER_RECOVERY_COOLDOWN",60))
+    current=len(containers)
+    if env_bool("GITRUN_AUTO_CONTAINER_RECOVERY",True) and queued > 0:
+        for name in list(containers):
+            container_state=container_status(name)
+            runner=by_name.get(name)
+            if container_state.get("Status") != "running":
+                continue
+            if runner and runner.get("busy"):
+                continue
+            if runner and runner.get("status") != "online":
+                stamp=recovery.get(name)
+                try:age=(now-datetime.fromisoformat(stamp)).total_seconds() if stamp else recovery_cooldown
+                except ValueError:age=recovery_cooldown
+                if age >= recovery_cooldown and restart_container(name):
+                    recovery[name]=now.isoformat()
+            elif runner is None:
+                permanent=container_is_permanent(name)
+                log.warning("Runner %s is missing from GitHub; recreating managed container", name)
+                remove_runner(repo,name)
+                containers.remove(name)
+                current -= 1
+                create_runner(repo,permanent=permanent)
+                current += 1
+                recovery.pop(name,None)
+    current=len(containers)
+    permanent_count=sum(1 for name in containers if container_is_permanent(name))
+    while current < desired and permanent_count < cfg.minimum:
+        create_runner(repo, permanent=True)
+        current += 1
+        permanent_count += 1
+    while current < desired:
+        create_runner(repo, permanent=False)
+        current += 1
+    by_name={r.get("name"):r for r in runners}
     for name in containers:
         runner=by_name.get(name)
         if runner and runner.get("busy"):idle.pop(name,None)
         elif runner and runner.get("status")=="online":idle.setdefault(name,now.isoformat())
     for name in list(idle):
         if name not in containers:idle.pop(name,None)
+    for name in list(recovery):
+        if name not in containers:recovery.pop(name,None)
     if os.getenv("GITRUN_EPHEMERAL","false").lower()!="true" and current>cfg.minimum:
         removable=current-cfg.minimum;timeout=env_int("GITRUN_IDLE_TIMEOUT",120);candidates=[]
         for name,stamp in idle.items():

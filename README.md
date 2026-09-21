@@ -10,8 +10,11 @@ It is designed for administrators running their own repositories on a small priv
 - Automatic scaling with configurable warm and maximum pools
 - Multiple repositories from one installation
 - CPU, memory and PID limits
+- CI-ready runner images with Docker CLI and PowerShell
 - Persistent or ephemeral runner modes
 - Automatic restart after host reboot
+- Automatic container recovery when queued jobs have no online managed runner
+- Shared persistent Docker cache/storage across managed runners
 - Linux, macOS and Windows setup scripts
 - CLI for status, health and service management
 - Rust setup preflight for configuration, directories and host dependencies
@@ -42,7 +45,7 @@ The current release uses:
 - Git
 - Python 3 for the local installer helpers
 
-The manager and runner dependencies are contained in their Docker images. GitRun does not require Node.js, Python packages or Rust on the host beyond what the installer itself needs.
+The manager and runner dependencies are contained in their Docker images. Runner images include the Docker CLI and PowerShell; managed runners receive the host Docker socket for Docker-backed CI jobs. GitRun does not require Node.js, Python packages or Rust on the host beyond what the installer itself needs.
 
 ## Installation
 
@@ -89,6 +92,9 @@ GITRUN_MIN_RUNNERS=3
 GITRUN_MAX_RUNNERS=8
 GITRUN_IDLE_TIMEOUT=120
 GITRUN_POLL_INTERVAL=5
+GITRUN_AUTO_CONTAINER_RECOVERY=true
+GITRUN_CONTAINER_RECOVERY_COOLDOWN=60
+GITRUN_SHARED_CACHE_VOLUME=gitrun-runner-shared
 ```
 
 The GitHub token must have enough repository permissions to manage self-hosted runners and read Actions workflow/job state for every configured repository.
@@ -107,6 +113,10 @@ desired = min(desired, maximum)
 ```
 
 Extra persistent runners are removed only after the configured idle grace period.
+
+When a self-hosted job is queued and a managed runner container is still running but its GitHub runner is offline, GitRun can restart that container automatically. If the container exists but its runner registration is missing, GitRun recreates the container. Recovery skips runners reported as busy and uses a cooldown to prevent restart loops. Disable it with `GITRUN_AUTO_CONTAINER_RECOVERY=false`.
+
+All GitRun-managed runners use the same versioned runner image and the same persistent Docker volume for shared caches. Cargo registry/git state, Rust build targets (per repository), pip cache and npm cache survive runner replacement, so a newly created runner starts from the same toolchain and cached environment. Runner workspaces remain isolated per container. The shared volume is Docker-managed and is not removed when a runner is recreated.
 
 Ephemeral mode is available when runners should be replaced after each job:
 

@@ -76,7 +76,10 @@ manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
 for required in [
     "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
     "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
-    "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME", "gtuu_schedule_loop",
+    "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME",
+    "GITRUN_AUTO_CONTAINER_RECOVERY", "GITRUN_CONTAINER_RECOVERY_COOLDOWN", "restart_container", "container_recovery",
+    "GITRUN_SHARED_CACHE_VOLUME", "shared_cache_volume", "ensure_shared_cache_volume", "CARGO_HOME", "CARGO_TARGET_DIR",
+    "gtuu_schedule_loop",
 ]:
     if required not in manager:
         errors.append(f"autoscaler feature missing: {required}")
@@ -90,6 +93,9 @@ for key, expected in [
     ("GITRUN_CONTAINER_MEMORY", "1g"),
     ("GITRUN_AUTO_CONTAINER_UPDATE", "false"),
     ("GITRUN_CONTAINER_UPDATE_TIME", "03:00"),
+    ("GITRUN_AUTO_CONTAINER_RECOVERY", "true"),
+    ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", "60"),
+    ("GITRUN_SHARED_CACHE_VOLUME", "gitrun-runner-shared"),
 ]:
     if f"{key}={expected}" not in config:
         errors.append(f"config default mismatch: {key}={expected}")
@@ -98,7 +104,7 @@ release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="
 for required in [
     "runs-on: [self-hosted, Linux, X64, gitrun-temporary]",
     "gh release create",
-    "cargo build --release -p gitrun-cli --bin gitrun",
+    "cargo build --locked --release -p gitrun-cli --bin gitrun",
     "test -x target/release/gitrun",
     "./scripts/build-deb.sh",
     "dpkg-deb --info",
@@ -123,6 +129,11 @@ if "DOCKER_CONFIG: /tmp/gitrun-docker-config" not in release_workflow:
 cli_manifest = (ROOT / "crates/gitrun-cli/Cargo.toml").read_text(encoding="utf-8")
 if 'name = "gitrun"' not in cli_manifest:
     errors.append("Rust CLI binary target gitrun missing")
+
+runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")
+for required in ["docker-ce-cli", "docker-compose-plugin", "powershell", "gh", "packages.microsoft.com/config/debian/12", "https://sh.rustup.rs"]:
+    if required not in runner_image:
+        errors.append(f"runner image CI dependency missing: {required}")
 
 compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR", "GITRUN_LOG_DIR"]:

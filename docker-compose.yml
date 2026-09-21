@@ -18,3 +18,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+volumes:
+  gitrun-runner-shared:
+    name: ${GITRUN_SHARED_CACHE_VOLUME:-gitrun-runner-shared}

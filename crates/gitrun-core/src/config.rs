@@ -28,6 +28,8 @@ pub struct Config {
     pub ephemeral: bool,
     pub state_dir: String,
     pub log_dir: String,
+    pub auto_container_update: bool,
+    pub container_update_time: String,
 }
 
 impl Default for Config {
@@ -38,6 +40,7 @@ impl Default for Config {
             runner_image: "gitrun-runner:latest".into(),
             runner_labels: "self-hosted,Linux,X64".into(), ephemeral: false,
             state_dir: "/var/lib/gitrun".into(), log_dir: "/var/log/gitrun".into(),
+            auto_container_update: false, container_update_time: "03:00".into(),
         }
     }
 }
@@ -55,6 +58,8 @@ impl Config {
         c.ephemeral = env_bool("GITRUN_EPHEMERAL", c.ephemeral)?;
         c.state_dir = env::var("GITRUN_STATE_DIR").unwrap_or(c.state_dir);
         c.log_dir = env::var("GITRUN_LOG_DIR").unwrap_or(c.log_dir);
+        c.auto_container_update = env_bool("GITRUN_AUTO_CONTAINER_UPDATE", c.auto_container_update)?;
+        c.container_update_time = env::var("GITRUN_CONTAINER_UPDATE_TIME").unwrap_or(c.container_update_time);
         c.validate()?;
         Ok(c)
     }
@@ -82,6 +87,8 @@ impl Config {
         if let Some(v) = get("GITRUN_EPHEMERAL") { c.ephemeral = parse_bool("GITRUN_EPHEMERAL", &v)?; }
         if let Some(v) = get("GITRUN_STATE_DIR") { c.state_dir = v; }
         if let Some(v) = get("GITRUN_LOG_DIR") { c.log_dir = v; }
+        if let Some(v) = get("GITRUN_AUTO_CONTAINER_UPDATE") { c.auto_container_update = parse_bool("GITRUN_AUTO_CONTAINER_UPDATE", &v)?; }
+        if let Some(v) = get("GITRUN_CONTAINER_UPDATE_TIME") { c.container_update_time = v; }
         c.validate()?;
         Ok(c)
     }
@@ -93,11 +100,29 @@ impl Config {
         if self.poll_interval == 0 { return Err(ConfigError::Invalid("poll interval must be greater than zero".into())); }
         if self.runner_image.trim().is_empty() { return Err(ConfigError::Invalid("runner image must not be empty".into())); }
         if self.runner_labels.trim().is_empty() { return Err(ConfigError::Invalid("runner labels must not be empty".into())); }
+        validate_time(&self.container_update_time)?;
         for repo in &self.repositories {
             if !is_repository(repo) { return Err(ConfigError::Repository(repo.clone())); }
         }
         Ok(())
     }
+}
+
+fn validate_time(value: &str) -> Result<(), ConfigError> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 5
+        || bytes[2] != b':'
+        || !bytes[..2].iter().all(|byte| byte.is_ascii_digit())
+        || !bytes[3..].iter().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(ConfigError::Invalid(format!("invalid container update time: {value}")));
+    }
+    let hour = value[..2].parse::<u8>().unwrap_or(99);
+    let minute = value[3..].parse::<u8>().unwrap_or(99);
+    if hour > 23 || minute > 59 {
+        return Err(ConfigError::Invalid(format!("invalid container update time: {value}")));
+    }
+    Ok(())
 }
 
 fn parse_repositories(raw: &str) -> Result<Vec<String>, ConfigError> {
@@ -159,4 +184,12 @@ mod tests {
     }
     #[test]
     fn invalid_boolean_is_rejected() { assert!(parse_bool("TEST", "maybe").is_err()); }
+
+    #[test]
+    fn container_update_time_is_validated() {
+        assert!(validate_time("03:00").is_ok());
+        assert!(validate_time("23:59").is_ok());
+        assert!(validate_time("24:00").is_err());
+        assert!(validate_time("3:00").is_err());
+    }
 }

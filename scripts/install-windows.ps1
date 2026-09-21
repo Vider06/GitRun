@@ -25,7 +25,7 @@ for ($i = 0; $i -lt 60; $i++) {
   try { docker info | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 2 }
 }
 if (-not $ready) {
-  $exe = Join-Path $env:ProgramFiles "Docker\\Docker\\Docker Desktop.exe"
+  $exe = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
   if (Test-Path $exe) {
     Start-Process $exe
   }
@@ -44,7 +44,7 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
 
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 if (-not (Test-Path $EnvFile)) {
-  Copy-Item (Join-Path $InstallDir "config\\config.example.env") $EnvFile
+  Copy-Item (Join-Path $InstallDir "config\config.example.env") $EnvFile
 }
 
 $token = Read-Host "GitHub token"

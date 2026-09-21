@@ -170,6 +170,16 @@ Static validation does not contact GitHub and does not prove that live runners a
 
 ## Current architecture
 
-The current release is a Python/Docker control plane. A Rust core, native desktop GUI, cross-platform packaging and an integrated update/recovery system are planned as the next major development phase.
+GitRun is transitioning from its original Python/Docker control plane toward a Rust workspace. The Phase 1–6 branch adds:
 
-The project is intentionally kept small and host-oriented rather than built as a Kubernetes platform.
+- Rust core for typed configuration, runner state, health and crash state.
+- Rust CLI foundation for configuration and runner-pool operations.
+- Updater and recovery primitives with explicit staging semantics.
+- Cross-platform release build entry points.
+- A native egui dashboard shell.
+- Workspace-wide Rust formatting, clippy and test gates in CI.
+
+The existing Python/Docker manager remains the deployment-compatible path during migration. The Rust components are intentionally additive; the manager API and runner lifecycle are migrated only after each replacement is independently verified.
+
+See [docs/ROADMAP_PHASES.md](docs/ROADMAP_PHASES.md) and [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).
+

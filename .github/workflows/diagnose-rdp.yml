@@ -14,6 +14,8 @@ jobs:
     name: Diagnose RDP host
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 5
+    env:
+      SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
     steps:
       - name: Host identity and network
         shell: bash
@@ -37,40 +39,34 @@ jobs:
         run: |
           set -u
           echo "=== TCP 3389 listeners ==="
-          ss -lntp 2>&1 | grep ':3389 ' || true
+          sudo -S -p '' ss -lntp <<< "$SUDO_PASSWORD" 2>&1 | grep ':3389 ' || true
           echo
           echo "=== local TCP 3389 ==="
           if command -v nc >/dev/null 2>&1; then
             nc -vz 127.0.0.1 3389 2>&1 || true
           else
-            timeout 3 bash -c '</dev/tcp/127.0.0.1/3389'               && echo "127.0.0.1:3389 reachable"               || echo "127.0.0.1:3389 not reachable"
+            timeout 3 bash -c '</dev/tcp/127.0.0.1/3389' &&               echo "127.0.0.1:3389 reachable" ||               echo "127.0.0.1:3389 not reachable"
           fi
 
-      - name: GNOME Remote Desktop
+      - name: GNOME Remote Desktop system status
         shell: bash
         run: |
           set -u
           echo "=== service ==="
-          systemctl is-active gnome-remote-desktop.service 2>&1 || true
-          systemctl is-enabled gnome-remote-desktop.service 2>&1 || true
+          sudo -S -p '' systemctl is-active gnome-remote-desktop.service <<< "$SUDO_PASSWORD" 2>&1 || true
+          sudo -S -p '' systemctl is-enabled gnome-remote-desktop.service <<< "$SUDO_PASSWORD" 2>&1 || true
           echo
-          echo "=== grdctl ==="
-          if command -v grdctl >/dev/null 2>&1; then
-            grdctl status 2>&1 || true
-            echo
-            sudo -n grdctl --system status 2>&1 || true
-          else
-            echo "grdctl not found"
-          fi
+          echo "=== system grdctl ==="
+          sudo -S -p '' grdctl --system status <<< "$SUDO_PASSWORD" 2>&1 || true
 
       - name: RDP logs
         shell: bash
         run: |
           set -u
           echo "=== gnome-remote-desktop journal ==="
-          journalctl -u gnome-remote-desktop.service -b --no-pager -n 120 2>&1 || true
+          sudo -S -p '' journalctl -u gnome-remote-desktop.service -b --no-pager -n 80 <<< "$SUDO_PASSWORD" 2>&1 || true
           echo
           echo "=== recent RDP-related journal lines ==="
-          journalctl -b --no-pager -n 300 2>&1 |
+          sudo -S -p '' journalctl -b --no-pager -n 250 <<< "$SUDO_PASSWORD" 2>&1 |
             grep -Ei 'remote-desktop|gnome-remote-desktop|rdp|tls|credssp|freerdp' |
             tail -n 120 || true

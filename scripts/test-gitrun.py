@@ -54,6 +54,8 @@ for path in [
     "crates/gitrun-recovery/src/lib.rs",
     "crates/gitrun-dashboard/Cargo.toml",
     "crates/gitrun-dashboard/src/main.rs",
+    "crates/gitrun-dashboard/src/lib.rs",
+    "crates/gitrun-setup/src/resources.rs",
 ]:
     require(path)
 
@@ -94,9 +96,9 @@ for key, expected in [
 release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 for required in [
     "runs-on: [self-hosted, Linux, X64, gitrun-temporary]",
-    "RELEASE_TARGET: x86_64-unknown-linux-gnu",
-    "docker/build-push-action@v6",
     "gh release create",
+    "cargo build --release -p gitrun-cli --bin gitrun",
+    "test -x target/release/gitrun",
 ]:
     if required not in release_workflow:
         errors.append(f"release workflow requirement missing: {required}")
@@ -110,12 +112,9 @@ if "x86_64-unknown-linux-gnu" not in release_workflow:
 if "DOCKER_CONFIG: /tmp/gitrun-docker-config" not in release_workflow:
     errors.append("release workflow Docker credential isolation missing")
 
-if "ghcr.io/vider06/gitrun-runner:" not in release_workflow:
-    errors.append("release workflow GHCR image repository must be lowercase")
-
 cli_manifest = (ROOT / "crates/gitrun-cli/Cargo.toml").read_text(encoding="utf-8")
-if 'name = "gitrun-rs"' not in cli_manifest:
-    errors.append("Rust CLI binary target gitrun-rs missing")
+if 'name = "gitrun"' not in cli_manifest:
+    errors.append("Rust CLI binary target gitrun missing")
 
 compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR", "GITRUN_LOG_DIR"]:

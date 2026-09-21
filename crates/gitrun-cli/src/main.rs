@@ -7,10 +7,12 @@ use gitrun_updater::{
 use std::path::{Path, PathBuf};
 
 fn help() {
-    println!("GitRun Rust control plane");
-    println!("Usage: gitrun-rs <version|config|desired|doctor|setup|update|rollback|dashboard|help>");
-    println!("  update [manifest-url]  check, download, verify, stage and apply the newest release");
-    println!("  rollback <backup.json> restore a previously backed-up installation");
+    println!("GitRun");
+    println!("Usage: gitrun [version|config|desired|doctor|setup|update|rollback|dashboard|help]");
+    println!("  dashboard              open GitRun (first run launches the setup wizard)");
+    println!("  setup                  check host dependencies and runtime directories");
+    println!("  update                 check and apply the newest GitRun release");
+    println!("  rollback <backup.json> restore a previously-backed-up installation");
 }
 
 fn parse_u32_arg(args: &[String], index: usize, name: &str) -> Result<u32, String> {
@@ -153,22 +155,20 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
-    let current = std::env::current_exe()?;
-    let sibling = current
-        .parent()
-        .ok_or("gitrun-rs executable has no parent directory")?
-        .join(if cfg!(windows) { "gitrun-dashboard.exe" } else { "gitrun-dashboard" });
+    gitrun_dashboard::run().map_err(|error| error.into())
+}
 
-    if !sibling.is_file() {
-        return Err(format!("dashboard executable not found: {}", sibling.display()).into());
-    }
+fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut lines = raw.lines();
+    let token = lines.next().unwrap_or_default().trim();
+    let repositories = lines.next().unwrap_or_default().trim();
+    let owner_uid = std::env::var("PKEXEC_UID").ok().and_then(|value| value.parse::<u32>().ok());
+    let executable = std::env::current_exe()?;
 
-    let status = std::process::Command::new(sibling).status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("dashboard exited with status {status}").into())
-    }
+    gitrun_setup::bootstrap_linux(token, repositories, &executable, owner_uid)?;
+    println!("GitRun setup: PASS");
+    Ok(())
 }
 
 fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -188,7 +188,7 @@ fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str).unwrap_or("help") {
+    match args.first().map(String::as_str).unwrap_or("dashboard") {
         "version" if args.len() == 1 => {
             let version = std::env::var("GITRUN_VERSION")
                 .ok()
@@ -248,10 +248,16 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "--install-root" if args.len() == 2 => {
+            if let Err(error) = install_root_command(&args[1]) {
+                eprintln!("GitRun install: FAIL — {error}");
+                std::process::exit(1);
+            }
+        }
         "rollback" if args.len() == 2 => {
             if let Err(error) = rollback_command(&args[1]) { eprintln!("GitRun rollback: FAIL — {error}"); std::process::exit(1); }
         }
-        "help" if args.len() == 1 => help(),
+        "help" if args.len() == 1 || (args.len() == 2 && args[0] == "--help") => help(),
         _ => { help(); std::process::exit(2); }
     }
 }

@@ -1,14 +1,15 @@
 [package]
 name = "gitrun-cli"
-version = "0.2.0"
+version = "0.4.0"
 edition = "2021"
 
 [[bin]]
-name = "gitrun-rs"
+name = "gitrun"
 path = "src/main.rs"
 
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
 gitrun-setup = { path = "../gitrun-setup" }
 gitrun-updater = { path = "../gitrun-updater" }
+gitrun-dashboard = { path = "../gitrun-dashboard" }
 serde_json = "1"

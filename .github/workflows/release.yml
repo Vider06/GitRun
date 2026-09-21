@@ -79,6 +79,7 @@ jobs:
           test -f "${RUNNER_TEMP}/gitrun.deb"
           dpkg-deb --info "${RUNNER_TEMP}/gitrun.deb"
           dpkg-deb --contents "${RUNNER_TEMP}/gitrun.deb" | grep -F "/usr/local/bin/gitrun"
+          dpkg-deb --contents "${RUNNER_TEMP}/gitrun.deb" | grep -F "/usr/share/gitrun/version.txt"
           ls -lh "${RUNNER_TEMP}/gitrun.deb"
 
       - name: Publish GitHub release

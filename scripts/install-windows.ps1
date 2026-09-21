@@ -59,6 +59,7 @@ $lines = Get-Content $EnvFile | ForEach-Object {
 }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllLines($EnvFile, [string[]]$lines, $utf8NoBom)
+$token = $null
 
 $state = Join-Path $InstallDir "state"
 $logs = Join-Path $InstallDir "logs"

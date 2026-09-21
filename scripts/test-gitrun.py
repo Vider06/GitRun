@@ -57,6 +57,7 @@ for path in [
     require(path)
 
 check_python("autoscaler/gitrun_manager.py")
+check_python("autoscaler/gitrun_updater_utility.py")
 
 cli = (ROOT / "bin/gitrun").read_text(encoding="utf-8")
 for command in [
@@ -71,7 +72,7 @@ manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
 for required in [
     "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
     "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
-    "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME",
+    "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME", "gtuu_schedule_loop",
 ]:
     if required not in manager:
         errors.append(f"autoscaler feature missing: {required}")

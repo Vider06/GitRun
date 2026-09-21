@@ -6,11 +6,11 @@ services:
     container_name: gitrun-manager
     restart: unless-stopped
     env_file:
-      - /etc/gitrun/gitrun.env
+      - ${GITRUN_CONFIG_FILE:-/etc/gitrun/gitrun.env}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/gitrun:/var/lib/gitrun
-      - /var/log/gitrun:/var/log/gitrun
+      - ${GITRUN_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${GITRUN_STATE_DIR:-/var/lib/gitrun}:/var/lib/gitrun
+      - ${GITRUN_LOG_DIR:-/var/log/gitrun}:/var/log/gitrun
     healthcheck:
       test: ["CMD", "python3", "-c", "import os; raise SystemExit(0 if os.path.exists('/var/run/docker.sock') else 1)"]
       interval: 30s

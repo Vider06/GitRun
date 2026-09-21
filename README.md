@@ -15,6 +15,7 @@ It is designed for administrators running their own repositories on a small priv
 - Linux, macOS and Windows setup scripts
 - CLI for status, health and service management
 - Rust setup preflight for configuration, directories and host dependencies
+- Cross-platform Rust release artifacts for Linux, Windows and macOS
 - No Kubernetes required
 
 ## Default profile
@@ -169,6 +170,8 @@ gitrun-rs setup
 ```
 
 Static validation does not contact GitHub and does not prove that live runners are healthy.
+
+Release builds accept an optional Rust target and version. Tagged releases build Linux x64/ARM64, Windows x64 and macOS x64/ARM64 artifacts with SHA-256 checksums and a machine-readable release manifest.
 
 ## Current architecture
 

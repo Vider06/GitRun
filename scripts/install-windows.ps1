@@ -31,6 +31,8 @@ if(-not(Test-Path $EnvFile)){Copy-Item (Join-Path $InstallDir "config\config.exa
 
 $token=Read-Host "GitHub token"
 $repos=Read-Host "Repositories (comma separated)"
+if([string]::IsNullOrWhiteSpace($token)){throw "GitHub token is required."}
+if([string]::IsNullOrWhiteSpace($repos)){throw "At least one repository is required."}
 $lines=Get-Content $EnvFile|ForEach-Object{
   if($_ -like "GITHUB_TOKEN=*"){"GITHUB_TOKEN=$token"}
   elseif($_ -like "GITRUN_REPOSITORIES=*"){"GITRUN_REPOSITORIES=$repos"}
@@ -47,5 +49,6 @@ $env:GITRUN_STATE_DIR=$state
 $env:GITRUN_LOG_DIR=$logs
 $env:GITRUN_DOCKER_SOCKET="/var/run/docker.sock"
 
+docker compose --env-file $EnvFile -f (Join-Path $InstallDir "docker-compose.yml") config -q
 docker compose --env-file $EnvFile -f (Join-Path $InstallDir "docker-compose.yml") up -d --build
 Write-Host "GitRun installed and started."

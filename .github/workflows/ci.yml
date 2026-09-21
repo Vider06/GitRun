@@ -343,11 +343,76 @@ jobs:
           trap 'rm -f "$credential_file"' EXIT
           printf '%s\n%s\n' "$RDP_USERNAME" "$RDP_PASSWORD" > "$credential_file"
           chmod 600 "$credential_file"
-          sudo -S -p '' bash -c 'grdctl --system rdp set-credentials < "$1"' bash "$credential_file" <<< "$SUDO_PASSWORD"
+          rdp_username=$(sed -n '1p' "$credential_file")
+          rdp_password=$(sed -n '2p' "$credential_file")
+          sudo -S -p '' grdctl --system rdp set-credentials "$rdp_username" "$rdp_password" <<< "$SUDO_PASSWORD"
           sudo -S -p '' systemctl restart gnome-remote-desktop.service <<< "$SUDO_PASSWORD"
           sudo -S -p '' systemctl is-active --quiet gnome-remote-desktop.service <<< "$SUDO_PASSWORD"
+          status=$(sudo -S -p '' grdctl --system status <<< "$SUDO_PASSWORD")
+          printf '%s\n' "$status"
+          if ! printf '%s\n' "$status" | grep -Fq 
+
+  summary:
+    name: Verification summary
+    if: always()
+    needs: [detect, python, rust, shell, security, powershell, docker, repository]
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    steps:
+      - name: Enforce required gates
+        shell: bash
+        env:
+          PYTHON_RESULT: ${{ needs.python.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          SHELL_RESULT: ${{ needs.shell.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          POWERSHELL_RESULT: ${{ needs.powershell.result }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
+        run: |
+          set -euo pipefail
+          for result in "$PYTHON_RESULT" "$RUST_RESULT" "$SHELL_RESULT" "$SECURITY_RESULT" "$POWERSHELL_RESULT" "$DOCKER_RESULT" "$REPOSITORY_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "Verification gate failed: $result"; exit 1 ;;
+            esac
+          done
+          echo "All applicable GitRun verification gates passed."
+Username: vider06'; then
+            echo "RDP username was not persisted."
+            exit 1
+          fi
+          if printf '%s\n' "$status" | grep -Fq 
+
+  summary:
+    name: Verification summary
+    if: always()
+    needs: [detect, python, rust, shell, security, powershell, docker, repository]
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    steps:
+      - name: Enforce required gates
+        shell: bash
+        env:
+          PYTHON_RESULT: ${{ needs.python.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          SHELL_RESULT: ${{ needs.shell.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          POWERSHELL_RESULT: ${{ needs.powershell.result }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
+        run: |
+          set -euo pipefail
+          for result in "$PYTHON_RESULT" "$RUST_RESULT" "$SHELL_RESULT" "$SECURITY_RESULT" "$POWERSHELL_RESULT" "$DOCKER_RESULT" "$REPOSITORY_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "Verification gate failed: $result"; exit 1 ;;
+            esac
+          done
+          echo "All applicable GitRun verification gates passed."
+Password: (empty)'; then
+            echo "RDP password was not persisted."
+            exit 1
+          fi
           echo "GNOME system RDP credentials configured."
-          sudo -S -p '' grdctl --system status <<< "$SUDO_PASSWORD"
 
   summary:
     name: Verification summary

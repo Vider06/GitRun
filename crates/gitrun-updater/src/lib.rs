@@ -334,6 +334,55 @@ pub fn health_check_binary(install_dir: &Path, config_dir: Option<&Path>) -> Res
     Ok(())
 }
 
+pub fn update_incompatible_dependencies(plan: &UpdatePlan) -> Result<Vec<String>, UpdateError> {
+    let mut updated = Vec::new();
+    for dependency in &plan.dependencies {
+        if dependency.action != "update" {
+            continue;
+        }
+        update_dependency(&dependency.name)?;
+        updated.push(dependency.name.clone());
+    }
+    Ok(updated)
+}
+
+fn update_dependency(name: &str) -> Result<(), UpdateError> {
+    let command = match (std::env::consts::OS, name) {
+        ("linux", "Git") => ("apt-get", vec!["install", "-y", "git"]),
+        ("linux", "Docker") => ("apt-get", vec!["install", "-y", "docker.io", "docker-compose-plugin"]),
+        ("linux", "Node.js") => ("apt-get", vec!["install", "-y", "nodejs"]),
+        ("linux", "Python") => ("apt-get", vec!["install", "-y", "python3"]),
+        ("macos", "Git") => ("brew", vec!["upgrade", "git"]),
+        ("macos", "Docker") => ("brew", vec!["upgrade", "--cask", "docker"]),
+        ("macos", "Node.js") => ("brew", vec!["upgrade", "node"]),
+        ("macos", "Python") => ("brew", vec!["upgrade", "python"]),
+        ("windows", "Git") => ("winget", vec!["upgrade", "--id", "Git.Git", "--accept-source-agreements", "--accept-package-agreements"]),
+        ("windows", "Docker") => ("winget", vec!["upgrade", "--id", "Docker.DockerDesktop", "--accept-source-agreements", "--accept-package-agreements"]),
+        ("windows", "Node.js") => ("winget", vec!["upgrade", "--id", "OpenJS.NodeJS", "--accept-source-agreements", "--accept-package-agreements"]),
+        ("windows", "Python") => ("winget", vec!["upgrade", "--id", "Python.Python.3.12", "--accept-source-agreements", "--accept-package-agreements"]),
+        _ => return Err(UpdateError::Command(format!("no package-manager strategy for {name} on {}", std::env::consts::OS))),
+    };
+    if command.0 == "apt-get" {
+        let mut apt = Command::new("apt-get");
+        apt.args(["update"]);
+        if std::env::var_os("EUID").as_deref() != Some(std::ffi::OsStr::new("0")) {
+            apt = Command::new("sudo");
+            apt.args(["apt-get", "update"]);
+        }
+        run_command(&mut apt)?;
+    }
+    let mut update = if command.0 == "apt-get" && std::env::var_os("EUID").as_deref() != Some(std::ffi::OsStr::new("0")) {
+        let mut sudo = Command::new("sudo");
+        sudo.arg("apt-get").args(&command.1);
+        sudo
+    } else {
+        let mut cmd = Command::new(command.0);
+        cmd.args(&command.1);
+        cmd
+    };
+    run_command(&mut update)
+}
+
 pub fn dependency_status(name: &str, minimum_version: &str) -> DependencyStatus {
     let installed = command_version(name);
     let compatible = installed.as_deref()

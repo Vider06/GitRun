@@ -3,6 +3,10 @@ name = "gitrun-cli"
 version = "0.2.0"
 edition = "2021"
 
+[[bin]]
+name = "gitrun-rs"
+path = "src/main.rs"
+
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
 gitrun-setup = { path = "../gitrun-setup" }

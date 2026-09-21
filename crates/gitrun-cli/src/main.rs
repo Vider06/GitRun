@@ -2,7 +2,7 @@ use gitrun_core::{Config, Runner};
 use gitrun_setup::prepare_directories;
 use gitrun_updater::{
     apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest, latest_manifest,
-    refresh_docker_stack, rollback, update_runner_image, BackupRecord, UpdatePaths,
+    refresh_docker_stack, rollback, update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
 };
 use std::path::{Path, PathBuf};
 
@@ -97,7 +97,7 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let work_root = PathBuf::from(
+    let updated_dependencies = update_incompatible_dependencies(&plan)?;\n    if !updated_dependencies.is_empty() {\n        println!("dependencies updated: {}", updated_dependencies.join(", "));\n    }\n\n    let work_root = PathBuf::from(
         std::env::var("GITRUN_UPDATE_DIR")
             .unwrap_or_else(|_| ".gitrun-update".into()),
     );

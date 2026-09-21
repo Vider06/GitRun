@@ -7,10 +7,10 @@ CONFIG_DIR="$INSTALL_DIR/config"; ENV_FILE="$CONFIG_DIR/gitrun.env"
 if ! command -v docker >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update
-    sudo apt-get install -y docker.io docker-compose-v2 git
+    sudo apt-get install -y docker.io docker-compose-v2 git python3
     sudo systemctl enable --now docker
   elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y docker docker-compose-plugin git
+    sudo dnf install -y docker docker-compose-plugin git python3
     sudo systemctl enable --now docker
   else
     echo "Install Docker + Compose for this Linux distribution, then rerun."

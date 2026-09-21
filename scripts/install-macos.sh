@@ -9,7 +9,11 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 if ! docker info >/dev/null 2>&1; then open -a Docker; for _ in {1..60}; do docker info >/dev/null 2>&1 && break; sleep 2; done; fi
 docker info >/dev/null 2>&1 || { echo "Docker Desktop did not become ready."; exit 1; }
-command -v git >/dev/null 2>&1 || { echo "Git is required."; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "Git is required." >&2; exit 1; }
+if ! command -v python3 >/dev/null 2>&1; then
+  command -v brew >/dev/null 2>&1 || { echo "Python 3 is required." >&2; exit 1; }
+  brew install python
+fi
 [[ -d "$INSTALL_DIR/.git" ]] && git -C "$INSTALL_DIR" pull --ff-only || git clone "$REPO_URL" "$INSTALL_DIR"
 mkdir -p "$CONFIG_DIR"
 [[ -f "$ENV_FILE" ]] || { cp "$INSTALL_DIR/config/config.example.env" "$ENV_FILE"; chmod 600 "$ENV_FILE"; }

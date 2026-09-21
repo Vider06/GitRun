@@ -248,7 +248,7 @@ def remove_runner(repo: str, name: str) -> None:
     finally:
         result = docker("rm", "-f", name, check=False)
         if result.returncode == 0:
-        log.info("Removed runner %s", name)
+            log.info("Removed runner %s", name)
         else:
             log.warning("Could not remove runner %s: %s", name, result.stderr.strip())
 

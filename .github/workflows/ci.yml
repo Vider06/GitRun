@@ -17,7 +17,7 @@ concurrency:
 jobs:
   detect:
     name: Detect project components
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -42,7 +42,7 @@ jobs:
     name: Python validation
     needs: detect
     if: needs.detect.outputs.python == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -60,7 +60,7 @@ jobs:
     name: Rust check and tests
     needs: detect
     if: needs.detect.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -89,7 +89,7 @@ jobs:
 
   shell:
     name: Shell validation
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -117,7 +117,7 @@ jobs:
 
   security:
     name: Security audit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -139,7 +139,7 @@ jobs:
     name: PowerShell validation
     needs: detect
     if: needs.detect.outputs.powershell == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -164,7 +164,7 @@ jobs:
     name: Docker and Compose validation
     needs: detect
     if: needs.detect.outputs.docker == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -188,7 +188,7 @@ jobs:
 
   repository:
     name: Repository hygiene
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -224,7 +224,7 @@ jobs:
     name: Verification summary
     if: always()
     needs: [detect, python, rust, shell, security, powershell, docker, repository]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     steps:
       - name: Enforce required gates
         shell: bash

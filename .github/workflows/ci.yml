@@ -41,9 +41,9 @@ jobs:
 
   python:
     # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
-name: Python validation
+    name: Python validation
     needs: detect
-if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (eeds.detect.outputs.python == 'true')
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (needs.detect.outputs.python == 'true')
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
@@ -58,9 +58,9 @@ if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.
 
   rust:
     # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
-name: Rust check and tests
+    name: Rust check and tests
     needs: detect
-if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (eeds.detect.outputs.rust == 'true')
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (needs.detect.outputs.rust == 'true')
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 25
     steps:
@@ -175,9 +175,9 @@ if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.
 
   powershell:
     # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
-name: PowerShell validation
+    name: PowerShell validation
     needs: detect
-if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (eeds.detect.outputs.powershell == 'true')
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (needs.detect.outputs.powershell == 'true')
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
@@ -201,9 +201,9 @@ if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.
 
   docker:
     # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
-name: Docker and Compose validation
+    name: Docker and Compose validation
     needs: detect
-if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (eeds.detect.outputs.docker == 'true')
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (needs.detect.outputs.docker == 'true')
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     env:

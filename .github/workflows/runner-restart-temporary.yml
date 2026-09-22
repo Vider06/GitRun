@@ -58,26 +58,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t targets < <(
+          found=0
+          while read -r id name; do
+            found=1
+            echo "Restarting $name ($id)..."
+            docker restart "$id"
+          done < <(
             docker ps \
-              --format '{{.ID}} {{.Names}}' \
-              | awk '$2 ~ /^gitrun-/ {print}'
+              --filter "name=^/gitrun-" \
+              --format '{{.ID}} {{.Names}}'
           )
 
-          if (\${#targets[@]} == 0); then
+          if [[ "$found" -eq 0 ]]; then
             echo "No running gitrun-* containers found."
             exit 0
           fi
-
-          echo "GitRun containers to restart:"
-          printf '%s\n' "\${targets[@]}"
-
-          for entry in "\${targets[@]}"; do
-            id="\${entry%% *}"
-            name="\${entry#* }"
-            echo "Restarting \$name (\$id)..."
-            docker restart "\$id"
-          done
 
           echo "Restart completed."
 

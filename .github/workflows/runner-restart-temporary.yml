@@ -9,7 +9,7 @@ permissions:
 jobs:
   restart:
     name: Restart managed GitRun runner containers
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64, gitrun-ci]
     timeout-minutes: 10
     steps:
       - name: Install temporary Docker CLI

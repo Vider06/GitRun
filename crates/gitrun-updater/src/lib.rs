@@ -356,7 +356,7 @@ pub fn refresh_docker_stack(compose_file: impl AsRef<Path>) -> Result<(), Update
 }
 
 pub fn health_check_binary(install_dir: &Path, config_dir: Option<&Path>) -> Result<(), UpdateError> {
-    let binary = if cfg!(windows) { install_dir.join("gitrun-rs.exe") } else { install_dir.join("gitrun-rs") };
+    let binary = if cfg!(windows) { install_dir.join("gitrun.exe") } else { install_dir.join("gitrun") };
     if !binary.is_file() {
         return Err(UpdateError::Command(format!("updated binary not found: {}", binary.display())));
     }

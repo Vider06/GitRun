@@ -110,11 +110,13 @@ def create_runner(repo:str, permanent: bool=False)->None:
     if "gitrun-ci" not in {part.strip() for part in labels.split(",") if part.strip()}:
         labels=f"{labels},gitrun-ci"
     shared_args=shared_runner_args(repo)
+    runner_data_volume=f"{name}-data"
     docker_socket_gid=str(os.stat("/var/run/docker.sock").st_gid)
     cmd=["run","-d","--name",name,"--label","gitrun.runner=true","--label",f"gitrun.repo={repo}","--label","gitrun.managed=true",
          "--label",f"gitrun.permanent={str(permanent).lower()}","--label",f"gitrun.dynamic={str(not permanent).lower()}",
          "--cpus",os.getenv("GITRUN_CONTAINER_CPUS","1"),"--memory",os.getenv("GITRUN_CONTAINER_MEMORY","1g"),"--pids-limit",os.getenv("GITRUN_CONTAINER_PIDS","1024"),
          "--restart","unless-stopped","--read-only","--tmpfs","/tmp:rw,nosuid,nodev,size=256m",
+         "--mount",f"type=volume,source={runner_data_volume},target=/home/runner/actions-runner",
          "--volume","/var/run/docker.sock:/var/run/docker.sock",
          "--group-add",docker_socket_gid,
          *shared_args,
@@ -152,6 +154,8 @@ def remove_runner(repo:str,name:str)->None:
     finally:
         r=docker("rm","-f",name,check=False)
         if r.returncode:log.warning("Could not remove runner %s: %s",name,r.stderr.strip())
+        volume=docker("volume","rm",f"{name}-data",check=False)
+        if volume.returncode:log.debug("Runner data volume %s was not removed: %s",f"{name}-data",volume.stderr.strip())
 def reconcile(cfg:RepoConfig)->None:
     repo=cfg.full_name;containers=managed_containers(repo);runners=list_runners(repo)
     online=[r for r in runners if r.get("status")=="online"];busy=[r for r in online if r.get("busy")];queued=queued_jobs(repo)

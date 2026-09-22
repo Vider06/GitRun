@@ -4,7 +4,10 @@ cd /home/runner/actions-runner
 : "${RUNNER_URL:?RUNNER_URL is required}"
 : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
 : "${RUNNER_NAME:?RUNNER_NAME is required}"
-RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,Linux,X64,gitrun}"
+RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,Linux,X64,gitrun,gitrun-ci}"
+if [[ ",${RUNNER_LABELS}," != *,gitrun-ci,* ]]; then
+  RUNNER_LABELS="${RUNNER_LABELS},gitrun-ci"
+fi
 RUNNER_EPHEMERAL="${RUNNER_EPHEMERAL:-false}"
 RUNNER_DISABLE_UPDATE="${RUNNER_DISABLE_UPDATE:-false}"
 SHARED_CACHE_DIR="${GITRUN_SHARED_CACHE_DIR:-/var/lib/gitrun/shared}"

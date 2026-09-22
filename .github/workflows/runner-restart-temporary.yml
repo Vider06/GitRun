@@ -51,6 +51,14 @@ jobs:
           echo "DOCKER_HOST=$DOCKER_HOST"
           docker info --format 'Docker server: {{.ServerVersion}}'
 
+      - name: Build current GitRun runner image
+        shell: bash
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
+        run: |
+          set -euo pipefail
+          docker build --network=host -f docker/runner/Dockerfile -t gitrun-runner:latest .
+
       - name: Refresh temporary runner containers
         shell: bash
         env:

@@ -18,6 +18,7 @@ jobs:
   detect:
     name: Detect project components
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    timeout-minutes: 25
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}

@@ -169,7 +169,14 @@ pub fn bootstrap_linux(
     )?;
 
     let installed = PathBuf::from("/usr/local/bin/gitrun");
-    fs::copy(app_binary, &installed)?;
+    let same_executable = fs::canonicalize(app_binary)
+        .ok()
+        .zip(fs::canonicalize(&installed).ok())
+        .map(|(source, target)| source == target)
+        .unwrap_or(false);
+    if !same_executable {
+        fs::copy(app_binary, &installed)?;
+    }
     fs::set_permissions(&installed, fs::Permissions::from_mode(0o755))?;
 
     write_resource(

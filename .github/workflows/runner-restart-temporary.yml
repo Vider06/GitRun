@@ -1,0 +1,47 @@
+name: GitRun Temporary Runner Restart
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restart:
+    name: Restart existing GitRun runner containers
+    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    timeout-minutes: 10
+    steps:
+      - name: Restart GitRun runner containers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Docker:"
+          docker version --format '{{.Server.Version}}'
+
+          current="$(hostname)"
+          echo "Current runner container: ${current}"
+
+          mapfile -t targets < <(
+            docker ps               --filter "name=gitrun-"               --format '{{.ID}} {{.Names}}' |
+            awk -v current="${current}" '$1 != current && $2 ~ /^gitrun-/ {print $1}'
+          )
+
+          if ((${#targets[@]} == 0)); then
+            echo "No other GitRun runner containers found."
+            exit 0
+          fi
+
+          for id in "${targets[@]}"; do
+            echo "Restarting $id..."
+            docker restart "$id"
+          done
+
+          echo "Restart completed."
+
+      - name: Verify runner containers
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker ps             --filter "name=gitrun-"             --format 'table {{.Names}}	{{.Status}}	{{.Image}}'

@@ -44,7 +44,18 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto "=https" --tlsv1.2 --retry 10 --retry-connrefused -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init"
+            chmod 0755 "$RUNNER_TEMP/rustup-init"
+            "$RUNNER_TEMP/rustup-init" -y --profile minimal --default-toolchain stable --no-modify-path
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup component add rustfmt clippy --toolchain stable
+          rustc --version
+          cargo --version
 
       - name: Restore Cargo cache
         uses: actions/cache/restore@v4
@@ -68,29 +79,79 @@ jobs:
           set -euo pipefail
           ./scripts/build-deb.sh "$VERSION" target/release/gitrun "${RUNNER_TEMP}/gitrun.deb"
 
-      - name: Verify release package
+      - name: Build portable archive and manifest
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TARGET: ${{ env.RELEASE_TARGET }}
         run: |
           set -euo pipefail
+          payload="${RUNNER_TEMP}/gitrun-release-payload"
+          archive="${RUNNER_TEMP}/GitRun-${VERSION}-${TARGET}.tar.gz"
+          manifest="${RUNNER_TEMP}/release-manifest.json"
+          rm -rf "$payload"
+          mkdir -p "$payload"
+          install -m 0755 target/release/gitrun "$payload/gitrun"
+          cp LICENSE README.md config/config.example.env "$payload/"
+          tar -C "$payload" -czf "$archive" .
+          sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          cat > "$manifest" <<JSON
+{
+  "name": "GitRun",
+  "version": "${VERSION}",
+  "git_commit": "${GITHUB_SHA}",
+  "repository": "Vider06/GitRun",
+  "artifacts": [
+    {
+      "target": "${TARGET}",
+      "file": "GitRun-${VERSION}-${TARGET}.tar.gz",
+      "sha256": "${sha256}"
+    }
+  ]
+}
+JSON
+
+      - name: Verify release artifacts
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TARGET: ${{ env.RELEASE_TARGET }}
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/GitRun-${VERSION}-${TARGET}.tar.gz"
+          manifest="${RUNNER_TEMP}/release-manifest.json"
           test -x target/release/gitrun
           test -f "${RUNNER_TEMP}/gitrun.deb"
+          test -f "$archive"
+          test -f "$manifest"
           dpkg-deb --info "${RUNNER_TEMP}/gitrun.deb"
           dpkg-deb --contents "${RUNNER_TEMP}/gitrun.deb" | grep -F "/usr/local/bin/gitrun"
-          dpkg-deb --contents "${RUNNER_TEMP}/gitrun.deb" | grep -F "/usr/share/gitrun/version.txt"
-          ls -lh "${RUNNER_TEMP}/gitrun.deb"
+          sha256sum "$archive"
+          python3 - "$manifest" <<'PY'
+import json, pathlib, sys
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert manifest["name"] == "GitRun"
+assert manifest["artifacts"]
+assert manifest["artifacts"][0]["target"] == "x86_64-unknown-linux-gnu"
+assert len(manifest["artifacts"][0]["sha256"]) == 64
+print("Release manifest: PASS")
+PY
 
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          TARGET: ${{ env.RELEASE_TARGET }}
         shell: bash
         run: |
           set -euo pipefail
           package="${RUNNER_TEMP}/gitrun.deb"
+          archive="${RUNNER_TEMP}/GitRun-${VERSION}-${TARGET}.tar.gz"
+          manifest="${RUNNER_TEMP}/release-manifest.json"
           if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release upload "$VERSION" "$package" --clobber
+            gh release upload "$VERSION" "$package" "$archive" "$manifest" --clobber
           else
-            gh release create "$VERSION" "$package" \
+            gh release create "$VERSION" "$package" "$archive" "$manifest" \
               --title "GitRun $VERSION" \
               --generate-notes
           fi

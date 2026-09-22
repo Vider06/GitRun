@@ -1,19 +1,52 @@
 # Contributing
 
+Thanks for contributing to GitRun.
+
+## Before you start
+
+Please read SECURITY.md and docs/SECURITY_MODEL.md for the security boundary around self-hosted runners and Docker, and docs/RUST_MIGRATION.md for the current migration contract.
+
+Do not include tokens, passwords, private keys, runtime .env files, logs containing secrets, crash dumps, or private infrastructure details in commits or issues.
+
 ## Development
 
-GitRun is currently a small Python/Docker control plane. The Rust rewrite is planned after the current release is stabilized.
+GitRun currently contains both Python/Docker and Rust components. The Python/Docker manager remains the deployment-compatible control plane during the Rust migration.
 
-Before opening a pull request:
+Before opening a pull request, the preferred full validation is:
 
-1. Keep changes focused.
-2. Run `python3 scripts/test-gitrun.py`.
-3. Run shell syntax checks for changed shell scripts.
-4. Do not commit tokens, credentials, local configuration, logs, or generated state.
-5. Update documentation when behavior or configuration changes.
+~~~bash
+python3 scripts/test-gitrun.py
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --all-features --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+~~~
+
+For shell changes also run bash -n and shellcheck on the changed scripts.
+
+For Docker changes, build the affected image locally when practical.
 
 ## Pull requests
 
-Explain what changed and why. Include any relevant compatibility or migration notes.
+Keep PRs focused and explain:
 
-The main branch is kept stable; larger changes should be developed in a branch and reviewed before merging.
+1. what changed;
+2. why it changed;
+3. how it was validated;
+4. whether the change affects security, runner privileges, credentials, filesystem mounts, networking, or compatibility.
+
+Update documentation when user-visible behavior or configuration changes.
+
+Do not merge known-broken CI into main.
+
+## Commits
+
+Use clear imperative commit messages and avoid credentials or personal infrastructure details in commit messages.
+
+Prefer small, reviewable commits over unrelated cleanups.
+
+## Public repository hygiene
+
+Before adding a new file, check that it contains no credentials, personal addresses, private hostnames, access tokens, or generated state.
+
+Runtime configuration should use environment variables or secret-management systems rather than hardcoded values.

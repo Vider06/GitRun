@@ -17,7 +17,7 @@ concurrency:
 jobs:
   detect:
     name: Detect project components
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64, gitrun-ci]
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}

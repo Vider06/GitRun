@@ -18,7 +18,6 @@ jobs:
   detect:
     name: Detect project components
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
-    timeout-minutes: 25
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -60,7 +59,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.rust == 'true'
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - name: Setup Rust

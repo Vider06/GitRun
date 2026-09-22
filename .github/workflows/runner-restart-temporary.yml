@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   restart:
-    name: Restart existing GitRun runner containers
+    name: Restart managed GitRun runner containers
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
@@ -19,57 +19,75 @@ jobs:
 
           if command -v docker >/dev/null 2>&1; then
             docker --version
-            exit 0
+          else
+            version="29.1.3"
+            arch="$(uname -m)"
+            case "$arch" in
+              x86_64) docker_arch="x86_64" ;;
+              aarch64) docker_arch="aarch64" ;;
+              *) echo "Unsupported architecture: $arch"; exit 1 ;;
+            esac
+
+            mkdir -p "$RUNNER_TEMP/docker-cli"
+            curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${version}.tgz" \
+              -o "$RUNNER_TEMP/docker.tgz"
+            tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP/docker-cli" --strip-components=1
+            echo "$RUNNER_TEMP/docker-cli" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/docker-cli/docker" --version
           fi
 
-          version="29.1.3"
-          arch="$(uname -m)"
-          case "$arch" in
-            x86_64) docker_arch="x86_64" ;;
-            aarch64) docker_arch="aarch64" ;;
-            *) echo "Unsupported architecture: $arch"; exit 1 ;;
-          esac
-
-          mkdir -p "$RUNNER_TEMP/docker-cli"
-          curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${version}.tgz" \
-            -o "$RUNNER_TEMP/docker.tgz"
-          tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP/docker-cli" --strip-components=1
-          echo "$RUNNER_TEMP/docker-cli" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/docker-cli/docker" --version
-
-      - name: Restart GitRun runner containers
+      - name: Check Docker socket
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Docker:"
-          docker version --format '{{.Server.Version}}'
+          if [[ ! -S /var/run/docker.sock ]]; then
+            echo "ERROR: /var/run/docker.sock is not mounted in this runner."
+            echo "This workflow must run on a GitRun runner with access to the host Docker socket."
+            exit 1
+          fi
 
-          current="$(hostname)"
-          echo "Current runner hostname: ${current}"
+          export DOCKER_HOST=unix:///var/run/docker.sock
+          echo "DOCKER_HOST=$DOCKER_HOST"
+          docker info --format 'Docker server: {{.ServerVersion}}'
+
+      - name: Restart managed GitRun runner containers
+        shell: bash
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
+        run: |
+          set -euo pipefail
 
           mapfile -t targets < <(
-            docker ps --format '{{.ID}} {{.Names}}' |
-            awk -v current="${current}" '$1 !~ "^" current && $2 ~ /^gitrun-/ {print $1}'
+            docker ps \
+              --filter "label=gitrun.runner=true" \
+              --format '{{.ID}} {{.Names}}'
           )
 
           if ((${#targets[@]} == 0)); then
-            echo "No other GitRun containers found."
+            echo "No managed GitRun runner containers found."
             exit 0
           fi
 
-          for id in "${targets[@]}"; do
-            echo "Restarting $id..."
+          echo "Managed GitRun runners:"
+          printf '%s\n' "${targets[@]}"
+
+          for entry in "${targets[@]}"; do
+            id="${entry%% *}"
+            name="${entry#* }"
+            echo "Restarting $name ($id)..."
             docker restart "$id"
           done
 
           echo "Restart completed."
 
-      - name: Verify runner containers
+      - name: Verify managed runner containers
         shell: bash
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
         run: |
           set -euo pipefail
-          sleep 3
+          sleep 5
           docker ps \
-            --filter "name=gitrun-" \
+            --filter "label=gitrun.runner=true" \
             --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'

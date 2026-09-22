@@ -42,7 +42,7 @@ jobs:
     name: Python validation
     needs: detect
     if: needs.detect.outputs.python == 'true'
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -58,7 +58,7 @@ jobs:
     name: Rust check and tests
     needs: detect
     if: needs.detect.outputs.rust == 'true'
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
@@ -91,7 +91,7 @@ jobs:
 
   shell:
     name: Shell validation
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -151,7 +151,7 @@ jobs:
 
   security:
     name: Security audit
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -170,7 +170,7 @@ jobs:
     name: PowerShell validation
     needs: detect
     if: needs.detect.outputs.powershell == 'true'
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -195,7 +195,7 @@ jobs:
     name: Docker and Compose validation
     needs: detect
     if: needs.detect.outputs.docker == 'true'
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     env:
       # Managed runner containers expose the native Docker Engine socket.
@@ -258,7 +258,7 @@ jobs:
 
   repository:
     name: Repository hygiene
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -300,7 +300,7 @@ jobs:
     name: Verification summary
     if: always()
     needs: [detect, python, rust, shell, security, powershell, docker, repository]
-    runs-on: [self-hosted, Linux, X64, gitrun-temporary]
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Enforce required gates
         shell: bash

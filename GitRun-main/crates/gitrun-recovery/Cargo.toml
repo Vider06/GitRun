@@ -1,0 +1,8 @@
+[package]
+name = "gitrun-recovery"
+version = "0.3.0"
+edition = "2021"
+
+[dependencies]
+gitrun-core = { path = "../gitrun-core" }
+gitrun-updater = { path = "../gitrun-updater" }

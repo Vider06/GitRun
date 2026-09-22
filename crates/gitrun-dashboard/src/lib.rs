@@ -864,7 +864,7 @@ fn resolve_config_path() -> Option<PathBuf> {
 }
 
 fn needs_first_run(config_path: Option<&PathBuf>) -> bool {
-    config_path.map_or(true, |path| !path.is_file())
+    config_path.is_none_or(|path| !path.is_file())
 }
 
 fn update_env_file(path: &PathBuf, config: &Config) -> Result<(), String> {

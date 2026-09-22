@@ -30,8 +30,11 @@ RUN apt-get update \
     && pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
+    && rustup component add rustfmt clippy \
     && rustc --version \
-    && cargo --version
+    && cargo --version \
+    && cargo fmt --version \
+    && cargo clippy --version
 
 RUN useradd --create-home --shell /bin/bash runner \
     && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared /opt/rustup /opt/cargo \

@@ -1,4 +1,0 @@
-[workspace]
-resolver = "2"
-members = ["crates/gitrun-core","crates/gitrun-cli","crates/gitrun-setup","crates/gitrun-updater","crates/gitrun-recovery","crates/gitrun-dashboard"]
-default-members = ["crates/gitrun-core","crates/gitrun-cli","crates/gitrun-setup","crates/gitrun-updater","crates/gitrun-recovery","crates/gitrun-dashboard"]

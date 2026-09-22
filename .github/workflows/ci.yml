@@ -65,10 +65,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Verify Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -288,11 +292,12 @@ jobs:
           if python3 -c 'import yaml' >/dev/null 2>&1; then
             exit 0
           fi
-          python3 -m pip install --quiet --user --break-system-packages pyyaml
+          mkdir -p "$RUNNER_TEMP/pyyaml" "$RUNNER_TEMP/pip-cache"
+          PIP_CACHE_DIR="$RUNNER_TEMP/pip-cache" python3 -m pip install --quiet --target "$RUNNER_TEMP/pyyaml" --disable-pip-version-check pyyaml
       - name: YAML parse
         shell: bash
         run: |
-          python3 - <<'PY'
+          PYTHONPATH="$RUNNER_TEMP/pyyaml" python3 - <<'PY'
           import pathlib
           try:
               import yaml

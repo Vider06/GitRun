@@ -41,10 +41,9 @@ jobs:
 
   python:
     # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    name: Python validation
+name: Python validation
     needs: detect
-    if: needs.detect.outputs.python == 'true'
+if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (eeds.detect.outputs.python == 'true')
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
@@ -59,10 +58,9 @@ jobs:
 
   rust:
     # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    name: Rust check and tests
+name: Rust check and tests
     needs: detect
-    if: needs.detect.outputs.rust == 'true'
+if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (eeds.detect.outputs.rust == 'true')
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 25
     steps:
@@ -177,10 +175,9 @@ jobs:
 
   powershell:
     # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    name: PowerShell validation
+name: PowerShell validation
     needs: detect
-    if: needs.detect.outputs.powershell == 'true'
+if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (eeds.detect.outputs.powershell == 'true')
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
@@ -204,10 +201,9 @@ jobs:
 
   docker:
     # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    name: Docker and Compose validation
+name: Docker and Compose validation
     needs: detect
-    if: needs.detect.outputs.docker == 'true'
+if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (eeds.detect.outputs.docker == 'true')
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     env:

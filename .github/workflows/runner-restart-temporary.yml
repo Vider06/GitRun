@@ -12,6 +12,31 @@ jobs:
     runs-on: [self-hosted, Linux, X64, gitrun-temporary]
     timeout-minutes: 10
     steps:
+      - name: Install temporary Docker CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if command -v docker >/dev/null 2>&1; then
+            docker --version
+            exit 0
+          fi
+
+          version="29.1.3"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64) docker_arch="x86_64" ;;
+            aarch64) docker_arch="aarch64" ;;
+            *) echo "Unsupported architecture: $arch"; exit 1 ;;
+          esac
+
+          mkdir -p "$RUNNER_TEMP/docker-cli"
+          curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${version}.tgz" \
+            -o "$RUNNER_TEMP/docker.tgz"
+          tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP/docker-cli" --strip-components=1
+          echo "$RUNNER_TEMP/docker-cli" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/docker-cli/docker" --version
+
       - name: Restart GitRun runner containers
         shell: bash
         run: |
@@ -21,15 +46,15 @@ jobs:
           docker version --format '{{.Server.Version}}'
 
           current="$(hostname)"
-          echo "Current runner container: ${current}"
+          echo "Current runner hostname: ${current}"
 
           mapfile -t targets < <(
-            docker ps               --filter "name=gitrun-"               --format '{{.ID}} {{.Names}}' |
-            awk -v current="${current}" '$1 != current && $2 ~ /^gitrun-/ {print $1}'
+            docker ps --format '{{.ID}} {{.Names}}' |
+            awk -v current="${current}" '$1 !~ "^" current && $2 ~ /^gitrun-/ {print $1}'
           )
 
           if ((${#targets[@]} == 0)); then
-            echo "No other GitRun runner containers found."
+            echo "No other GitRun containers found."
             exit 0
           fi
 
@@ -44,4 +69,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker ps             --filter "name=gitrun-"             --format 'table {{.Names}}	{{.Status}}	{{.Image}}'
+          sleep 3
+          docker ps \
+            --filter "name=gitrun-" \
+            --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'

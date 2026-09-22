@@ -51,7 +51,7 @@ jobs:
           echo "DOCKER_HOST=$DOCKER_HOST"
           docker info --format 'Docker server: {{.ServerVersion}}'
 
-      - name: Restart managed GitRun runner containers
+      - name: Restart GitRun runner containers
         shell: bash
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
@@ -60,23 +60,23 @@ jobs:
 
           mapfile -t targets < <(
             docker ps \
-              --filter "label=gitrun.runner=true" \
-              --format '{{.ID}} {{.Names}}'
+              --format '{{.ID}} {{.Names}}' \
+              | awk '$2 ~ /^gitrun-/ {print}'
           )
 
-          if ((${#targets[@]} == 0)); then
-            echo "No managed GitRun runner containers found."
+          if (\${#targets[@]} == 0); then
+            echo "No running gitrun-* containers found."
             exit 0
           fi
 
-          echo "Managed GitRun runners:"
-          printf '%s\n' "${targets[@]}"
+          echo "GitRun containers to restart:"
+          printf '%s\n' "\${targets[@]}"
 
-          for entry in "${targets[@]}"; do
-            id="${entry%% *}"
-            name="${entry#* }"
-            echo "Restarting $name ($id)..."
-            docker restart "$id"
+          for entry in "\${targets[@]}"; do
+            id="\${entry%% *}"
+            name="\${entry#* }"
+            echo "Restarting \$name (\$id)..."
+            docker restart "\$id"
           done
 
           echo "Restart completed."

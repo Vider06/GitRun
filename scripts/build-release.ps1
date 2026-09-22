@@ -14,11 +14,9 @@ try {
         git describe --tags --always --dirty
     }
 
-    cargo build --release -p gitrun-cli -p gitrun-dashboard --target $Target
+    cargo build --release -p gitrun-cli --target $Target
 
-    $cliBinary = if ($Target -like '*windows*') { 'gitrun-rs.exe' } else { 'gitrun-rs' }
-    $dashboardBinary = if ($Target -like '*windows*') { 'gitrun-dashboard.exe' } else { 'gitrun-dashboard' }
-
+    $binary = if ($Target -like '*windows*') { 'gitrun.exe' } else { 'gitrun' }
     $release = Join-Path $Root 'dist\release'
     $package = Join-Path $release 'package'
     New-Item -ItemType Directory -Force -Path $package | Out-Null
@@ -26,8 +24,7 @@ try {
     Get-ChildItem $release -Filter 'GitRun-*' -File -ErrorAction SilentlyContinue | Remove-Item -Force
     Get-ChildItem $package -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 
-    Copy-Item (Join-Path $Root "target\$Target\release\$cliBinary") $package
-    Copy-Item (Join-Path $Root "target\$Target\release\$dashboardBinary") $package
+    Copy-Item (Join-Path $Root "target\$Target\release\$binary") $package
     Copy-Item (Join-Path $Root 'LICENSE'), (Join-Path $Root 'README.md'), (Join-Path $Root 'config\config.example.env') $package
 
     $archive = Join-Path $release "GitRun-$Version-$Target.zip"
@@ -36,7 +33,7 @@ try {
     "$hash  $(Split-Path $archive -Leaf)" | Set-Content "$archive.sha256"
 
     Write-Host "GitRun release build complete: $Target -> $archive"
-    Write-Host "Included: $cliBinary, $dashboardBinary"
+    Write-Host "Included: $binary"
 } finally {
     Pop-Location
 }

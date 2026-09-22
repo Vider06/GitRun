@@ -863,6 +863,10 @@ fn resolve_config_path() -> Option<PathBuf> {
     .find(|path| path.is_file())
 }
 
+fn needs_first_run(config_path: Option<&PathBuf>) -> bool {
+    config_path.map_or(true, |path| !path.is_file())
+}
+
 fn update_env_file(path: &PathBuf, config: &Config) -> Result<(), String> {
     let original = fs::read_to_string(path)
         .map_err(|error| format!("unable to read {}: {error}", path.display()))?;
@@ -1260,7 +1264,7 @@ pub fn run() -> eframe::Result {
             .with_min_inner_size([980.0, 620.0]),
         ..Default::default()
     };
-    let first_run = resolve_config_path().is_none();
+    let first_run = needs_first_run(resolve_config_path().as_ref());
 
     eframe::run_native(
         "GitRun",
@@ -1296,6 +1300,23 @@ mod tests {
     #[test]
     fn detects_stopped_runner() {
         assert!(!is_running("Exited (1) 20 seconds ago"));
+    }
+
+    #[test]
+    fn missing_config_file_requires_first_run() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-dashboard-first-run-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        assert!(needs_first_run(Some(&path)));
+
+        fs::write(&path, "GITRUN_REPOSITORIES=owner/repo\n").unwrap();
+        assert!(!needs_first_run(Some(&path)));
+
+        fs::remove_file(path).unwrap();
+        assert!(needs_first_run(None));
     }
 
     #[test]

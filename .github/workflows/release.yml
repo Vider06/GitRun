@@ -22,7 +22,7 @@ concurrency:
 jobs:
   release:
     name: Build and publish GitRun
-    runs-on: [self-hosted, Linux, X64, gitrun-ci]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 60
     env:
       RELEASE_TARGET: x86_64-unknown-linux-gnu

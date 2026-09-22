@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: gitrun-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -17,6 +17,7 @@ concurrency:
 jobs:
   detect:
     name: Detect project components
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
@@ -39,6 +40,8 @@ jobs:
           find . -name '*.ps1' -not -path './.git/*' -print -quit | grep -q . && echo "powershell=true" >> "$GITHUB_OUTPUT" || echo "powershell=false" >> "$GITHUB_OUTPUT"
 
   python:
+    # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Python validation
     needs: detect
     if: needs.detect.outputs.python == 'true'
@@ -55,6 +58,8 @@ jobs:
         run: python3 scripts/test-gitrun.py
 
   rust:
+    # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Rust check and tests
     needs: detect
     if: needs.detect.outputs.rust == 'true'
@@ -90,6 +95,8 @@ jobs:
         run: cargo test --workspace --all-features --locked
 
   shell:
+    # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Shell validation
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
@@ -150,6 +157,8 @@ jobs:
           bash bin/gitrun --help >/dev/null
 
   security:
+    # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Security audit
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
@@ -167,6 +176,8 @@ jobs:
           fi
 
   powershell:
+    # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: PowerShell validation
     needs: detect
     if: needs.detect.outputs.powershell == 'true'
@@ -192,6 +203,8 @@ jobs:
             }
 
   docker:
+    # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Docker and Compose validation
     needs: detect
     if: needs.detect.outputs.docker == 'true'
@@ -257,6 +270,8 @@ jobs:
           docker build --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .
 
   repository:
+    # Public-repo safety: never execute fork PR code on a trusted self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Repository hygiene
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10

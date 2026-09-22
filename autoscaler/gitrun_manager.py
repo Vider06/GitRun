@@ -107,6 +107,8 @@ def create_runner(repo:str, permanent: bool=False)->None:
     registration=registration_token(repo); safe=re.sub(r"[^a-zA-Z0-9_.-]","-",repo); name=f"gitrun-{safe}-{uuid4().hex[:8]}"
     image=os.getenv("GITRUN_RUNNER_IMAGE","gitrun-runner:latest")
     labels=os.getenv("GITRUN_RUNNER_LABELS","self-hosted,Linux,X64")
+    if "gitrun-ci" not in {part.strip() for part in labels.split(",") if part.strip()}:
+        labels=f"{labels},gitrun-ci"
     shared_args=shared_runner_args(repo)
     docker_socket_gid=str(os.stat("/var/run/docker.sock").st_gid)
     cmd=["run","-d","--name",name,"--label","gitrun.runner=true","--label",f"gitrun.repo={repo}","--label","gitrun.managed=true",

@@ -24,6 +24,7 @@ for path in [
     "docker-compose.yml",
     "docker/runner/Dockerfile",
     "docker/runner/entrypoint.sh",
+    "docker/runner/entrypoint.sh",
     "docker/manager/Dockerfile",
     "systemd/gitrun.service",
     "autoscaler/gitrun_manager.py",
@@ -108,6 +109,8 @@ for required in [
     "cargo build --locked --release -p gitrun-cli --bin gitrun",
     "test -x target/release/gitrun",
     "./scripts/build-deb.sh",
+    "Build portable archive and manifest",
+    "release-manifest.json",
     "dpkg-deb --info",
     "gh release upload",
     "gitrun.deb",
@@ -115,8 +118,8 @@ for required in [
     if required not in release_workflow:
         errors.append(f"release workflow requirement missing: {required}")
 
-if "gh release upload \"$VERSION\" target/release/gitrun" in release_workflow:
-    errors.append("release workflow still uploads the raw binary directly")
+if "gitrun-rs" in release_workflow:
+    errors.append("release workflow still references obsolete gitrun-rs binary")
 
 if "ubuntu-latest" in release_workflow or "windows-latest" in release_workflow or "macos-" in release_workflow:
     errors.append("release workflow still references GitHub-hosted OS runners")

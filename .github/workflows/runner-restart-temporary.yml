@@ -2,15 +2,12 @@ name: GitRun Temporary Runner Restart
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   restart:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[repair-runners]')
     name: Restart and refresh GitRun runner containers
     runs-on: [main]
     timeout-minutes: 20

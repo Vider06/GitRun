@@ -13,7 +13,6 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 concurrency:
   group: gitrun-release-${{ github.ref }}

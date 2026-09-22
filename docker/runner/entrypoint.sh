@@ -16,6 +16,10 @@ mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 sudo -u runner -E mkdir -p   "$SHARED_CACHE_DIR/cargo"   "$SHARED_CACHE_DIR/cargo-target"   "$SHARED_CACHE_DIR/pip"   "$SHARED_CACHE_DIR/npm"
 
+if [[ -f .runner ]]; then
+  chown runner:runner .runner .credentials .credentials_rsaparams 2>/dev/null || true
+fi
+
 if [[ ! -f .runner ]]; then
   args=(--url "$RUNNER_URL" --token "$RUNNER_TOKEN" --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" --unattended --replace)
   [[ "$RUNNER_EPHEMERAL" == "true" ]] && args+=(--ephemeral)

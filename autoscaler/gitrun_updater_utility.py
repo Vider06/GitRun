@@ -189,6 +189,8 @@ def create_replacement(repo: str, old_name: str, image: str, permanent: bool) ->
     replacement = f"{safe}-gtuu-{os.getpid()}-{int(time.time()) % 100000}"
     token_value = registration_token(repo)
     labels = os.getenv("GITRUN_RUNNER_LABELS", "self-hosted,Linux,X64")
+    if "gitrun-ci" not in {part.strip() for part in labels.split(",") if part.strip()}:
+        labels = f"{labels},gitrun-ci"
     ephemeral = os.getenv("GITRUN_EPHEMERAL", "false")
     disable_update = os.getenv("GITRUN_DISABLE_UPDATE", "false")
     shared_volume = ensure_shared_cache_volume()

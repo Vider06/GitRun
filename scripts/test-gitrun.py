@@ -75,7 +75,7 @@ for command in [
 manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
 for required in [
     "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
-    "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
+    "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted", "gitrun-ci",
     "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME",
     "GITRUN_AUTO_CONTAINER_RECOVERY", "GITRUN_CONTAINER_RECOVERY_COOLDOWN", "restart_container", "container_recovery",
     "GITRUN_SHARED_CACHE_VOLUME", "shared_cache_volume", "ensure_shared_cache_volume", "CARGO_HOME", "CARGO_TARGET_DIR",
@@ -96,13 +96,14 @@ for key, expected in [
     ("GITRUN_AUTO_CONTAINER_RECOVERY", "true"),
     ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", "60"),
     ("GITRUN_SHARED_CACHE_VOLUME", "gitrun-runner-shared"),
+    ("GITRUN_RUNNER_LABELS", "self-hosted,Linux,X64,gitrun-ci"),
 ]:
     if f"{key}={expected}" not in config:
         errors.append(f"config default mismatch: {key}={expected}")
 
 release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 for required in [
-    "runs-on: [self-hosted, Linux, X64, gitrun-temporary]",
+    "runs-on: [self-hosted, Linux, X64, gitrun-ci]",
     "gh release create",
     "cargo build --locked --release -p gitrun-cli --bin gitrun",
     "test -x target/release/gitrun",

@@ -173,5 +173,9 @@ jobs:
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" "$package" "$archive" "$manifest" --clobber
           else
-            gh release create "$VERSION" "$package" "$archive" "$manifest"               --title "GitRun $VERSION"               --generate-notes
+            gh api --method DELETE "/repos/Vider06/GitRun/git/refs/tags/$VERSION" || true
+            gh release create "$VERSION" "$package" "$archive" "$manifest" \
+              --target "$GITHUB_SHA" \
+              --title "GitRun $VERSION" \
+              --notes "Fixed a lil bit of small but very important stuff, cleaned Commits history, Preparing branch for BigRework release."
           fi

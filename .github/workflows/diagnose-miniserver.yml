@@ -1,0 +1,85 @@
+name: Diagnose miniserver
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - name: Inspect GitRun installation
+        shell: bash
+        run: |
+          set +e
+          echo "=== HOST ==="
+          hostname
+          whoami
+          id
+
+          echo
+          echo "=== GITRUN VERSION ==="
+          if command -v gitrun >/dev/null 2>&1; then
+            gitrun version
+            gitrun --version
+            command -v gitrun
+            readlink -f "$(command -v gitrun)"
+            sha256sum "$(readlink -f "$(command -v gitrun)")"
+          else
+            echo "gitrun: NOT FOUND"
+          fi
+
+          echo
+          echo "=== PACKAGE ==="
+          dpkg-query -W gitrun 2>/dev/null || echo "gitrun package: not registered"
+
+          echo
+          echo "=== GITRUN STATUS ==="
+          gitrun status 2>&1 || true
+
+          echo
+          echo "=== GITRUN RUNNERS ==="
+          gitrun runners 2>&1 || true
+
+          echo
+          echo "=== SYSTEMD ==="
+          systemctl list-units --all --type=service --no-legend 2>/dev/null | grep -i gitrun || true
+          systemctl list-unit-files --type=service --no-legend 2>/dev/null | grep -i gitrun || true
+
+          echo
+          echo "=== DOCKER CONTAINERS ==="
+          if command -v docker >/dev/null 2>&1; then
+            docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}' | grep -i gitrun || true
+          else
+            echo "docker: NOT FOUND"
+          fi
+
+          echo
+          echo "=== COMMON GITRUN PATHS ==="
+          for p in /usr/local/bin/gitrun /usr/bin/gitrun /opt/gitrun /etc/gitrun /var/lib/gitrun /var/log/gitrun; do
+            if [ -e "$p" ]; then
+              ls -ld "$p"
+            fi
+          done
+
+      - name: Inspect registered GitHub runners
+        shell: bash
+        env:
+          GH_TOKEN: $GITHUB_TOKEN
+        run: |
+          set -e
+          echo
+          echo "=== REGISTERED RUNNERS ==="
+          curl -fsSL             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners?per_page=100" |
+            python3 -c '
+import json, sys
+data=json.load(sys.stdin)
+for r in data.get("runners", []):
+    labels=",".join(x.get("name","") for x in r.get("labels", []))
+    print(f"id={r.get("id")} name={r.get("name")} status={r.get("status")} busy={r.get("busy")} labels=[{labels}]")
+print(f"total={len(data.get("runners", []))}")
+'

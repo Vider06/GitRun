@@ -96,6 +96,20 @@ jobs:
           cargo --version
           cargo build --locked --release -p gitrun-cli --bin gitrun
 
+      - name: Free build space before packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf \
+            target/debug \
+            target/release/deps \
+            target/release/build \
+            target/release/.fingerprint \
+            "$CARGO_HOME/registry/src" \
+            "$CARGO_HOME/git/checkouts" \
+            "$CARGO_HOME/git/db"
+          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+
       - name: Build Ubuntu package
         shell: bash
         env:

@@ -1,6 +1,9 @@
 name: Diagnose miniserver
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -69,7 +72,7 @@ jobs:
       - name: Inspect registered GitHub runners
         shell: bash
         env:
-          GH_TOKEN: $GITHUB_TOKEN
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           echo
@@ -80,6 +83,8 @@ import json, sys
 data=json.load(sys.stdin)
 for r in data.get("runners", []):
     labels=",".join(x.get("name","") for x in r.get("labels", []))
-    print(f"id={r.get("id")} name={r.get("name")} status={r.get("status")} busy={r.get("busy")} labels=[{labels}]")
-print(f"total={len(data.get("runners", []))}")
+    print("id={} name={} status={} busy={} labels=[{}]".format(
+        r.get("id"), r.get("name"), r.get("status"), r.get("busy"), labels
+    ))
+print("total={}".format(len(data.get("runners", []))))
 '

@@ -128,15 +128,15 @@ jobs:
           dpkg-deb --info "${RUNNER_TEMP}/gitrun.deb"
           dpkg-deb --contents "${RUNNER_TEMP}/gitrun.deb" | grep -F "/usr/local/bin/gitrun"
           sha256sum "$archive"
-          python3 - "$manifest" <<'PY'
-import json, pathlib, sys
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          printf '%s\n' "$manifest" | python3 -c '
+import json, sys
+manifest = json.load(sys.stdin)
 assert manifest["name"] == "GitRun"
 assert manifest["artifacts"]
 assert manifest["artifacts"][0]["target"] == "x86_64-unknown-linux-gnu"
 assert len(manifest["artifacts"][0]["sha256"]) == 64
 print("Release manifest: PASS")
-PY
+'
 
       - name: Publish GitHub release
         env:

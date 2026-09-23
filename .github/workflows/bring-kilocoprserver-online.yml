@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - ".gitrun/kilocoprserver-online.txt"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   bring-online:
@@ -155,3 +157,28 @@ jobs:
           clean = output.replace(b"\x00", b"")
           print(clean.decode("utf-8", errors="replace"))
           PY
+
+      - name: Record runner online
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .gitrun
+          printf 'KiloCoprServer online\ncommit=%s\nrecorded_at=%s\n' \
+            "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .gitrun/kilocoprserver-online.txt
+          content="$(base64 -w0 .gitrun/kilocoprserver-online.txt)"
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/contents/.gitrun/kilocoprserver-online.txt" --jq ".sha" 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/.gitrun/kilocoprserver-online.txt" \
+              -f message="ops: record KiloCoprServer online" \
+              -f content="$content" \
+              -f sha="$existing" \
+              -f branch=main >/dev/null
+          else
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/.gitrun/kilocoprserver-online.txt" \
+              -f message="ops: record KiloCoprServer online" \
+              -f content="$content" \
+              -f branch=main >/dev/null
+          fi
+          echo "Recorded KiloCoprServer online."

@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   recreate:
-    if: github.event.head_commit.message == 'chore: recreate v0.4.8 through release workflow'
+    if: "github.event.head_commit.message == 'chore: recreate v0.4.8 through release workflow'"
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Remove manually-created release and tag

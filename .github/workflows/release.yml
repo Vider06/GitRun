@@ -97,20 +97,20 @@ jobs:
           tar -C "$payload" -czf "$archive" .
           sha256="$(sha256sum "$archive" | awk '{print $1}')"
           cat > "$manifest" <<JSON
-{
-  "name": "GitRun",
-  "version": "${VERSION}",
-  "git_commit": "${GITHUB_SHA}",
-  "repository": "Vider06/GitRun",
-  "artifacts": [
-    {
-      "target": "${TARGET}",
-      "file": "GitRun-${VERSION}-${TARGET}.tar.gz",
-      "sha256": "${sha256}"
-    }
-  ]
-}
-JSON
+          {
+            "name": "GitRun",
+            "version": "${VERSION}",
+            "git_commit": "${GITHUB_SHA}",
+            "repository": "Vider06/GitRun",
+            "artifacts": [
+              {
+                "target": "${TARGET}",
+                "file": "GitRun-${VERSION}-${TARGET}.tar.gz",
+                "sha256": "${sha256}"
+              }
+            ]
+          }
+          JSON
 
       - name: Verify release artifacts
         shell: bash

@@ -49,10 +49,12 @@ jobs:
         env:
           RUSTUP_HOME: ${{ runner.temp }}/rustup
           CARGO_HOME: ${{ runner.temp }}/cargo
+          TMPDIR: ${{ runner.temp }}/rust-tmp
         run: |
           set -euo pipefail
-          mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+          mkdir -p "$RUSTUP_HOME" "$CARGO_HOME" "$TMPDIR"
           export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:$PATH"
+          export TMPDIR
 
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto "=https" --tlsv1.2 --retry 10 --retry-connrefused               -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init"

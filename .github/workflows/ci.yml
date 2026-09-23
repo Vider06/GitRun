@@ -73,13 +73,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+          export TMPDIR="$RUNNER_TEMP/rust-tmp"
+          mkdir -p "$TMPDIR"
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused \
               -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init"
             chmod 0755 "$RUNNER_TEMP/rustup-init"
             "$RUNNER_TEMP/rustup-init" -y --profile minimal --default-toolchain stable --no-modify-path
           fi
-          export PATH="$CARGO_HOME/bin:$PATH"
+          export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:$PATH"
           rustup toolchain install stable --profile minimal
           rustup component add rustfmt clippy --toolchain stable
           rustc --version
@@ -87,14 +89,16 @@ jobs:
           cargo fmt --version
           cargo clippy --version
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          echo "TMPDIR=$TMPDIR" >> "$GITHUB_ENV"
           echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
           echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
+            ${{ runner.temp }}/cargo/bin
             target
           key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
@@ -213,7 +217,12 @@ jobs:
           version="7.6.6"
           archive="powershell-${version}-linux-x64.tar.gz"
           destination="$RUNNER_TEMP/pwsh"
-          mkdir -p "$destination"
+          pwsh_home="$RUNNER_TEMP/pwsh-home"
+          mkdir -p "$destination" "$pwsh_home/.cache"
+          export HOME="$pwsh_home"
+          export XDG_CACHE_HOME="$pwsh_home/.cache"
+          echo "HOME=$pwsh_home" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$pwsh_home/.cache" >> "$GITHUB_ENV"
           curl -fsSL -o "$RUNNER_TEMP/$archive" \
             "https://github.com/PowerShell/PowerShell/releases/download/v${version}/${archive}"
           echo "ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc  $RUNNER_TEMP/$archive" | sha256sum -c -
@@ -248,15 +257,23 @@ jobs:
     env:
       # Managed runner containers expose the native Docker Engine socket.
       DOCKER_HOST: unix:///var/run/docker.sock
-      DOCKER_CONFIG: /tmp/gitrun-docker-config
     steps:
       - uses: actions/checkout@v7
       - name: Prepare CI environment
         run: |
-          cp config/config.example.env /tmp/gitrun.env
-          sed -i 's|^GITHUB_TOKEN=.*|GITHUB_TOKEN=ci-placeholder|' /tmp/gitrun.env
-          sed -i 's|^GITRUN_REPOSITORIES=.*|GITRUN_REPOSITORIES=Vider06/GitRun|' /tmp/gitrun.env
-          mkdir -p /tmp/gitrun-state /tmp/gitrun-logs
+          set -euo pipefail
+          export GITRUN_CI_ROOT="$RUNNER_TEMP/gitrun-ci"
+          export GITRUN_DOCKER_CONFIG="$RUNNER_TEMP/gitrun-docker-config"
+          mkdir -p "$GITRUN_CI_ROOT/state" "$GITRUN_CI_ROOT/logs" "$GITRUN_DOCKER_CONFIG"
+          cp config/config.example.env "$GITRUN_CI_ROOT/gitrun.env"
+          sed -i 's|^GITHUB_TOKEN=.*|GITHUB_TOKEN=ci-placeholder|' "$GITRUN_CI_ROOT/gitrun.env"
+          sed -i 's|^GITRUN_REPOSITORIES=.*|GITRUN_REPOSITORIES=Vider06/GitRun|' "$GITRUN_CI_ROOT/gitrun.env"
+          {
+            echo "DOCKER_CONFIG=$GITRUN_DOCKER_CONFIG"
+            echo "GITRUN_CONFIG_FILE=$GITRUN_CI_ROOT/gitrun.env"
+            echo "GITRUN_STATE_DIR=$GITRUN_CI_ROOT/state"
+            echo "GITRUN_LOG_DIR=$GITRUN_CI_ROOT/logs"
+          } >> "$GITHUB_ENV"
 
       - name: Ensure Docker CLI and Compose
         shell: bash
@@ -282,10 +299,7 @@ jobs:
 
       - name: Validate Compose
         env:
-          GITRUN_CONFIG_FILE: /tmp/gitrun.env
           GITRUN_DOCKER_SOCKET: /var/run/docker.sock
-          GITRUN_STATE_DIR: /tmp/gitrun-state
-          GITRUN_LOG_DIR: /tmp/gitrun-logs
         run: docker compose config -q
       - name: Build manager image
         shell: bash

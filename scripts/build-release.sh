@@ -19,7 +19,7 @@ cp LICENSE README.md config/config.example.env dist/release/package/
 ARCHIVE="dist/release/GitRun-$VERSION-$TARGET.tar.gz"
 tar -C dist/release/package -czf "$ARCHIVE" .
 SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
-printf '%s  %s\n' "$SHА" "$(basename "$ARCHIVE")" > "$ARCHIVE.sha256"
+printf '%s  %s\n' "$SHA" "$(basename "$ARCHIVE")" > "$ARCHIVE.sha256"
 
 python3 - "$VERSION" "$TARGET" "$(basename "$ARCHIVE")" "$SHА" <<'PY'
 import json

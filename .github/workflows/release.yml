@@ -97,20 +97,20 @@ jobs:
           tar -C "$payload" -czf "$archive" .
           sha256="$(sha256sum "$archive" | awk '{print $1}')"
           cat > "$manifest" <<JSON
-{
-  "name": "GitRun",
-  "version": "${VERSION}",
-  "git_commit": "${GITHUB_SHA}",
-  "repository": "Vider06/GitRun",
-  "artifacts": [
-    {
-      "target": "${TARGET}",
-      "file": "GitRun-${VERSION}-${TARGET}.tar.gz",
-      "sha256": "${sha256}"
-    }
-  ]
-}
-JSON
+          {
+            "name": "GitRun",
+            "version": "${VERSION}",
+            "git_commit": "${GITHUB_SHA}",
+            "repository": "Vider06/GitRun",
+            "artifacts": [
+              {
+                "target": "${TARGET}",
+                "file": "GitRun-${VERSION}-${TARGET}.tar.gz",
+                "sha256": "${sha256}"
+              }
+            ]
+          }
+          JSON
 
       - name: Verify release artifacts
         shell: bash
@@ -128,15 +128,15 @@ JSON
           dpkg-deb --info "${RUNNER_TEMP}/gitrun.deb"
           dpkg-deb --contents "${RUNNER_TEMP}/gitrun.deb" | grep -F "/usr/local/bin/gitrun"
           sha256sum "$archive"
-          python3 - "$manifest" <<'PY'
-import json, pathlib, sys
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
-assert manifest["name"] == "GitRun"
-assert manifest["artifacts"]
-assert manifest["artifacts"][0]["target"] == "x86_64-unknown-linux-gnu"
-assert len(manifest["artifacts"][0]["sha256"]) == 64
-print("Release manifest: PASS")
-PY
+          printf '%s\n' "$manifest" | python3 -c '
+          import json, sys
+          manifest = json.load(sys.stdin)
+          assert manifest["name"] == "GitRun"
+          assert manifest["artifacts"]
+          assert manifest["artifacts"][0]["target"] == "x86_64-unknown-linux-gnu"
+          assert len(manifest["artifacts"][0]["sha256"]) == 64
+          print("Release manifest: PASS")
+          '
 
       - name: Publish GitHub release
         env:

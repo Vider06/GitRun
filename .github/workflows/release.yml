@@ -90,8 +90,11 @@ jobs:
         run: |
           set -euo pipefail
           test -x "$CARGO_BIN"
-          "$CARGO_BIN" --version
-          "$CARGO_BIN" build --locked --release -p gitrun-cli --bin gitrun
+          mkdir -p "$GITHUB_WORKSPACE/.gitrun-bin"
+          ln -sf "$CARGO_BIN" "$GITHUB_WORKSPACE/.gitrun-bin/cargo"
+          export PATH="$GITHUB_WORKSPACE/.gitrun-bin:$PATH"
+          cargo --version
+          cargo build --locked --release -p gitrun-cli --bin gitrun
 
       - name: Build Ubuntu package
         shell: bash

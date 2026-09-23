@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   diagnose:
-    runs-on: [self-hosted, Linux, X64, gitrun-admin]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - name: Inspect GitRun installation

@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ github.event.inputs.version || github.ref_name }}"
-          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+          [[ "$version" =~ ^v[0-9]+.[0-9]+.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
             echo "Invalid release version: $version" >&2
             exit 1
           }
@@ -46,24 +46,34 @@ jobs:
 
       - name: Setup Rust
         shell: bash
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/rustup
+          CARGO_HOME: ${{ runner.temp }}/cargo
         run: |
           set -euo pipefail
+          mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+          export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:$PATH"
+
           if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto "=https" --tlsv1.2 --retry 10 --retry-connrefused -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init"
+            curl --proto "=https" --tlsv1.2 --retry 10 --retry-connrefused               -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init"
             chmod 0755 "$RUNNER_TEMP/rustup-init"
             "$RUNNER_TEMP/rustup-init" -y --profile minimal --default-toolchain stable --no-modify-path
           fi
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+          rustup toolchain install stable --profile minimal
           rustup component add rustfmt clippy --toolchain stable
           rustc --version
           cargo --version
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
 
       - name: Restore Cargo cache
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
             target
           key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
@@ -152,7 +162,5 @@ jobs:
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" "$package" "$archive" "$manifest" --clobber
           else
-            gh release create "$VERSION" "$package" "$archive" "$manifest" \
-              --title "GitRun $VERSION" \
-              --generate-notes
+            gh release create "$VERSION" "$package" "$archive" "$manifest"               --title "GitRun $VERSION"               --generate-notes
           fi

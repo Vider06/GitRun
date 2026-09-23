@@ -171,7 +171,7 @@ jobs:
           dpkg-deb --info "${RUNNER_TEMP}/gitrun.deb"
           dpkg-deb --contents "${RUNNER_TEMP}/gitrun.deb" | grep -F "/usr/local/bin/gitrun"
           sha256sum "$archive"
-          printf '%s\n' "$manifest" | python3 -c '
+          cat "$manifest" | python3 -c '
           import json, sys
           manifest = json.load(sys.stdin)
           assert manifest["name"] == "GitRun"

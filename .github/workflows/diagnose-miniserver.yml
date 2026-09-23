@@ -82,7 +82,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners?per_page=100")"
-          python3 - <<'PY' <<<"$response"
+          printf '%s' "$response" | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
 for r in data.get("runners", []):
@@ -91,4 +91,4 @@ for r in data.get("runners", []):
         r.get("id"), r.get("name"), r.get("status"), r.get("busy"), labels
     ))
 print("total={}".format(len(data.get("runners", []))))
-PY
+'

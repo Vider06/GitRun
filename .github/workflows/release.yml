@@ -83,7 +83,12 @@ jobs:
             ${{ runner.os }}-cargo-v2-
 
       - name: Build GitRun
-        run: cargo build --locked --release -p gitrun-cli --bin gitrun
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$CARGO_HOME/bin:$PATH"
+          cargo --version
+          cargo build --locked --release -p gitrun-cli --bin gitrun
 
       - name: Build Ubuntu package
         shell: bash

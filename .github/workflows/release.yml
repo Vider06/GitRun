@@ -66,13 +66,17 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup component add rustfmt clippy --toolchain stable
           cargo_bin="$(rustup which cargo)"
+          rustc_bin="$(rustup which rustc)"
           test -x "$cargo_bin"
-          rustc --version
+          test -x "$rustc_bin"
+          "$rustc_bin" --version
           "$cargo_bin" --version
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          echo "$(dirname "$cargo_bin")" >> "$GITHUB_PATH"
           echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
           echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
           echo "CARGO_BIN=$cargo_bin" >> "$GITHUB_ENV"
+          echo "RUSTC_BIN=$rustc_bin" >> "$GITHUB_ENV"
 
       - name: Restore Cargo cache
         uses: actions/cache/restore@v4
@@ -90,10 +94,11 @@ jobs:
         run: |
           set -euo pipefail
           test -x "$CARGO_BIN"
-          mkdir -p "$GITHUB_WORKSPACE/.gitrun-bin"
-          ln -sf "$CARGO_BIN" "$GITHUB_WORKSPACE/.gitrun-bin/cargo"
-          export PATH="$GITHUB_WORKSPACE/.gitrun-bin:$PATH"
+          test -x "$RUSTC_BIN"
+          export PATH="$(dirname "$CARGO_BIN"):$CARGO_HOME/bin:$PATH"
+          export RUSTC="$RUSTC_BIN"
           cargo --version
+          rustc --version
           cargo build --locked --release -p gitrun-cli --bin gitrun
 
       - name: Free build space before packaging

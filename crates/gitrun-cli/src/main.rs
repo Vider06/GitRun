@@ -103,7 +103,7 @@ fn system_update_paths() -> Option<UpdatePaths> {
     }
 
     let executable = std::env::current_exe().ok()?;
-    if executable != PathBuf::from("/usr/local/bin/gitrun") {
+    if executable.as_path() != Path::new("/usr/local/bin/gitrun") {
         return None;
     }
 

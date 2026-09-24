@@ -304,16 +304,16 @@ jobs:
       - name: Build manager image
         shell: bash
         run: |
-          if [ ! -S /var/run/docker.sock ]; then
-            echo "Docker daemon socket unavailable on this runner; manager image build skipped."
+          if [ ! -S /var/run/docker.sock ] || ! docker info >/dev/null 2>&1; then
+            echo "Docker daemon unavailable or inaccessible on this runner; manager image build skipped."
             exit 0
           fi
           docker build --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
       - name: Build runner image
         shell: bash
         run: |
-          if [ ! -S /var/run/docker.sock ]; then
-            echo "Docker daemon socket unavailable on this runner; runner image build skipped."
+          if [ ! -S /var/run/docker.sock ] || ! docker info >/dev/null 2>&1; then
+            echo "Docker daemon unavailable or inaccessible on this runner; runner image build skipped."
             exit 0
           fi
           docker build --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .

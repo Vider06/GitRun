@@ -1,5 +1,7 @@
 use gitrun_core::{Config, Runner};
 use gitrun_setup::prepare_directories;
+use std::process::Command;
+
 use gitrun_updater::{
     apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest, latest_manifest,
     pin_runner_image, refresh_docker_stack, rollback, update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
@@ -44,6 +46,7 @@ fn setup_config_dir() -> PathBuf {
 fn current_version() -> String {
     std::env::var("GITRUN_VERSION")
         .ok()
+        .or_else(|| std::fs::read_to_string("/opt/gitrun/version.txt").ok().map(|v| v.trim().to_owned()))
         .or_else(|| std::fs::read_to_string("/usr/share/gitrun/version.txt").ok().map(|v| v.trim().to_owned()))
         .or_else(|| std::fs::read_to_string("version.txt").ok().map(|v| v.trim().to_owned()))
         .unwrap_or_else(|| "0.0.0".into())
@@ -81,7 +84,58 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
     .collect()
 }
 
+fn is_root() -> bool {
+    if cfg!(target_os = "windows") {
+        return false;
+    }
+    Command::new("id")
+        .args(["-u"])
+        .output()
+        .map(|output| {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "0"
+        })
+        .unwrap_or(false)
+}
+
+fn system_update_paths() -> Option<UpdatePaths> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+
+    let executable = std::env::current_exe().ok()?;
+    if executable != PathBuf::from("/usr/local/bin/gitrun") {
+        return None;
+    }
+
+    if !Path::new("/opt/gitrun").is_dir() || !Path::new("/etc/gitrun").is_dir() {
+        return None;
+    }
+
+    Some(UpdatePaths {
+        install_dir: PathBuf::from("/opt/gitrun"),
+        state_dir: PathBuf::from("/var/lib/gitrun"),
+        config_dir: Some(PathBuf::from("/etc/gitrun")),
+        service_config: Some(PathBuf::from("/etc/systemd/system/gitrun.service")),
+        backup_root: PathBuf::from("/var/backups/gitrun"),
+    })
+}
+
 fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let system_install = system_update_paths();
+
+    if system_install.is_some() && !is_root() {
+        let executable = std::env::current_exe()?;
+        println!("Elevated privileges are required for the system update.");
+        let status = Command::new("sudo")
+            .arg(&executable)
+            .args(args)
+            .status()?;
+        if !status.success() {
+            return Err(format!("sudo GitRun update failed with status {status}").into());
+        }
+        return Ok(());
+    }
+
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = if let Some(url) = args.get(1) {
         fetch_manifest(url)?
@@ -111,7 +165,9 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let work_root = PathBuf::from(
         std::env::var("GITRUN_UPDATE_DIR")
-            .unwrap_or_else(|_| ".gitrun-update".into()),
+            .ok()
+            .or_else(|| system_install.as_ref().map(|_| "/var/lib/gitrun/update".into()))
+            .unwrap_or_else(|| ".gitrun-update".into()),
     );
     std::fs::create_dir_all(&work_root)?;
     let archive = work_root.join(&plan.artifact);
@@ -119,34 +175,45 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     download_and_verify(&plan.artifact_url, &artifact.sha256, &archive)?;
     println!("checksum: PASS");
 
-    let install_dir = PathBuf::from(
-        std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()),
-    );
-    let state_dir = PathBuf::from(
-        std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()),
-    );
-    let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
-    let backup_root = PathBuf::from(
-        std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()),
-    );
-    let service_config = std::env::var("GITRUN_SERVICE_CONFIG").ok().map(PathBuf::from);
-
-    let paths = UpdatePaths { install_dir, state_dir, config_dir, service_config, backup_root };
+    let paths = if let Some(system_paths) = system_install {
+        system_paths
+    } else {
+        let install_dir = PathBuf::from(
+            std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()),
+        );
+        let state_dir = PathBuf::from(
+            std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()),
+        );
+        let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
+        let backup_root = PathBuf::from(
+            std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()),
+        );
+        let service_config = std::env::var("GITRUN_SERVICE_CONFIG").ok().map(PathBuf::from);
+        UpdatePaths { install_dir, state_dir, config_dir, service_config, backup_root }
+    };
     let backup = apply_update(&paths, &archive, &target, &manifest.version, true)?;
     if let Some(image) = &plan.runner_image {
         if let Err(error) = update_runner_image(image) {
             rollback(&paths, &backup)?;
             return Err(format!("runner update failed; GitRun was rolled back: {error}").into());
         }
-        if let Ok(config_file) = std::env::var("GITRUN_CONFIG_FILE") {
+        if let Some(config_file) = std::env::var("GITRUN_CONFIG_FILE").ok()
+            .or_else(|| if paths.config_dir.is_some() { Some("/etc/gitrun/gitrun.env".into()) } else { None })
+        {
             if let Err(error) = pin_runner_image(config_file, image) {
                 rollback(&paths, &backup)?;
                 return Err(format!("runner configuration update failed; GitRun was rolled back: {error}").into());
             }
         }
     }
-    if let Ok(compose) = std::env::var("GITRUN_COMPOSE_FILE") {
-        if let Err(error) = refresh_docker_stack(&compose) {
+    if let Some(compose) = std::env::var("GITRUN_COMPOSE_FILE").ok()
+        .or_else(|| if paths.install_dir == Path::new("/opt/gitrun") {
+            Some("/opt/gitrun/docker-compose.yml".into())
+        } else {
+            None
+        })
+    {
+        if let Err(error) = refresh_docker_stack(compose) {
             rollback(&paths, &backup)?;
             return Err(format!("Docker refresh failed; GitRun was rolled back: {error}").into());
         }

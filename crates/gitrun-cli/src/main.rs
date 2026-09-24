@@ -11,6 +11,7 @@ fn help() {
     println!("Usage: gitrun [version|config|desired|doctor|setup|update|rollback|dashboard|help]");
     println!("  dashboard              open GitRun (first run launches the setup wizard)");
     println!("  setup                  check host dependencies and runtime directories");
+    println!("  setup --terminal       run the first-run setup wizard entirely in the terminal");
     println!("  update                 check and apply the newest GitRun release");
     println!("  rollback <backup.json> restore a previously-backed-up installation");
 }
@@ -203,12 +204,113 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
+fn read_terminal_line(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+    use std::io::{self, Write};
+
+    print!("{prompt}");
+    io::stdout().flush()?;
+
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    Ok(value.trim().to_owned())
+}
+
+fn read_terminal_secret(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+    use std::io::{self, Write};
+
+    print!("{prompt}");
+    io::stdout().flush()?;
+
+    let echo_disabled = std::process::Command::new("stty")
+        .arg("-echo")
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+
+    let mut value = String::new();
+    let read_result = io::stdin().read_line(&mut value);
+
+    if echo_disabled {
+        let _ = std::process::Command::new("stty").arg("echo").status();
+        println!();
+    }
+
+    Ok(read_result.map(|_| value.trim().to_owned())?)
+}
+
+fn terminal_setup_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err("terminal setup currently targets Linux x86_64".into());
+    }
+
+    println!("GitRun terminal setup");
+    println!("This is the headless equivalent of the graphical first-run wizard.");
+    println!();
+
+    let token = read_terminal_secret("GitHub token: ")?;
+    if token.is_empty() {
+        return Err("GitHub token cannot be empty".into());
+    }
+
+    let repositories = read_terminal_line("Repositories (owner/repository[,owner/other]): ")?;
+    if repositories.is_empty() {
+        return Err("at least one repository is required".into());
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-setup-{}-{}.conf",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+
+    let payload = format!("{token}\n{repositories}\n");
+    std::fs::write(&path, payload)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let executable = std::env::current_exe()?;
+        let uid_output = std::process::Command::new("id").arg("-u").output()?;
+        let uid = String::from_utf8_lossy(&uid_output.stdout).trim().to_owned();
+
+        if uid == "0" {
+            install_root_command(path.to_str().ok_or("invalid setup path")?)?;
+            return Ok(());
+        }
+
+        println!("Elevated privileges are required for the system installation.");
+        let status = std::process::Command::new("sudo")
+            .arg(&executable)
+            .arg("--install-root")
+            .arg(&path)
+            .status()?;
+
+        if !status.success() {
+            return Err(format!("sudo GitRun installation failed with status {status}").into());
+        }
+
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     let mut lines = raw.lines();
     let token = lines.next().unwrap_or_default().trim();
     let repositories = lines.next().unwrap_or_default().trim();
-    let owner_uid = std::env::var("PKEXEC_UID").ok().and_then(|value| value.parse::<u32>().ok());
+    let owner_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
     let executable = std::env::current_exe()?;
 
     gitrun_setup::bootstrap_linux(token, repositories, &executable, owner_uid)?;
@@ -256,6 +358,12 @@ fn main() {
                 *values[2].as_ref().unwrap(), *values[3].as_ref().unwrap(),
             ));
         }
+        "setup" if args.len() == 2 && args[1] == "--terminal" => {
+            if let Err(error) = terminal_setup_command() {
+                eprintln!("GitRun terminal setup: FAIL — {error}");
+                std::process::exit(1);
+            }
+        },
         "setup" if args.len() == 1 => match load_config() {
             Ok(config) => {
                 let config_dir = setup_config_dir();

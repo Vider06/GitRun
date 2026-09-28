@@ -66,22 +66,38 @@ jobs:
         shell: bash
         env:
           TMPDIR: ${{ runner.temp }}/rustup-tmp
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          RUSTUP_HOME: ${{ runner.temp }}/rustup
         run: |
           set -euo pipefail
-          mkdir -p "$TMPDIR"
+          mkdir -p "$TMPDIR" "$CARGO_HOME" "$RUSTUP_HOME"
           test -w "$TMPDIR"
+          test -w "$CARGO_HOME"
+          test -w "$RUSTUP_HOME"
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         env:
           TMPDIR: ${{ runner.temp }}/rustup-tmp
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          RUSTUP_HOME: ${{ runner.temp }}/rustup
         with:
           components: rustfmt, clippy
+      - name: Persist Rust toolchain paths
+        shell: bash
+        env:
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          RUSTUP_HOME: ${{ runner.temp }}/rustup
+        run: |
+          set -euo pipefail
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
             target
           key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |

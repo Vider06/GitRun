@@ -239,7 +239,9 @@ jobs:
           GITRUN_DOCKER_SOCKET: /var/run/docker.sock
           GITRUN_STATE_DIR: /tmp/gitrun-state
           GITRUN_LOG_DIR: /tmp/gitrun-logs
-        run: "$DOCKER_CONFIG/cli-plugins/docker-compose" config -q
+        run: |
+          set -euo pipefail
+          "$DOCKER_CONFIG/cli-plugins/docker-compose" config -q
       - name: Build manager image
         shell: bash
         run: |

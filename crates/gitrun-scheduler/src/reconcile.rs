@@ -474,7 +474,7 @@ mod tests {
         // runners are never "for" a specific job, so they always get an
         // empty label set even when queued_job_labels is non-empty.
         let mut input = base_input();
-        input.queued_jobs = 2; // desired = clamp(0+2, 3, 8) = 3 -> 1 dynamic on top of min 3? no: min already 3
+        input.queued_jobs = 3; // desired = clamp(0+3, 1, 8) = 3 -> 1 permanent + 2 dynamic slots.
         // Force one permanent + two dynamic slots by starting under min.
         input.min_runners = 1;
         input.max_runners = 8;

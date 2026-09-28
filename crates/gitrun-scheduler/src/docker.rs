@@ -32,8 +32,9 @@ const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
 /// needs for a Windows-container host running inside a VirtualBox VM: same
 /// `docker run`/`docker ps`/etc. commands, just pointed at a different
 /// daemon via `DOCKER_HOST`, rather than a different code path per OS.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DockerHost {
+    #[default]
     Local,
     /// `tcp://host:port`, e.g. `tcp://192.168.56.10:2376`. TLS is assumed
     /// configured on the daemon side (Docker's default posture for any
@@ -49,12 +50,6 @@ impl DockerHost {
             DockerHost::Local => None,
             DockerHost::Remote(addr) => Some(addr.as_str()),
         }
-    }
-}
-
-impl Default for DockerHost {
-    fn default() -> Self {
-        DockerHost::Local
     }
 }
 

@@ -91,7 +91,7 @@ pub fn resolve_or_spawn(registry: &VmResolutionRegistry, state_dir: &Path, vm_co
     }
     drop(guard); // release before spawning; the thread takes its own lock when it finishes
 
-    let registry = Arc::clone(registry);
+    let registry_for_thread = Arc::clone(registry);
     let state_dir = state_dir.to_path_buf();
     let vm_config = vm_config.clone();
     let name_for_thread = vm_config.name.clone();
@@ -99,7 +99,7 @@ pub fn resolve_or_spawn(registry: &VmResolutionRegistry, state_dir: &Path, vm_co
         .name(format!("gitrun-vm-resolve-{}", vm_config.name))
         .spawn(move || {
             let outcome = resolve_blocking(&state_dir, &vm_config);
-            let mut guard = registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = registry_for_thread.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             match outcome {
                 Some(host) => {
                     guard.insert(vm_config.name.clone(), VmResolution::Resolved(host));

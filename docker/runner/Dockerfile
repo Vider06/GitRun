@@ -31,7 +31,8 @@ RUN apt-get update \
        build-essential pkg-config libssl-dev clang cmake shellcheck \
        libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev \
        libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev \
-       libfontconfig1-dev unzip xz-utils \
+       libfontconfig1-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+       librsvg2-dev libxdo-dev patchelf xdg-utils unzip xz-utils \
        gnupg lsb-release gh \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \

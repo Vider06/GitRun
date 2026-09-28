@@ -11,7 +11,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: gitrun-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: gitrun-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:

@@ -2382,7 +2382,6 @@ dependencies = [
  "gitrun-core",
  "gitrun-gsr",
  "gitrun-vault",
- "jsonwebtoken",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

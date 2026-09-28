@@ -216,14 +216,25 @@ jobs:
           echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
 
-      - name: Restore Cargo cache
+      - name: Restore Cargo dependency cache
+        id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             .gitrun-ci/cargo/registry
             .gitrun-ci/cargo/git
-            target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-cargo-v6-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-cargo-v7-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-cargo-v7-
+
+      - name: Report Cargo cache status
+        shell: bash
+        env:
+          CARGO_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          echo "Cargo dependency cache hit: ${CARGO_CACHE_HIT:-false}"
+          du -sh .gitrun-ci/cargo/registry .gitrun-ci/cargo/git 2>/dev/null || true
 
       - name: Rust format check
         run: cargo fmt --all -- --check
@@ -243,7 +254,7 @@ jobs:
       - name: Rust documentation
         run: cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked
 
-      - name: Save Cargo cache
+      - name: Save Cargo dependency cache
         if: success()
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -251,17 +262,7 @@ jobs:
           path: |
             .gitrun-ci/cargo/registry
             .gitrun-ci/cargo/git
-            target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-cargo-v6-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml') }}
-
-  dependency:
-    name: Dependency and supply-chain audit
-    needs: detect
-    if: needs.detect.outputs.dependency == 'true'
-    runs-on: [self-hosted, Linux]
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-cargo-v7-${{ hashFiles('Cargo.lock') }}
 
       - name: Setup Node.js
         if: needs.detect.outputs.node == 'true'

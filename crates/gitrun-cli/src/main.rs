@@ -170,6 +170,11 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
 
+    if let Err(error) = restart_scheduler_service() {
+        rollback(&paths, &backup)?;
+        return Err(format!("scheduler restart failed; GitRun was rolled back: {error}").into());
+    }
+
     let version_file = paths.install_dir.join("version.txt");
     std::fs::write(version_file, format!("{}\n", manifest.version))?;
     println!("GitRun update: PASS");
@@ -181,6 +186,24 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(Path::new("."))
             .display()
     );
+    Ok(())
+}
+
+fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
+    if !cfg!(target_os = "linux") || !Path::new("/etc/systemd/system/gitrun.service").is_file() {
+        return Ok(());
+    }
+    let output = std::process::Command::new("systemctl")
+        .args(["restart", "gitrun.service"])
+        .output()?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            "systemctl restart gitrun.service failed".into()
+        } else {
+            detail.into()
+        });
+    }
     Ok(())
 }
 

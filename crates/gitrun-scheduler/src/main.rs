@@ -15,7 +15,7 @@
 //! GTUU runs on its own schedule in a background thread, same shape as the
 //! Python `gtuu_schedule_loop`.
 
-use gitrun_core::Config;
+use gitrun_core::{Config, GitHubAuth};
 use gitrun_scheduler::backoff::RateLimitTracker;
 use gitrun_scheduler::docker::{self, ManagedContainer};
 use gitrun_scheduler::github::{GitHubClient, GitHubError};
@@ -145,25 +145,9 @@ fn build_github_client(config: &Config) -> Result<GitHubClient, Box<dyn std::err
     let connect_timeout = Duration::from_secs(config.github_connect_timeout);
     let request_timeout = Duration::from_secs(config.github_request_timeout);
 
-    if config.uses_github_app() {
-        let private_key = std::fs::read_to_string(&config.github_app_private_key_path).map_err(|error| {
-            format!(
-                "unable to read GitHub App private key at {}: {error}",
-                config.github_app_private_key_path
-            )
-        })?;
-        let auth = gitrun_scheduler::app_auth::AppAuth::new(
-            &config.github_app_id,
-            &config.github_app_installation_id,
-            &private_key,
-        )?;
-        Ok(GitHubClient::with_app_auth(auth, connect_timeout, request_timeout)?)
-    } else {
-        let token = match std::env::var("GITHUB_TOKEN") {
-            Ok(value) if !value.trim().is_empty() => value,
-            _ => return Err("GITHUB_TOKEN is not configured (and no GitHub App auth is set up)".into()),
-        };
-        Ok(GitHubClient::with_timeouts(token, connect_timeout, request_timeout)?)
+    match GitHubAuth::from_config(config)? {
+        GitHubAuth::App(auth) => Ok(GitHubClient::with_app_auth(auth, connect_timeout, request_timeout)?),
+        GitHubAuth::Pat(token) => Ok(GitHubClient::with_timeouts(token, connect_timeout, request_timeout)?),
     }
 }
 

@@ -28,7 +28,7 @@ jobs:
           cargo fmt --all
           cargo update -p jsonwebtoken --precise 10.3.0
           cargo fmt --all -- --check
-          cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --locked --dry-run
+          cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --locked
       - name: Commit repairs
         shell: bash
         env:

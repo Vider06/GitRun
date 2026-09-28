@@ -712,7 +712,7 @@ mod tests {
         let secrets_path = dir.join(SECRETS_FILE);
         let raw = fs::read_to_string(&secrets_path).unwrap();
         let mut file: VaultFile = serde_json::from_str(&raw).unwrap();
-        let secret = file.secrets.get_mut("key").unwrap();
+        let secret = file.secrets.get_mut("global\u{1}key").unwrap();
         let mut bytes = base64_decode(&secret.ciphertext).unwrap();
         bytes[0] ^= 0xFF;
         secret.ciphertext = base64_encode(&bytes);

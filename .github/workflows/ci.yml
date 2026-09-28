@@ -1054,7 +1054,7 @@ jobs:
           set -euo pipefail
           test -S /var/run/docker.sock
           docker info >/dev/null
-          docker buildx build --load --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
+          docker buildx build --load --network=host -f docker/manager-rs/Dockerfile -t gitrun-manager-rs:ci .
 
       - name: Build runner image
         shell: bash

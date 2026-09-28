@@ -329,6 +329,12 @@ jobs:
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/gitrun-docker-compose" config -q
+      - name: Diagnose Rust 1.85 Cargo.lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work rust:1.85.1-bookworm             sh -c 'cargo generate-lockfile && git diff --unified=0 -- Cargo.lock | head -n 800 || true'
+
       - name: Build manager image
         shell: bash
         run: |

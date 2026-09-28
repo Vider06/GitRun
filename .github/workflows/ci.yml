@@ -2,7 +2,7 @@ name: GitRun CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, BigRework]
   pull_request:
   workflow_dispatch:
 

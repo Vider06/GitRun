@@ -1053,26 +1053,16 @@ jobs:
         run: |
           set -euo pipefail
           test -S /var/run/docker.sock
-          if docker info >/dev/null 2>&1; then
-            docker buildx build --load --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
-          else
-            echo "::notice::Docker socket is not accessible to the runner user; retrying Docker CLI with passwordless sudo."
-            sudo -n docker --config "$DOCKER_CONFIG" --host "$DOCKER_HOST" info >/dev/null
-            sudo -n docker --config "$DOCKER_CONFIG" --host "$DOCKER_HOST" buildx build --load --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
-          fi
+          docker info >/dev/null
+          docker buildx build --load --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
 
       - name: Build runner image
         shell: bash
         run: |
           set -euo pipefail
           test -S /var/run/docker.sock
-          if docker info >/dev/null 2>&1; then
-            docker buildx build --load --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .
-          else
-            echo "::notice::Docker socket is not accessible to the runner user; retrying Docker CLI with passwordless sudo."
-            sudo -n docker --config "$DOCKER_CONFIG" --host "$DOCKER_HOST" info >/dev/null
-            sudo -n docker --config "$DOCKER_CONFIG" --host "$DOCKER_HOST" buildx build --load --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .
-          fi
+          docker info >/dev/null
+          docker buildx build --load --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .
 
   repository:
     name: Repository hygiene

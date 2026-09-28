@@ -272,7 +272,7 @@ jobs:
         run: cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked
 
       - name: Save Rust common cache
-        if: success()
+        if: success() && steps.rust-common-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -282,7 +282,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
 
       - name: Save Rust build target cache
-        if: success()
+        if: success() && steps.rust-target-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -296,8 +296,6 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Setup Node.js
@@ -323,6 +321,7 @@ jobs:
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
 
       - name: Restore Rust common cache for dependency tooling
+        id: dependency-rust-common-cache
         if: needs.detect.outputs.rust == 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -334,6 +333,7 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
 
       - name: Restore Rust dependency auditor cache
+        id: auditor-cache
         if: needs.detect.outputs.rust == 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -411,7 +411,7 @@ jobs:
 
 
       - name: Save Rust dependency auditor cache
-        if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request'
+        if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request' && steps.auditor-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -422,6 +422,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-${{ hashFiles('Cargo.lock') }}
 
       - name: Restore npm cache for dependency audit
+        id: dependency-npm-cache
         if: needs.detect.outputs.node == 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -449,7 +450,7 @@ jobs:
           done < <(find . -name package.json -not -path './.git/*' -not -path '*/node_modules/*' -print0)
 
       - name: Save npm dependency cache
-        if: always() && needs.detect.outputs.node == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: always() && needs.detect.outputs.node == 'true' && steps.dependency-npm-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -487,6 +488,7 @@ jobs:
           node-version: 22
 
       - name: Restore npm cache
+        id: frontend-npm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
@@ -551,7 +553,7 @@ jobs:
           done < <(find . -name package.json -not -path './.git/*' -not -path '*/node_modules/*' -print0)
 
       - name: Save npm cache
-        if: success()
+        if: success() && steps.frontend-npm-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:

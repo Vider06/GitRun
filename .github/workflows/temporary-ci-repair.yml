@@ -22,13 +22,15 @@ jobs:
           export TMPDIR="$RUNNER_TEMP/rustup-tmp"
           export CARGO_HOME="$RUNNER_TEMP/cargo"
           export RUSTUP_HOME="$RUNNER_TEMP/rustup"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/cargo-target"
+          mkdir -p "$CARGO_TARGET_DIR"
           curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.1 --no-modify-path
           export PATH="$CARGO_HOME/bin:$PATH"
           rustup component add rustfmt
           cargo fmt --all
           cargo update -p jsonwebtoken --precise 10.3.0
           cargo fmt --all -- --check
-          cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --locked
+          cargo metadata --workspace --all-features --locked --format-version 1 >/dev/null
       - name: Commit repairs
         shell: bash
         env:

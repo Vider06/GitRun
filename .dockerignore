@@ -7,3 +7,22 @@ config
 bin
 *.md
 *.log
+
+# Local build artifacts and dependency caches.
+target
+dist
+node_modules
+.venv
+__pycache__
+.pytest_cache
+
+# Local environment/configuration files.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*

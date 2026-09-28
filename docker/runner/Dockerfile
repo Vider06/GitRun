@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Build the GSR shell agent with a modern Rust toolchain.
+# Build the GSR shell agent with a modern Rust toolchain. The runner image
 # itself is deliberately kept on the existing Node/Debian base below.
 FROM rust:1.98.1-bookworm AS gsr-builder
 
@@ -11,7 +11,7 @@ WORKDIR /usr/src/gitrun
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN --mount=type=cache/,id=gitrun-runner-cargo-registry,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,id=gitrun-runner-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=gitrun-runner-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=gitrun-runner-target,target=/usr/src/gitrun/target \
     cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \

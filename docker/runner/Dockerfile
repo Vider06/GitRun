@@ -1,6 +1,6 @@
 # Build the GSR shell agent with a modern Rust toolchain. The runner image
 # itself is deliberately kept on the existing Node/Debian base below.
-FROM rust:1.85.1-bookworm AS gsr-builder
+FROM rust:1.98.1-bookworm AS gsr-builder
 
 WORKDIR /usr/src/gitrun
 
@@ -9,12 +9,7 @@ WORKDIR /usr/src/gitrun
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN cp Cargo.lock /tmp/Cargo.lock.before \
-    && cargo generate-lockfile \
-    && echo '=== Rust 1.85 Cargo.lock diff ===' \
-    && diff -u /tmp/Cargo.lock.before Cargo.lock || true \
-    && echo '=== End Rust 1.85 Cargo.lock diff ===' \
-    && cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
+RUN cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
     && test -x target/release/gitrun-gsr-agent
 
 FROM node:22-bookworm

@@ -413,8 +413,8 @@ jobs:
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-v2-${{ hashFiles('**/package.json', '**/package-lock.json') }}
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
 
   tauri:
     name: Tauri GUI build and package
@@ -460,10 +460,10 @@ jobs:
       - name: Restore npm cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-v2-${{ hashFiles('**/package.json', '**/package-lock.json') }}
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-npm-v2-
+            ${{ runner.os }}-npm-v3-
 
       - name: Install Tauri frontend dependencies
         working-directory: crates/gitrun-dashboard-tauri
@@ -487,8 +487,8 @@ jobs:
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-v2-${{ hashFiles('**/package.json', '**/package-lock.json') }}
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
 
   shell:
     name: Shell validation
@@ -586,7 +586,8 @@ jobs:
           cargo install --locked --target-dir "$RUNNER_TEMP/zizmor-target" zizmor
           "$CARGO_HOME/bin/zizmor" --version
       - name: Audit GitHub Actions workflows
-        run: "$RUNNER_TEMP/zizmor-cargo/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
+        run: |
+          "$RUNNER_TEMP/zizmor-cargo/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
 
   powershell:
     name: PowerShell validation

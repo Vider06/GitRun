@@ -449,7 +449,7 @@ fn create_runner(
     }
 
     let safe = docker::sanitize(repo, '-');
-    let name = format!("gitrun-{safe}-{}", &uuid_like_suffix());
+    let name = format!("gitrun-{safe}-{}", uuid_like_suffix());
     docker::ensure_shared_cache_volume(&config.shared_cache_volume)?;
     let docker_socket_gid = resolve_docker_socket_gid()?;
     let secret_env = vault_env_for_repo(config, repo);

@@ -193,9 +193,8 @@ pub fn update_permanent_containers(client: &GitHubClient, config: &GtuuConfig) -
             if !container.permanent {
                 continue;
             }
-            match update_one(client, config, repo, &container.name, &new_image_id)? {
-                UpdateOutcome::Updated => updated += 1,
-                _ => {}
+            if update_one(client, config, repo, &container.name, &new_image_id)? == UpdateOutcome::Updated {
+                updated += 1;
             }
         }
     }

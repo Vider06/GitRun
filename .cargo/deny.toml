@@ -1,0 +1,5 @@
+# cargo-deny still reports unmaintained transitive dependencies, but they are
+# not actionable vulnerabilities by themselves. Keep them visible as warnings while
+# allowing the advisory gate to fail on actual security/unsoundness advisories.
+[advisories]
+unmaintained = "warn"

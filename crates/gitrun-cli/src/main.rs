@@ -168,12 +168,7 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    if let Ok(compose) = std::env::var("GITRUN_COMPOSE_FILE") {
-        if let Err(error) = refresh_docker_stack(&compose) {
-            rollback(&paths, &backup)?;
-            return Err(format!("Docker refresh failed; GitRun was rolled back: {error}").into());
-        }
-    }
+
 
     let version_file = paths.install_dir.join("version.txt");
     std::fs::write(version_file, format!("{}\n", manifest.version))?;

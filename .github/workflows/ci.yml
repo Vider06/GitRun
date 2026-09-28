@@ -268,7 +268,7 @@ jobs:
         shell: bash
         env:
           TMPDIR: ${{ runner.temp }}/rustup-tmp
-          CARGO_HOME: .gitrun-ci/cargo
+          CARGO_HOME: .gitrun-ci/cargo-audit
           RUSTUP_HOME: ${{ runner.temp }}/rustup
           CARGO_TARGET_DIR: .gitrun-ci/cargo-target
         run: |
@@ -298,7 +298,7 @@ jobs:
         if: needs.detect.outputs.rust == 'true'
         shell: bash
         env:
-          CARGO_HOME: .gitrun-ci/cargo
+          CARGO_HOME: .gitrun-ci/cargo-audit
           AUDITOR_ROOT: .gitrun-ci/cargo-tools
         run: |
           set -euo pipefail

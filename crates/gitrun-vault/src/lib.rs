@@ -576,10 +576,22 @@ mod tests {
     fn same_name_in_different_scopes_are_independent_entries() {
         let dir = temp_dir("scope-independence");
         let mut vault = Vault::open(&dir).unwrap();
-        vault.set_scoped("API_KEY", "global-value", Scope::Global).unwrap();
-        vault.set_scoped("API_KEY", "repo-value", Scope::Repo("owner/repo".into())).unwrap();
-        assert_eq!(vault.get_scoped("API_KEY", &Scope::Global).unwrap(), "global-value");
-        assert_eq!(vault.get_scoped("API_KEY", &Scope::Repo("owner/repo".into())).unwrap(), "repo-value");
+        vault
+            .set_scoped("API_KEY", "global-value", Scope::Global)
+            .unwrap();
+        vault
+            .set_scoped("API_KEY", "repo-value", Scope::Repo("owner/repo".into()))
+            .unwrap();
+        assert_eq!(
+            vault.get_scoped("API_KEY", &Scope::Global).unwrap(),
+            "global-value"
+        );
+        assert_eq!(
+            vault
+                .get_scoped("API_KEY", &Scope::Repo("owner/repo".into()))
+                .unwrap(),
+            "repo-value"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -587,9 +599,14 @@ mod tests {
     fn resolve_for_repo_includes_global_secrets() {
         let dir = temp_dir("resolve-global");
         let mut vault = Vault::open(&dir).unwrap();
-        vault.set_scoped("SHARED_TOKEN", "shared-value", Scope::Global).unwrap();
+        vault
+            .set_scoped("SHARED_TOKEN", "shared-value", Scope::Global)
+            .unwrap();
         let resolved = vault.resolve_for_repo("owner/repo", &[]);
-        assert_eq!(resolved, vec![("SHARED_TOKEN".to_owned(), "shared-value".to_owned())]);
+        assert_eq!(
+            resolved,
+            vec![("SHARED_TOKEN".to_owned(), "shared-value".to_owned())]
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -597,11 +614,20 @@ mod tests {
     fn resolve_for_repo_includes_matching_group_secrets_only() {
         let dir = temp_dir("resolve-group");
         let mut vault = Vault::open(&dir).unwrap();
-        vault.set_scoped("DEPLOY_KEY", "prod-value", Scope::Group("production".into())).unwrap();
+        vault
+            .set_scoped(
+                "DEPLOY_KEY",
+                "prod-value",
+                Scope::Group("production".into()),
+            )
+            .unwrap();
 
         // A repo in the "production" group gets it...
         let in_group = vault.resolve_for_repo("owner/repo-a", &["production".to_owned()]);
-        assert_eq!(in_group, vec![("DEPLOY_KEY".to_owned(), "prod-value".to_owned())]);
+        assert_eq!(
+            in_group,
+            vec![("DEPLOY_KEY".to_owned(), "prod-value".to_owned())]
+        );
 
         // ...a repo not in that group does not.
         let not_in_group = vault.resolve_for_repo("owner/repo-b", &["staging".to_owned()]);
@@ -613,7 +639,9 @@ mod tests {
     fn resolve_for_repo_excludes_other_repos_secrets() {
         let dir = temp_dir("resolve-repo-isolation");
         let mut vault = Vault::open(&dir).unwrap();
-        vault.set_scoped("SECRET", "repo-a-value", Scope::Repo("owner/repo-a".into())).unwrap();
+        vault
+            .set_scoped("SECRET", "repo-a-value", Scope::Repo("owner/repo-a".into()))
+            .unwrap();
         let resolved = vault.resolve_for_repo("owner/repo-b", &[]);
         assert!(resolved.is_empty());
         let _ = fs::remove_dir_all(&dir);
@@ -623,21 +651,36 @@ mod tests {
     fn resolve_for_repo_prefers_most_specific_scope_on_name_collision() {
         let dir = temp_dir("resolve-precedence");
         let mut vault = Vault::open(&dir).unwrap();
-        vault.set_scoped("API_KEY", "global-value", Scope::Global).unwrap();
-        vault.set_scoped("API_KEY", "group-value", Scope::Group("prod".into())).unwrap();
-        vault.set_scoped("API_KEY", "repo-value", Scope::Repo("owner/repo".into())).unwrap();
+        vault
+            .set_scoped("API_KEY", "global-value", Scope::Global)
+            .unwrap();
+        vault
+            .set_scoped("API_KEY", "group-value", Scope::Group("prod".into()))
+            .unwrap();
+        vault
+            .set_scoped("API_KEY", "repo-value", Scope::Repo("owner/repo".into()))
+            .unwrap();
 
         // Repo scope should win over both group and global for this repo.
         let resolved = vault.resolve_for_repo("owner/repo", &["prod".to_owned()]);
-        assert_eq!(resolved, vec![("API_KEY".to_owned(), "repo-value".to_owned())]);
+        assert_eq!(
+            resolved,
+            vec![("API_KEY".to_owned(), "repo-value".to_owned())]
+        );
 
         // A different repo in the same group falls back to the group value.
         let other_repo = vault.resolve_for_repo("owner/other-repo", &["prod".to_owned()]);
-        assert_eq!(other_repo, vec![("API_KEY".to_owned(), "group-value".to_owned())]);
+        assert_eq!(
+            other_repo,
+            vec![("API_KEY".to_owned(), "group-value".to_owned())]
+        );
 
         // A repo in no matching group falls back to global.
         let no_group = vault.resolve_for_repo("owner/unrelated", &[]);
-        assert_eq!(no_group, vec![("API_KEY".to_owned(), "global-value".to_owned())]);
+        assert_eq!(
+            no_group,
+            vec![("API_KEY".to_owned(), "global-value".to_owned())]
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

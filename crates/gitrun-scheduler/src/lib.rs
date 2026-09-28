@@ -35,19 +35,14 @@ pub use reconcile::{Action, ReconcileInput};
 // Python `gtuu_schedule_loop`.
 
 use gitrun_core::{Config, GitHubAuth};
-use crate::backoff::RateLimitTracker;
-use crate::docker::{self, ManagedContainer};
-use crate::github::{GitHubClient, GitHubError};
+use crate::docker::ManagedContainer;
 use crate::gsr_bridge::VaultToGsrBridge;
-use crate::gsr_poll;
-use crate::gtuu::{self, GtuuConfig, GtuuLock};
-use crate::logic_containers;
+use crate::gtuu::{GtuuConfig, GtuuLock};
 use crate::reconcile::{
-    self, Action, ContainerHealth, ContainerView, IdleInfo, ReconcileInput, RunnerView,
+    ContainerHealth, ContainerView, IdleInfo, RunnerView,
 };
 use crate::state::SchedulerState;
-use crate::vm;
-use crate::vm_resolution::{self, VmResolutionRegistry};
+use crate::vm_resolution::VmResolutionRegistry;
 use gitrun_vault::Vault;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -775,7 +770,9 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         shared_cache_volume: &config.shared_cache_volume,
         docker_socket_gid: &docker_socket_gid,
         runner_home_size: &config.runner_home_size,
-        runner_home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
+        runner_home_backend: docker::RunnerHomeBackend::from_config_str(
+            &config.runner_home_backend,
+        ),
         secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
@@ -796,15 +793,18 @@ fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
             let mut last_run_date: Option<String> = None;
             while !stopping.load(Ordering::Relaxed) {
                 let now = chrono_like_now(use_local_time);
-                if auto_update && now.time_hhmm == update_time && last_run_date.as_deref() != Some(&now.date) {
+                if auto_update
+                    && now.time_hhmm == update_time
+                    && last_run_date.as_deref() != Some(&now.date)
+                {
                     println!("gitrun-autoscaler: GTUU scheduled run starting");
                     match GtuuLock::acquire(&state_dir) {
-                        Ok(_lock) => {
-                            match run_gtuu_once() {
-                        Ok(count) => println!("gitrun-autoscaler: GTUU updated {count} permanent runner(s)"),
-                        Err(error) => eprintln!("gitrun-autoscaler: GTUU run failed: {error}"),
-                    }
-                        }
+                        Ok(_lock) => match run_gtuu_once() {
+                            Ok(count) => println!(
+                                "gitrun-autoscaler: GTUU updated {count} permanent runner(s)"
+                            ),
+                            Err(error) => eprintln!("gitrun-autoscaler: GTUU run failed: {error}"),
+                        },
                         Err(error) => eprintln!("gitrun-autoscaler: GTUU skipped: {error}"),
                     }
                     last_run_date = Some(now.date);

@@ -3,8 +3,8 @@ use gitrun_core::{AppAuth, Config, GitHubAuth, Runner};
 use gitrun_setup::{bootstrap_linux_with_auth, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
     apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest,
-    latest_manifest, pin_runner_image, rollback,
-    update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
+    latest_manifest, pin_runner_image, rollback, update_incompatible_dependencies,
+    update_runner_image, BackupRecord, UpdatePaths,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};

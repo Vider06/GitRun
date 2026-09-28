@@ -4,7 +4,7 @@ GitRun controls Docker containers and GitHub Actions self-hosted runners. A GitR
 
 ## Threat model
 
-A GitHub Actions runner executes repository-controlled workflow code. A compromised or malicious workflow can therefore access everything available inside its runner container and potentially exploit the Docker daemon if that socket is exposed to the runner. GitRun must never mount the host Docker socket into runner containers.
+A GitHub Actions runner executes repository-controlled workflow code. A compromised or malicious workflow can therefore access everything available inside its runner container and potentially exploit the Docker daemon if that socket is exposed to the runner. GitRun must not mount the host Docker socket into runner containers unless Docker-backed CI compatibility has been explicitly enabled for the repository/customer.
 
 The manager requires Docker socket access because it creates and removes runner containers. Keep the manager isolated, do not expose Docker's API publicly, and restrict host access.
 

@@ -73,8 +73,7 @@ pub struct AppAuth {
 
 impl AppAuth {
     /// `private_key_pem` is the App's private key exactly as downloaded from
-    /// GitHub (PEM, starting with `-----BEGIN RSA PRIVATE KEY-----` or
-    /// `-----BEGIN PRIVATE KEY-----`).
+    /// GitHub (PEM private-key material).
     pub fn new(app_id: impl Into<String>, installation_id: impl Into<String>, private_key_pem: &str) -> Result<Self> {
         let encoding_key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())
             .map_err(AppAuthError::InvalidPrivateKey)?;

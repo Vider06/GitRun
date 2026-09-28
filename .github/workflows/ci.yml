@@ -694,7 +694,17 @@ jobs:
 
       - name: Build Tauri application
         working-directory: crates/gitrun-dashboard-tauri
-        run: npm run tauri build -- --ci
+        shell: bash
+        env:
+          CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
+          RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -euo pipefail
+          export PATH="$CARGO_HOME/bin:$PATH"
+          command -v cargo
+          cargo --version
+          npm run tauri build -- --ci
 
       - name: Save Tauri target cache
         if: success() && steps.tauri-target-cache.outputs.cache-hit != 'true'
@@ -955,18 +965,21 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/tools/docker
-          key: ${{ runner.os }}-${{ runner.arch }}-docker-cli-29.8.1-compose-5.5.1-v1
+          key: ${{ runner.os }}-${{ runner.arch }}-docker-cli-29.8.1-compose-5.5.1-buildx-0.37.1-v2
 
-      - name: Ensure Docker CLI and Compose
+      - name: Ensure Docker CLI, Compose and Buildx
         shell: bash
         run: |
           set -euo pipefail
           docker_version="29.8.1"
           compose_version="5.5.1"
+          buildx_version="0.37.1"
           tools_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/docker"
+          plugin_dir="$tools_dir/cli-plugins"
           docker_bin="$tools_dir/docker"
           compose_bin="$tools_dir/docker-compose"
-          mkdir -p "$tools_dir"
+          buildx_bin="$plugin_dir/docker-buildx"
+          mkdir -p "$tools_dir" "$plugin_dir"
           if [ ! -x "$docker_bin" ]; then
             curl -fsSL -o "$RUNNER_TEMP/docker.tgz" \
               "https://download.docker.com/linux/static/stable/x86_64/docker-${docker_version}.tgz"
@@ -980,8 +993,18 @@ jobs:
             echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$compose_bin" | sha256sum -c -
             chmod 0755 "$compose_bin"
           fi
+          if [ ! -x "$buildx_bin" ]; then
+            curl -fsSL -o "$RUNNER_TEMP/docker-buildx" \
+              "https://github.com/docker/buildx/releases/download/v${buildx_version}/buildx-v${buildx_version}.linux-amd64"
+            echo "9447199cdb435f25880548343c128a4b6650e8891ee598905d8d29d39a8e359b *$RUNNER_TEMP/docker-buildx" | sha256sum -c -
+            install -m 0755 "$RUNNER_TEMP/docker-buildx" "$buildx_bin"
+            rm -f "$RUNNER_TEMP/docker-buildx"
+          fi
           "$docker_bin" --version
           "$compose_bin" version
+          mkdir -p "$DOCKER_CONFIG/cli-plugins"
+          install -m 0755 "$buildx_bin" "$DOCKER_CONFIG/cli-plugins/docker-buildx"
+          "$docker_bin" buildx version
           echo "$tools_dir" >> "$GITHUB_PATH"
 
       - name: Save Docker tool cache
@@ -990,7 +1013,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/tools/docker
-          key: ${{ runner.os }}-${{ runner.arch }}-docker-cli-29.8.1-compose-5.5.1-v1
+          key: ${{ runner.os }}-${{ runner.arch }}-docker-cli-29.8.1-compose-5.5.1-buildx-0.37.1-v2
 
       - name: Validate Compose
         env:
@@ -1010,7 +1033,7 @@ jobs:
           set -euo pipefail
           test -S /var/run/docker.sock
           docker info >/dev/null
-          docker build --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
+          docker buildx build --load --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
 
       - name: Build runner image
         shell: bash
@@ -1018,7 +1041,7 @@ jobs:
           set -euo pipefail
           test -S /var/run/docker.sock
           docker info >/dev/null
-          docker build --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .
+          docker buildx build --load --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .
 
   repository:
     name: Repository hygiene

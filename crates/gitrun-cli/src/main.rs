@@ -169,7 +169,6 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-
     if let Err(error) = restart_scheduler_service() {
         rollback(&paths, &backup)?;
         return Err(format!("scheduler restart failed; GitRun was rolled back: {error}").into());
@@ -719,13 +718,14 @@ fn main() {
             }
         },
         Command::Doctor => run_doctor(),
-        Command::Update { manifest_url, only_containers } => {
-            run_update(manifest_url.as_deref(), only_containers)
-        }
+        Command::Update {
+            manifest_url,
+            only_containers,
+        } => run_update(manifest_url.as_deref(), only_containers),
         Command::Scheduler => {
             gitrun_scheduler::run();
             0
-        },
+        }
         Command::Dashboard => run_dashboard(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),
         Command::Rollback { backup_path } => run_rollback(&backup_path),

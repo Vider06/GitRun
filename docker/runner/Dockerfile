@@ -9,7 +9,12 @@ WORKDIR /usr/src/gitrun
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
+RUN cp Cargo.lock /tmp/Cargo.lock.before \
+    && cargo generate-lockfile \
+    && echo '=== Rust 1.85 Cargo.lock diff ===' \
+    && diff -u /tmp/Cargo.lock.before Cargo.lock || true \
+    && echo '=== End Rust 1.85 Cargo.lock diff ===' \
+    && cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
     && test -x target/release/gitrun-gsr-agent
 
 FROM node:22-bookworm

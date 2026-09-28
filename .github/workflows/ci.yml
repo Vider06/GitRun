@@ -431,7 +431,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-npm-v9-
+            ${{ runner.os }}-${{ runner.arch }}-npm-v8-
 
       - name: Prepare npm dependencies for audit
         if: needs.detect.outputs.node == 'true'
@@ -459,7 +462,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
 
       - name: Node dependency audit
         if: needs.detect.outputs.node == 'true'
@@ -496,7 +499,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-npm-v9-
+            ${{ runner.os }}-${{ runner.arch }}-npm-v8-
       - name: Validate frontend packages
         shell: bash
         env:
@@ -562,7 +568,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
 
   tauri:
     name: Tauri GUI build and package
@@ -666,7 +672,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-npm-v9-
+            ${{ runner.os }}-${{ runner.arch }}-npm-v8-
       - name: Install Tauri frontend dependencies
         working-directory: crates/gitrun-dashboard-tauri
         env:

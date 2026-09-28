@@ -22,7 +22,9 @@ pub struct VaultToGsrBridge {
 
 impl VaultToGsrBridge {
     pub fn new(state_dir: &str) -> Self {
-        Self { events_path: gitrun_gsr::events::default_queue_path(state_dir) }
+        Self {
+            events_path: gitrun_gsr::events::default_queue_path(state_dir),
+        }
     }
 }
 

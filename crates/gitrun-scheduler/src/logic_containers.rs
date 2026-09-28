@@ -49,15 +49,20 @@ pub struct LogicRule {
 /// `job_labels` should be the same labels already fetched from GitHub's jobs
 /// API (see `github.rs`'s `Job.labels`, used today only to filter for
 /// `self-hosted`).
-pub fn resolve<'a>(rules: &'a [LogicRule], job_labels: &[String]) -> Option<(&'a Backend, &'a str)> {
+pub fn resolve<'a>(
+    rules: &'a [LogicRule],
+    job_labels: &[String],
+) -> Option<(&'a Backend, &'a str)> {
     let normalized: Vec<String> = job_labels.iter().map(|l| l.to_ascii_lowercase()).collect();
     rules
         .iter()
         .filter(|rule| !rule.match_labels.is_empty())
         .find(|rule| {
-            rule.match_labels
-                .iter()
-                .all(|required| normalized.iter().any(|label| label == &required.to_ascii_lowercase()))
+            rule.match_labels.iter().all(|required| {
+                normalized
+                    .iter()
+                    .any(|label| label == &required.to_ascii_lowercase())
+            })
         })
         .map(|rule| (&rule.backend, rule.image.as_str()))
 }
@@ -111,21 +116,48 @@ mod tests {
 
     #[test]
     fn matches_when_all_required_labels_present() {
-        let rules = vec![rule("windows-jobs", &["windows"], Backend::Vm { vm_name: "win-host".into() }, "gitrun-runner:windows")];
+        let rules = vec![rule(
+            "windows-jobs",
+            &["windows"],
+            Backend::Vm {
+                vm_name: "win-host".into(),
+            },
+            "gitrun-runner:windows",
+        )];
         let result = resolve(&rules, &["self-hosted".into(), "windows".into()]);
-        assert_eq!(result, Some((&Backend::Vm { vm_name: "win-host".into() }, "gitrun-runner:windows")));
+        assert_eq!(
+            result,
+            Some((
+                &Backend::Vm {
+                    vm_name: "win-host".into()
+                },
+                "gitrun-runner:windows"
+            ))
+        );
     }
 
     #[test]
     fn does_not_match_when_a_required_label_is_missing() {
-        let rules = vec![rule("gpu-jobs", &["gpu", "cuda"], Backend::LocalLinux, "gitrun-runner:cuda")];
+        let rules = vec![rule(
+            "gpu-jobs",
+            &["gpu", "cuda"],
+            Backend::LocalLinux,
+            "gitrun-runner:cuda",
+        )];
         // Has "gpu" but not "cuda" — rule requires both.
         assert_eq!(resolve(&rules, &["self-hosted".into(), "gpu".into()]), None);
     }
 
     #[test]
     fn matching_is_case_insensitive() {
-        let rules = vec![rule("windows-jobs", &["Windows"], Backend::Vm { vm_name: "win-host".into() }, "gitrun-runner:windows")];
+        let rules = vec![rule(
+            "windows-jobs",
+            &["Windows"],
+            Backend::Vm {
+                vm_name: "win-host".into(),
+            },
+            "gitrun-runner:windows",
+        )];
         let result = resolve(&rules, &["self-hosted".into(), "WINDOWS".into()]);
         assert!(result.is_some());
     }
@@ -133,13 +165,28 @@ mod tests {
     #[test]
     fn first_matching_rule_wins() {
         let rules = vec![
-            rule("catch-all-linux", &["self-hosted"], Backend::LocalLinux, "gitrun-runner:default"),
-            rule("windows-jobs", &["windows"], Backend::Vm { vm_name: "win-host".into() }, "gitrun-runner:windows"),
+            rule(
+                "catch-all-linux",
+                &["self-hosted"],
+                Backend::LocalLinux,
+                "gitrun-runner:default",
+            ),
+            rule(
+                "windows-jobs",
+                &["windows"],
+                Backend::Vm {
+                    vm_name: "win-host".into(),
+                },
+                "gitrun-runner:windows",
+            ),
         ];
         // Both rules could match; the first one in the list wins even though
         // a later, more specific rule also applies.
         let result = resolve(&rules, &["self-hosted".into(), "windows".into()]);
-        assert_eq!(result, Some((&Backend::LocalLinux, "gitrun-runner:default")));
+        assert_eq!(
+            result,
+            Some((&Backend::LocalLinux, "gitrun-runner:default"))
+        );
     }
 
     #[test]
@@ -147,16 +194,29 @@ mod tests {
         // An empty match_labels list is treated as misconfigured, not "always
         // match" — an operator wanting a default should configure
         // Config::runner_image, not a labelless Logic Containers rule.
-        let rules = vec![rule("broken-rule", &[], Backend::LocalLinux, "gitrun-runner:should-not-apply")];
+        let rules = vec![rule(
+            "broken-rule",
+            &[],
+            Backend::LocalLinux,
+            "gitrun-runner:should-not-apply",
+        )];
         assert_eq!(resolve(&rules, &["self-hosted".into()]), None);
     }
 
     #[test]
     fn save_and_load_round_trip() {
-        let dir = std::env::temp_dir().join(format!("gitrun-logic-rules-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-logic-rules-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("logic-containers.json");
-        let rules = vec![rule("windows-jobs", &["windows"], Backend::Vm { vm_name: "win-host".into() }, "gitrun-runner:windows")];
+        let rules = vec![rule(
+            "windows-jobs",
+            &["windows"],
+            Backend::Vm {
+                vm_name: "win-host".into(),
+            },
+            "gitrun-runner:windows",
+        )];
         save_rules(&path, &rules).unwrap();
         let loaded = load_rules(&path).unwrap();
         assert_eq!(loaded.len(), 1);
@@ -166,7 +226,10 @@ mod tests {
 
     #[test]
     fn missing_file_loads_as_empty_not_error() {
-        let path = std::env::temp_dir().join(format!("gitrun-logic-rules-missing-{}.json", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-logic-rules-missing-{}.json",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         let loaded = load_rules(&path).unwrap();
         assert!(loaded.is_empty());

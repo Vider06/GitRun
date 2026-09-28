@@ -59,7 +59,10 @@ pub struct SecurityEvent {
 impl SecurityEvent {
     pub fn new(source: impl Into<String>, severity: Severity, message: impl Into<String>) -> Self {
         Self {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
             source: source.into(),
             severity,
             message: message.into(),
@@ -110,7 +113,10 @@ mod tests {
     use super::*;
 
     fn temp_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("gitrun-gsr-events-test-{label}-{}.jsonl", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "gitrun-gsr-events-test-{label}-{}.jsonl",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -136,7 +142,11 @@ mod tests {
         let path = temp_path("multi");
         let _ = std::fs::remove_file(&path);
         emit(&path, &SecurityEvent::new("a", Severity::Info, "first")).unwrap();
-        emit(&path, &SecurityEvent::new("b", Severity::Critical, "second")).unwrap();
+        emit(
+            &path,
+            &SecurityEvent::new("b", Severity::Critical, "second"),
+        )
+        .unwrap();
         let events = read_all(&path).unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].message, "first");

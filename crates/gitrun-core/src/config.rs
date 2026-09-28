@@ -161,15 +161,24 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            repositories: Vec::new(), min_runners: 3, max_runners: 8,
-            idle_timeout: 120, poll_interval: 5,
+            repositories: Vec::new(),
+            min_runners: 3,
+            max_runners: 8,
+            idle_timeout: 120,
+            poll_interval: 5,
             runner_image: "gitrun-runner:latest".into(),
-            runner_labels: "self-hosted,Linux,X64".into(), ephemeral: false,
-            state_dir: "/var/lib/gitrun".into(), log_dir: "/var/log/gitrun".into(),
-            auto_container_update: false, container_update_time: "03:00".into(),
-            auto_container_recovery: true, container_recovery_cooldown: 60,
-            container_cpus: "1".into(), container_memory: "1g".into(),
-            container_pids_limit: "1024".into(), runner_disable_update: false,
+            runner_labels: "self-hosted,Linux,X64".into(),
+            ephemeral: false,
+            state_dir: "/var/lib/gitrun".into(),
+            log_dir: "/var/log/gitrun".into(),
+            auto_container_update: false,
+            container_update_time: "03:00".into(),
+            auto_container_recovery: true,
+            container_recovery_cooldown: 60,
+            container_cpus: "1".into(),
+            container_memory: "1g".into(),
+            container_pids_limit: "1024".into(),
+            runner_disable_update: false,
             shared_cache_volume: "gitrun-runner-shared".into(),
             runner_home_size: "8g".into(),
             runner_home_backend: "tmpfs".into(),
@@ -219,7 +228,9 @@ impl Config {
         let mut lookup = std::collections::HashMap::new();
         for raw in content.lines() {
             let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             let Some((key, value)) = line.split_once('=') else {
                 return Err(ConfigError::Invalid(format!("invalid env line: {line}")));
             };
@@ -232,7 +243,9 @@ impl Config {
     /// `from_env` (process environment) and `from_env_file` (a `.env`-style
     /// file) funnel into this single place so the 14 config fields are only
     /// ever enumerated once instead of twice in lockstep.
-    fn from_lookup(lookup: &std::collections::HashMap<String, String>) -> Result<Self, ConfigError> {
+    fn from_lookup(
+        lookup: &std::collections::HashMap<String, String>,
+    ) -> Result<Self, ConfigError> {
         let get = |key: &str| lookup.get(key).cloned();
         let mut c = Self::default();
         // Fallback for compatibility with the Python autoscaler: it accepts
@@ -244,73 +257,212 @@ impl Config {
         let repositories_raw = get("GITRUN_REPOSITORIES")
             .filter(|v| !v.trim().is_empty())
             .or_else(|| get("GITRUN_DEFAULT_REPOSITORY"));
-        if let Some(raw) = repositories_raw { c.repositories = parse_repositories(&raw)?; }
-        c.min_runners = value_u32(&get("GITRUN_MIN_RUNNERS"), "GITRUN_MIN_RUNNERS", c.min_runners)?;
-        c.max_runners = value_u32(&get("GITRUN_MAX_RUNNERS"), "GITRUN_MAX_RUNNERS", c.max_runners)?;
-        c.idle_timeout = value_u64(&get("GITRUN_IDLE_TIMEOUT"), "GITRUN_IDLE_TIMEOUT", c.idle_timeout)?;
-        c.poll_interval = value_u64(&get("GITRUN_POLL_INTERVAL"), "GITRUN_POLL_INTERVAL", c.poll_interval)?;
-        if let Some(v) = get("GITRUN_RUNNER_IMAGE") { c.runner_image = v; }
-        if let Some(v) = get("GITRUN_RUNNER_LABELS") { c.runner_labels = v; }
-        if let Some(v) = get("GITRUN_EPHEMERAL") { c.ephemeral = parse_bool("GITRUN_EPHEMERAL", &v)?; }
-        if let Some(v) = get("GITRUN_STATE_DIR") { c.state_dir = v; }
-        if let Some(v) = get("GITRUN_LOG_DIR") { c.log_dir = v; }
-        if let Some(v) = get("GITRUN_AUTO_CONTAINER_UPDATE") { c.auto_container_update = parse_bool("GITRUN_AUTO_CONTAINER_UPDATE", &v)?; }
-        if let Some(v) = get("GITRUN_CONTAINER_UPDATE_TIME") { c.container_update_time = v; }
-        if let Some(v) = get("GITRUN_AUTO_CONTAINER_RECOVERY") { c.auto_container_recovery = parse_bool("GITRUN_AUTO_CONTAINER_RECOVERY", &v)?; }
-        c.container_recovery_cooldown = value_u64(&get("GITRUN_CONTAINER_RECOVERY_COOLDOWN"), "GITRUN_CONTAINER_RECOVERY_COOLDOWN", c.container_recovery_cooldown)?;
-        if let Some(v) = get("GITRUN_CONTAINER_CPUS") { c.container_cpus = v; }
-        if let Some(v) = get("GITRUN_CONTAINER_MEMORY") { c.container_memory = v; }
-        if let Some(v) = get("GITRUN_CONTAINER_PIDS") { c.container_pids_limit = v; }
-        if let Some(v) = get("GITRUN_DISABLE_UPDATE") { c.runner_disable_update = parse_bool("GITRUN_DISABLE_UPDATE", &v)?; }
+        if let Some(raw) = repositories_raw {
+            c.repositories = parse_repositories(&raw)?;
+        }
+        c.min_runners = value_u32(
+            &get("GITRUN_MIN_RUNNERS"),
+            "GITRUN_MIN_RUNNERS",
+            c.min_runners,
+        )?;
+        c.max_runners = value_u32(
+            &get("GITRUN_MAX_RUNNERS"),
+            "GITRUN_MAX_RUNNERS",
+            c.max_runners,
+        )?;
+        c.idle_timeout = value_u64(
+            &get("GITRUN_IDLE_TIMEOUT"),
+            "GITRUN_IDLE_TIMEOUT",
+            c.idle_timeout,
+        )?;
+        c.poll_interval = value_u64(
+            &get("GITRUN_POLL_INTERVAL"),
+            "GITRUN_POLL_INTERVAL",
+            c.poll_interval,
+        )?;
+        if let Some(v) = get("GITRUN_RUNNER_IMAGE") {
+            c.runner_image = v;
+        }
+        if let Some(v) = get("GITRUN_RUNNER_LABELS") {
+            c.runner_labels = v;
+        }
+        if let Some(v) = get("GITRUN_EPHEMERAL") {
+            c.ephemeral = parse_bool("GITRUN_EPHEMERAL", &v)?;
+        }
+        if let Some(v) = get("GITRUN_STATE_DIR") {
+            c.state_dir = v;
+        }
+        if let Some(v) = get("GITRUN_LOG_DIR") {
+            c.log_dir = v;
+        }
+        if let Some(v) = get("GITRUN_AUTO_CONTAINER_UPDATE") {
+            c.auto_container_update = parse_bool("GITRUN_AUTO_CONTAINER_UPDATE", &v)?;
+        }
+        if let Some(v) = get("GITRUN_CONTAINER_UPDATE_TIME") {
+            c.container_update_time = v;
+        }
+        if let Some(v) = get("GITRUN_AUTO_CONTAINER_RECOVERY") {
+            c.auto_container_recovery = parse_bool("GITRUN_AUTO_CONTAINER_RECOVERY", &v)?;
+        }
+        c.container_recovery_cooldown = value_u64(
+            &get("GITRUN_CONTAINER_RECOVERY_COOLDOWN"),
+            "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
+            c.container_recovery_cooldown,
+        )?;
+        if let Some(v) = get("GITRUN_CONTAINER_CPUS") {
+            c.container_cpus = v;
+        }
+        if let Some(v) = get("GITRUN_CONTAINER_MEMORY") {
+            c.container_memory = v;
+        }
+        if let Some(v) = get("GITRUN_CONTAINER_PIDS") {
+            c.container_pids_limit = v;
+        }
+        if let Some(v) = get("GITRUN_DISABLE_UPDATE") {
+            c.runner_disable_update = parse_bool("GITRUN_DISABLE_UPDATE", &v)?;
+        }
         if let Some(v) = get("GITRUN_SHARED_CACHE_VOLUME") {
             let trimmed = v.trim();
-            if !trimmed.is_empty() { c.shared_cache_volume = trimmed.to_owned(); }
+            if !trimmed.is_empty() {
+                c.shared_cache_volume = trimmed.to_owned();
+            }
         }
         if let Some(v) = get("GITRUN_RUNNER_HOME_SIZE") {
             let trimmed = v.trim();
-            if !trimmed.is_empty() { c.runner_home_size = trimmed.to_owned(); }
+            if !trimmed.is_empty() {
+                c.runner_home_size = trimmed.to_owned();
+            }
         }
         if let Some(v) = get("GITRUN_RUNNER_HOME_BACKEND") {
             let trimmed = v.trim();
-            if !trimmed.is_empty() { c.runner_home_backend = trimmed.to_ascii_lowercase(); }
+            if !trimmed.is_empty() {
+                c.runner_home_backend = trimmed.to_ascii_lowercase();
+            }
         }
-        c.github_connect_timeout = value_u64(&get("GITRUN_GITHUB_CONNECT_TIMEOUT"), "GITRUN_GITHUB_CONNECT_TIMEOUT", c.github_connect_timeout)?;
-        c.github_request_timeout = value_u64(&get("GITRUN_GITHUB_REQUEST_TIMEOUT"), "GITRUN_GITHUB_REQUEST_TIMEOUT", c.github_request_timeout)?;
-        if let Some(v) = get("GITRUN_GITHUB_APP_ID") { c.github_app_id = v.trim().to_owned(); }
-        if let Some(v) = get("GITRUN_GITHUB_APP_INSTALLATION_ID") { c.github_app_installation_id = v.trim().to_owned(); }
-        if let Some(v) = get("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH") { c.github_app_private_key_path = v.trim().to_owned(); }
-        if let Some(v) = get("GITRUN_VAULT_DIR") { c.vault_dir = v.trim().to_owned(); }
-        if let Some(v) = get("GITRUN_VAULT_GROUPS") { c.vault_group_membership = v.trim().to_owned(); }
-        if let Some(v) = get("GITRUN_GTUU_SCHEDULE_TIMEZONE") { c.gtuu_schedule_timezone = v.trim().to_ascii_lowercase(); }
-        if let Some(v) = get("GITRUN_GSR_DOCKER_SOCKET_HARDENING") { c.gsr_docker_socket_hardening = parse_bool("GITRUN_GSR_DOCKER_SOCKET_HARDENING", &v)?; }
-        if let Some(v) = get("GITRUN_GSR_ALLOW_UNSAFE_RUNNER") { c.gsr_allow_unsafe_runner = parse_bool("GITRUN_GSR_ALLOW_UNSAFE_RUNNER", &v)?; }
-        if let Some(v) = get("GITRUN_GSR_COMMAND_POLICY_ENABLED") { c.gsr_command_policy_enabled = parse_bool("GITRUN_GSR_COMMAND_POLICY_ENABLED", &v)?; }
-        if let Some(v) = get("GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED") { c.gsr_command_baseline_blacklist_enabled = parse_bool("GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED", &v)?; }
-        if let Some(v) = get("GITRUN_GSR_COMMAND_BLACKLIST_ENABLED") { c.gsr_command_blacklist_enabled = parse_bool("GITRUN_GSR_COMMAND_BLACKLIST_ENABLED", &v)?; }
-        if let Some(v) = get("GITRUN_GSR_COMMAND_BLACKLIST") { c.gsr_command_blacklist = v; }
-        if let Some(v) = get("GITRUN_GSR_COMMAND_WHITELIST_ENABLED") { c.gsr_command_whitelist_enabled = parse_bool("GITRUN_GSR_COMMAND_WHITELIST_ENABLED", &v)?; }
-        if let Some(v) = get("GITRUN_GSR_COMMAND_WHITELIST") { c.gsr_command_whitelist = v; }
-        if let Some(v) = get("GITRUN_GSR_VIOLATION_ACTION") { c.gsr_violation_action = v.trim().to_ascii_lowercase(); }
-        if let Some(v) = get("GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED") { c.gsr_workflow_validation_enabled = parse_bool("GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED", &v)?; }
-        if let Some(v) = get("GITRUN_GSR_ZIZMOR_ENABLED") { c.gsr_zizmor_enabled = parse_bool("GITRUN_GSR_ZIZMOR_ENABLED", &v)?; }
-        if let Some(v) = get("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED") { c.gsr_zizmor_license_accepted = parse_bool("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED", &v)?; }
+        c.github_connect_timeout = value_u64(
+            &get("GITRUN_GITHUB_CONNECT_TIMEOUT"),
+            "GITRUN_GITHUB_CONNECT_TIMEOUT",
+            c.github_connect_timeout,
+        )?;
+        c.github_request_timeout = value_u64(
+            &get("GITRUN_GITHUB_REQUEST_TIMEOUT"),
+            "GITRUN_GITHUB_REQUEST_TIMEOUT",
+            c.github_request_timeout,
+        )?;
+        if let Some(v) = get("GITRUN_GITHUB_APP_ID") {
+            c.github_app_id = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_GITHUB_APP_INSTALLATION_ID") {
+            c.github_app_installation_id = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH") {
+            c.github_app_private_key_path = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_VAULT_DIR") {
+            c.vault_dir = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_VAULT_GROUPS") {
+            c.vault_group_membership = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_GTUU_SCHEDULE_TIMEZONE") {
+            c.gtuu_schedule_timezone = v.trim().to_ascii_lowercase();
+        }
+        if let Some(v) = get("GITRUN_GSR_DOCKER_SOCKET_HARDENING") {
+            c.gsr_docker_socket_hardening = parse_bool("GITRUN_GSR_DOCKER_SOCKET_HARDENING", &v)?;
+        }
+        if let Some(v) = get("GITRUN_GSR_ALLOW_UNSAFE_RUNNER") {
+            c.gsr_allow_unsafe_runner = parse_bool("GITRUN_GSR_ALLOW_UNSAFE_RUNNER", &v)?;
+        }
+        if let Some(v) = get("GITRUN_GSR_COMMAND_POLICY_ENABLED") {
+            c.gsr_command_policy_enabled = parse_bool("GITRUN_GSR_COMMAND_POLICY_ENABLED", &v)?;
+        }
+        if let Some(v) = get("GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED") {
+            c.gsr_command_baseline_blacklist_enabled =
+                parse_bool("GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED", &v)?;
+        }
+        if let Some(v) = get("GITRUN_GSR_COMMAND_BLACKLIST_ENABLED") {
+            c.gsr_command_blacklist_enabled =
+                parse_bool("GITRUN_GSR_COMMAND_BLACKLIST_ENABLED", &v)?;
+        }
+        if let Some(v) = get("GITRUN_GSR_COMMAND_BLACKLIST") {
+            c.gsr_command_blacklist = v;
+        }
+        if let Some(v) = get("GITRUN_GSR_COMMAND_WHITELIST_ENABLED") {
+            c.gsr_command_whitelist_enabled =
+                parse_bool("GITRUN_GSR_COMMAND_WHITELIST_ENABLED", &v)?;
+        }
+        if let Some(v) = get("GITRUN_GSR_COMMAND_WHITELIST") {
+            c.gsr_command_whitelist = v;
+        }
+        if let Some(v) = get("GITRUN_GSR_VIOLATION_ACTION") {
+            c.gsr_violation_action = v.trim().to_ascii_lowercase();
+        }
+        if let Some(v) = get("GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED") {
+            c.gsr_workflow_validation_enabled =
+                parse_bool("GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED", &v)?;
+        }
+        if let Some(v) = get("GITRUN_GSR_ZIZMOR_ENABLED") {
+            c.gsr_zizmor_enabled = parse_bool("GITRUN_GSR_ZIZMOR_ENABLED", &v)?;
+        }
+        if let Some(v) = get("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED") {
+            c.gsr_zizmor_license_accepted = parse_bool("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED", &v)?;
+        }
         c.validate()?;
         Ok(c)
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.min_runners == 0 || self.max_runners < self.min_runners {
-            return Err(ConfigError::Invalid(format!("runner bounds are invalid: {}..{}", self.min_runners, self.max_runners)));
+            return Err(ConfigError::Invalid(format!(
+                "runner bounds are invalid: {}..{}",
+                self.min_runners, self.max_runners
+            )));
         }
-        if self.poll_interval == 0 { return Err(ConfigError::Invalid("poll interval must be greater than zero".into())); }
-        if self.container_recovery_cooldown == 0 { return Err(ConfigError::Invalid("container recovery cooldown must be greater than zero".into())); }
-        if self.runner_image.trim().is_empty() { return Err(ConfigError::Invalid("runner image must not be empty".into())); }
-        if self.runner_labels.trim().is_empty() { return Err(ConfigError::Invalid("runner labels must not be empty".into())); }
-        if self.container_cpus.trim().is_empty() { return Err(ConfigError::Invalid("container cpus must not be empty".into())); }
-        if self.container_memory.trim().is_empty() { return Err(ConfigError::Invalid("container memory must not be empty".into())); }
-        if self.container_pids_limit.trim().is_empty() { return Err(ConfigError::Invalid("container pids limit must not be empty".into())); }
-        if self.shared_cache_volume.trim().is_empty() { return Err(ConfigError::Invalid("shared cache volume must not be empty".into())); }
-        if self.runner_home_size.trim().is_empty() { return Err(ConfigError::Invalid("runner home size must not be empty".into())); }
+        if self.poll_interval == 0 {
+            return Err(ConfigError::Invalid(
+                "poll interval must be greater than zero".into(),
+            ));
+        }
+        if self.container_recovery_cooldown == 0 {
+            return Err(ConfigError::Invalid(
+                "container recovery cooldown must be greater than zero".into(),
+            ));
+        }
+        if self.runner_image.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "runner image must not be empty".into(),
+            ));
+        }
+        if self.runner_labels.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "runner labels must not be empty".into(),
+            ));
+        }
+        if self.container_cpus.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "container cpus must not be empty".into(),
+            ));
+        }
+        if self.container_memory.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "container memory must not be empty".into(),
+            ));
+        }
+        if self.container_pids_limit.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "container pids limit must not be empty".into(),
+            ));
+        }
+        if self.shared_cache_volume.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "shared cache volume must not be empty".into(),
+            ));
+        }
+        if self.runner_home_size.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "runner home size must not be empty".into(),
+            ));
+        }
         if !matches!(self.runner_home_backend.as_str(), "tmpfs" | "volume") {
             return Err(ConfigError::Invalid(format!(
                 "runner home backend must be \"tmpfs\" or \"volume\", got {:?}",
@@ -323,10 +475,20 @@ impl Config {
                 self.gtuu_schedule_timezone
             )));
         }
-        if self.github_connect_timeout == 0 { return Err(ConfigError::Invalid("github connect timeout must be greater than zero".into())); }
-        if self.github_request_timeout == 0 { return Err(ConfigError::Invalid("github request timeout must be greater than zero".into())); }
+        if self.github_connect_timeout == 0 {
+            return Err(ConfigError::Invalid(
+                "github connect timeout must be greater than zero".into(),
+            ));
+        }
+        if self.github_request_timeout == 0 {
+            return Err(ConfigError::Invalid(
+                "github request timeout must be greater than zero".into(),
+            ));
+        }
         if self.github_connect_timeout > self.github_request_timeout {
-            return Err(ConfigError::Invalid("github connect timeout must not exceed the overall request timeout".into()));
+            return Err(ConfigError::Invalid(
+                "github connect timeout must not exceed the overall request timeout".into(),
+            ));
         }
         let app_fields = [
             !self.github_app_id.trim().is_empty(),
@@ -340,7 +502,9 @@ impl Config {
         }
         validate_time(&self.container_update_time)?;
         for repo in &self.repositories {
-            if !is_repository(repo) { return Err(ConfigError::Repository(repo.clone())); }
+            if !is_repository(repo) {
+                return Err(ConfigError::Repository(repo.clone()));
+            }
         }
         // The danger gate: disabling Docker-socket hardening requires the
         // separate explicit opt-in, so a single unset/mistyped variable
@@ -350,7 +514,10 @@ impl Config {
                 "GITRUN_GSR_DOCKER_SOCKET_HARDENING=false requires GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true as an explicit, separate opt-in".into(),
             ));
         }
-        if !matches!(self.gsr_violation_action.as_str(), "log_only" | "kill" | "kill_and_ban") {
+        if !matches!(
+            self.gsr_violation_action.as_str(),
+            "log_only" | "kill" | "kill_and_ban"
+        ) {
             return Err(ConfigError::Invalid(format!(
                 "GSR violation action must be \"log_only\", \"kill\", or \"kill_and_ban\", got {:?}",
                 self.gsr_violation_action
@@ -424,50 +591,83 @@ fn validate_time(value: &str) -> Result<(), ConfigError> {
         || !bytes[..2].iter().all(|byte| byte.is_ascii_digit())
         || !bytes[3..].iter().all(|byte| byte.is_ascii_digit())
     {
-        return Err(ConfigError::Invalid(format!("invalid container update time: {value}")));
+        return Err(ConfigError::Invalid(format!(
+            "invalid container update time: {value}"
+        )));
     }
     let hour = value[..2].parse::<u8>().unwrap_or(99);
     let minute = value[3..].parse::<u8>().unwrap_or(99);
     if hour > 23 || minute > 59 {
-        return Err(ConfigError::Invalid(format!("invalid container update time: {value}")));
+        return Err(ConfigError::Invalid(format!(
+            "invalid container update time: {value}"
+        )));
     }
     Ok(())
 }
 
 fn parse_repositories(raw: &str) -> Result<Vec<String>, ConfigError> {
-    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(|repo| {
-        if is_repository(repo) { Ok(repo.to_owned()) } else { Err(ConfigError::Repository(repo.to_owned())) }
-    }).collect()
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|repo| {
+            if is_repository(repo) {
+                Ok(repo.to_owned())
+            } else {
+                Err(ConfigError::Repository(repo.to_owned()))
+            }
+        })
+        .collect()
 }
 /// Splits a comma-separated config string into trimmed, non-empty patterns.
 /// Used for `gsr_command_blacklist`/`gsr_command_whitelist` — same shape as
 /// `parse_repositories` above but without the repo-format check, since
 /// these are free-form substrings rather than `owner/repo` pairs.
 fn split_csv(raw: &str) -> Vec<String> {
-    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect()
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 fn is_repository(value: &str) -> bool {
     let mut parts = value.split('/');
     matches!((parts.next(), parts.next(), parts.next()), (Some(a), Some(b), None) if !a.is_empty() && !b.is_empty())
 }
 fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, ConfigError> {
-    match value { Some(v) => v.parse().map_err(|_| ConfigError::Integer { key: key.into(), value: v.clone() }), None => Ok(default) }
+    match value {
+        Some(v) => v.parse().map_err(|_| ConfigError::Integer {
+            key: key.into(),
+            value: v.clone(),
+        }),
+        None => Ok(default),
+    }
 }
 fn value_u64(value: &Option<String>, key: &str, default: u64) -> Result<u64, ConfigError> {
-    match value { Some(v) => v.parse().map_err(|_| ConfigError::Integer { key: key.into(), value: v.clone() }), None => Ok(default) }
+    match value {
+        Some(v) => v.parse().map_err(|_| ConfigError::Integer {
+            key: key.into(),
+            value: v.clone(),
+        }),
+        None => Ok(default),
+    }
 }
 fn parse_bool(key: &str, value: &str) -> Result<bool, ConfigError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(ConfigError::Boolean { key: key.into(), value: value.into() }),
+        _ => Err(ConfigError::Boolean {
+            key: key.into(),
+            value: value.into(),
+        }),
     }
 }
 fn unquote(value: &str) -> String {
     if value.len() >= 2 {
         let b = value.as_bytes();
-        if (b[0] == b'"' && b[value.len()-1] == b'"') || (b[0] == b'\'' && b[value.len()-1] == b'\'') {
-            return value[1..value.len()-1].to_owned();
+        if (b[0] == b'"' && b[value.len() - 1] == b'"')
+            || (b[0] == b'\'' && b[value.len() - 1] == b'\'')
+        {
+            return value[1..value.len() - 1].to_owned();
         }
     }
     value.to_owned()
@@ -477,7 +677,10 @@ fn unquote(value: &str) -> String {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     #[test]
     fn repository_validation_is_strict() {
         assert!(is_repository("owner/repo"));
@@ -489,7 +692,10 @@ mod tests {
     fn vault_groups_for_repo_parses_multiple_repos_and_groups() {
         let mut config = Config::default();
         config.vault_group_membership = "owner/a=production,shared;owner/b=staging".to_owned();
-        assert_eq!(config.vault_groups_for_repo("owner/a"), vec!["production", "shared"]);
+        assert_eq!(
+            config.vault_groups_for_repo("owner/a"),
+            vec!["production", "shared"]
+        );
         assert_eq!(config.vault_groups_for_repo("owner/b"), vec!["staging"]);
         assert!(config.vault_groups_for_repo("owner/unlisted").is_empty());
     }
@@ -508,7 +714,13 @@ mod tests {
     }
     #[test]
     fn env_file_does_not_mutate_process_environment() {
-        let path = std::env::temp_dir().join(format!("gitrun-config-{}.env", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-config-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         fs::write(&path, "GITRUN_MIN_RUNNERS=2\nGITRUN_MAX_RUNNERS=4\nGITRUN_EPHEMERAL=true\nGITRUN_AUTO_CONTAINER_RECOVERY=false\nGITRUN_CONTAINER_RECOVERY_COOLDOWN=90\n").unwrap();
         let config = Config::from_env_file(&path).unwrap();
         fs::remove_file(path).unwrap();
@@ -519,7 +731,9 @@ mod tests {
         assert_eq!(config.container_recovery_cooldown, 90);
     }
     #[test]
-    fn invalid_boolean_is_rejected() { assert!(parse_bool("TEST", "maybe").is_err()); }
+    fn invalid_boolean_is_rejected() {
+        assert!(parse_bool("TEST", "maybe").is_err());
+    }
 
     #[test]
     fn container_update_time_is_validated() {
@@ -566,19 +780,34 @@ mod tests {
         config.gsr_command_blacklist_enabled = true;
         config.gsr_command_blacklist = "rm -rf, curl evil.com ".into();
         let policy = config.command_policy().unwrap();
-        assert!(matches!(policy.evaluate("rm -rf /tmp"), crate::command_policy::Decision::Denied { .. }));
-        assert_eq!(policy.evaluate("cargo build"), crate::command_policy::Decision::Allowed);
+        assert!(matches!(
+            policy.evaluate("rm -rf /tmp"),
+            crate::command_policy::Decision::Denied { .. }
+        ));
+        assert_eq!(
+            policy.evaluate("cargo build"),
+            crate::command_policy::Decision::Allowed
+        );
     }
 
     #[test]
     fn env_file_loads_gsr_fields() {
-        let path = std::env::temp_dir().join(format!("gitrun-config-gsr-{}.env", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-config-gsr-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         fs::write(&path, "GITRUN_GSR_COMMAND_WHITELIST_ENABLED=true\nGITRUN_GSR_COMMAND_WHITELIST=cargo,npm\nGITRUN_GSR_VIOLATION_ACTION=kill_and_ban\n").unwrap();
         let config = Config::from_env_file(&path).unwrap();
         fs::remove_file(path).unwrap();
         assert!(config.gsr_command_whitelist_enabled);
         assert_eq!(config.gsr_command_whitelist, "cargo,npm");
-        assert_eq!(config.violation_action(), crate::command_policy::ViolationAction::KillAndBan);
+        assert_eq!(
+            config.violation_action(),
+            crate::command_policy::ViolationAction::KillAndBan
+        );
     }
 
     #[test]

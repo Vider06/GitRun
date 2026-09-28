@@ -131,7 +131,9 @@ pub fn bootstrap_linux_with_auth(
         .collect::<Vec<_>>();
 
     if repositories.is_empty() {
-        return Err(SetupError::InvalidRepository("at least one repository is required".into()));
+        return Err(SetupError::InvalidRepository(
+            "at least one repository is required".into(),
+        ));
     }
     for repo in &repositories {
         if !valid_repo(repo) {
@@ -151,13 +153,41 @@ pub fn bootstrap_linux_with_auth(
         fs::create_dir_all(path)?;
     }
 
-    write_resource(&root.join("autoscaler/gitrun_manager.py"), resources::MANAGER_PY, 0o644)?;
-    write_resource(&root.join("autoscaler/gitrun_updater_utility.py"), resources::GTUU_PY, 0o755)?;
-    write_resource(&root.join("docker/manager/Dockerfile"), resources::MANAGER_DOCKERFILE, 0o644)?;
-    write_resource(&root.join("docker/runner/Dockerfile"), resources::RUNNER_DOCKERFILE, 0o644)?;
-    write_resource(&root.join("docker/runner/entrypoint.sh"), resources::RUNNER_ENTRYPOINT, 0o755)?;
-    write_resource(&root.join("docker-compose.yml"), resources::COMPOSE_YML, 0o644)?;
-    write_resource(Path::new("/etc/systemd/system/gitrun.service"), resources::SYSTEMD_SERVICE, 0o644)?;
+    write_resource(
+        &root.join("autoscaler/gitrun_manager.py"),
+        resources::MANAGER_PY,
+        0o644,
+    )?;
+    write_resource(
+        &root.join("autoscaler/gitrun_updater_utility.py"),
+        resources::GTUU_PY,
+        0o755,
+    )?;
+    write_resource(
+        &root.join("docker/manager/Dockerfile"),
+        resources::MANAGER_DOCKERFILE,
+        0o644,
+    )?;
+    write_resource(
+        &root.join("docker/runner/Dockerfile"),
+        resources::RUNNER_DOCKERFILE,
+        0o644,
+    )?;
+    write_resource(
+        &root.join("docker/runner/entrypoint.sh"),
+        resources::RUNNER_ENTRYPOINT,
+        0o755,
+    )?;
+    write_resource(
+        &root.join("docker-compose.yml"),
+        resources::COMPOSE_YML,
+        0o644,
+    )?;
+    write_resource(
+        Path::new("/etc/systemd/system/gitrun.service"),
+        resources::SYSTEMD_SERVICE,
+        0o644,
+    )?;
 
     let config_path = config_dir.join("gitrun.env");
     let auth_lines = match &auth {
@@ -186,22 +216,29 @@ pub fn bootstrap_linux_with_auth(
         add_user_to_docker_group(uid)?;
     }
 
-    build_image("gitrun-manager:latest", &root, &root.join("docker/manager/Dockerfile"))?;
-    build_image("gitrun-runner:latest", &root, &root.join("docker/runner/Dockerfile"))?;
+    build_image(
+        "gitrun-manager:latest",
+        &root,
+        &root.join("docker/manager/Dockerfile"),
+    )?;
+    build_image(
+        "gitrun-runner:latest",
+        &root,
+        &root.join("docker/runner/Dockerfile"),
+    )?;
 
-    run_command(
-        Command::new("docker")
-            .args(["compose", "--env-file", "/etc/gitrun/gitrun.env", "-f", "/opt/gitrun/docker-compose.yml", "config", "-q"]),
-    )?;
-    run_command(
-        Command::new("systemctl").args(["daemon-reload"]),
-    )?;
-    run_command(
-        Command::new("systemctl").args(["enable", "gitrun.service"]),
-    )?;
-    run_command(
-        Command::new("systemctl").args(["restart", "gitrun.service"]),
-    )?;
+    run_command(Command::new("docker").args([
+        "compose",
+        "--env-file",
+        "/etc/gitrun/gitrun.env",
+        "-f",
+        "/opt/gitrun/docker-compose.yml",
+        "config",
+        "-q",
+    ]))?;
+    run_command(Command::new("systemctl").args(["daemon-reload"]))?;
+    run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
+    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
 
     let installed = PathBuf::from("/usr/local/bin/gitrun");
     fs::copy(app_binary, &installed)?;
@@ -235,14 +272,14 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
             validate_env_value(installation_id, "GITRUN_GITHUB_APP_INSTALLATION_ID")?;
             validate_env_value(private_key_path, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?;
 
-            let key = fs::read_to_string(private_key_path)
-                .map_err(|error| SetupError::Command(format!(
+            let key = fs::read_to_string(private_key_path).map_err(|error| {
+                SetupError::Command(format!(
                     "unable to read GitHub App private key at {private_key_path}: {error}"
-                )))?;
-            gitrun_core::AppAuth::new(app_id, installation_id, &key)
-                .map_err(|error| SetupError::Command(format!(
-                    "invalid GitHub App authentication data: {error}"
-                )))?;
+                ))
+            })?;
+            gitrun_core::AppAuth::new(app_id, installation_id, &key).map_err(|error| {
+                SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
+            })?;
         }
     }
     Ok(())
@@ -252,8 +289,13 @@ fn validate_env_value(value: &str, key: &str) -> Result<(), SetupError> {
     if value.trim().is_empty() {
         return Err(SetupError::Command(format!("{key} must not be empty")));
     }
-    if value.chars().any(|character| character == '\n' || character == '\r') {
-        return Err(SetupError::Command(format!("{key} must not contain newlines")));
+    if value
+        .chars()
+        .any(|character| character == '\n' || character == '\r')
+    {
+        return Err(SetupError::Command(format!(
+            "{key} must not contain newlines"
+        )));
     }
     Ok(())
 }
@@ -268,16 +310,13 @@ fn ensure_docker() -> Result<(), SetupError> {
     }
 
     run_command(Command::new("apt-get").args(["update"]))?;
-    run_command(Command::new("apt-get").args([
-        "install",
-        "-y",
-        "docker.io",
-        "docker-compose-v2",
-    ]))?;
+    run_command(Command::new("apt-get").args(["install", "-y", "docker.io", "docker-compose-v2"]))?;
     run_command(Command::new("systemctl").args(["enable", "--now", "docker"]))?;
 
     if !docker_daemon_ready() || !compose_ready() {
-        return Err(SetupError::Command("Docker installation completed but Docker/Compose is not ready".into()));
+        return Err(SetupError::Command(
+            "Docker installation completed but Docker/Compose is not ready".into(),
+        ));
     }
     Ok(())
 }
@@ -304,11 +343,17 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
     // freshly created file — e.g. gitrun.env, which holds the GitHub token in
     // plaintext — sits on disk with default (potentially world/group-readable)
     // permissions before being tightened to 0o600.
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("resource");
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("resource");
     let tmp_path = path.with_file_name(format!(
         "{file_name}.tmp.{}.{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
     ));
     {
         let mut file = fs::OpenOptions::new()
@@ -339,9 +384,7 @@ fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
 }
 
 fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {
-    run_command(
-        Command::new("chown").arg(uid.to_string()).arg(path),
-    )
+    run_command(Command::new("chown").arg(uid.to_string()).arg(path))
 }
 
 fn valid_repo(value: &str) -> bool {
@@ -350,17 +393,19 @@ fn valid_repo(value: &str) -> bool {
     };
     !owner.is_empty()
         && !repo.is_empty()
-        && owner.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
-        && repo.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        && owner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        && repo
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
 }
 
 fn running_as_root() -> bool {
     Command::new("id")
         .args(["-u"])
         .output()
-        .map(|o| {
-            o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "0"
-        })
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "0")
         .unwrap_or(false)
 }
 
@@ -373,19 +418,35 @@ fn command_exists(name: &str) -> bool {
 }
 
 fn docker_daemon_ready() -> bool {
-    Command::new("docker").arg("info").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("docker")
+        .arg("info")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn docker_daemon_status() -> DependencyStatus {
     if docker_daemon_ready() {
-        DependencyStatus { name: "docker daemon", available: true, version: None }
+        DependencyStatus {
+            name: "docker daemon",
+            available: true,
+            version: None,
+        }
     } else {
-        DependencyStatus { name: "docker daemon", available: false, version: None }
+        DependencyStatus {
+            name: "docker daemon",
+            available: false,
+            version: None,
+        }
     }
 }
 
 fn compose_ready() -> bool {
-    Command::new("docker").args(["compose", "version"]).output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("docker")
+        .args(["compose", "version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn compose_status() -> DependencyStatus {
@@ -393,11 +454,23 @@ fn compose_status() -> DependencyStatus {
         DependencyStatus {
             name: "docker compose",
             available: true,
-            version: Command::new("docker").args(["compose", "version"]).output().ok()
-                .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next().map(str::to_owned)),
+            version: Command::new("docker")
+                .args(["compose", "version"])
+                .output()
+                .ok()
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .next()
+                        .map(str::to_owned)
+                }),
         }
     } else {
-        DependencyStatus { name: "docker compose", available: false, version: None }
+        DependencyStatus {
+            name: "docker compose",
+            available: false,
+            version: None,
+        }
     }
 }
 
@@ -406,9 +479,16 @@ fn command_status(name: &'static str, args: &[&str]) -> DependencyStatus {
         Ok(output) if output.status.success() => DependencyStatus {
             name,
             available: true,
-            version: String::from_utf8_lossy(&output.stdout).lines().next().map(str::to_owned),
+            version: String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .map(str::to_owned),
         },
-        _ => DependencyStatus { name, available: false, version: None },
+        _ => DependencyStatus {
+            name,
+            available: false,
+            version: None,
+        },
     }
 }
 
@@ -420,14 +500,21 @@ fn run_command(command: &mut Command) -> Result<(), SetupError> {
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        Err(SetupError::Command(if stderr.is_empty() { format!("{display}: {stdout}") } else { format!("{display}: {stderr}") }))
+        Err(SetupError::Command(if stderr.is_empty() {
+            format!("{display}: {stdout}")
+        } else {
+            format!("{display}: {stderr}")
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn config_path_is_inside_config_dir() {
@@ -440,15 +527,29 @@ mod tests {
     #[test]
     fn dependency_report_has_required_tools() {
         let names: Vec<_> = check_dependencies().into_iter().map(|d| d.name).collect();
-        assert!(names.contains(&"docker") && names.contains(&"docker daemon") && names.contains(&"docker compose") && names.contains(&"git"));
+        assert!(
+            names.contains(&"docker")
+                && names.contains(&"docker daemon")
+                && names.contains(&"docker compose")
+                && names.contains(&"git")
+        );
     }
 
     #[test]
     fn prepare_directories_rejects_file_as_config_dir() {
-        let path = std::env::temp_dir().join(format!("gitrun-setup-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         fs::write(&path, "not a directory").unwrap();
         let config = Config::default();
-        assert!(matches!(prepare_directories(&config, &path), Err(SetupError::InvalidConfigDir(_))));
+        assert!(matches!(
+            prepare_directories(&config, &path),
+            Err(SetupError::InvalidConfigDir(_))
+        ));
         fs::remove_file(path).unwrap();
     }
 

@@ -125,11 +125,23 @@ pub fn install(ctx: &egui::Context) {
 
     // --- Typography: clear hierarchy, monospace where data density matters ---
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(20.0, FontFamily::Proportional)),
+        (
+            TextStyle::Heading,
+            FontId::new(20.0, FontFamily::Proportional),
+        ),
         (TextStyle::Body, FontId::new(14.0, FontFamily::Proportional)),
-        (TextStyle::Button, FontId::new(14.0, FontFamily::Proportional)),
-        (TextStyle::Small, FontId::new(12.0, FontFamily::Proportional)),
-        (TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace)),
+        (
+            TextStyle::Button,
+            FontId::new(14.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Small,
+            FontId::new(12.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Monospace,
+            FontId::new(13.0, FontFamily::Monospace),
+        ),
     ]
     .into();
 
@@ -140,7 +152,11 @@ pub fn install(ctx: &egui::Context) {
 /// always means the same green everywhere in the app, rather than each call site
 /// picking its own `Color32::from_rgb(...)`.
 pub fn status_color(running: bool) -> Color32 {
-    if running { PALETTE.success } else { PALETTE.danger }
+    if running {
+        PALETTE.success
+    } else {
+        PALETTE.danger
+    }
 }
 
 /// Small helper for the recurring "section card" look: a slightly raised panel

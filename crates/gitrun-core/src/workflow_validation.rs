@@ -30,9 +30,9 @@
 //!    see `run_zizmor` — since it's an optional enhancement, not a
 //!    dependency GitRun installs on the operator's behalf.
 
+use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
-use serde::Serialize;
 
 /// One finding from either the built-in scan or `zizmor`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,11 +275,16 @@ pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
     if Command::new("zizmor").arg("--version").output().is_ok() {
         return Ok(InstallOutcome::AlreadyInstalled);
     }
-    let output = Command::new("cargo").arg("install").arg("zizmor").output()?;
+    let output = Command::new("cargo")
+        .arg("install")
+        .arg("zizmor")
+        .output()?;
     if output.status.success() {
         Ok(InstallOutcome::Installed)
     } else {
-        Ok(InstallOutcome::Failed(String::from_utf8_lossy(&output.stderr).trim().to_owned()))
+        Ok(InstallOutcome::Failed(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ))
     }
 }
 
@@ -299,12 +304,15 @@ mod tests {
     fn flags_pull_request_target_with_head_checkout() {
         let workflow = "on: pull_request_target\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n";
         let findings = scan("ci.yml", workflow);
-        assert!(findings.iter().any(|f| f.rule == "pull_request_target-with-head-checkout"));
+        assert!(findings
+            .iter()
+            .any(|f| f.rule == "pull_request_target-with-head-checkout"));
     }
 
     #[test]
     fn does_not_flag_pull_request_target_alone() {
-        let workflow = "on: pull_request_target\njobs:\n  build:\n    steps:\n      - run: echo hello\n";
+        let workflow =
+            "on: pull_request_target\njobs:\n  build:\n    steps:\n      - run: echo hello\n";
         let findings = scan("ci.yml", workflow);
         assert!(findings.is_empty());
     }
@@ -313,12 +321,15 @@ mod tests {
     fn flags_unsecure_commands_opt_out() {
         let workflow = "env:\n  ACTIONS_ALLOW_UNSECURE_COMMANDS: true\n";
         let findings = scan("ci.yml", workflow);
-        assert!(findings.iter().any(|f| f.rule == "unsecure-commands-enabled"));
+        assert!(findings
+            .iter()
+            .any(|f| f.rule == "unsecure-commands-enabled"));
     }
 
     #[test]
     fn flags_template_injection_from_issue_title() {
-        let workflow = "jobs:\n  build:\n    steps:\n      - run: echo \"${{ github.event.issue.title }}\"\n";
+        let workflow =
+            "jobs:\n  build:\n    steps:\n      - run: echo \"${{ github.event.issue.title }}\"\n";
         let findings = scan("ci.yml", workflow);
         assert!(findings.iter().any(|f| f.rule == "template-injection-risk"));
     }
@@ -338,7 +349,8 @@ mod tests {
 
     #[test]
     fn validate_workflows_dir_on_missing_dir_is_empty_not_an_error() {
-        let dir = std::env::temp_dir().join(format!("gitrun-workflows-missing-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-workflows-missing-{}", std::process::id()));
         let report = validate_workflows_dir(&dir).unwrap();
         assert!(report.is_clean());
     }

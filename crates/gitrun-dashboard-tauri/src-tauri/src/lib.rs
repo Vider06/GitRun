@@ -43,9 +43,16 @@ fn get_overview() -> Result<OverviewData, String> {
     let config = load_config()?;
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let recent_critical_events = gitrun_gsr::events::read_all(&events_path)
-        .map(|events| events.iter().filter(|e| e.severity == gitrun_gsr::Severity::Critical).count() as u32)
+        .map(|events| {
+            events
+                .iter()
+                .filter(|e| e.severity == gitrun_gsr::Severity::Critical)
+                .count() as u32
+        })
         .unwrap_or(0);
-    let gsr_watching = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid").exists();
+    let gsr_watching = PathBuf::from(&config.state_dir)
+        .join("gitrun-autoscaler.pid")
+        .exists();
 
     Ok(OverviewData {
         repositories: config.repositories.clone(),
@@ -74,7 +81,8 @@ pub struct RepoDetail {
 fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     let config = load_config()?;
     let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
-    let all_rules = gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
+    let all_rules =
+        gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
     Ok(RepoDetail {
         vault_groups: config.vault_groups_for_repo(&repo),
         repo,
@@ -139,7 +147,11 @@ fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
     Ok(vault
         .list()
         .into_iter()
-        .map(|(name, scope, updated_at)| VaultSecretSummary { name, scope: scope.into(), updated_at })
+        .map(|(name, scope, updated_at)| VaultSecretSummary {
+            name,
+            scope: scope.into(),
+            updated_at,
+        })
         .collect())
 }
 
@@ -154,14 +166,18 @@ fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
 fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), String> {
     let config = load_config()?;
     let mut vault = open_vault(&config)?;
-    vault.set_scoped(&name, &value, scope.into()).map_err(|e| e.to_string())
+    vault
+        .set_scoped(&name, &value, scope.into())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
     let config = load_config()?;
     let mut vault = open_vault(&config)?;
-    vault.delete_scoped(&name, &scope.into()).map_err(|e| e.to_string())
+    vault
+        .delete_scoped(&name, &scope.into())
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------
@@ -178,8 +194,13 @@ pub struct GsrStatus {
 fn get_gsr_status() -> Result<GsrStatus, String> {
     let config = load_config()?;
     let pid_file = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid");
-    let watched_pid = std::fs::read_to_string(&pid_file).ok().and_then(|s| s.trim().parse().ok());
-    Ok(GsrStatus { watching: pid_file.exists(), watched_pid })
+    let watched_pid = std::fs::read_to_string(&pid_file)
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
+    Ok(GsrStatus {
+        watching: pid_file.exists(),
+        watched_pid,
+    })
 }
 
 #[tauri::command]
@@ -248,7 +269,11 @@ fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, St
     config.validate().map_err(|e| e.to_string())?;
     let path = match std::env::var("GITRUN_CONFIG_FILE") {
         Ok(path) => PathBuf::from(path),
-        Err(_) => return Err("GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into()),
+        Err(_) => {
+            return Err(
+                "GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into(),
+            )
+        }
     };
     gitrun_setup_bridge::update_env_file(&path, &config).map_err(|e| e.to_string())?;
     gitrun_core::ensure_zizmor_installed().map_err(|e| e.to_string())
@@ -266,7 +291,11 @@ fn disable_zizmor() -> Result<(), String> {
     config.gsr_zizmor_enabled = false;
     let path = match std::env::var("GITRUN_CONFIG_FILE") {
         Ok(path) => PathBuf::from(path),
-        Err(_) => return Err("GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into()),
+        Err(_) => {
+            return Err(
+                "GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into(),
+            )
+        }
     };
     gitrun_setup_bridge::update_env_file(&path, &config).map_err(|e| e.to_string())
 }
@@ -283,7 +312,9 @@ fn list_logic_rules() -> Result<Vec<gitrun_scheduler::logic_containers::LogicRul
 }
 
 #[tauri::command]
-fn save_logic_rules(rules: Vec<gitrun_scheduler::logic_containers::LogicRule>) -> Result<(), String> {
+fn save_logic_rules(
+    rules: Vec<gitrun_scheduler::logic_containers::LogicRule>,
+) -> Result<(), String> {
     let config = load_config()?;
     let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
     gitrun_scheduler::logic_containers::save_rules(&rules_path, &rules).map_err(|e| e.to_string())
@@ -319,7 +350,11 @@ fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), St
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -334,9 +369,11 @@ fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), St
 // ---------------------------------------------------------------------
 
 #[tauri::command]
-fn list_pending_hypervisor_decisions() -> Result<Vec<gitrun_core::hypervisor_decision::PendingDecision>, String> {
+fn list_pending_hypervisor_decisions(
+) -> Result<Vec<gitrun_core::hypervisor_decision::PendingDecision>, String> {
     let config = load_config()?;
-    gitrun_core::hypervisor_decision::list_pending(std::path::Path::new(&config.state_dir)).map_err(|e| e.to_string())
+    gitrun_core::hypervisor_decision::list_pending(std::path::Path::new(&config.state_dir))
+        .map_err(|e| e.to_string())
 }
 
 /// The operator's answer to a pending prompt. Does *not* itself bring the
@@ -349,10 +386,17 @@ fn list_pending_hypervisor_decisions() -> Result<Vec<gitrun_core::hypervisor_dec
 /// abandoned; it'll be retried automatically next time it's needed" rather
 /// than a generic failure.
 #[tauri::command]
-fn respond_hypervisor_decision(vm_name: String, choice: gitrun_core::hypervisor_decision::DecisionChoice) -> Result<(), String> {
+fn respond_hypervisor_decision(
+    vm_name: String,
+    choice: gitrun_core::hypervisor_decision::DecisionChoice,
+) -> Result<(), String> {
     let config = load_config()?;
-    gitrun_core::hypervisor_decision::respond(std::path::Path::new(&config.state_dir), &vm_name, choice)
-        .map_err(|e| e.to_string())
+    gitrun_core::hypervisor_decision::respond(
+        std::path::Path::new(&config.state_dir),
+        &vm_name,
+        choice,
+    )
+    .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------
@@ -374,7 +418,11 @@ fn save_config(updated: Config) -> Result<(), String> {
     updated.validate().map_err(|e| e.to_string())?;
     let path = match std::env::var("GITRUN_CONFIG_FILE") {
         Ok(path) => PathBuf::from(path),
-        Err(_) => return Err("GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into()),
+        Err(_) => {
+            return Err(
+                "GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into(),
+            )
+        }
     };
     gitrun_setup_bridge::update_env_file(&path, &updated).map_err(|e| e.to_string())
 }
@@ -390,22 +438,38 @@ mod gitrun_setup_bridge {
     use std::path::Path;
 
     const MANAGED_CONFIG_KEYS: &[&str] = &[
-        "GITRUN_REPOSITORIES", "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
-        "GITRUN_POLL_INTERVAL", "GITRUN_RUNNER_IMAGE", "GITRUN_RUNNER_LABELS", "GITRUN_EPHEMERAL",
-        "GITRUN_STATE_DIR", "GITRUN_LOG_DIR", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME",
-        "GITRUN_AUTO_CONTAINER_RECOVERY", "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
+        "GITRUN_REPOSITORIES",
+        "GITRUN_MIN_RUNNERS",
+        "GITRUN_MAX_RUNNERS",
+        "GITRUN_IDLE_TIMEOUT",
+        "GITRUN_POLL_INTERVAL",
+        "GITRUN_RUNNER_IMAGE",
+        "GITRUN_RUNNER_LABELS",
+        "GITRUN_EPHEMERAL",
+        "GITRUN_STATE_DIR",
+        "GITRUN_LOG_DIR",
+        "GITRUN_AUTO_CONTAINER_UPDATE",
+        "GITRUN_CONTAINER_UPDATE_TIME",
+        "GITRUN_AUTO_CONTAINER_RECOVERY",
+        "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
         // GSR hardening / command policy / workflow validation. Added
         // alongside the dashboard's GSR settings UI — without these keys
         // here, toggling any of these settings in the dashboard would
         // silently fail to persist (save_config would report success, but
         // gitrun_setup_bridge::update_env_file only ever writes keys in
         // this list, so the change would be lost on the next config load).
-        "GITRUN_GSR_DOCKER_SOCKET_HARDENING", "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
-        "GITRUN_GSR_COMMAND_POLICY_ENABLED", "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED",
-        "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED", "GITRUN_GSR_COMMAND_BLACKLIST",
-        "GITRUN_GSR_COMMAND_WHITELIST_ENABLED", "GITRUN_GSR_COMMAND_WHITELIST",
-        "GITRUN_GSR_VIOLATION_ACTION", "GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED",
-        "GITRUN_GSR_ZIZMOR_ENABLED", "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
+        "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
+        "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
+        "GITRUN_GSR_COMMAND_POLICY_ENABLED",
+        "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED",
+        "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED",
+        "GITRUN_GSR_COMMAND_BLACKLIST",
+        "GITRUN_GSR_COMMAND_WHITELIST_ENABLED",
+        "GITRUN_GSR_COMMAND_WHITELIST",
+        "GITRUN_GSR_VIOLATION_ACTION",
+        "GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED",
+        "GITRUN_GSR_ZIZMOR_ENABLED",
+        "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
     ];
 
     fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
@@ -420,27 +484,76 @@ mod gitrun_setup_bridge {
             ("GITRUN_EPHEMERAL", config.ephemeral.to_string()),
             ("GITRUN_STATE_DIR", config.state_dir.clone()),
             ("GITRUN_LOG_DIR", config.log_dir.clone()),
-            ("GITRUN_AUTO_CONTAINER_UPDATE", config.auto_container_update.to_string()),
-            ("GITRUN_CONTAINER_UPDATE_TIME", config.container_update_time.clone()),
-            ("GITRUN_AUTO_CONTAINER_RECOVERY", config.auto_container_recovery.to_string()),
-            ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", config.container_recovery_cooldown.to_string()),
-            ("GITRUN_GSR_DOCKER_SOCKET_HARDENING", config.gsr_docker_socket_hardening.to_string()),
-            ("GITRUN_GSR_ALLOW_UNSAFE_RUNNER", config.gsr_allow_unsafe_runner.to_string()),
-            ("GITRUN_GSR_COMMAND_POLICY_ENABLED", config.gsr_command_policy_enabled.to_string()),
-            ("GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED", config.gsr_command_baseline_blacklist_enabled.to_string()),
-            ("GITRUN_GSR_COMMAND_BLACKLIST_ENABLED", config.gsr_command_blacklist_enabled.to_string()),
-            ("GITRUN_GSR_COMMAND_BLACKLIST", config.gsr_command_blacklist.clone()),
-            ("GITRUN_GSR_COMMAND_WHITELIST_ENABLED", config.gsr_command_whitelist_enabled.to_string()),
-            ("GITRUN_GSR_COMMAND_WHITELIST", config.gsr_command_whitelist.clone()),
-            ("GITRUN_GSR_VIOLATION_ACTION", config.gsr_violation_action.clone()),
-            ("GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED", config.gsr_workflow_validation_enabled.to_string()),
-            ("GITRUN_GSR_ZIZMOR_ENABLED", config.gsr_zizmor_enabled.to_string()),
-            ("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED", config.gsr_zizmor_license_accepted.to_string()),
+            (
+                "GITRUN_AUTO_CONTAINER_UPDATE",
+                config.auto_container_update.to_string(),
+            ),
+            (
+                "GITRUN_CONTAINER_UPDATE_TIME",
+                config.container_update_time.clone(),
+            ),
+            (
+                "GITRUN_AUTO_CONTAINER_RECOVERY",
+                config.auto_container_recovery.to_string(),
+            ),
+            (
+                "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
+                config.container_recovery_cooldown.to_string(),
+            ),
+            (
+                "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
+                config.gsr_docker_socket_hardening.to_string(),
+            ),
+            (
+                "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
+                config.gsr_allow_unsafe_runner.to_string(),
+            ),
+            (
+                "GITRUN_GSR_COMMAND_POLICY_ENABLED",
+                config.gsr_command_policy_enabled.to_string(),
+            ),
+            (
+                "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED",
+                config.gsr_command_baseline_blacklist_enabled.to_string(),
+            ),
+            (
+                "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED",
+                config.gsr_command_blacklist_enabled.to_string(),
+            ),
+            (
+                "GITRUN_GSR_COMMAND_BLACKLIST",
+                config.gsr_command_blacklist.clone(),
+            ),
+            (
+                "GITRUN_GSR_COMMAND_WHITELIST_ENABLED",
+                config.gsr_command_whitelist_enabled.to_string(),
+            ),
+            (
+                "GITRUN_GSR_COMMAND_WHITELIST",
+                config.gsr_command_whitelist.clone(),
+            ),
+            (
+                "GITRUN_GSR_VIOLATION_ACTION",
+                config.gsr_violation_action.clone(),
+            ),
+            (
+                "GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED",
+                config.gsr_workflow_validation_enabled.to_string(),
+            ),
+            (
+                "GITRUN_GSR_ZIZMOR_ENABLED",
+                config.gsr_zizmor_enabled.to_string(),
+            ),
+            (
+                "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
+                config.gsr_zizmor_license_accepted.to_string(),
+            ),
         ]
     }
 
     pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
-        let original = std::fs::read_to_string(path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
+        let original = std::fs::read_to_string(path)
+            .map_err(|e| format!("unable to read {}: {e}", path.display()))?;
         let values = config_env_values(config);
         let managed: BTreeSet<&str> = MANAGED_CONFIG_KEYS.iter().copied().collect();
         let mut seen = BTreeSet::new();

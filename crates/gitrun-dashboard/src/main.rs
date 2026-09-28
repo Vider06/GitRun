@@ -1,1 +1,3 @@
-fn main() -> eframe::Result { gitrun_dashboard::run() }
+fn main() -> eframe::Result {
+    gitrun_dashboard::run()
+}

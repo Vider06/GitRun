@@ -198,11 +198,20 @@ fn kvm_device_exists() -> bool {
 }
 
 fn is_kvm_available() -> bool {
-    kvm_device_exists() && Command::new("virsh").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    kvm_device_exists()
+        && Command::new("virsh")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
 }
 
 pub fn is_virtualbox_installed() -> bool {
-    Command::new("VBoxManage").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("VBoxManage")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Human-readable, non-executed guidance for installing a hypervisor.
@@ -309,22 +318,60 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
     if vm_exists(HypervisorKind::VirtualBox, &config.name)? {
         return Ok(());
     }
-    run_checked(HypervisorKind::VirtualBox, &["createvm", "--name", &config.name, "--ostype", "Other_64", "--register"])?;
-    run_checked(HypervisorKind::VirtualBox, &[
-        "modifyvm", &config.name,
-        "--memory", &config.memory_mb.to_string(),
-        "--cpus", &config.cpus.to_string(),
-        "--nic1", "nat",
-        "--natpf1", &format!("docker,tcp,,{},,{}", config.docker_port, config.docker_port),
-    ])?;
-    run_checked(HypervisorKind::VirtualBox, &["storagectl", &config.name, "--name", "SATA", "--add", "sata", "--controller", "IntelAhci"])?;
-    run_checked(HypervisorKind::VirtualBox, &[
-        "storageattach", &config.name,
-        "--storagectl", "SATA",
-        "--port", "0",
-        "--type", "hdd",
-        "--medium", &config.base_disk_image,
-    ])?;
+    run_checked(
+        HypervisorKind::VirtualBox,
+        &[
+            "createvm",
+            "--name",
+            &config.name,
+            "--ostype",
+            "Other_64",
+            "--register",
+        ],
+    )?;
+    run_checked(
+        HypervisorKind::VirtualBox,
+        &[
+            "modifyvm",
+            &config.name,
+            "--memory",
+            &config.memory_mb.to_string(),
+            "--cpus",
+            &config.cpus.to_string(),
+            "--nic1",
+            "nat",
+            "--natpf1",
+            &format!("docker,tcp,,{},,{}", config.docker_port, config.docker_port),
+        ],
+    )?;
+    run_checked(
+        HypervisorKind::VirtualBox,
+        &[
+            "storagectl",
+            &config.name,
+            "--name",
+            "SATA",
+            "--add",
+            "sata",
+            "--controller",
+            "IntelAhci",
+        ],
+    )?;
+    run_checked(
+        HypervisorKind::VirtualBox,
+        &[
+            "storageattach",
+            &config.name,
+            "--storagectl",
+            "SATA",
+            "--port",
+            "0",
+            "--type",
+            "hdd",
+            "--medium",
+            &config.base_disk_image,
+        ],
+    )?;
     Ok(())
 }
 
@@ -336,7 +383,9 @@ fn vm_exists(kind: HypervisorKind, name: &str) -> Result<bool> {
         }
         HypervisorKind::VirtualBox => {
             let output = run_checked(kind, &["list", "vms"])?;
-            Ok(output.lines().any(|line| line.starts_with(&format!("\"{name}\""))))
+            Ok(output
+                .lines()
+                .any(|line| line.starts_with(&format!("\"{name}\""))))
         }
     }
 }
@@ -349,7 +398,9 @@ pub fn is_running(kind: HypervisorKind, name: &str) -> Result<bool> {
         }
         HypervisorKind::VirtualBox => {
             let output = run_checked(kind, &["list", "runningvms"])?;
-            Ok(output.lines().any(|line| line.starts_with(&format!("\"{name}\""))))
+            Ok(output
+                .lines()
+                .any(|line| line.starts_with(&format!("\"{name}\""))))
         }
     }
 }
@@ -399,9 +450,17 @@ pub fn wait_for_ip(kind: HypervisorKind, name: &str, timeout: Duration) -> Resul
             HypervisorKind::Kvm => run_checked(kind, &["domifaddr", name])
                 .ok()
                 .and_then(|output| extract_kvm_ip(&output)),
-            HypervisorKind::VirtualBox => run_checked(kind, &["guestproperty", "get", name, "/VirtualBox/GuestInfo/Net/0/V4/IP"])
-                .ok()
-                .and_then(|output| output.strip_prefix("Value: ").map(|s| s.trim().to_owned())),
+            HypervisorKind::VirtualBox => run_checked(
+                kind,
+                &[
+                    "guestproperty",
+                    "get",
+                    name,
+                    "/VirtualBox/GuestInfo/Net/0/V4/IP",
+                ],
+            )
+            .ok()
+            .and_then(|output| output.strip_prefix("Value: ").map(|s| s.trim().to_owned())),
         };
         if let Some(ip) = ip {
             if !ip.is_empty() {
@@ -440,7 +499,10 @@ mod tests {
 
     #[test]
     fn activation_mode_variants_are_distinct() {
-        assert_ne!(ActivationMode::Standard, ActivationMode::AlwaysOnExperimental);
+        assert_ne!(
+            ActivationMode::Standard,
+            ActivationMode::AlwaysOnExperimental
+        );
     }
 
     fn sample_vm(name: &str, disk: &str) -> VmConfig {
@@ -457,7 +519,8 @@ mod tests {
     }
 
     fn temp_state_dir(label: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("gitrun-vm-test-{label}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-vm-test-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -471,7 +534,10 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_vm_configs() {
         let dir = temp_state_dir("roundtrip");
-        let configs = vec![sample_vm("win-runner-1", "/vms/win.qcow2"), sample_vm("linux-iso", "/vms/base.qcow2")];
+        let configs = vec![
+            sample_vm("win-runner-1", "/vms/win.qcow2"),
+            sample_vm("linux-iso", "/vms/base.qcow2"),
+        ];
         save_vm_configs(&dir, &configs).unwrap();
         let loaded = load_vm_configs(&dir).unwrap();
         assert_eq!(loaded.len(), 2);
@@ -497,13 +563,19 @@ mod tests {
     #[test]
     fn find_vm_config_looks_up_by_name() {
         let defs = vec![sample_vm("a", "/a.qcow2"), sample_vm("b", "/b.qcow2")];
-        assert_eq!(find_vm_config(&defs, "b").unwrap().base_disk_image, "/b.qcow2");
+        assert_eq!(
+            find_vm_config(&defs, "b").unwrap().base_disk_image,
+            "/b.qcow2"
+        );
         assert!(find_vm_config(&defs, "missing").is_none());
     }
 
     #[test]
     fn docker_host_address_builds_expected_tcp_address() {
-        assert_eq!(docker_host_address("192.168.56.10", 2376), "tcp://192.168.56.10:2376");
+        assert_eq!(
+            docker_host_address("192.168.56.10", 2376),
+            "tcp://192.168.56.10:2376"
+        );
     }
 
     #[test]

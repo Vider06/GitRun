@@ -87,7 +87,10 @@ pub enum Action {
     /// overflow when the queue had fewer label-tagged jobs than runners
     /// being created (falls back to the default backend/image, same as
     /// before this field existed).
-    CreateRunner { permanent: bool, job_labels: Vec<String> },
+    CreateRunner {
+        permanent: bool,
+        job_labels: Vec<String>,
+    },
     /// Runner is online in Docker but GitHub doesn't know about it anymore:
     /// remove and recreate, preserving its permanent/dynamic role.
     RecreateOrphaned { name: String, permanent: bool },
@@ -118,7 +121,9 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // 1. Drop anything Docker already reports as exited.
     for container in &input.containers {
         if container.health == ContainerHealth::Exited {
-            actions.push(Action::RemoveExited { name: container.name.clone() });
+            actions.push(Action::RemoveExited {
+                name: container.name.clone(),
+            });
         } else {
             live_containers.push(container.clone());
         }
@@ -144,7 +149,9 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                         .map(|(_, age)| *age)
                         .unwrap_or(input.recovery_cooldown);
                     if age >= input.recovery_cooldown {
-                        actions.push(Action::RestartUnresponsive { name: container.name.clone() });
+                        actions.push(Action::RestartUnresponsive {
+                            name: container.name.clone(),
+                        });
                     }
                 }
                 None => {
@@ -170,7 +177,10 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         live_containers.iter().filter(|c| c.permanent).count() as u32 + recreating;
 
     while current < desired && permanent_count < input.min_runners {
-        actions.push(Action::CreateRunner { permanent: true, job_labels: Vec::new() });
+        actions.push(Action::CreateRunner {
+            permanent: true,
+            job_labels: Vec::new(),
+        });
         current += 1;
         permanent_count += 1;
     }
@@ -190,7 +200,10 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             .get(dynamic_index)
             .cloned()
             .unwrap_or_default();
-        actions.push(Action::CreateRunner { permanent: false, job_labels });
+        actions.push(Action::CreateRunner {
+            permanent: false,
+            job_labels,
+        });
         dynamic_index += 1;
         current += 1;
     }
@@ -204,8 +217,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             .idle
             .iter()
             .filter(|i| {
-                i.idle_for >= input.idle_timeout
-                    && live_containers.iter().any(|c| c.name == i.name)
+                i.idle_for >= input.idle_timeout && live_containers.iter().any(|c| c.name == i.name)
             })
             .collect();
         candidates.sort_by_key(|i| {
@@ -217,7 +229,9 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             (permanent, std::cmp::Reverse(i.idle_for))
         });
         for info in candidates.into_iter().take(removable as usize) {
-            actions.push(Action::RemoveIdle { name: info.name.clone() });
+            actions.push(Action::RemoveIdle {
+                name: info.name.clone(),
+            });
         }
     }
 
@@ -262,8 +276,16 @@ mod tests {
     fn desired_count_counts_busy_runners() {
         let mut input = base_input();
         input.runners = vec![
-            RunnerView { name: "a".into(), online: true, busy: true },
-            RunnerView { name: "b".into(), online: true, busy: true },
+            RunnerView {
+                name: "a".into(),
+                online: true,
+                busy: true,
+            },
+            RunnerView {
+                name: "b".into(),
+                online: true,
+                busy: true,
+            },
         ];
         input.queued_jobs = 1;
         assert_eq!(desired_count(&input), 3); // 2 busy + 1 queued = 3, still >= min
@@ -278,7 +300,13 @@ mod tests {
             .filter(|a| matches!(a, Action::CreateRunner { .. }))
             .collect();
         assert_eq!(created.len(), 3);
-        assert!(created.iter().all(|a| matches!(a, Action::CreateRunner { permanent: true, .. })));
+        assert!(created.iter().all(|a| matches!(
+            a,
+            Action::CreateRunner {
+                permanent: true,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -288,11 +316,27 @@ mod tests {
         let actions = plan(&input);
         let permanent = actions
             .iter()
-            .filter(|a| matches!(a, Action::CreateRunner { permanent: true, .. }))
+            .filter(|a| {
+                matches!(
+                    a,
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
+                )
+            })
             .count();
         let dynamic = actions
             .iter()
-            .filter(|a| matches!(a, Action::CreateRunner { permanent: false, .. }))
+            .filter(|a| {
+                matches!(
+                    a,
+                    Action::CreateRunner {
+                        permanent: false,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(permanent, 3);
         assert_eq!(dynamic, 2);
@@ -306,17 +350,43 @@ mod tests {
         // "harmless because already satisfied" duplicate-but-inert behavior.
         let mut input = base_input();
         input.containers = vec![
-            ContainerView { name: "a".into(), health: ContainerHealth::Running, permanent: true },
-            ContainerView { name: "b".into(), health: ContainerHealth::Running, permanent: true },
-            ContainerView { name: "c".into(), health: ContainerHealth::Running, permanent: true },
+            ContainerView {
+                name: "a".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "b".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "c".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
         ];
         input.runners = vec![
-            RunnerView { name: "a".into(), online: true, busy: false },
-            RunnerView { name: "b".into(), online: true, busy: false },
-            RunnerView { name: "c".into(), online: true, busy: false },
+            RunnerView {
+                name: "a".into(),
+                online: true,
+                busy: false,
+            },
+            RunnerView {
+                name: "b".into(),
+                online: true,
+                busy: false,
+            },
+            RunnerView {
+                name: "c".into(),
+                online: true,
+                busy: false,
+            },
         ];
         let actions = plan(&input);
-        assert!(actions.iter().all(|a| !matches!(a, Action::CreateRunner { .. })));
+        assert!(actions
+            .iter()
+            .all(|a| !matches!(a, Action::CreateRunner { .. })));
     }
 
     #[test]
@@ -328,12 +398,22 @@ mod tests {
             permanent: true,
         }];
         let actions = plan(&input);
-        assert!(actions.contains(&Action::RemoveExited { name: "dead".into() }));
+        assert!(actions.contains(&Action::RemoveExited {
+            name: "dead".into()
+        }));
         // Since the exited container doesn't count as live, we should still
         // top up to the minimum of 3 permanents.
         let created = actions
             .iter()
-            .filter(|a| matches!(a, Action::CreateRunner { permanent: true, .. }))
+            .filter(|a| {
+                matches!(
+                    a,
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(created, 3);
     }
@@ -363,7 +443,11 @@ mod tests {
             health: ContainerHealth::Running,
             permanent: true,
         }];
-        input.runners = vec![RunnerView { name: "busy-one".into(), online: false, busy: true }];
+        input.runners = vec![RunnerView {
+            name: "busy-one".into(),
+            online: false,
+            busy: true,
+        }];
         input.queued_jobs = 1;
         let actions = plan(&input);
         assert!(actions
@@ -382,35 +466,81 @@ mod tests {
             health: ContainerHealth::Running,
             permanent: true,
         }];
-        input.runners = vec![RunnerView { name: "flaky".into(), online: false, busy: false }];
+        input.runners = vec![RunnerView {
+            name: "flaky".into(),
+            online: false,
+            busy: false,
+        }];
         input.queued_jobs = 1;
         input.recovery_age = vec![("flaky".into(), Duration::from_secs(10))]; // below cooldown of 60s
         let actions = plan(&input);
-        assert!(!actions.contains(&Action::RestartUnresponsive { name: "flaky".into() }));
+        assert!(!actions.contains(&Action::RestartUnresponsive {
+            name: "flaky".into()
+        }));
 
         input.recovery_age = vec![("flaky".into(), Duration::from_secs(90))]; // above cooldown
         let actions = plan(&input);
-        assert!(actions.contains(&Action::RestartUnresponsive { name: "flaky".into() }));
+        assert!(actions.contains(&Action::RestartUnresponsive {
+            name: "flaky".into()
+        }));
     }
 
     #[test]
     fn idle_scale_down_prefers_removing_dynamic_first() {
         let mut input = base_input();
         input.containers = vec![
-            ContainerView { name: "perm-1".into(), health: ContainerHealth::Running, permanent: true },
-            ContainerView { name: "perm-2".into(), health: ContainerHealth::Running, permanent: true },
-            ContainerView { name: "perm-3".into(), health: ContainerHealth::Running, permanent: true },
-            ContainerView { name: "dyn-1".into(), health: ContainerHealth::Running, permanent: false },
+            ContainerView {
+                name: "perm-1".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "perm-2".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "perm-3".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "dyn-1".into(),
+                health: ContainerHealth::Running,
+                permanent: false,
+            },
         ];
         input.runners = vec![
-            RunnerView { name: "perm-1".into(), online: true, busy: false },
-            RunnerView { name: "perm-2".into(), online: true, busy: false },
-            RunnerView { name: "perm-3".into(), online: true, busy: false },
-            RunnerView { name: "dyn-1".into(), online: true, busy: false },
+            RunnerView {
+                name: "perm-1".into(),
+                online: true,
+                busy: false,
+            },
+            RunnerView {
+                name: "perm-2".into(),
+                online: true,
+                busy: false,
+            },
+            RunnerView {
+                name: "perm-3".into(),
+                online: true,
+                busy: false,
+            },
+            RunnerView {
+                name: "dyn-1".into(),
+                online: true,
+                busy: false,
+            },
         ];
         input.idle = vec![
-            IdleInfo { name: "perm-1".into(), idle_for: Duration::from_secs(999) },
-            IdleInfo { name: "dyn-1".into(), idle_for: Duration::from_secs(150) },
+            IdleInfo {
+                name: "perm-1".into(),
+                idle_for: Duration::from_secs(999),
+            },
+            IdleInfo {
+                name: "dyn-1".into(),
+                idle_for: Duration::from_secs(150),
+            },
         ];
         let actions = plan(&input);
         // Only 1 is removable (4 live - 3 min), and it must be the dynamic
@@ -420,7 +550,12 @@ mod tests {
             .filter(|a| matches!(a, Action::RemoveIdle { .. }))
             .collect();
         assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0], &Action::RemoveIdle { name: "dyn-1".into() });
+        assert_eq!(
+            removed[0],
+            &Action::RemoveIdle {
+                name: "dyn-1".into()
+            }
+        );
     }
 
     #[test]
@@ -437,15 +572,24 @@ mod tests {
         input.runners = input
             .containers
             .iter()
-            .map(|c| RunnerView { name: c.name.clone(), online: true, busy: false })
+            .map(|c| RunnerView {
+                name: c.name.clone(),
+                online: true,
+                busy: false,
+            })
             .collect();
         input.idle = input
             .containers
             .iter()
-            .map(|c| IdleInfo { name: c.name.clone(), idle_for: Duration::from_secs(9999) })
+            .map(|c| IdleInfo {
+                name: c.name.clone(),
+                idle_for: Duration::from_secs(9999),
+            })
             .collect();
         let actions = plan(&input);
-        assert!(actions.iter().all(|a| !matches!(a, Action::RemoveIdle { .. })));
+        assert!(actions
+            .iter()
+            .all(|a| !matches!(a, Action::RemoveIdle { .. })));
     }
 
     #[test]
@@ -460,9 +604,9 @@ mod tests {
         input.queued_jobs = 0;
         input.runners = Vec::new();
         let actions = plan(&input);
-        assert!(actions
-            .iter()
-            .all(|a| !matches!(a, Action::RecreateOrphaned { name, .. } if name == "gone-from-github")));
+        assert!(actions.iter().all(
+            |a| !matches!(a, Action::RecreateOrphaned { name, .. } if name == "gone-from-github")
+        ));
     }
 
     #[test]
@@ -475,18 +619,18 @@ mod tests {
         // empty label set even when queued_job_labels is non-empty.
         let mut input = base_input();
         input.queued_jobs = 3; // desired = clamp(0+3, 1, 8) = 3 -> 1 permanent + 2 dynamic slots.
-        // Force one permanent + two dynamic slots by starting under min.
+                               // Force one permanent + two dynamic slots by starting under min.
         input.min_runners = 1;
         input.max_runners = 8;
-        input.queued_job_labels = vec![
-            vec!["gpu".into()],
-            vec!["arm64".into(), "large".into()],
-        ];
+        input.queued_job_labels = vec![vec!["gpu".into()], vec!["arm64".into(), "large".into()]];
         let actions = plan(&input);
         let dynamic: Vec<_> = actions
             .iter()
             .filter_map(|a| match a {
-                Action::CreateRunner { permanent: false, job_labels } => Some(job_labels.clone()),
+                Action::CreateRunner {
+                    permanent: false,
+                    job_labels,
+                } => Some(job_labels.clone()),
                 _ => None,
             })
             .collect();
@@ -497,7 +641,10 @@ mod tests {
         let permanent: Vec<_> = actions
             .iter()
             .filter_map(|a| match a {
-                Action::CreateRunner { permanent: true, job_labels } => Some(job_labels.clone()),
+                Action::CreateRunner {
+                    permanent: true,
+                    job_labels,
+                } => Some(job_labels.clone()),
                 _ => None,
             })
             .collect();
@@ -517,7 +664,10 @@ mod tests {
         let dynamic: Vec<_> = actions
             .iter()
             .filter_map(|a| match a {
-                Action::CreateRunner { permanent: false, job_labels } => Some(job_labels.clone()),
+                Action::CreateRunner {
+                    permanent: false,
+                    job_labels,
+                } => Some(job_labels.clone()),
                 _ => None,
             })
             .collect();

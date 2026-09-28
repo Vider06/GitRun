@@ -88,7 +88,13 @@ fn run_checked(args: &[&str]) -> Result<String> {
 pub fn sanitize(value: &str, replacement: char) -> String {
     value
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') { c } else { replacement })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+                c
+            } else {
+                replacement
+            }
+        })
         .collect()
 }
 
@@ -160,8 +166,22 @@ fn parse_top_output(output: &str) -> Vec<String> {
 /// at a time). Same `gitrun.runner=true` label filter as
 /// `managed_containers_on`, just without the additional per-repo filter.
 pub fn all_managed_container_names_on(host: &DockerHost) -> Result<Vec<String>> {
-    let output = run_checked_on(host, &["ps", "--filter", "label=gitrun.runner=true", "--format", "{{.Names}}"])?;
-    Ok(output.lines().map(str::trim).filter(|n| !n.is_empty()).map(str::to_owned).collect())
+    let output = run_checked_on(
+        host,
+        &[
+            "ps",
+            "--filter",
+            "label=gitrun.runner=true",
+            "--format",
+            "{{.Names}}",
+        ],
+    )?;
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
+        .collect())
 }
 
 /// Lists containers managed by GitRun for a given repo, with their raw
@@ -171,22 +191,29 @@ pub fn managed_containers(repo: &str) -> Result<Vec<ManagedContainer>> {
 }
 
 pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<ManagedContainer>> {
-    let output = run_checked_on(host, &[
-        "ps",
-        "-a",
-        "--filter",
-        "label=gitrun.runner=true",
-        "--filter",
-        &format!("label=gitrun.repo={repo}"),
-        "--format",
-        "{{.Names}}",
-    ])?;
+    let output = run_checked_on(
+        host,
+        &[
+            "ps",
+            "-a",
+            "--filter",
+            "label=gitrun.runner=true",
+            "--filter",
+            &format!("label=gitrun.repo={repo}"),
+            "--format",
+            "{{.Names}}",
+        ],
+    )?;
 
     let mut containers = Vec::new();
     for name in output.lines().map(str::trim).filter(|n| !n.is_empty()) {
         let status = container_status_string(host, name).unwrap_or_default();
         let permanent = container_is_permanent_on(host, name).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
-        containers.push(ManagedContainer { name: name.to_owned(), status, permanent });
+        containers.push(ManagedContainer {
+            name: name.to_owned(),
+            status,
+            permanent,
+        });
     }
     Ok(containers)
 }
@@ -199,7 +226,15 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
 /// policy violation, without needing to separately track container->repo
 /// associations outside of what Docker itself already records.
 pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Result<Option<String>> {
-    let output = run_on(host, &["inspect", "-f", "{{index .Config.Labels \"gitrun.repo\"}}", container_name])?;
+    let output = run_on(
+        host,
+        &[
+            "inspect",
+            "-f",
+            "{{index .Config.Labels \"gitrun.repo\"}}",
+            container_name,
+        ],
+    )?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -214,7 +249,11 @@ fn container_status_string(host: &DockerHost, name: &str) -> Result<String> {
     }
     let raw = String::from_utf8_lossy(&output.stdout);
     let value: Value = serde_json::from_str(raw.trim()).unwrap_or(Value::Null);
-    Ok(value.get("Status").and_then(Value::as_str).unwrap_or_default().to_owned())
+    Ok(value
+        .get("Status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned())
 }
 
 pub fn container_is_permanent(name: &str) -> Result<bool> {
@@ -222,11 +261,21 @@ pub fn container_is_permanent(name: &str) -> Result<bool> {
 }
 
 pub fn container_is_permanent_on(host: &DockerHost, name: &str) -> Result<bool> {
-    let output = run_on(host, &["inspect", "-f", "{{index .Config.Labels \"gitrun.dynamic\"}}", name])?;
+    let output = run_on(
+        host,
+        &[
+            "inspect",
+            "-f",
+            "{{index .Config.Labels \"gitrun.dynamic\"}}",
+            name,
+        ],
+    )?;
     if !output.status.success() {
         return Ok(true);
     }
-    let dynamic = String::from_utf8_lossy(&output.stdout).trim().to_ascii_lowercase();
+    let dynamic = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_ascii_lowercase();
     Ok(dynamic != "true")
 }
 
@@ -352,14 +401,22 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
     args.extend([
-        "--label".into(), "gitrun.runner=true".into(),
-        "--label".into(), format!("gitrun.repo={}", spec.repo),
-        "--label".into(), "gitrun.managed=true".into(),
-        "--label".into(), format!("gitrun.permanent={}", spec.permanent),
-        "--label".into(), format!("gitrun.dynamic={}", !spec.permanent),
-        "--cpus".into(), spec.cpus.into(),
-        "--memory".into(), spec.memory.into(),
-        "--restart".into(), "unless-stopped".into(),
+        "--label".into(),
+        "gitrun.runner=true".into(),
+        "--label".into(),
+        format!("gitrun.repo={}", spec.repo),
+        "--label".into(),
+        "gitrun.managed=true".into(),
+        "--label".into(),
+        format!("gitrun.permanent={}", spec.permanent),
+        "--label".into(),
+        format!("gitrun.dynamic={}", !spec.permanent),
+        "--cpus".into(),
+        spec.cpus.into(),
+        "--memory".into(),
+        spec.memory.into(),
+        "--restart".into(),
+        "unless-stopped".into(),
     ]);
 
     if spec.is_windows {
@@ -373,7 +430,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.push("GITRUN_SHARED_CACHE_DIR=C:\\gitrun\\shared".into());
     } else {
         args.extend([
-            "--pids-limit".into(), spec.pids_limit.into(),
+            "--pids-limit".into(),
+            spec.pids_limit.into(),
             "--read-only".into(),
             // Fix: --read-only alone with only /tmp writable broke the GitHub
             // runner in practice ("Read-only file system" on .env and on
@@ -387,7 +445,10 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             RunnerHomeBackend::Tmpfs => {
                 args.extend([
                     "--tmpfs".into(),
-                    format!("/home/runner/actions-runner:rw,nosuid,nodev,size={}", spec.runner_home_size),
+                    format!(
+                        "/home/runner/actions-runner:rw,nosuid,nodev,size={}",
+                        spec.runner_home_size
+                    ),
                 ]);
             }
             RunnerHomeBackend::Volume => {
@@ -402,21 +463,37 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
                 // filesystem, not this setting.
                 args.extend([
                     "--mount".into(),
-                    format!("type=volume,source={},target=/home/runner/actions-runner", home_volume_name(spec.name)),
+                    format!(
+                        "type=volume,source={},target=/home/runner/actions-runner",
+                        home_volume_name(spec.name)
+                    ),
                 ]);
             }
         }
         args.extend([
-            "--tmpfs".into(), "/tmp:rw,nosuid,nodev,size=256m".into(),
-            "--volume".into(), "/var/run/docker.sock:/var/run/docker.sock".into(),
-            "--group-add".into(), spec.docker_socket_gid.into(),
-            "--mount".into(), format!("type=volume,source={},target=/var/lib/gitrun/shared", spec.shared_cache_volume),
-            "-e".into(), "GITRUN_SHARED_CACHE_DIR=/var/lib/gitrun/shared".into(),
-            "-e".into(), "CARGO_HOME=/var/lib/gitrun/shared/cargo".into(),
-            "-e".into(), format!("CARGO_TARGET_DIR=/var/lib/gitrun/shared/cargo-target/{slug}"),
-            "-e".into(), "PIP_CACHE_DIR=/var/lib/gitrun/shared/pip".into(),
-            "-e".into(), "NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm".into(),
-            "-e".into(), "DOCKER_CONFIG=/tmp/docker-config".into(),
+            "--tmpfs".into(),
+            "/tmp:rw,nosuid,nodev,size=256m".into(),
+            "--volume".into(),
+            "/var/run/docker.sock:/var/run/docker.sock".into(),
+            "--group-add".into(),
+            spec.docker_socket_gid.into(),
+            "--mount".into(),
+            format!(
+                "type=volume,source={},target=/var/lib/gitrun/shared",
+                spec.shared_cache_volume
+            ),
+            "-e".into(),
+            "GITRUN_SHARED_CACHE_DIR=/var/lib/gitrun/shared".into(),
+            "-e".into(),
+            "CARGO_HOME=/var/lib/gitrun/shared/cargo".into(),
+            "-e".into(),
+            format!("CARGO_TARGET_DIR=/var/lib/gitrun/shared/cargo-target/{slug}"),
+            "-e".into(),
+            "PIP_CACHE_DIR=/var/lib/gitrun/shared/pip".into(),
+            "-e".into(),
+            "NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm".into(),
+            "-e".into(),
+            "DOCKER_CONFIG=/tmp/docker-config".into(),
         ]);
         if spec.docker_socket_hardening {
             args.extend(docker_socket_hardening_args());
@@ -424,12 +501,18 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
 
     args.extend([
-        "-e".into(), format!("RUNNER_URL=https://github.com/{}", spec.repo),
-        "-e".into(), format!("RUNNER_TOKEN={}", spec.registration_token),
-        "-e".into(), format!("RUNNER_NAME={}", spec.name),
-        "-e".into(), format!("RUNNER_LABELS={labels}"),
-        "-e".into(), format!("RUNNER_EPHEMERAL={}", spec.ephemeral),
-        "-e".into(), format!("RUNNER_DISABLE_UPDATE={}", spec.disable_update),
+        "-e".into(),
+        format!("RUNNER_URL=https://github.com/{}", spec.repo),
+        "-e".into(),
+        format!("RUNNER_TOKEN={}", spec.registration_token),
+        "-e".into(),
+        format!("RUNNER_NAME={}", spec.name),
+        "-e".into(),
+        format!("RUNNER_LABELS={labels}"),
+        "-e".into(),
+        format!("RUNNER_EPHEMERAL={}", spec.ephemeral),
+        "-e".into(),
+        format!("RUNNER_DISABLE_UPDATE={}", spec.disable_update),
         spec.image.to_owned(),
     ]);
     // Secrets are inserted before the image argument (Docker requires -e
@@ -473,12 +556,18 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
 ///   somewhere in the image.
 fn docker_socket_hardening_args() -> Vec<String> {
     [
-        "--cap-drop", "ALL",
-        "--cap-add", "CHOWN",
-        "--cap-add", "SETUID",
-        "--cap-add", "SETGID",
-        "--cap-add", "DAC_OVERRIDE",
-        "--security-opt", "no-new-privileges",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "CHOWN",
+        "--cap-add",
+        "SETUID",
+        "--cap-add",
+        "SETGID",
+        "--cap-add",
+        "DAC_OVERRIDE",
+        "--security-opt",
+        "no-new-privileges",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -500,12 +589,18 @@ mod tests {
 
     #[test]
     fn sanitize_keeps_safe_characters() {
-        assert_eq!(sanitize("owner/repo.name_v1-2", '_'), "owner_repo.name_v1-2");
+        assert_eq!(
+            sanitize("owner/repo.name_v1-2", '_'),
+            "owner_repo.name_v1-2"
+        );
     }
 
     #[test]
     fn shared_cache_volume_falls_back_to_default_on_blank() {
-        assert_eq!(shared_cache_volume(Some("   ")), SHARED_CACHE_VOLUME_DEFAULT);
+        assert_eq!(
+            shared_cache_volume(Some("   ")),
+            SHARED_CACHE_VOLUME_DEFAULT
+        );
         assert_eq!(shared_cache_volume(None), SHARED_CACHE_VOLUME_DEFAULT);
     }
 
@@ -516,19 +611,27 @@ mod tests {
 
     #[test]
     fn ensure_label_does_not_duplicate() {
-        assert_eq!(ensure_label("self-hosted,gitrun-ci", "gitrun-ci"), "self-hosted,gitrun-ci");
+        assert_eq!(
+            ensure_label("self-hosted,gitrun-ci", "gitrun-ci"),
+            "self-hosted,gitrun-ci"
+        );
     }
 
     #[test]
     fn ensure_label_appends_when_missing() {
-        assert_eq!(ensure_label("self-hosted,Linux", "gitrun-ci"), "self-hosted,Linux,gitrun-ci");
+        assert_eq!(
+            ensure_label("self-hosted,Linux", "gitrun-ci"),
+            "self-hosted,Linux,gitrun-ci"
+        );
     }
 
     #[test]
     fn docker_socket_hardening_args_drop_all_then_add_back_only_safe_caps() {
         let args = docker_socket_hardening_args();
         assert!(args.windows(2).any(|w| w == ["--cap-drop", "ALL"]));
-        assert!(args.windows(2).any(|w| w == ["--security-opt", "no-new-privileges"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["--security-opt", "no-new-privileges"]));
         // SYS_ADMIN and SYS_PTRACE must never be added back - that would
         // defeat the point of dropping ALL in the first place.
         assert!(!args.iter().any(|a| a == "SYS_ADMIN" || a == "SYS_PTRACE"));
@@ -537,7 +640,10 @@ mod tests {
     #[test]
     fn parse_top_output_skips_header_and_blank_lines() {
         let raw = "COMMAND\ncargo build --release\nsh -c echo hi\n\n";
-        assert_eq!(parse_top_output(raw), vec!["cargo build --release", "sh -c echo hi"]);
+        assert_eq!(
+            parse_top_output(raw),
+            vec!["cargo build --release", "sh -c echo hi"]
+        );
     }
 
     #[test]

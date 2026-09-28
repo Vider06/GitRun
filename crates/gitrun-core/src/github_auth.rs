@@ -9,7 +9,10 @@ pub enum GitHubAuthError {
     #[error("GITHUB_TOKEN is not configured and no GitHub App authentication is configured")]
     MissingCredentials,
     #[error("unable to read GitHub App private key at {path}: {source}")]
-    PrivateKeyIo { path: String, source: std::io::Error },
+    PrivateKeyIo {
+        path: String,
+        source: std::io::Error,
+    },
     #[error(transparent)]
     App(#[from] crate::app_auth::AppAuthError),
     #[error(transparent)]

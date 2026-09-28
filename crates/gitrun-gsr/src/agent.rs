@@ -106,14 +106,20 @@ pub enum AgentDecision {
 /// Pure decision logic, taking the policy and raw argv (excluding argv[0],
 /// i.e. what the shell was invoked with) rather than reading the
 /// environment/process directly, so it's fully unit-testable.
-pub fn decide(policy: &CommandPolicy, args: &[String], real_shell_env: Option<&str>) -> AgentDecision {
+pub fn decide(
+    policy: &CommandPolicy,
+    args: &[String],
+    real_shell_env: Option<&str>,
+) -> AgentDecision {
     let command_line = extract_command_line(args);
     match policy.evaluate(&command_line) {
         Decision::Allowed => AgentDecision::Delegate {
             real_shell: real_shell_env.unwrap_or(REAL_SHELL_FALLBACK).to_owned(),
         },
         Decision::Denied { reason } => AgentDecision::Refuse {
-            reason: format!("gitrun-gsr-agent blocked this command: {reason} (command: {command_line:?})"),
+            reason: format!(
+                "gitrun-gsr-agent blocked this command: {reason} (command: {command_line:?})"
+            ),
         },
     }
 }
@@ -170,7 +176,9 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
                 match Command::new(&real_shell).args(&args).status() {
                     Ok(status) => status.code().unwrap_or(1),
                     Err(error) => {
-                        eprintln!("gitrun-gsr-agent: failed to run real shell {real_shell:?}: {error}");
+                        eprintln!(
+                            "gitrun-gsr-agent: failed to run real shell {real_shell:?}: {error}"
+                        );
                         127
                     }
                 }
@@ -180,7 +188,9 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
             eprintln!("{reason}");
             let event = SecurityEvent::new("gsr-agent", severity_for(config), reason);
             if let Err(write_error) = events::emit(events_path, &event) {
-                eprintln!("gitrun-gsr-agent: additionally failed to write security event: {write_error}");
+                eprintln!(
+                    "gitrun-gsr-agent: additionally failed to write security event: {write_error}"
+                );
             }
             1
         }
@@ -225,7 +235,12 @@ mod tests {
         let policy = policy_with_baseline();
         let args = vec!["-c".to_string(), "cargo test".to_string()];
         let decision = decide(&policy, &args, Some("/bin/sh.gitrun-real"));
-        assert_eq!(decision, AgentDecision::Delegate { real_shell: "/bin/sh.gitrun-real".into() });
+        assert_eq!(
+            decision,
+            AgentDecision::Delegate {
+                real_shell: "/bin/sh.gitrun-real".into()
+            }
+        );
     }
 
     #[test]
@@ -269,6 +284,11 @@ mod tests {
         let policy = policy_with_baseline();
         let args = vec!["-c".to_string(), "echo hi".to_string()];
         let decision = decide(&policy, &args, None);
-        assert_eq!(decision, AgentDecision::Delegate { real_shell: REAL_SHELL_FALLBACK.into() });
+        assert_eq!(
+            decision,
+            AgentDecision::Delegate {
+                real_shell: REAL_SHELL_FALLBACK.into()
+            }
+        );
     }
 }

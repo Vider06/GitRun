@@ -74,7 +74,11 @@ pub struct AppAuth {
 impl AppAuth {
     /// `private_key_pem` is the App's private key exactly as downloaded from
     /// GitHub (PEM private-key material).
-    pub fn new(app_id: impl Into<String>, installation_id: impl Into<String>, private_key_pem: &str) -> Result<Self> {
+    pub fn new(
+        app_id: impl Into<String>,
+        installation_id: impl Into<String>,
+        private_key_pem: &str,
+    ) -> Result<Self> {
         let encoding_key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())
             .map_err(AppAuthError::InvalidPrivateKey)?;
         let http = reqwest::blocking::Client::builder()
@@ -107,13 +111,20 @@ impl AppAuth {
 
         let fresh = self.mint_installation_token()?;
         let mut cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
-        *cached = Some(CachedToken { token: fresh.0.clone(), expires_at: fresh.1 });
+        *cached = Some(CachedToken {
+            token: fresh.0.clone(),
+            expires_at: fresh.1,
+        });
         Ok(fresh.0)
     }
 
     fn app_jwt(&self) -> Result<String> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let claims = AppClaims { iat: now.saturating_sub(60), exp: now + 9 * 60, iss: self.app_id.clone() };
+        let claims = AppClaims {
+            iat: now.saturating_sub(60),
+            exp: now + 9 * 60,
+            iss: self.app_id.clone(),
+        };
         let header = Header::new(Algorithm::RS256);
         jsonwebtoken::encode(&header, &claims, &self.encoding_key).map_err(AppAuthError::Signing)
     }
@@ -135,11 +146,20 @@ impl AppAuth {
 
         let status = response.status();
         if !status.is_success() {
-            let detail = response.text().unwrap_or_default().chars().take(500).collect();
-            return Err(AppAuthError::Rejected { status: status.as_u16(), detail });
+            let detail = response
+                .text()
+                .unwrap_or_default()
+                .chars()
+                .take(500)
+                .collect();
+            return Err(AppAuthError::Rejected {
+                status: status.as_u16(),
+                detail,
+            });
         }
         let parsed: InstallationTokenResponse = response.json()?;
-        let expires_at = parse_github_timestamp(&parsed.expires_at).unwrap_or(SystemTime::now() + Duration::from_secs(3300));
+        let expires_at = parse_github_timestamp(&parsed.expires_at)
+            .unwrap_or(SystemTime::now() + Duration::from_secs(3300));
         Ok((parsed.token, expires_at))
     }
 }

@@ -193,7 +193,9 @@ pub fn update_permanent_containers(client: &GitHubClient, config: &GtuuConfig) -
             if !container.permanent {
                 continue;
             }
-            if update_one(client, config, repo, &container.name, &new_image_id)? == UpdateOutcome::Updated {
+            if update_one(client, config, repo, &container.name, &new_image_id)?
+                == UpdateOutcome::Updated
+            {
                 updated += 1;
             }
         }
@@ -303,11 +305,19 @@ fn update_one(
     Ok(UpdateOutcome::Updated)
 }
 
-fn wait_for_online(client: &GitHubClient, repo: &str, runner_name: &str, timeout: Duration) -> Result<bool> {
+fn wait_for_online(
+    client: &GitHubClient,
+    repo: &str,
+    runner_name: &str,
+    timeout: Duration,
+) -> Result<bool> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         let runners = client.list_runners(repo)?;
-        if runners.iter().any(|r| r.name == runner_name && r.is_online()) {
+        if runners
+            .iter()
+            .any(|r| r.name == runner_name && r.is_online())
+        {
             return Ok(true);
         }
         std::thread::sleep(Duration::from_secs(3));
@@ -352,7 +362,8 @@ mod tests {
 
     #[test]
     fn stale_lock_from_dead_pid_is_reclaimed() {
-        let dir = std::env::temp_dir().join(format!("gitrun-gtuu-stale-pid-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-gtuu-stale-pid-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let lock_path = dir.join("gtuu.lock");
@@ -364,13 +375,17 @@ mod tests {
         // with AlreadyRunning forever — this is exactly the "SIGKILL left a
         // lock behind" scenario the fix addresses.
         let reclaimed = GtuuLock::acquire(&dir);
-        assert!(reclaimed.is_ok(), "expected stale lock (dead PID) to be reclaimed");
+        assert!(
+            reclaimed.is_ok(),
+            "expected stale lock (dead PID) to be reclaimed"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn stale_lock_from_old_age_is_reclaimed_even_with_live_pid() {
-        let dir = std::env::temp_dir().join(format!("gitrun-gtuu-stale-age-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-gtuu-stale-age-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let lock_path = dir.join("gtuu.lock");
@@ -385,7 +400,10 @@ mod tests {
         let _ = filetime::set_file_mtime(&lock_path, old_time);
 
         let reclaimed = GtuuLock::acquire(&dir);
-        assert!(reclaimed.is_ok(), "expected an implausibly old lock to be reclaimed regardless of PID");
+        assert!(
+            reclaimed.is_ok(),
+            "expected an implausibly old lock to be reclaimed regardless of PID"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

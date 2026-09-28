@@ -97,7 +97,9 @@ struct Job {
 fn split_repo(repo: &str) -> Result<(&str, &str)> {
     let mut parts = repo.splitn(2, '/');
     match (parts.next(), parts.next()) {
-        (Some(owner), Some(name)) if !owner.is_empty() && !name.is_empty() && !name.contains('/') => {
+        (Some(owner), Some(name))
+            if !owner.is_empty() && !name.is_empty() && !name.contains('/') =>
+        {
             Ok((owner, name))
         }
         _ => Err(GitHubError::InvalidRepository(repo.to_owned())),
@@ -158,7 +160,10 @@ impl GitHubClient {
             .connect_timeout(connect_timeout)
             .timeout(request_timeout)
             .build()?;
-        Ok(Self { http, token: TokenSource::StaticToken(token) })
+        Ok(Self {
+            http,
+            token: TokenSource::StaticToken(token),
+        })
     }
 
     /// Authenticates as a GitHub App installation instead of a raw PAT. The
@@ -174,14 +179,13 @@ impl GitHubClient {
             .connect_timeout(connect_timeout)
             .timeout(request_timeout)
             .build()?;
-        Ok(Self { http, token: TokenSource::App(auth) })
+        Ok(Self {
+            http,
+            token: TokenSource::App(auth),
+        })
     }
 
-    fn request(
-        &self,
-        method: reqwest::Method,
-        url: &str,
-    ) -> Result<reqwest::blocking::Response> {
+    fn request(&self, method: reqwest::Method, url: &str) -> Result<reqwest::blocking::Response> {
         let token = self.token.current_token()?;
         let response = self
             .http
@@ -193,7 +197,9 @@ impl GitHubClient {
             .send()?;
 
         let status = response.status();
-        if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        if status == reqwest::StatusCode::FORBIDDEN
+            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        {
             let is_rate_limit = response
                 .headers()
                 .get("x-ratelimit-remaining")
@@ -229,7 +235,10 @@ impl GitHubClient {
         if !status.is_success() {
             let detail = response.text().unwrap_or_default();
             let detail = detail.chars().take(500).collect();
-            return Err(GitHubError::Api { status: status.as_u16(), detail });
+            return Err(GitHubError::Api {
+                status: status.as_u16(),
+                detail,
+            });
         }
 
         Ok(response)
@@ -318,7 +327,12 @@ impl GitHubClient {
         Ok(all_labels)
     }
 
-    fn queued_self_hosted_job_labels_for_run(&self, owner: &str, name: &str, run_id: u64) -> Result<Vec<Vec<String>>> {
+    fn queued_self_hosted_job_labels_for_run(
+        &self,
+        owner: &str,
+        name: &str,
+        run_id: u64,
+    ) -> Result<Vec<Vec<String>>> {
         let mut labels = Vec::new();
         let mut url = format!(
             "{API_BASE}/repos/{owner}/{name}/actions/runs/{run_id}/jobs?filter=latest&per_page=100"
@@ -331,7 +345,13 @@ impl GitHubClient {
                 parsed
                     .jobs
                     .into_iter()
-                    .filter(|job| job.status == "queued" && job.labels.iter().any(|label| label.eq_ignore_ascii_case("self-hosted")))
+                    .filter(|job| {
+                        job.status == "queued"
+                            && job
+                                .labels
+                                .iter()
+                                .any(|label| label.eq_ignore_ascii_case("self-hosted"))
+                    })
                     .map(|job| job.labels),
             );
             match next_url {
@@ -370,7 +390,10 @@ impl GitHubClient {
             if entry.entry_type != "file" || !is_yaml {
                 continue;
             }
-            let file_url = format!("{API_BASE}/repos/{owner}/{name}/contents/.github/workflows/{}", entry.name);
+            let file_url = format!(
+                "{API_BASE}/repos/{owner}/{name}/contents/.github/workflows/{}",
+                entry.name
+            );
             let file: ContentsFile = self.request(reqwest::Method::GET, &file_url)?.json()?;
             let content = decode_contents_base64(&file.content).unwrap_or_default();
             files.push((entry.name, content));
@@ -404,7 +427,9 @@ struct ContentsFile {
 fn decode_contents_base64(raw: &str) -> Option<String> {
     use base64::Engine;
     let cleaned: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
-    let bytes = base64::engine::general_purpose::STANDARD.decode(cleaned).ok()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(cleaned)
+        .ok()?;
     String::from_utf8(bytes).ok()
 }
 
@@ -419,7 +444,11 @@ fn parse_next_link(headers: &reqwest::header::HeaderMap) -> Option<String> {
         if !is_next {
             return None;
         }
-        url_part.trim_start_matches('<').trim_end_matches('>').to_owned().into()
+        url_part
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .to_owned()
+            .into()
     })
 }
 
@@ -429,7 +458,10 @@ mod tests {
 
     #[test]
     fn splits_valid_repository() {
-        assert_eq!(split_repo("octocat/hello-world").unwrap(), ("octocat", "hello-world"));
+        assert_eq!(
+            split_repo("octocat/hello-world").unwrap(),
+            ("octocat", "hello-world")
+        );
     }
 
     #[test]
@@ -450,7 +482,10 @@ mod tests {
 
     #[test]
     fn rejects_empty_token() {
-        assert!(matches!(GitHubClient::new("   "), Err(GitHubError::MissingToken)));
+        assert!(matches!(
+            GitHubClient::new("   "),
+            Err(GitHubError::MissingToken)
+        ));
     }
 
     #[test]
@@ -476,9 +511,19 @@ mod tests {
 
     #[test]
     fn runner_is_online_only_when_status_matches() {
-        let runner = Runner { id: 1, name: "r".into(), status: "online".into(), busy: false };
+        let runner = Runner {
+            id: 1,
+            name: "r".into(),
+            status: "online".into(),
+            busy: false,
+        };
         assert!(runner.is_online());
-        let offline = Runner { id: 1, name: "r".into(), status: "offline".into(), busy: false };
+        let offline = Runner {
+            id: 1,
+            name: "r".into(),
+            status: "offline".into(),
+            busy: false,
+        };
         assert!(!offline.is_online());
     }
 
@@ -499,7 +544,10 @@ mod tests {
         // newlines for readability; "cargo build" base64-encoded, split
         // across two lines the way a real API response would.
         let wrapped = "Y2FyZ28g\nYnVpbGQ=";
-        assert_eq!(decode_contents_base64(wrapped).as_deref(), Some("cargo build"));
+        assert_eq!(
+            decode_contents_base64(wrapped).as_deref(),
+            Some("cargo build")
+        );
     }
 
     #[test]

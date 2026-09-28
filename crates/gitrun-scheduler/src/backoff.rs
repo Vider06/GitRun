@@ -31,7 +31,9 @@ impl Default for RateLimitTracker {
 
 impl RateLimitTracker {
     pub fn new() -> Self {
-        Self { cooldowns: Mutex::new(HashMap::new()) }
+        Self {
+            cooldowns: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Records that `repo` hit a rate limit and should not be contacted

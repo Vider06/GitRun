@@ -2,8 +2,9 @@ use clap::Parser;
 use gitrun_core::{AppAuth, Config, GitHubAuth, Runner};
 use gitrun_setup::{bootstrap_linux_with_auth, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
-    apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest, latest_manifest,
-    pin_runner_image, refresh_docker_stack, rollback, update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
+    apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest,
+    latest_manifest, pin_runner_image, refresh_docker_stack, rollback,
+    update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -49,8 +50,16 @@ fn setup_config_dir() -> PathBuf {
 fn current_version() -> String {
     std::env::var("GITRUN_VERSION")
         .ok()
-        .or_else(|| std::fs::read_to_string("/usr/share/gitrun/version.txt").ok().map(|v| v.trim().to_owned()))
-        .or_else(|| std::fs::read_to_string("version.txt").ok().map(|v| v.trim().to_owned()))
+        .or_else(|| {
+            std::fs::read_to_string("/usr/share/gitrun/version.txt")
+                .ok()
+                .map(|v| v.trim().to_owned())
+        })
+        .or_else(|| {
+            std::fs::read_to_string("version.txt")
+                .ok()
+                .map(|v| v.trim().to_owned())
+        })
         .unwrap_or_else(|| "0.0.0".into())
 }
 
@@ -96,7 +105,10 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let target = target_triple();
     let plan = build_plan(&manifest, &current, &target, &dependency_snapshot())?;
 
-    println!("GitRun update: {} -> {}", plan.current_version, plan.target_version);
+    println!(
+        "GitRun update: {} -> {}",
+        plan.current_version, plan.target_version
+    );
     println!("target: {}", plan.target);
     println!("artifact: {}", plan.artifact);
     for dependency in &plan.dependencies {
@@ -114,8 +126,7 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let work_root = PathBuf::from(
-        std::env::var("GITRUN_UPDATE_DIR")
-            .unwrap_or_else(|_| ".gitrun-update".into()),
+        std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| ".gitrun-update".into()),
     );
     std::fs::create_dir_all(&work_root)?;
     let archive = work_root.join(&plan.artifact);
@@ -123,19 +134,24 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     download_and_verify(&plan.artifact_url, &artifact.sha256, &archive)?;
     println!("checksum: PASS");
 
-    let install_dir = PathBuf::from(
-        std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()),
-    );
-    let state_dir = PathBuf::from(
-        std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()),
-    );
+    let install_dir =
+        PathBuf::from(std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()));
+    let state_dir =
+        PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
     let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
-    let backup_root = PathBuf::from(
-        std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()),
-    );
-    let service_config = std::env::var("GITRUN_SERVICE_CONFIG").ok().map(PathBuf::from);
+    let backup_root =
+        PathBuf::from(std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()));
+    let service_config = std::env::var("GITRUN_SERVICE_CONFIG")
+        .ok()
+        .map(PathBuf::from);
 
-    let paths = UpdatePaths { install_dir, state_dir, config_dir, service_config, backup_root };
+    let paths = UpdatePaths {
+        install_dir,
+        state_dir,
+        config_dir,
+        service_config,
+        backup_root,
+    };
     let backup = apply_update(&paths, &archive, &target, &manifest.version, true)?;
     if let Some(image) = &plan.runner_image {
         if let Err(error) = update_runner_image(image) {
@@ -145,7 +161,10 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(config_file) = std::env::var("GITRUN_CONFIG_FILE") {
             if let Err(error) = pin_runner_image(config_file, image) {
                 rollback(&paths, &backup)?;
-                return Err(format!("runner configuration update failed; GitRun was rolled back: {error}").into());
+                return Err(format!(
+                    "runner configuration update failed; GitRun was rolled back: {error}"
+                )
+                .into());
             }
         }
     }
@@ -159,7 +178,14 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let version_file = paths.install_dir.join("version.txt");
     std::fs::write(version_file, format!("{}\n", manifest.version))?;
     println!("GitRun update: PASS");
-    println!("backup: {}", backup.install_backup.parent().unwrap_or(Path::new(".")).display());
+    println!(
+        "backup: {}",
+        backup
+            .install_backup
+            .parent()
+            .unwrap_or(Path::new("."))
+            .display()
+    );
     Ok(())
 }
 
@@ -185,13 +211,20 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             let candidates: [(&str, &[&str]); 3] = [
-                ("x-terminal-emulator", &["-e", "sh", "-c", &emergency_command]),
+                (
+                    "x-terminal-emulator",
+                    &["-e", "sh", "-c", &emergency_command],
+                ),
                 ("gnome-terminal", &["--", "sh", "-c", &emergency_command]),
                 ("konsole", &["-e", "sh", "-c", &emergency_command]),
             ];
 
             for (program, args) in candidates {
-                if std::process::Command::new(program).args(args).spawn().is_ok() {
+                if std::process::Command::new(program)
+                    .args(args)
+                    .spawn()
+                    .is_ok()
+                {
                     return Err(format!(
                         "dashboard failed; emergency GitRun CLI opened in {program}"
                     )
@@ -207,7 +240,6 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")
@@ -216,15 +248,25 @@ fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|value| value.parse::<u32>().ok());
     let executable = std::env::current_exe()?;
 
-    if raw.lines().next().is_some_and(|line| line.starts_with("AUTH_MODE=")) {
+    if raw
+        .lines()
+        .next()
+        .is_some_and(|line| line.starts_with("AUTH_MODE="))
+    {
         let values = parse_setup_request(&raw)?;
         let repositories = required_setup_value(&values, "GITRUN_REPOSITORIES")?;
         let auth = match required_setup_value(&values, "AUTH_MODE")?.as_str() {
             "pat" => BootstrapAuth::Pat(required_setup_value(&values, "GITHUB_TOKEN")?),
             "app" => BootstrapAuth::GitHubApp {
                 app_id: required_setup_value(&values, "GITRUN_GITHUB_APP_ID")?,
-                installation_id: required_setup_value(&values, "GITRUN_GITHUB_APP_INSTALLATION_ID")?,
-                private_key_path: required_setup_value(&values, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?,
+                installation_id: required_setup_value(
+                    &values,
+                    "GITRUN_GITHUB_APP_INSTALLATION_ID",
+                )?,
+                private_key_path: required_setup_value(
+                    &values,
+                    "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH",
+                )?,
             },
             other => return Err(format!("unsupported setup auth mode: {other}").into()),
         };
@@ -243,7 +285,9 @@ fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_setup_request(raw: &str) -> Result<std::collections::BTreeMap<String, String>, Box<dyn std::error::Error>> {
+fn parse_setup_request(
+    raw: &str,
+) -> Result<std::collections::BTreeMap<String, String>, Box<dyn std::error::Error>> {
     let mut values = std::collections::BTreeMap::new();
     for line in raw.lines() {
         let line = line.trim();
@@ -274,7 +318,6 @@ fn required_setup_value(
     }
     Ok(value)
 }
-
 
 fn terminal_print_header(title: &str) {
     println!();
@@ -368,7 +411,10 @@ fn verify_repository_access(
     }
 }
 
-fn write_repositories_to_config(path: &Path, repositories: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn write_repositories_to_config(
+    path: &Path,
+    repositories: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
     let original = std::fs::read_to_string(path)?;
     let repository_value = repositories.join(",");
     let mut output = Vec::new();
@@ -432,7 +478,10 @@ fn terminal_setup_command() -> Result<(), Box<dyn std::error::Error>> {
     println!("Credentials are tested before the privileged installation begins.");
     println!();
 
-    let auth_choice = read_terminal_choice("Authentication: [1] Personal Access Token  [2] GitHub App → ", 2)?;
+    let auth_choice = read_terminal_choice(
+        "Authentication: [1] Personal Access Token  [2] GitHub App → ",
+        2,
+    )?;
     let (bootstrap_auth, github_auth) = match auth_choice {
         1 => {
             let token = read_terminal_secret("GitHub Personal Access Token: ")?;
@@ -448,7 +497,9 @@ fn terminal_setup_command() -> Result<(), Box<dyn std::error::Error>> {
             let private_key_path = read_terminal_line("Private key PEM path: ")?;
 
             if app_id.is_empty() || installation_id.is_empty() || private_key_path.is_empty() {
-                return Err("GitHub App ID, Installation ID, and private key path are required".into());
+                return Err(
+                    "GitHub App ID, Installation ID, and private key path are required".into(),
+                );
             }
 
             let private_key = std::fs::read_to_string(&private_key_path)
@@ -510,8 +561,12 @@ fn terminal_setup_command() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             payload.push_str("AUTH_MODE=app\n");
             payload.push_str(&format!("GITRUN_GITHUB_APP_ID={app_id}\n"));
-            payload.push_str(&format!("GITRUN_GITHUB_APP_INSTALLATION_ID={installation_id}\n"));
-            payload.push_str(&format!("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH={private_key_path}\n"));
+            payload.push_str(&format!(
+                "GITRUN_GITHUB_APP_INSTALLATION_ID={installation_id}\n"
+            ));
+            payload.push_str(&format!(
+                "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH={private_key_path}\n"
+            ));
         }
     }
     payload.push_str(&format!("GITRUN_REPOSITORIES={}\n", repositories.join(",")));
@@ -527,11 +582,9 @@ fn terminal_setup_command() -> Result<(), Box<dyn std::error::Error>> {
         let executable = std::env::current_exe()?;
         println!();
         println!("Installing GitRun with elevated privileges...");
-        let uid = std::process::Command::new("id")
-            .arg("-u")
-            .output()?;
-        let running_as_root = uid.status.success()
-            && String::from_utf8_lossy(&uid.stdout).trim() == "0";
+        let uid = std::process::Command::new("id").arg("-u").output()?;
+        let running_as_root =
+            uid.status.success() && String::from_utf8_lossy(&uid.stdout).trim() == "0";
         let status = if running_as_root {
             std::process::Command::new(&executable)
                 .arg("--install-root")
@@ -568,7 +621,10 @@ fn connect_command(repository: &str) -> Result<(), Box<dyn std::error::Error>> {
     verify_repository_access(&auth, repository)?;
 
     let mut repositories = config.repositories;
-    if repositories.iter().any(|repo| repo.eq_ignore_ascii_case(repository)) {
+    if repositories
+        .iter()
+        .any(|repo| repo.eq_ignore_ascii_case(repository))
+    {
         println!("Repository already connected: {repository}");
         return Ok(());
     }
@@ -584,13 +640,27 @@ fn connect_command(repository: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     let backup: BackupRecord = serde_json::from_str(&raw)?;
-    let install_dir = PathBuf::from(std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()));
-    let state_dir = PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
+    let install_dir =
+        PathBuf::from(std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()));
+    let state_dir =
+        PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
     let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
-    let backup_root = backup.install_backup.parent().and_then(Path::parent).map(PathBuf::from)
+    let backup_root = backup
+        .install_backup
+        .parent()
+        .and_then(Path::parent)
+        .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("./backups"));
-    let service_config = std::env::var("GITRUN_SERVICE_CONFIG").ok().map(PathBuf::from);
-    let paths = UpdatePaths { install_dir, state_dir, config_dir, service_config, backup_root };
+    let service_config = std::env::var("GITRUN_SERVICE_CONFIG")
+        .ok()
+        .map(PathBuf::from);
+    let paths = UpdatePaths {
+        install_dir,
+        state_dir,
+        config_dir,
+        service_config,
+        backup_root,
+    };
     rollback(&paths, &backup)?;
     println!("GitRun rollback: PASS");
     Ok(())
@@ -604,20 +674,31 @@ fn main() {
     }
     let exit_code = match cli.command.unwrap_or(Command::Dashboard) {
         Command::Config => run_config(),
-        Command::Desired { min, max, busy, queued } => run_desired(min, max, busy, queued),
+        Command::Desired {
+            min,
+            max,
+            busy,
+            queued,
+        } => run_desired(min, max, busy, queued),
         Command::Setup { terminal } => {
             if terminal {
                 match terminal_setup_command() {
                     Ok(()) => 0,
-                    Err(error) => { eprintln!("GitRun terminal setup: FAIL — {error}"); 1 }
+                    Err(error) => {
+                        eprintln!("GitRun terminal setup: FAIL — {error}");
+                        1
+                    }
                 }
             } else {
                 run_setup()
             }
-        },
+        }
         Command::Connect { repository } => match connect_command(&repository) {
             Ok(()) => 0,
-            Err(error) => { eprintln!("GitRun connect: FAIL — {error}"); 1 }
+            Err(error) => {
+                eprintln!("GitRun connect: FAIL — {error}");
+                1
+            }
         },
         Command::Doctor => run_doctor(),
         Command::Update { manifest_url } => run_update(manifest_url.as_deref()),
@@ -692,8 +773,14 @@ enum Command {
 
 fn run_config() -> i32 {
     match load_config() {
-        Ok(config) => { println!("{}", serde_json::to_string_pretty(&config).unwrap()); 0 }
-        Err(error) => { eprintln!("configuration error: {error}"); 2 }
+        Ok(config) => {
+            println!("{}", serde_json::to_string_pretty(&config).unwrap());
+            0
+        }
+        Err(error) => {
+            eprintln!("configuration error: {error}");
+            2
+        }
     }
 }
 
@@ -710,7 +797,15 @@ fn run_setup() -> i32 {
                 Ok(report) => {
                     let failed = report.dependencies.iter().filter(|d| !d.available).count();
                     for dependency in &report.dependencies {
-                        println!("{}: {}", dependency.name, if dependency.available { "available" } else { "missing" });
+                        println!(
+                            "{}: {}",
+                            dependency.name,
+                            if dependency.available {
+                                "available"
+                            } else {
+                                "missing"
+                            }
+                        );
                     }
                     println!("config: {}", report.config_dir.display());
                     println!("state: {}", report.state_dir.display());
@@ -722,20 +817,34 @@ fn run_setup() -> i32 {
                     println!("GitRun setup: PASS");
                     0
                 }
-                Err(error) => { eprintln!("GitRun setup: FAIL — {error}"); 1 }
+                Err(error) => {
+                    eprintln!("GitRun setup: FAIL — {error}");
+                    1
+                }
             }
         }
-        Err(error) => { eprintln!("GitRun setup: FAIL — {error}"); 1 }
+        Err(error) => {
+            eprintln!("GitRun setup: FAIL — {error}");
+            1
+        }
     }
 }
 
 fn run_doctor() -> i32 {
     match load_config() {
         Ok(config) => {
-            println!("GitRun doctor: PASS ({} repositories, pool {}..{})", config.repositories.len(), config.min_runners, config.max_runners);
+            println!(
+                "GitRun doctor: PASS ({} repositories, pool {}..{})",
+                config.repositories.len(),
+                config.min_runners,
+                config.max_runners
+            );
             0
         }
-        Err(error) => { eprintln!("GitRun doctor: FAIL — {error}"); 1 }
+        Err(error) => {
+            eprintln!("GitRun doctor: FAIL — {error}");
+            1
+        }
     }
 }
 
@@ -750,27 +859,39 @@ fn run_update(manifest_url: Option<&str>) -> i32 {
     };
     match update_command(&args) {
         Ok(()) => 0,
-        Err(error) => { eprintln!("GitRun update: FAIL — {error}"); 1 }
+        Err(error) => {
+            eprintln!("GitRun update: FAIL — {error}");
+            1
+        }
     }
 }
 
 fn run_dashboard() -> i32 {
     match dashboard_command() {
         Ok(()) => 0,
-        Err(error) => { eprintln!("GitRun dashboard: FAIL — {error}"); 1 }
+        Err(error) => {
+            eprintln!("GitRun dashboard: FAIL — {error}");
+            1
+        }
     }
 }
 
 fn run_install_root(token_path: &str) -> i32 {
     match install_root_command(token_path) {
         Ok(()) => 0,
-        Err(error) => { eprintln!("GitRun install: FAIL — {error}"); 1 }
+        Err(error) => {
+            eprintln!("GitRun install: FAIL — {error}");
+            1
+        }
     }
 }
 
 fn run_rollback(backup_path: &str) -> i32 {
     match rollback_command(backup_path) {
         Ok(()) => 0,
-        Err(error) => { eprintln!("GitRun rollback: FAIL — {error}"); 1 }
+        Err(error) => {
+            eprintln!("GitRun rollback: FAIL — {error}");
+            1
+        }
     }
 }

@@ -400,16 +400,8 @@ impl Dashboard {
                     &format!("{}..{}", config.min_runners, config.max_runners),
                 );
                 status_chip(ui, "Poll", &format!("{}s", config.poll_interval));
-                status_chip(
-                    ui,
-                    "Idle timeout",
-                    &format!("{}s", config.idle_timeout),
-                );
-                status_chip(
-                    ui,
-                    "Ephemeral",
-                    if config.ephemeral { "yes" } else { "no" },
-                );
+                status_chip(ui, "Idle timeout", &format!("{}s", config.idle_timeout));
+                status_chip(ui, "Ephemeral", if config.ephemeral { "yes" } else { "no" });
             } else {
                 status_chip(ui, "Pool", "configuration unavailable");
             }
@@ -436,9 +428,7 @@ impl Dashboard {
         if let Some(path) = &self.config_path {
             ui.small(format!("Persistent file: {}", path.display()));
         } else {
-            ui.small(
-                "Set GITRUN_CONFIG_FILE to edit and persist settings from this dashboard.",
-            );
+            ui.small("Set GITRUN_CONFIG_FILE to edit and persist settings from this dashboard.");
         }
 
         let Some(settings) = &mut self.settings else {
@@ -519,8 +509,7 @@ impl Dashboard {
                 ui.strong("Runner image");
                 if ui
                     .add(
-                        egui::TextEdit::singleline(&mut settings.runner_image)
-                            .desired_width(420.0),
+                        egui::TextEdit::singleline(&mut settings.runner_image).desired_width(420.0),
                     )
                     .changed()
                 {
@@ -547,14 +536,21 @@ impl Dashboard {
                 ui.end_row();
 
                 ui.strong("Automatic container recovery");
-                if ui.checkbox(&mut settings.auto_container_recovery, "").changed() {
+                if ui
+                    .checkbox(&mut settings.auto_container_recovery, "")
+                    .changed()
+                {
                     self.settings_dirty = true;
                 }
                 ui.end_row();
 
                 ui.strong("Container recovery cooldown");
                 if ui
-                    .add(egui::DragValue::new(&mut settings.container_recovery_cooldown).range(15..=86_400).speed(1))
+                    .add(
+                        egui::DragValue::new(&mut settings.container_recovery_cooldown)
+                            .range(15..=86_400)
+                            .speed(1),
+                    )
                     .changed()
                 {
                     self.settings_dirty = true;
@@ -562,7 +558,10 @@ impl Dashboard {
                 ui.end_row();
 
                 ui.strong("Automatic container updates");
-                if ui.checkbox(&mut settings.auto_container_update, "").changed() {
+                if ui
+                    .checkbox(&mut settings.auto_container_update, "")
+                    .changed()
+                {
                     self.settings_dirty = true;
                 }
                 ui.end_row();
@@ -582,10 +581,7 @@ impl Dashboard {
 
                 ui.strong("State directory");
                 if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut settings.state_dir)
-                            .desired_width(420.0),
-                    )
+                    .add(egui::TextEdit::singleline(&mut settings.state_dir).desired_width(420.0))
                     .changed()
                 {
                     self.settings_dirty = true;
@@ -594,10 +590,7 @@ impl Dashboard {
 
                 ui.strong("Log directory");
                 if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut settings.log_dir)
-                            .desired_width(420.0),
-                    )
+                    .add(egui::TextEdit::singleline(&mut settings.log_dir).desired_width(420.0))
                     .changed()
                 {
                     self.settings_dirty = true;
@@ -630,10 +623,8 @@ impl Dashboard {
                 .clicked()
             {
                 match self.save_settings_and_restart() {
-                    Ok(()) => self.set_action_message(
-                        true,
-                        "Settings saved and GitRun service restarted.",
-                    ),
+                    Ok(()) => self
+                        .set_action_message(true, "Settings saved and GitRun service restarted."),
                     Err(error) => self.set_action_message(false, error),
                 }
             }
@@ -741,13 +732,7 @@ impl Dashboard {
 
                 for repository in configured {
                     ui.label(&repository);
-                    ui.label(
-                        counts
-                            .get(&repository)
-                            .copied()
-                            .unwrap_or(0)
-                            .to_string(),
-                    );
+                    ui.label(counts.get(&repository).copied().unwrap_or(0).to_string());
                     if let Some(config) = &self.snapshot.config {
                         ui.label(format!("{}..{}", config.min_runners, config.max_runners));
                     } else {
@@ -798,10 +783,7 @@ impl Dashboard {
                     {
                         self.run_runner_action("start", &runner.name);
                     }
-                    if ui
-                        .add_enabled(running, egui::Button::new("Stop"))
-                        .clicked()
-                    {
+                    if ui.add_enabled(running, egui::Button::new("Stop")).clicked() {
                         self.run_runner_action("stop", &runner.name);
                     }
                     if ui.button("Restart").clicked() {
@@ -877,9 +859,7 @@ fn update_env_file(path: &PathBuf, config: &Config) -> Result<(), String> {
 
     for line in original.lines() {
         let trimmed = line.trim();
-        let key = trimmed
-            .split_once('=')
-            .map(|(key, _)| key.trim());
+        let key = trimmed.split_once('=').map(|(key, _)| key.trim());
 
         if let Some(key) = key.filter(|key| managed.contains(key)) {
             output.push(format!("{key}={}", values[key]));
@@ -917,10 +897,22 @@ fn config_env_values(config: &Config) -> BTreeMap<&'static str, String> {
         ("GITRUN_EPHEMERAL", config.ephemeral.to_string()),
         ("GITRUN_STATE_DIR", config.state_dir.clone()),
         ("GITRUN_LOG_DIR", config.log_dir.clone()),
-        ("GITRUN_AUTO_CONTAINER_UPDATE", config.auto_container_update.to_string()),
-        ("GITRUN_CONTAINER_UPDATE_TIME", config.container_update_time.clone()),
-        ("GITRUN_AUTO_CONTAINER_RECOVERY", config.auto_container_recovery.to_string()),
-        ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", config.container_recovery_cooldown.to_string()),
+        (
+            "GITRUN_AUTO_CONTAINER_UPDATE",
+            config.auto_container_update.to_string(),
+        ),
+        (
+            "GITRUN_CONTAINER_UPDATE_TIME",
+            config.container_update_time.clone(),
+        ),
+        (
+            "GITRUN_AUTO_CONTAINER_RECOVERY",
+            config.auto_container_recovery.to_string(),
+        ),
+        (
+            "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
+            config.container_recovery_cooldown.to_string(),
+        ),
     ])
 }
 
@@ -1115,10 +1107,12 @@ impl SetupWizard {
             self.status = "Enter a GitHub token.".into();
             return;
         }
-        if repositories.is_empty() || repositories.split(',').any(|repo| {
-            let repo = repo.trim();
-            !repo.contains('/') || repo.starts_with('/') || repo.ends_with('/')
-        }) {
+        if repositories.is_empty()
+            || repositories.split(',').any(|repo| {
+                let repo = repo.trim();
+                !repo.contains('/') || repo.starts_with('/') || repo.ends_with('/')
+            })
+        {
             self.status = "Enter at least one repository as owner/repository.".into();
             return;
         }
@@ -1127,13 +1121,12 @@ impl SetupWizard {
             return;
         }
 
-        let path = std::env::temp_dir().join(format!(
-            "gitrun-setup-{}.conf",
-            std::process::id()
-        ));
-        let payload = format!("{token}
+        let path = std::env::temp_dir().join(format!("gitrun-setup-{}.conf", std::process::id()));
+        let payload = format!(
+            "{token}
 {repositories}
-");
+"
+        );
         if let Err(error) = fs::write(&path, payload) {
             self.status = format!("Unable to prepare setup request: {error}");
             return;
@@ -1374,10 +1367,8 @@ mod tests {
             ..Config::default()
         };
         let original = "GITHUB_TOKEN=secret\nGITRUN_MIN_RUNNERS=3\nCUSTOM=value\n";
-        let path = std::env::temp_dir().join(format!(
-            "gitrun-dashboard-config-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("gitrun-dashboard-config-{}", std::process::id()));
         fs::write(&path, original).unwrap();
         update_env_file(&path, &config).unwrap();
         let rendered = fs::read_to_string(&path).unwrap();

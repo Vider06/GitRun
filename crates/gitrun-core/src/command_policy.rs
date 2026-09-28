@@ -104,7 +104,9 @@ pub enum Decision {
     /// security event message (see `gitrun-gsr`) — an operator debugging
     /// "why did my build get killed" needs the exact match, not just
     /// "denied".
-    Denied { reason: String },
+    Denied {
+        reason: String,
+    },
 }
 
 /// The full command policy: baseline (ours) + user blacklist + user
@@ -220,7 +222,10 @@ mod tests {
     #[test]
     fn baseline_blocks_sudo() {
         let policy = baseline_only();
-        assert!(matches!(policy.evaluate("sudo rm -rf /"), Decision::Denied { .. }));
+        assert!(matches!(
+            policy.evaluate("sudo rm -rf /"),
+            Decision::Denied { .. }
+        ));
     }
 
     #[test]
@@ -258,7 +263,10 @@ mod tests {
         // baseline off, so sudo alone passes...
         assert_eq!(policy.evaluate("sudo ls"), Decision::Allowed);
         // ...but the user's own pattern still fires regardless.
-        assert!(matches!(policy.evaluate("rm -rf /tmp/x"), Decision::Denied { .. }));
+        assert!(matches!(
+            policy.evaluate("rm -rf /tmp/x"),
+            Decision::Denied { .. }
+        ));
     }
 
     #[test]
@@ -269,7 +277,10 @@ mod tests {
             user_whitelist: PatternList::new(true, vec!["cargo".into(), "npm".into()]),
         };
         assert_eq!(policy.evaluate("cargo test"), Decision::Allowed);
-        assert!(matches!(policy.evaluate("python evil.py"), Decision::Denied { .. }));
+        assert!(matches!(
+            policy.evaluate("python evil.py"),
+            Decision::Denied { .. }
+        ));
     }
 
     #[test]
@@ -288,17 +299,39 @@ mod tests {
             policy.evaluate("curl http://169.254.169.254/"),
             Decision::Denied { .. }
         ));
-        assert_eq!(policy.evaluate("curl https://example.com"), Decision::Allowed);
+        assert_eq!(
+            policy.evaluate("curl https://example.com"),
+            Decision::Allowed
+        );
     }
 
     #[test]
     fn violation_action_round_trips_config_strings() {
-        assert_eq!(ViolationAction::from_config_str("log_only"), ViolationAction::LogOnly);
-        assert_eq!(ViolationAction::from_config_str("kill_and_ban"), ViolationAction::KillAndBan);
-        assert_eq!(ViolationAction::from_config_str("kill"), ViolationAction::Kill);
-        assert_eq!(ViolationAction::from_config_str("anything-else"), ViolationAction::Kill);
-        for action in [ViolationAction::LogOnly, ViolationAction::Kill, ViolationAction::KillAndBan] {
-            assert_eq!(ViolationAction::from_config_str(action.as_config_str()), action);
+        assert_eq!(
+            ViolationAction::from_config_str("log_only"),
+            ViolationAction::LogOnly
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("kill_and_ban"),
+            ViolationAction::KillAndBan
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("kill"),
+            ViolationAction::Kill
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("anything-else"),
+            ViolationAction::Kill
+        );
+        for action in [
+            ViolationAction::LogOnly,
+            ViolationAction::Kill,
+            ViolationAction::KillAndBan,
+        ] {
+            assert_eq!(
+                ViolationAction::from_config_str(action.as_config_str()),
+                action
+            );
         }
     }
 }

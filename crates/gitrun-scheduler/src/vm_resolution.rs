@@ -80,8 +80,14 @@ pub fn new_registry() -> VmResolutionRegistry {
 /// - Neither → spawns the background thread described in this module's
 ///   doc comment and returns `None` for *this* cycle; a later cycle will
 ///   see `Resolved` once the thread finishes.
-pub fn resolve_or_spawn(registry: &VmResolutionRegistry, state_dir: &Path, vm_config: &VmConfig) -> Option<DockerHost> {
-    let mut guard = registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+pub fn resolve_or_spawn(
+    registry: &VmResolutionRegistry,
+    state_dir: &Path,
+    vm_config: &VmConfig,
+) -> Option<DockerHost> {
+    let mut guard = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     match guard.get(&vm_config.name) {
         Some(VmResolution::Resolved(host)) => return Some(host.clone()),
         Some(VmResolution::Resolving) => return None,
@@ -99,7 +105,9 @@ pub fn resolve_or_spawn(registry: &VmResolutionRegistry, state_dir: &Path, vm_co
         .name(format!("gitrun-vm-resolve-{}", vm_config.name))
         .spawn(move || {
             let outcome = resolve_blocking(&state_dir, &vm_config);
-            let mut guard = registry_for_thread.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = registry_for_thread
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             match outcome {
                 Some(host) => {
                     guard.insert(vm_config.name.clone(), VmResolution::Resolved(host));
@@ -137,7 +145,9 @@ fn resolve_blocking(state_dir: &Path, vm_config: &VmConfig) -> Option<DockerHost
                 vm_config.name,
                 DECISION_TIMEOUT.as_secs()
             );
-            if let Err(write_error) = hypervisor_decision::request(state_dir, &vm_config.name, &error.to_string()) {
+            if let Err(write_error) =
+                hypervisor_decision::request(state_dir, &vm_config.name, &error.to_string())
+            {
                 eprintln!(
                     "gitrun-autoscaler: could not write hypervisor decision request for '{}': {write_error} — giving up for this attempt",
                     vm_config.name
@@ -183,7 +193,10 @@ fn resolve_blocking(state_dir: &Path, vm_config: &VmConfig) -> Option<DockerHost
                 // cleared it) or still pending. Either way, keep waiting.
             }
             Err(error) => {
-                eprintln!("gitrun-autoscaler: error polling hypervisor decision for VM '{}': {error}", vm_config.name);
+                eprintln!(
+                    "gitrun-autoscaler: error polling hypervisor decision for VM '{}': {error}",
+                    vm_config.name
+                );
             }
         }
         std::thread::sleep(DECISION_POLL_INTERVAL);
@@ -201,7 +214,10 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
         vm::start(kind, &config.name)?;
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
-    Ok(DockerHost::Remote(vm::docker_host_address(&ip, config.docker_port)))
+    Ok(DockerHost::Remote(vm::docker_host_address(
+        &ip,
+        config.docker_port,
+    )))
 }
 
 /// Loads VM definitions from `{state_dir}/vm-configs.json` at startup —
@@ -244,18 +260,23 @@ mod tests {
         // wait on non-test threads to exit) — harmless for the test, not
         // cleaned up here beyond best-effort temp dir removal.
         let registry = new_registry();
-        let dir = std::env::temp_dir().join(format!("gitrun-vm-resolution-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-vm-resolution-test-{}", std::process::id()));
         let started = Instant::now();
         let result = resolve_or_spawn(&registry, &dir, &sample_vm("never-answered"));
         assert!(result.is_none());
-        assert!(started.elapsed() < Duration::from_secs(2), "resolve_or_spawn must not block the caller");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "resolve_or_spawn must not block the caller"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn resolve_or_spawn_does_not_spawn_a_second_thread_while_resolving() {
         let registry = new_registry();
-        let dir = std::env::temp_dir().join(format!("gitrun-vm-resolution-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-vm-resolution-test-{}", std::process::id()));
         let vm = sample_vm("dup-check");
         let _ = resolve_or_spawn(&registry, &dir, &vm);
         // Immediately call again: the entry should already be `Resolving`
@@ -264,7 +285,11 @@ mod tests {
         let second = resolve_or_spawn(&registry, &dir, &vm);
         assert!(second.is_none());
         let guard = registry.lock().unwrap();
-        assert_eq!(guard.len(), 1, "only one registry entry should exist for one VM name");
+        assert_eq!(
+            guard.len(),
+            1,
+            "only one registry entry should exist for one VM name"
+        );
         drop(guard);
         let _ = std::fs::remove_dir_all(&dir);
     }

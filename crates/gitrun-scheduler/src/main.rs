@@ -80,7 +80,10 @@ fn main() {
     // caught at boot rather than only showing up as "every VM job falls
     // back to local host" with no clear error later.
     if let Err(error) = vm_resolution::load_vm_definitions(&state_dir) {
-        eprintln!("gitrun-autoscaler: invalid {}: {error}", state_dir.join("vm-configs.json").display());
+        eprintln!(
+            "gitrun-autoscaler: invalid {}: {error}",
+            state_dir.join("vm-configs.json").display()
+        );
         std::process::exit(2);
     }
     let vm_registry = vm_resolution::new_registry();
@@ -92,10 +95,16 @@ fn main() {
     // in it, which is exactly the signal the watchdog looks for.
     let pid_file = state_dir.join("gitrun-autoscaler.pid");
     if let Err(error) = std::fs::write(&pid_file, std::process::id().to_string()) {
-        eprintln!("gitrun-autoscaler: warning: could not write PID file for GSR at {}: {error}", pid_file.display());
+        eprintln!(
+            "gitrun-autoscaler: warning: could not write PID file for GSR at {}: {error}",
+            pid_file.display()
+        );
     }
 
-    println!("gitrun-autoscaler: starting, polling every {}s", config.poll_interval);
+    println!(
+        "gitrun-autoscaler: starting, polling every {}s",
+        config.poll_interval
+    );
     while !stopping.load(Ordering::Relaxed) {
         for repo in &config.repositories {
             if let Some(remaining) = rate_limits.remaining_cooldown(repo) {
@@ -111,7 +120,9 @@ fn main() {
                 continue;
             }
             if let Err(error) = reconcile_repo(&client, &config, &state_dir, &vm_registry, repo) {
-                if let Some(GitHubError::RateLimited { retry_after }) = error.downcast_ref::<GitHubError>() {
+                if let Some(GitHubError::RateLimited { retry_after }) =
+                    error.downcast_ref::<GitHubError>()
+                {
                     rate_limits.record_rate_limited(repo, *retry_after);
                 }
                 eprintln!("gitrun-autoscaler: reconciliation failed for {repo}: {error}");
@@ -146,8 +157,16 @@ fn build_github_client(config: &Config) -> Result<GitHubClient, Box<dyn std::err
     let request_timeout = Duration::from_secs(config.github_request_timeout);
 
     match GitHubAuth::from_config(config)? {
-        GitHubAuth::App(auth) => Ok(GitHubClient::with_app_auth(auth, connect_timeout, request_timeout)?),
-        GitHubAuth::Pat(token) => Ok(GitHubClient::with_timeouts(token, connect_timeout, request_timeout)?),
+        GitHubAuth::App(auth) => Ok(GitHubClient::with_app_auth(
+            auth,
+            connect_timeout,
+            request_timeout,
+        )?),
+        GitHubAuth::Pat(token) => Ok(GitHubClient::with_timeouts(
+            token,
+            connect_timeout,
+            request_timeout,
+        )?),
     }
 }
 
@@ -204,7 +223,9 @@ fn resolve_backend_and_image(
     });
 
     match logic_containers::resolve(&rules, job_labels) {
-        Some((logic_containers::Backend::LocalLinux, image)) => (docker::DockerHost::Local, image.to_owned(), false),
+        Some((logic_containers::Backend::LocalLinux, image)) => {
+            (docker::DockerHost::Local, image.to_owned(), false)
+        }
         Some((logic_containers::Backend::Vm { vm_name }, image)) => {
             // Reloaded fresh every call, same as `rules` above — an
             // operator can add/edit VMs from the dashboard while the
@@ -220,7 +241,11 @@ fn resolve_backend_and_image(
                 eprintln!(
                     "gitrun-autoscaler: Logic Containers rule targets VM '{vm_name}', but no VM with that name is configured — falling back to local host for this runner"
                 );
-                return (docker::DockerHost::Local, config.runner_image.clone(), false);
+                return (
+                    docker::DockerHost::Local,
+                    config.runner_image.clone(),
+                    false,
+                );
             };
             match vm_resolution::resolve_or_spawn(vm_registry, state_dir, vm_config) {
                 Some(host) => (host, image.to_owned(), vm_config.is_windows),
@@ -233,11 +258,19 @@ fn resolve_backend_and_image(
                     eprintln!(
                         "gitrun-autoscaler: VM '{vm_name}' isn't ready yet (hypervisor setup in progress) — using local host for this runner this cycle"
                     );
-                    (docker::DockerHost::Local, config.runner_image.clone(), false)
+                    (
+                        docker::DockerHost::Local,
+                        config.runner_image.clone(),
+                        false,
+                    )
                 }
             }
         }
-        None => (docker::DockerHost::Local, config.runner_image.clone(), false),
+        None => (
+            docker::DockerHost::Local,
+            config.runner_image.clone(),
+            false,
+        ),
     }
 }
 
@@ -287,7 +320,10 @@ fn reconcile_repo(
                 .map(|r| r.is_online() && !r.busy)
                 .unwrap_or(false)
         })
-        .map(|name| IdleInfo { name: name.clone(), idle_for: state.mark_idle(name) })
+        .map(|name| IdleInfo {
+            name: name.clone(),
+            idle_for: state.mark_idle(name),
+        })
         .collect();
     for name in &live_names {
         if !idle.iter().any(|i| &i.name == name) {
@@ -324,7 +360,11 @@ fn reconcile_repo(
         containers: containers.iter().map(to_container_view).collect(),
         runners: runners
             .iter()
-            .map(|r| RunnerView { name: r.name.clone(), online: r.is_online(), busy: r.busy })
+            .map(|r| RunnerView {
+                name: r.name.clone(),
+                online: r.is_online(),
+                busy: r.busy,
+            })
             .collect(),
         queued_jobs,
         queued_job_labels,
@@ -342,7 +382,15 @@ fn reconcile_repo(
         // transient Docker error creating one runner) is logged and the loop
         // continues with the rest, rather than the Python behavior of one
         // exception aborting the entire repo's cycle.
-        if let Err(error) = execute(client, config, state_dir, vm_registry, repo, &action, &mut state) {
+        if let Err(error) = execute(
+            client,
+            config,
+            state_dir,
+            vm_registry,
+            repo,
+            &action,
+            &mut state,
+        ) {
             eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}: {error}");
         }
     }
@@ -354,7 +402,11 @@ fn reconcile_repo(
 fn to_container_view(container: &ManagedContainer) -> ContainerView {
     ContainerView {
         name: container.name.clone(),
-        health: if container.status == "exited" { ContainerHealth::Exited } else { ContainerHealth::Running },
+        health: if container.status == "exited" {
+            ContainerHealth::Exited
+        } else {
+            ContainerHealth::Running
+        },
         permanent: container.permanent,
     }
 }
@@ -374,15 +426,34 @@ fn execute(
             state.clear_idle(name);
             state.clear_recovery(name);
         }
-        Action::CreateRunner { permanent, job_labels } => {
-            create_runner(client, config, state_dir, vm_registry, repo, *permanent, job_labels)?;
+        Action::CreateRunner {
+            permanent,
+            job_labels,
+        } => {
+            create_runner(
+                client,
+                config,
+                state_dir,
+                vm_registry,
+                repo,
+                *permanent,
+                job_labels,
+            )?;
         }
         Action::RecreateOrphaned { name, permanent } => {
             deregister_and_remove(client, repo, name)?;
             // Recreation isn't tied to a specific queued job (it's replacing
             // a container GitHub lost track of, not opening new capacity),
             // so it keeps the pre-existing behavior of an empty label set.
-            create_runner(client, config, state_dir, vm_registry, repo, *permanent, &[])?;
+            create_runner(
+                client,
+                config,
+                state_dir,
+                vm_registry,
+                repo,
+                *permanent,
+                &[],
+            )?;
             state.clear_recovery(name);
         }
         Action::RestartUnresponsive { name } => {
@@ -400,7 +471,11 @@ fn execute(
     Ok(())
 }
 
-fn deregister_and_remove(client: &GitHubClient, repo: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn deregister_and_remove(
+    client: &GitHubClient,
+    repo: &str,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(runners) = client.list_runners(repo) {
         if let Some(runner) = runners.iter().find(|r| r.name == name) {
             client.delete_runner(repo, runner.id)?;
@@ -438,28 +513,32 @@ fn create_runner(
     let docker_socket_gid = resolve_docker_socket_gid()?;
     let secret_env = vault_env_for_repo(config, repo);
 
-    let (backend, image, is_windows) = resolve_backend_and_image(config, state_dir, vm_registry, job_labels);
+    let (backend, image, is_windows) =
+        resolve_backend_and_image(config, state_dir, vm_registry, job_labels);
 
-    docker::create_runner_on(&backend, &docker::RunnerSpec {
-        name: &name,
-        repo,
-        permanent,
-        registration_token: &registration_token,
-        image: &image,
-        labels: &config.runner_labels,
-        ephemeral: config.ephemeral,
-        disable_update: config.runner_disable_update,
-        cpus: &config.container_cpus,
-        memory: &config.container_memory,
-        pids_limit: &config.container_pids_limit,
-        shared_cache_volume: &config.shared_cache_volume,
-        docker_socket_gid: &docker_socket_gid,
-        runner_home_size: &config.runner_home_size,
-        home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
-        secret_env: &secret_env,
-        is_windows,
-        docker_socket_hardening: config.gsr_docker_socket_hardening,
-    })?;
+    docker::create_runner_on(
+        &backend,
+        &docker::RunnerSpec {
+            name: &name,
+            repo,
+            permanent,
+            registration_token: &registration_token,
+            image: &image,
+            labels: &config.runner_labels,
+            ephemeral: config.ephemeral,
+            disable_update: config.runner_disable_update,
+            cpus: &config.container_cpus,
+            memory: &config.container_memory,
+            pids_limit: &config.container_pids_limit,
+            shared_cache_volume: &config.shared_cache_volume,
+            docker_socket_gid: &docker_socket_gid,
+            runner_home_size: &config.runner_home_size,
+            home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
+            secret_env: &secret_env,
+            is_windows,
+            docker_socket_hardening: config.gsr_docker_socket_hardening,
+        },
+    )?;
     Ok(())
 }
 
@@ -506,7 +585,9 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
             match gitrun_core::run_zizmor(&scratch_dir) {
                 Ok(Some(zizmor_findings)) => findings.extend(zizmor_findings),
                 Ok(None) => {} // zizmor not installed - silently skipped, per its own design.
-                Err(error) => eprintln!("gitrun-autoscaler: workflow validation for {repo}: zizmor run failed: {error}"),
+                Err(error) => eprintln!(
+                    "gitrun-autoscaler: workflow validation for {repo}: zizmor run failed: {error}"
+                ),
             }
         }
         let _ = std::fs::remove_dir_all(&scratch_dir);
@@ -521,14 +602,21 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
             finding.rule,
         );
         println!("gitrun-autoscaler: workflow validation finding: {message}");
-        let event = gitrun_gsr::SecurityEvent::new("workflow-validation", gitrun_gsr::Severity::Warning, message);
+        let event = gitrun_gsr::SecurityEvent::new(
+            "workflow-validation",
+            gitrun_gsr::Severity::Warning,
+            message,
+        );
         if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
             eprintln!("gitrun-autoscaler: workflow validation for {repo}: failed to write security event: {error}");
         }
     }
 }
 
-fn write_scratch_workflows(dir: &std::path::Path, files: &[(String, String)]) -> std::io::Result<()> {
+fn write_scratch_workflows(
+    dir: &std::path::Path,
+    files: &[(String, String)],
+) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     for (name, content) in files {
         std::fs::write(dir.join(name), content)?;
@@ -561,7 +649,10 @@ fn vault_env_for_repo(config: &Config, repo: &str) -> Vec<(String, String)> {
     let vault = match Vault::open_with_sink(&config.vault_dir, Box::new(bridge)) {
         Ok(vault) => vault,
         Err(error) => {
-            eprintln!("gitrun-autoscaler: could not open GitVault at {}: {error}", config.vault_dir);
+            eprintln!(
+                "gitrun-autoscaler: could not open GitVault at {}: {error}",
+                config.vault_dir
+            );
             return Vec::new();
         }
     };
@@ -717,7 +808,9 @@ fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
 /// isn't started at all rather than spun up to immediately no-op every
 /// tick.
 fn spawn_gsr_poll_thread(config: &Config, stopping: &Arc<AtomicBool>) {
-    let Some(policy) = config.command_policy() else { return };
+    let Some(policy) = config.command_policy() else {
+        return;
+    };
     let action = config.violation_action();
     let state_dir = PathBuf::from(&config.state_dir);
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
@@ -783,8 +876,14 @@ fn chrono_like_now(use_local: bool) -> SimpleNow {
 /// binary missing, non-zero exit, unparseable output — so the caller can
 /// fall back rather than panic.
 fn local_now_via_date_command() -> Option<SimpleNow> {
-    let time_out = std::process::Command::new("date").arg("+%H:%M").output().ok()?;
-    let date_out = std::process::Command::new("date").arg("+%Y-%m-%d").output().ok()?;
+    let time_out = std::process::Command::new("date")
+        .arg("+%H:%M")
+        .output()
+        .ok()?;
+    let date_out = std::process::Command::new("date")
+        .arg("+%Y-%m-%d")
+        .output()
+        .ok()?;
     if !time_out.status.success() || !date_out.status.success() {
         return None;
     }

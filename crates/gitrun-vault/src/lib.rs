@@ -82,7 +82,9 @@ pub enum VaultError {
     Decode(#[from] serde_json::Error),
     #[error("secret '{0}' not found")]
     NotFound(String),
-    #[error("decryption failed for secret '{0}' — wrong master key or corrupted/tampered ciphertext")]
+    #[error(
+        "decryption failed for secret '{0}' — wrong master key or corrupted/tampered ciphertext"
+    )]
     DecryptionFailed(String),
     #[error("master key file is the wrong size (expected 32 bytes, got {0})")]
     InvalidMasterKey(usize),
@@ -169,7 +171,10 @@ impl Vault {
         Self::open_with_sink(dir, Box::new(NoopEventSink))
     }
 
-    pub fn open_with_sink(dir: impl Into<PathBuf>, events: Box<dyn VaultEventSink>) -> Result<Self> {
+    pub fn open_with_sink(
+        dir: impl Into<PathBuf>,
+        events: Box<dyn VaultEventSink>,
+    ) -> Result<Self> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
         let key_bytes = load_or_create_master_key(&dir)?;
@@ -182,7 +187,12 @@ impl Vault {
             Err(error) => return Err(error.into()),
         };
 
-        Ok(Self { dir, cipher, data, events })
+        Ok(Self {
+            dir,
+            cipher,
+            data,
+            events,
+        })
     }
 
     /// Encrypts and stores `value` under `name` with `Scope::Global`,
@@ -239,14 +249,23 @@ impl Vault {
     /// Decrypts and returns the secret stored under `name` within `scope`.
     pub fn get_scoped(&self, name: &str, scope: &Scope) -> Result<String> {
         let key = storage_key(name, scope);
-        let entry = self.data.secrets.get(&key).ok_or_else(|| VaultError::NotFound(name.to_owned()))?;
-        let nonce_bytes = base64_decode(&entry.nonce).ok_or_else(|| VaultError::DecryptionFailed(name.to_owned()))?;
-        let ciphertext = base64_decode(&entry.ciphertext).ok_or_else(|| VaultError::DecryptionFailed(name.to_owned()))?;
+        let entry = self
+            .data
+            .secrets
+            .get(&key)
+            .ok_or_else(|| VaultError::NotFound(name.to_owned()))?;
+        let nonce_bytes = base64_decode(&entry.nonce)
+            .ok_or_else(|| VaultError::DecryptionFailed(name.to_owned()))?;
+        let ciphertext = base64_decode(&entry.ciphertext)
+            .ok_or_else(|| VaultError::DecryptionFailed(name.to_owned()))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let plaintext = self.cipher.decrypt(nonce, ciphertext.as_slice()).map_err(|_| {
-            self.events.on_decryption_failure(name);
-            VaultError::DecryptionFailed(name.to_owned())
-        })?;
+        let plaintext = self
+            .cipher
+            .decrypt(nonce, ciphertext.as_slice())
+            .map_err(|_| {
+                self.events.on_decryption_failure(name);
+                VaultError::DecryptionFailed(name.to_owned())
+            })?;
         String::from_utf8(plaintext).map_err(|_| VaultError::DecryptionFailed(name.to_owned()))
     }
 
@@ -268,7 +287,13 @@ impl Vault {
         self.data
             .secrets
             .iter()
-            .map(|(key, secret)| (name_part_of_key(key), secret.scope.clone(), secret.updated_at))
+            .map(|(key, secret)| {
+                (
+                    name_part_of_key(key),
+                    secret.scope.clone(),
+                    secret.updated_at,
+                )
+            })
             .collect()
     }
 
@@ -315,7 +340,8 @@ impl Vault {
             }
             let name = name_part_of_key(key);
             match best.get(&name) {
-                Some((existing_scope, _)) if existing_scope.specificity() >= secret.scope.specificity() => {}
+                Some((existing_scope, _))
+                    if existing_scope.specificity() >= secret.scope.specificity() => {}
                 _ => {
                     best.insert(name, (&secret.scope, key.as_str()));
                 }
@@ -377,7 +403,11 @@ fn load_or_create_master_key(dir: &Path) -> Result<[u8; 32]> {
 fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
     file.write_all(key)?;
     file.sync_all()?;
     Ok(())
@@ -437,14 +467,22 @@ mod tests {
     use super::*;
 
     fn temp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("gitrun-vault-test-{label}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-vault-test-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
     }
 
     #[test]
     fn base64_round_trips() {
-        for input in [b"".as_slice(), b"a", b"ab", b"abc", b"hello world", &[0u8, 255, 128, 1, 2, 3]] {
+        for input in [
+            b"".as_slice(),
+            b"a",
+            b"ab",
+            b"abc",
+            b"hello world",
+            &[0u8, 255, 128, 1, 2, 3],
+        ] {
             let encoded = base64_encode(input);
             let decoded = base64_decode(&encoded).unwrap();
             assert_eq!(decoded, input);
@@ -545,7 +583,10 @@ mod tests {
         fs::write(&key_path, &corrupted).unwrap();
 
         let vault = Vault::open(&dir).unwrap();
-        assert!(matches!(vault.get("key"), Err(VaultError::DecryptionFailed(_))));
+        assert!(matches!(
+            vault.get("key"),
+            Err(VaultError::DecryptionFailed(_))
+        ));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -568,7 +609,10 @@ mod tests {
         fs::write(&secrets_path, serde_json::to_string_pretty(&file).unwrap()).unwrap();
 
         let reloaded = Vault::open(&dir).unwrap();
-        assert!(matches!(reloaded.get("key"), Err(VaultError::DecryptionFailed(_))));
+        assert!(matches!(
+            reloaded.get("key"),
+            Err(VaultError::DecryptionFailed(_))
+        ));
         let _ = fs::remove_dir_all(&dir);
     }
 

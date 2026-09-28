@@ -129,12 +129,18 @@ impl BanStore {
     /// ban status is on a hot path for "can this repo get a new runner
     /// right now", so it should never itself need a write+fsync).
     pub fn is_banned(&self, repo: &str) -> bool {
-        self.data.banned_until.get(repo).is_some_and(|&until| until > now_secs())
+        self.data
+            .banned_until
+            .get(repo)
+            .is_some_and(|&until| until > now_secs())
     }
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Runs one poll tick: checks every managed runner container's current
@@ -161,7 +167,9 @@ pub fn poll_once(
         let command_lines = docker::container_command_lines_on(host, &container_name)?;
         let mut container_already_handled = false;
         for command_line in command_lines {
-            let Decision::Denied { reason } = policy.evaluate(&command_line) else { continue };
+            let Decision::Denied { reason } = policy.evaluate(&command_line) else {
+                continue;
+            };
             if !container_already_handled {
                 container_already_handled = true;
                 let repo = docker::container_repo_label_on(host, &container_name).unwrap_or(None);
@@ -199,7 +207,9 @@ fn apply_violation_action(
             let _ = docker::remove_container_on(host, container_name);
             if let Some(repo) = repo {
                 if let Err(error) = ban_store.ban(repo, DEFAULT_BAN_DURATION) {
-                    eprintln!("gitrun-scheduler: gsr_poll failed to persist ban for {repo}: {error}");
+                    eprintln!(
+                        "gitrun-scheduler: gsr_poll failed to persist ban for {repo}: {error}"
+                    );
                 }
             }
         }
@@ -229,7 +239,10 @@ pub fn run(
         Ok(store) => store,
         Err(error) => {
             eprintln!("gitrun-scheduler: gsr_poll could not load ban state, running without ban persistence: {error}");
-            BanStore { path: state_dir.join("gsr-bans.json"), data: BanFile::default() }
+            BanStore {
+                path: state_dir.join("gsr-bans.json"),
+                data: BanFile::default(),
+            }
         }
     };
 
@@ -262,7 +275,8 @@ mod tests {
     }
 
     fn temp_state_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("gitrun-gsr-poll-{label}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-gsr-poll-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -313,7 +327,13 @@ mod tests {
         // Docker daemon in this test environment, so if this accidentally
         // tried to shell out it would either hang or error; the absence of
         // a panic/hang here is itself part of what this test checks.
-        apply_violation_action(&DockerHost::Local, "irrelevant", Some("owner/repo"), ViolationAction::LogOnly, &mut store);
+        apply_violation_action(
+            &DockerHost::Local,
+            "irrelevant",
+            Some("owner/repo"),
+            ViolationAction::LogOnly,
+            &mut store,
+        );
         assert!(!store.is_banned("owner/repo"));
         fs::remove_dir_all(&dir).ok();
     }
@@ -326,7 +346,10 @@ mod tests {
         // or Layer 2 could kill a container over something Layer 1 was
         // actually right to allow, or vice versa.
         let policy = policy_with_baseline();
-        assert!(matches!(policy.evaluate("sudo rm -rf /"), Decision::Denied { .. }));
+        assert!(matches!(
+            policy.evaluate("sudo rm -rf /"),
+            Decision::Denied { .. }
+        ));
         assert_eq!(policy.evaluate("cargo build"), Decision::Allowed);
     }
 }

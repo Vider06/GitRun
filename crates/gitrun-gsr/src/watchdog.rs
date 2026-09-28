@@ -97,9 +97,12 @@ fn handle_crash(config: &WatchConfig, pid: u32) {
     // Always log first — this is the one action that must never fail
     // silently, since it's the only record if the graphical/terminal
     // notification below also fails.
-    let event = crate::events::SecurityEvent::new("gsr-watchdog", Severity::Critical, message.clone());
+    let event =
+        crate::events::SecurityEvent::new("gsr-watchdog", Severity::Critical, message.clone());
     if let Err(error) = events::emit(&config.events_path, &event) {
-        eprintln!("gitrun-gsr: CRITICAL: {message} (additionally failed to write event log: {error})");
+        eprintln!(
+            "gitrun-gsr: CRITICAL: {message} (additionally failed to write event log: {error})"
+        );
     }
 
     show_error(&message);
@@ -138,7 +141,8 @@ mod tests {
 
     #[test]
     fn read_pid_parses_valid_file() {
-        let path = std::env::temp_dir().join(format!("gitrun-gsr-pid-test-{}.pid", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("gitrun-gsr-pid-test-{}.pid", std::process::id()));
         std::fs::write(&path, "12345\n").unwrap();
         assert_eq!(read_pid(&path), Some(12345));
         let _ = std::fs::remove_file(&path);
@@ -146,14 +150,16 @@ mod tests {
 
     #[test]
     fn read_pid_returns_none_for_missing_file() {
-        let path = std::env::temp_dir().join(format!("gitrun-gsr-pid-missing-{}.pid", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("gitrun-gsr-pid-missing-{}.pid", std::process::id()));
         let _ = std::fs::remove_file(&path);
         assert_eq!(read_pid(&path), None);
     }
 
     #[test]
     fn read_pid_returns_none_for_garbage_content() {
-        let path = std::env::temp_dir().join(format!("gitrun-gsr-pid-garbage-{}.pid", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("gitrun-gsr-pid-garbage-{}.pid", std::process::id()));
         std::fs::write(&path, "not-a-pid").unwrap();
         assert_eq!(read_pid(&path), None);
         let _ = std::fs::remove_file(&path);
@@ -169,7 +175,10 @@ mod tests {
 
     #[test]
     fn crash_of_dead_pid_is_logged() {
-        let events_path = std::env::temp_dir().join(format!("gitrun-gsr-crash-events-{}.jsonl", std::process::id()));
+        let events_path = std::env::temp_dir().join(format!(
+            "gitrun-gsr-crash-events-{}.jsonl",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&events_path);
         let config = WatchConfig {
             pid_file: std::env::temp_dir().join("unused.pid"),

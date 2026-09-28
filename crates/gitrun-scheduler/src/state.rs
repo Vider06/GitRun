@@ -61,7 +61,10 @@ impl SchedulerState {
     }
 
     fn now() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
     }
 
     /// Marks a container as idle if it wasn't already tracked, and returns
@@ -79,15 +82,23 @@ impl SchedulerState {
     /// Removes tracking for any container name no longer present, so the
     /// state file doesn't grow forever with names of long-gone containers.
     pub fn prune(&mut self, live_names: &[String]) {
-        self.data.idle_since.retain(|name, _| live_names.contains(name));
-        self.data.recovery_since.retain(|name, _| live_names.contains(name));
+        self.data
+            .idle_since
+            .retain(|name, _| live_names.contains(name));
+        self.data
+            .recovery_since
+            .retain(|name, _| live_names.contains(name));
     }
 
     /// Returns how long a container has been marked as needing recovery,
     /// starting the clock now if this is the first time we've seen it.
     pub fn recovery_age(&mut self, name: &str) -> Duration {
         let now = Self::now();
-        let since = *self.data.recovery_since.entry(name.to_owned()).or_insert(now);
+        let since = *self
+            .data
+            .recovery_since
+            .entry(name.to_owned())
+            .or_insert(now);
         Duration::from_secs(now.saturating_sub(since))
     }
 
@@ -100,7 +111,12 @@ impl SchedulerState {
         self.data
             .recovery_since
             .iter()
-            .map(|(name, since)| (name.clone(), Duration::from_secs(now.saturating_sub(*since))))
+            .map(|(name, since)| {
+                (
+                    name.clone(),
+                    Duration::from_secs(now.saturating_sub(*since)),
+                )
+            })
             .collect()
     }
 
@@ -109,7 +125,12 @@ impl SchedulerState {
         self.data
             .idle_since
             .iter()
-            .map(|(name, since)| (name.clone(), Duration::from_secs(now.saturating_sub(*since))))
+            .map(|(name, since)| {
+                (
+                    name.clone(),
+                    Duration::from_secs(now.saturating_sub(*since)),
+                )
+            })
             .collect()
     }
 }
@@ -134,7 +155,8 @@ mod tests {
 
     #[test]
     fn clear_idle_removes_tracking() {
-        let dir = std::env::temp_dir().join(format!("gitrun-sched-state-clear-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-clear-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let mut state = SchedulerState::load(&dir).unwrap();
         state.mark_idle("runner-a");
@@ -145,7 +167,10 @@ mod tests {
 
     #[test]
     fn save_and_load_round_trips() {
-        let dir = std::env::temp_dir().join(format!("gitrun-sched-state-roundtrip-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-sched-state-roundtrip-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         let mut state = SchedulerState::load(&dir).unwrap();
         state.mark_idle("runner-a");
@@ -158,7 +183,8 @@ mod tests {
 
     #[test]
     fn prune_drops_entries_for_gone_containers() {
-        let dir = std::env::temp_dir().join(format!("gitrun-sched-state-prune-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-prune-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let mut state = SchedulerState::load(&dir).unwrap();
         state.mark_idle("runner-a");

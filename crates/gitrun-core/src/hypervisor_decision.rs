@@ -59,7 +59,10 @@ pub struct PendingDecision {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn decisions_dir(state_dir: &Path) -> PathBuf {
@@ -73,7 +76,13 @@ fn decision_path(state_dir: &Path, vm_name: &str) -> PathBuf {
     // `docker::sanitize` elsewhere in the scheduler.
     let safe: String = vm_name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     decisions_dir(state_dir).join(format!("{safe}.json"))
 }
@@ -93,7 +102,10 @@ pub fn request(state_dir: &Path, vm_name: &str, error: &str) -> Result<()> {
         choice: None,
         responded_at: None,
     };
-    fs::write(decision_path(state_dir, vm_name), serde_json::to_string(&record)?)?;
+    fs::write(
+        decision_path(state_dir, vm_name),
+        serde_json::to_string(&record)?,
+    )?;
     Ok(())
 }
 
@@ -162,7 +174,10 @@ mod tests {
     use super::*;
 
     fn temp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("gitrun-hv-decision-test-{label}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-hv-decision-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         dir
     }
@@ -171,7 +186,9 @@ mod tests {
     fn request_then_poll_sees_pending_with_no_choice() {
         let dir = temp_dir("pending");
         request(&dir, "win-runner-1", "virsh: connection refused").unwrap();
-        let seen = poll(&dir, "win-runner-1").unwrap().expect("record should exist");
+        let seen = poll(&dir, "win-runner-1")
+            .unwrap()
+            .expect("record should exist");
         assert_eq!(seen.vm_name, "win-runner-1");
         assert!(seen.choice.is_none());
         let _ = fs::remove_dir_all(&dir);
@@ -182,7 +199,9 @@ mod tests {
         let dir = temp_dir("respond");
         request(&dir, "win-runner-1", "boom").unwrap();
         respond(&dir, "win-runner-1", DecisionChoice::UseVirtualBox).unwrap();
-        let seen = poll(&dir, "win-runner-1").unwrap().expect("record should exist");
+        let seen = poll(&dir, "win-runner-1")
+            .unwrap()
+            .expect("record should exist");
         assert_eq!(seen.choice, Some(DecisionChoice::UseVirtualBox));
         assert!(seen.responded_at.is_some());
         let _ = fs::remove_dir_all(&dir);

@@ -154,21 +154,6 @@ pub fn bootstrap_linux_with_auth(
     }
 
     write_resource(
-        &root.join("autoscaler/gitrun_manager.py"),
-        resources::MANAGER_PY,
-        0o644,
-    )?;
-    write_resource(
-        &root.join("autoscaler/gitrun_updater_utility.py"),
-        resources::GTUU_PY,
-        0o755,
-    )?;
-    write_resource(
-        &root.join("docker/manager/Dockerfile"),
-        resources::MANAGER_DOCKERFILE,
-        0o644,
-    )?;
-    write_resource(
         &root.join("docker/runner/Dockerfile"),
         resources::RUNNER_DOCKERFILE,
         0o644,
@@ -177,11 +162,6 @@ pub fn bootstrap_linux_with_auth(
         &root.join("docker/runner/entrypoint.sh"),
         resources::RUNNER_ENTRYPOINT,
         0o755,
-    )?;
-    write_resource(
-        &root.join("docker-compose.yml"),
-        resources::COMPOSE_YML,
-        0o644,
     )?;
     write_resource(
         Path::new("/etc/systemd/system/gitrun.service"),
@@ -217,25 +197,11 @@ pub fn bootstrap_linux_with_auth(
     }
 
     build_image(
-        "gitrun-manager:latest",
-        &root,
-        &root.join("docker/manager/Dockerfile"),
-    )?;
-    build_image(
         "gitrun-runner:latest",
         &root,
         &root.join("docker/runner/Dockerfile"),
     )?;
 
-    run_command(Command::new("docker").args([
-        "compose",
-        "--env-file",
-        "/etc/gitrun/gitrun.env",
-        "-f",
-        "/opt/gitrun/docker-compose.yml",
-        "config",
-        "-q",
-    ]))?;
     run_command(Command::new("systemctl").args(["daemon-reload"]))?;
     run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;

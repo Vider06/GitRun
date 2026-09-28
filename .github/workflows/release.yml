@@ -241,7 +241,8 @@ jobs:
                 "target": "linux-x86_64-deb",
                 "file": "${deb}",
                 "sha256": "${deb_sha}"
-              },            ]
+              }
+            ]
           }
           JSON
 
@@ -259,7 +260,8 @@ jobs:
         run: |
           set -euo pipefail
           deb="$ROOT/$DEB"
-          server="$ROOT/$SERVER_ARCHIVE"          test -f "$deb" && test -f "$server" && test -f "$ROOT/release-manifest.json"
+          server="$ROOT/$SERVER_ARCHIVE"
+          test -f "$deb" && test -f "$server" && test -f "$ROOT/release-manifest.json"
 
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
           dpkg-deb --contents "$deb" | grep -E '/gitrun-dashboard-tauri$'
@@ -270,12 +272,6 @@ jobs:
           tar -xzf "$server" -C "$RUNNER_TEMP/server-check"
           test -x "$RUNNER_TEMP/server-check/gitrun-rs"
           test "$(od -An -t x1 -N 4 "$RUNNER_TEMP/server-check/gitrun-rs" | tr -d '[:space:]')" = "7f454c46"
-
-          rm -rf "$RUNNER_TEMP/gtuu-check"
-          mkdir -p "$RUNNER_TEMP/gtuu-check"
-          tar -xzf "$gtuu" -C "$RUNNER_TEMP/gtuu-check"
-          test -f "$RUNNER_TEMP/gtuu-check/gitrun_updater_utility.py"
-          python3 -m py_compile "$RUNNER_TEMP/gtuu-check/gitrun_updater_utility.py"
 
           python3 - "$ROOT/release-manifest.json" "$VERSION" "$GITHUB_SHA" <<'PY'
           import json

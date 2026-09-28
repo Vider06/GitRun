@@ -84,4 +84,10 @@ RUN mv /bin/sh /bin/sh.gitrun-real \
     && test -x /bin/sh \
     && test -x /bin/bash
 
+# Smoke-test both delegated shell entry points during the image build. These
+# commands execute through the new agent, which must transparently delegate
+# to the relocated real shells.
+RUN /bin/sh -c 'test "$(printf sh)" = sh' \
+    && /bin/bash -c 'test "$(printf bash)" = bash'
+
 ENTRYPOINT ["/entrypoint.sh"]

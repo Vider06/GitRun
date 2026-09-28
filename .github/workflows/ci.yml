@@ -208,35 +208,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v8-
 
-      - name: Prepare Tauri Rust cache directories
-        shell: bash
-        env:
-          CARGO_HOME: .gitrun-ci/cargo
-          RUSTUP_HOME: .gitrun-ci/rustup
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target
-        run: |
-          set -euo pipefail
-          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$CARGO_TARGET_DIR"
-
-      - name: Restore Rust common cache for Tauri
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            .gitrun-ci/cargo
-            .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
-
-      - name: Restore Tauri target cache
-        id: tauri-target-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v3-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v3-
-
       - name: Setup Rust
         shell: bash
         env:
@@ -252,10 +223,11 @@ jobs:
           fi
           rustup toolchain install "$RUST_VERSION" --profile minimal
           rustup default "$RUST_VERSION"
+          rustup component add rustfmt clippy --toolchain "$RUST_VERSION"
           rustc --version
           cargo --version
 
-      - name: Persist Tauri Rust toolchain paths
+      - name: Persist Rust toolchain paths
         shell: bash
         env:
           CARGO_HOME: .gitrun-ci/cargo
@@ -263,12 +235,78 @@ jobs:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           set -euo pipefail
+          mkdir -p "$CARGO_TARGET_DIR"
           echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
           echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
 
-      - name: Setup Node.js
+      - name: Report Rust cache status
+        shell: bash
+        env:
+          COMMON_CACHE_HIT: ${{ steps.rust-common-cache.outputs.cache-hit }}
+          TARGET_CACHE_HIT: ${{ steps.rust-target-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          echo "Rust common cache hit: ${COMMON_CACHE_HIT:-false}"
+          echo "Rust target cache hit: ${TARGET_CACHE_HIT:-false}"
+          du -sh .gitrun-ci/cargo/registry .gitrun-ci/cargo/git .gitrun-ci/rustup target 2>/dev/null || true
+
+
+      - name: Rust format check
+        run: cargo fmt --all -- --check
+
+      - name: Rust workspace check
+        run: cargo check --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked
+
+      - name: Rust workspace clippy
+        run: cargo clippy --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked -- -D warnings
+
+      - name: Rust release build
+        run: cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --release --locked
+
+      - name: Rust tests
+        run: cargo test --workspace --exclude gitrun-dashboard-tauri --all-features --locked --no-fail-fast
+
+      - name: Rust documentation
+        run: cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked
+
+      - name: Save Cargo dependency cache
+        if: success()
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo/registry
+            .gitrun-ci/cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-cargo-v7-${{ hashFiles('Cargo.lock') }}
+
+
+      - name: Save Rust common cache
+        if: success()
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo
+            .gitrun-ci/rustup
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+
+      - name: Save Rust build target cache
+        if: success()
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v8-${{ hashFiles('Cargo.lock') }}
+
+  dependency:
+    name: Dependency and supply-chain audit
+    needs: detect
+    if: needs.detect.outputs.dependency == 'true'
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
       - name: Setup Node.js
         if: needs.detect.outputs.node == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -369,6 +407,10 @@ jobs:
           "$AUDITOR_ROOT/bin/cargo-audit" --version
           "$AUDITOR_ROOT/bin/cargo-deny" --version
           echo "$AUDITOR_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Cargo audit
+        if: needs.detect.outputs.rust == 'true'
+        run: cargo audit
 
       - name: Cargo audit
         if: needs.detect.outputs.rust == 'true'
@@ -585,14 +627,6 @@ jobs:
         working-directory: crates/gitrun-dashboard-tauri
         run: npm run tauri build -- --ci
 
-      - name: Save Tauri target cache
-        if: success()
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v3-${{ hashFiles('Cargo.lock') }}
-
       - name: Upload Tauri bundles
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -608,57 +642,37 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Restore ShellCheck cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .gitrun-ci/tools/shellcheck
-          key: ${{ runner.os }}-${{ runner.arch }}-shellcheck-v0.11.0-v1
-
       - name: Install shellcheck
         shell: bash
         run: |
           set -euo pipefail
-          version="v0.11.0"
-          cache_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/shellcheck"
-          cached="$cache_dir/shellcheck"
-          mkdir -p "$cache_dir"
           if command -v shellcheck >/dev/null 2>&1; then
             shellcheck --version
-          elif [ -x "$cached" ]; then
-            "$cached" --version
-            echo "$cache_dir" >> "$GITHUB_PATH"
-          else
-            archive="$RUNNER_TEMP/shellcheck-${version}.linux.x86_64.tar.xz"
-            curl -fsSL -o "$archive" \
-              "https://github.com/koalaman/shellcheck/releases/download/${version}/shellcheck-${version}.linux.x86_64.tar.xz"
-            python3 - "$archive" "$cached" <<'PY'
-            import pathlib
-            import sys
-            import tarfile
+            exit 0
+          fi
+          version="v0.11.0"
+          archive="shellcheck-${version}.linux.x86_64.tar.xz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/${version}/${archive}"
+          python3 - "$archive" "$RUNNER_TEMP/shellcheck" <<'PY'
+          import pathlib
+          import sys
+          import tarfile
 
-            archive, destination = sys.argv[1:]
-            destination = pathlib.Path(destination)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with tarfile.open(archive, "r:xz") as tf:
-                member = next(m for m in tf.getmembers() if m.name.endswith("/shellcheck"))
-                source = tf.extractfile(member)
-                if source is None:
-                    raise SystemExit("shellcheck binary missing from archive")
-                destination.write_bytes(source.read())
-                destination.chmod(0o755)
-            PY
-            chmod 0755 "$cached"
-            "$cached" --version
-            echo "$cache_dir" >> "$GITHUB_PATH"
-
-      - name: Save ShellCheck cache
-        if: success() && hashFiles('.gitrun-ci/tools/shellcheck/shellcheck') != ''
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .gitrun-ci/tools/shellcheck
-          key: ${{ runner.os }}-${{ runner.arch }}-shellcheck-v0.11.0-v1
-
+          archive, destination = sys.argv[1:]
+          destination = pathlib.Path(destination)
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          with tarfile.open(archive, "r:xz") as tf:
+              member = next(m for m in tf.getmembers() if m.name.endswith("/shellcheck"))
+              source = tf.extractfile(member)
+              if source is None:
+                  raise SystemExit("shellcheck binary missing from archive")
+              destination.write_bytes(source.read())
+              destination.chmod(0o755)
+          PY
+          chmod 0755 "$RUNNER_TEMP/shellcheck"
+          "$RUNNER_TEMP/shellcheck" --version
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Syntax check
         shell: bash
         run: |
@@ -674,8 +688,8 @@ jobs:
           if [ "${#files[@]}" -gt 0 ]; then
             if command -v shellcheck >/dev/null 2>&1; then
               shellcheck "${files[@]}"
-            elif [ -x ".gitrun-ci/tools/shellcheck/shellcheck" ]; then
-              ".gitrun-ci/tools/shellcheck/shellcheck" "${files[@]}"
+            elif [ -x "$RUNNER_TEMP/shellcheck" ]; then
+              "$RUNNER_TEMP/shellcheck" "${files[@]}"
             else
               echo "ShellCheck binary is unavailable."
               exit 1
@@ -706,40 +720,15 @@ jobs:
             echo "Potential credential material found in tracked source."
             exit 1
           fi
-      - name: Restore zizmor cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .gitrun-ci/tools/zizmor
-          key: ${{ runner.os }}-${{ runner.arch }}-zizmor-v1.30.1-v1
-
       - name: Install zizmor
         shell: bash
         run: |
           set -euo pipefail
-          install_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/zizmor"
+          install_dir="$RUNNER_TEMP/zizmor"
           mkdir -p "$install_dir"
-          if [ -x "$install_dir/bin/zizmor" ] && "$install_dir/bin/zizmor" --version | grep -q "zizmor 1.30.1"; then
-            :
-          else
-            rm -rf "$install_dir"
-            mkdir -p "$install_dir"
-            python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
-              --target "$install_dir" "zizmor==1.30.1"
-          fi
+          python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
+            --target "$install_dir" "zizmor==1.30.1"
           "$install_dir/bin/zizmor" --version
-
-      - name: Audit GitHub Actions workflows
-        run: |
-          "$GITHUB_WORKSPACE/.gitrun-ci/tools/zizmor/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
-
-      - name: Save zizmor cache
-        if: success() && hashFiles('.gitrun-ci/tools/zizmor/bin/zizmor') != ''
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .gitrun-ci/tools/zizmor
-          key: ${{ runner.os }}-${{ runner.arch }}-zizmor-v1.30.1-v1
-
       - name: Audit GitHub Actions workflows
         run: |
           "$RUNNER_TEMP/zizmor/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
@@ -752,12 +741,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Restore PowerShell cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .gitrun-ci/tools/powershell
-          key: ${{ runner.os }}-${{ runner.arch }}-powershell-7.6.6-v1
-
       - name: Ensure PowerShell runtime
         shell: bash
         env:
@@ -774,15 +757,9 @@ jobs:
           fi
 
           version="7.6.6"
-          install_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/powershell"
-          cached_pwsh="$install_dir/pwsh"
-          if [ -x "$cached_pwsh" ] && "$cached_pwsh" --version | grep -q "PowerShell 7.6.6"; then
-            echo "$install_dir" >> "$GITHUB_PATH"
-            "$cached_pwsh" --version
-            exit 0
-          fi
+          archive="$RUNNER_TEMP/powershell-${version}-linux-x64.tar.gz"
+          install_dir="$RUNNER_TEMP/powershell"
 
-          archive="${{ runner.temp }}/powershell-${version}-linux-x64.tar.gz"
           curl -fsSL -o "$archive" \
             "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-x64.tar.gz"
           echo "ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc $archive" | sha256sum -c -
@@ -792,14 +769,6 @@ jobs:
           chmod 0755 "$install_dir/pwsh"
           echo "$install_dir" >> "$GITHUB_PATH"
           "$install_dir/pwsh" --version
-
-      - name: Save PowerShell cache
-        if: success() && hashFiles('.gitrun-ci/tools/powershell/pwsh') != ''
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .gitrun-ci/tools/powershell
-          key: ${{ runner.os }}-${{ runner.arch }}-powershell-7.6.6-v1
 
       - name: Validate PowerShell syntax
         shell: pwsh

@@ -54,7 +54,9 @@ use std::process::Command;
 /// to `/bin/sh.gitrun-real` if unset, so a misconfigured image fails
 /// loudly (real shell not found) rather than silently no-op'ing.
 const REAL_SHELL_ENV: &str = "GITRUN_GSR_REAL_SHELL";
+const REAL_BASH_ENV: &str = "GITRUN_GSR_REAL_BASH";
 const REAL_SHELL_FALLBACK: &str = "/bin/sh.gitrun-real";
+const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 
 /// Extracts the full command line this invocation represents, from `sh -c
 /// "<script>"`-style argv. GitHub Actions always invokes the step shell as
@@ -119,7 +121,13 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
             user_whitelist: gitrun_core::PatternList::default(),
         },
     };
-    let real_shell_env = env::var(REAL_SHELL_ENV).ok();
+    let invocation = env::args().next().unwrap_or_else(|| "sh".to_owned());
+    let is_bash = invocation.ends_with("/bash") || invocation == "bash";
+    let real_shell_env = if is_bash {
+        env::var(REAL_BASH_ENV).ok().or_else(|| Some(REAL_BASH_FALLBACK.to_owned()))
+    } else {
+        env::var(REAL_SHELL_ENV).ok().or_else(|| Some(REAL_SHELL_FALLBACK.to_owned()))
+    };
 
     match decide(&policy, &args, real_shell_env.as_deref()) {
         AgentDecision::Delegate { real_shell } => {

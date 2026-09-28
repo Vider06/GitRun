@@ -1,27 +1,47 @@
 use clap::Parser;
-use gitrun_core::{Config, Runner};
-use gitrun_setup::prepare_directories;
+use gitrun_core::{AppAuth, Config, GitHubAuth, Runner};
+use gitrun_setup::{bootstrap_linux_with_auth, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
     apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest, latest_manifest,
     pin_runner_image, refresh_docker_stack, rollback, update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
 };
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn persistent_config_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
+        return Some(PathBuf::from(path));
+    }
+    if let Ok(path) = std::env::var("GITRUN_CONFIG_DIR") {
+        let path = PathBuf::from(path).join("gitrun.env");
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    [
+        PathBuf::from("/etc/gitrun/gitrun.env"),
+        PathBuf::from("config/gitrun.env"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
 
 fn load_config() -> Result<Config, gitrun_core::ConfigError> {
-    if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
+    if let Some(path) = persistent_config_path() {
         return Config::from_env_file(path);
     }
     Config::from_env()
 }
 
 fn setup_config_dir() -> PathBuf {
-    if let Ok(path) = std::env::var("GITRUN_CONFIG_DIR") {
-        return path.into();
-    }
-    if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
-        if let Some(parent) = Path::new(&path).parent() {
+    if let Some(path) = persistent_config_path() {
+        if let Some(parent) = path.parent() {
             return parent.to_path_buf();
         }
+    }
+    if let Ok(path) = std::env::var("GITRUN_CONFIG_DIR") {
+        return path.into();
     }
     "config".into()
 }
@@ -190,14 +210,371 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
 
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
-    let mut lines = raw.lines();
-    let token = lines.next().unwrap_or_default().trim();
-    let repositories = lines.next().unwrap_or_default().trim();
-    let owner_uid = std::env::var("PKEXEC_UID").ok().and_then(|value| value.parse::<u32>().ok());
+    let owner_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
     let executable = std::env::current_exe()?;
 
-    gitrun_setup::bootstrap_linux(token, repositories, &executable, owner_uid)?;
+    if raw.lines().next().is_some_and(|line| line.starts_with("AUTH_MODE=")) {
+        let values = parse_setup_request(&raw)?;
+        let repositories = required_setup_value(&values, "GITRUN_REPOSITORIES")?;
+        let auth = match required_setup_value(&values, "AUTH_MODE")?.as_str() {
+            "pat" => BootstrapAuth::Pat(required_setup_value(&values, "GITHUB_TOKEN")?),
+            "app" => BootstrapAuth::GitHubApp {
+                app_id: required_setup_value(&values, "GITRUN_GITHUB_APP_ID")?,
+                installation_id: required_setup_value(&values, "GITRUN_GITHUB_APP_INSTALLATION_ID")?,
+                private_key_path: required_setup_value(&values, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?,
+            },
+            other => return Err(format!("unsupported setup auth mode: {other}").into()),
+        };
+
+        bootstrap_linux_with_auth(auth, &repositories, &executable, owner_uid)?;
+    } else {
+        // Compatibility path for the graphical first-run wizard still using
+        // the original two-line temporary request format.
+        let mut lines = raw.lines();
+        let token = lines.next().unwrap_or_default().trim();
+        let repositories = lines.next().unwrap_or_default().trim();
+        gitrun_setup::bootstrap_linux(token, repositories, &executable, owner_uid)?;
+    }
+
     println!("GitRun setup: PASS");
+    Ok(())
+}
+
+fn parse_setup_request(raw: &str) -> Result<std::collections::BTreeMap<String, String>, Box<dyn std::error::Error>> {
+    let mut values = std::collections::BTreeMap::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| format!("invalid setup request line: {line}"))?;
+        if key.trim().is_empty() {
+            return Err("setup request contains an empty key".into());
+        }
+        values.insert(key.trim().to_owned(), value.to_owned());
+    }
+    Ok(values)
+}
+
+fn required_setup_value(
+    values: &std::collections::BTreeMap<String, String>,
+    key: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let value = values
+        .get(key)
+        .cloned()
+        .ok_or_else(|| format!("setup request is missing {key}"))?;
+    if value.trim().is_empty() {
+        return Err(format!("setup request has an empty {key}").into());
+    }
+    Ok(value)
+}
+
+
+fn terminal_print_header(title: &str) {
+    println!();
+    println!("╭──────────────────────────────────────────────────────────────╮");
+    println!("│ {:<60} │", title);
+    println!("╰──────────────────────────────────────────────────────────────╯");
+}
+
+fn read_terminal_line(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    Ok(value.trim().to_owned())
+}
+
+fn read_terminal_secret(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+
+    let echo_disabled = std::process::Command::new("stty")
+        .arg("-echo")
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+
+    let mut value = String::new();
+    let result = io::stdin().read_line(&mut value);
+
+    if echo_disabled {
+        let _ = std::process::Command::new("stty").arg("echo").status();
+        println!();
+    }
+
+    Ok(result.map(|_| value.trim().to_owned())?)
+}
+
+fn read_terminal_choice(prompt: &str, max: usize) -> Result<usize, Box<dyn std::error::Error>> {
+    loop {
+        let raw = read_terminal_line(prompt)?;
+        if let Ok(value) = raw.parse::<usize>() {
+            if (1..=max).contains(&value) {
+                return Ok(value);
+            }
+        }
+        println!("  Please enter a number from 1 to {max}.");
+    }
+}
+
+fn verify_repository_access(
+    auth: &GitHubAuth,
+    repository: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut parts = repository.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    if owner.is_empty() || name.is_empty() || parts.next().is_some() {
+        return Err(format!("invalid repository: {repository}").into());
+    }
+
+    let token = auth.bearer_token()?;
+    let url = format!("https://api.github.com/repos/{owner}/{name}");
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?;
+    let response = client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("X-GitHub-Api-Version", "2026-03-10")
+        .header("User-Agent", concat!("GitRun/", env!("CARGO_PKG_VERSION")))
+        .send()?;
+
+    match response.status() {
+        reqwest::StatusCode::OK => Ok(()),
+        reqwest::StatusCode::UNAUTHORIZED => Err(
+            "GitHub rejected the configured credentials (401 Unauthorized).".into()
+        ),
+        reqwest::StatusCode::FORBIDDEN => Err(
+            "GitHub denied access or rate-limited the request (403 Forbidden).".into()
+        ),
+        reqwest::StatusCode::NOT_FOUND => Err(
+            format!("repository {repository} was not found or the configured authentication cannot access it.").into()
+        ),
+        status => Err(format!(
+            "GitHub returned HTTP {} while checking {repository}.",
+            status.as_u16()
+        ).into()),
+    }
+}
+
+fn write_repositories_to_config(path: &Path, repositories: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let original = std::fs::read_to_string(path)?;
+    let repository_value = repositories.join(",");
+    let mut output = Vec::new();
+    let mut replaced = false;
+
+    for line in original.lines() {
+        let trimmed = line.trim();
+        if trimmed.split_once('=').map(|(key, _)| key.trim()) == Some("GITRUN_REPOSITORIES") {
+            output.push(format!("GITRUN_REPOSITORIES={repository_value}"));
+            replaced = true;
+        } else {
+            output.push(line.to_owned());
+        }
+    }
+
+    if !replaced {
+        if !output.is_empty() && !output.last().is_some_and(|line| line.is_empty()) {
+            output.push(String::new());
+        }
+        output.push(format!("GITRUN_REPOSITORIES={repository_value}"));
+    }
+
+    let mut rendered = output.join("
+");
+    rendered.push('
+');
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let temp = parent.join(format!(
+        ".gitrun-connect-{}.{}.tmp",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)?;
+        file.write_all(rendered.as_bytes())?;
+        file.sync_all()?;
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&temp, rendered.as_bytes())?;
+    }
+
+    std::fs::rename(&temp, path)?;
+    Ok(())
+}
+
+fn terminal_setup_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err("terminal setup currently targets Linux x86_64".into());
+    }
+
+    terminal_print_header("GitRun • Terminal Setup");
+    println!("Configure GitHub authentication and the repositories GitRun should manage.");
+    println!("Credentials are tested before the privileged installation begins.");
+    println!();
+
+    let auth_choice = read_terminal_choice("Authentication: [1] Personal Access Token  [2] GitHub App → ", 2)?;
+    let (bootstrap_auth, github_auth) = match auth_choice {
+        1 => {
+            let token = read_terminal_secret("GitHub Personal Access Token: ")?;
+            if token.is_empty() {
+                return Err("GitHub token cannot be empty".into());
+            }
+            let auth = GitHubAuth::Pat(token.clone());
+            (BootstrapAuth::Pat(token), auth)
+        }
+        2 => {
+            let app_id = read_terminal_line("GitHub App ID: ")?;
+            let installation_id = read_terminal_line("GitHub Installation ID: ")?;
+            let private_key_path = read_terminal_line("Private key PEM path: ")?;
+
+            if app_id.is_empty() || installation_id.is_empty() || private_key_path.is_empty() {
+                return Err("GitHub App ID, Installation ID, and private key path are required".into());
+            }
+
+            let private_key = std::fs::read_to_string(&private_key_path)
+                .map_err(|error| format!("unable to read private key: {error}"))?;
+            let app = AppAuth::new(&app_id, &installation_id, &private_key)?;
+            let auth = GitHubAuth::App(app);
+            // Force the JWT → installation-token exchange now, rather than
+            // accepting merely syntactically valid App fields.
+            auth.bearer_token()?;
+
+            (
+                BootstrapAuth::GitHubApp {
+                    app_id,
+                    installation_id,
+                    private_key_path,
+                },
+                auth,
+            )
+        }
+        _ => unreachable!(),
+    };
+
+    println!();
+    let repositories_raw = read_terminal_line("Repositories (owner/repository[,owner/other]): ")?;
+    let repositories = repositories_raw
+        .split(',')
+        .map(str::trim)
+        .filter(|repo| !repo.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if repositories.is_empty() {
+        return Err("at least one repository is required".into());
+    }
+
+    terminal_print_header("Checking GitHub access");
+    for repository in &repositories {
+        print!("  {repository} ... ");
+        io::stdout().flush()?;
+        verify_repository_access(&github_auth, repository)?;
+        println!("OK");
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-setup-{}-{}.conf",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+
+    let mut payload = String::new();
+    match &bootstrap_auth {
+        BootstrapAuth::Pat(token) => {
+            payload.push_str("AUTH_MODE=pat\n");
+            payload.push_str(&format!("GITHUB_TOKEN={token}\n"));
+        }
+        BootstrapAuth::GitHubApp {
+            app_id,
+            installation_id,
+            private_key_path,
+        } => {
+            payload.push_str("AUTH_MODE=app\n");
+            payload.push_str(&format!("GITRUN_GITHUB_APP_ID={app_id}\n"));
+            payload.push_str(&format!("GITRUN_GITHUB_APP_INSTALLATION_ID={installation_id}\n"));
+            payload.push_str(&format!("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH={private_key_path}\n"));
+        }
+    }
+    payload.push_str(&format!("GITRUN_REPOSITORIES={}\n", repositories.join(",")));
+
+    std::fs::write(&path, payload.as_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let executable = std::env::current_exe()?;
+        println!();
+        println!("Installing GitRun with elevated privileges...");
+        let status = if unsafe { libc::geteuid() } == 0 {
+            std::process::Command::new(&executable)
+                .arg("--install-root")
+                .arg(&path)
+                .status()?
+        } else {
+            std::process::Command::new("sudo")
+                .arg(&executable)
+                .arg("--install-root")
+                .arg(&path)
+                .status()?
+        };
+
+        if !status.success() {
+            return Err(format!("GitRun installation failed with status {status}").into());
+        }
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+fn connect_command(repository: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if repository.split('/').count() != 2 || repository.split('/').any(|part| part.is_empty()) {
+        return Err("usage: gitrun connect <owner/repository>".into());
+    }
+
+    let path = persistent_config_path()
+        .ok_or("persistent GitRun configuration not found; run 'gitrun setup --terminal' first")?;
+    let config = Config::from_env_file(&path)?;
+    let auth = GitHubAuth::from_config_file(&config, &path)?;
+
+    verify_repository_access(&auth, repository)?;
+
+    let mut repositories = config.repositories;
+    if repositories.iter().any(|repo| repo.eq_ignore_ascii_case(repository)) {
+        println!("Repository already connected: {repository}");
+        return Ok(());
+    }
+    repositories.push(repository.to_owned());
+    write_repositories_to_config(&path, &repositories)?;
+
+    println!("Repository connected: {repository}");
+    println!("Configuration updated: {}", path.display());
+    println!("Restart GitRun to apply it to the scheduler.");
     Ok(())
 }
 
@@ -225,7 +602,20 @@ fn main() {
     let exit_code = match cli.command.unwrap_or(Command::Dashboard) {
         Command::Config => run_config(),
         Command::Desired { min, max, busy, queued } => run_desired(min, max, busy, queued),
-        Command::Setup => run_setup(),
+        Command::Setup { terminal } => {
+            if terminal {
+                match terminal_setup_command() {
+                    Ok(()) => 0,
+                    Err(error) => { eprintln!("GitRun terminal setup: FAIL — {error}"); 1 }
+                }
+            } else {
+                run_setup()
+            }
+        },
+        Command::Connect { repository } => match connect_command(&repository) {
+            Ok(()) => 0,
+            Err(error) => { eprintln!("GitRun connect: FAIL — {error}"); 1 }
+        },
         Command::Doctor => run_doctor(),
         Command::Update { manifest_url } => run_update(manifest_url.as_deref()),
         Command::Dashboard => run_dashboard(),
@@ -265,7 +655,16 @@ enum Command {
         queued: u32,
     },
     /// Check dependencies and prepare config/state/log directories.
-    Setup,
+    Setup {
+        /// Run the complete first-run wizard in the terminal.
+        #[arg(long)]
+        terminal: bool,
+    },
+    /// Add a repository using the currently configured GitHub authentication.
+    Connect {
+        /// Repository in owner/repository form.
+        repository: String,
+    },
     /// Quick health check of the current configuration.
     Doctor,
     /// Check for and apply GitRun updates.

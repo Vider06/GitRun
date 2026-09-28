@@ -1226,7 +1226,7 @@ impl eframe::App for SetupWizard {
 
                 egui::Frame::new()
                     .fill(theme::PALETTE.bg_card)
-                    .stroke(egui::Stroke::new(1.0, theme::PALETTE.border))
+                    .stroke(egui::Stroke::new(1.0_f32, theme::PALETTE.border))
                     .corner_radius(egui::CornerRadius::same(12))
                     .inner_margin(egui::Margin::symmetric(32, 28))
                     .show(ui, |ui| {

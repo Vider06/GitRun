@@ -2317,6 +2317,7 @@ dependencies = [
  "gitrun-dashboard",
  "gitrun-setup",
  "gitrun-updater",
+ "reqwest 0.12.28",
  "serde_json",
 ]
 

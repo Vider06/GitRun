@@ -1,6 +1,6 @@
 services:
   gitrun-manager:
-    profiles: ["python"]
+    profiles: ["legacy-python"]
     build:
       context: .
       dockerfile: docker/manager/Dockerfile
@@ -20,10 +20,9 @@ services:
       timeout: 5s
       retries: 3
 
-  # Rust autoscaler (see docs/RUST_MIGRATION.md). Not started by default:
-  # `docker compose up` without --profile activates neither manager unless
-  # you also set COMPOSE_PROFILES, so switching is an explicit choice, not an
-  # accidental one. Activate with: docker compose --profile rust up -d
+  # Rust autoscaler is the supported manager implementation for BigRework.
+  # It is not started by default; activate it explicitly with:
+  # `docker compose --profile rust up -d`.
   gitrun-manager-rs:
     profiles: ["rust"]
     build:

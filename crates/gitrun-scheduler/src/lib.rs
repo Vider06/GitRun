@@ -759,6 +759,29 @@ fn resolve_docker_socket_gid() -> Result<String, Box<dyn std::error::Error>> {
     Ok(gid)
 }
 
+pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
+    let config = load_config()?;
+    let client = build_github_client(&config)?;
+    let docker_socket_gid = resolve_docker_socket_gid()?;
+    let gtuu_config = GtuuConfig {
+        image: &config.runner_image,
+        repositories: &config.repositories,
+        runner_labels: &config.runner_labels,
+        ephemeral: config.ephemeral,
+        disable_update: config.runner_disable_update,
+        cpus: &config.container_cpus,
+        memory: &config.container_memory,
+        pids_limit: &config.container_pids_limit,
+        shared_cache_volume: &config.shared_cache_volume,
+        docker_socket_gid: &docker_socket_gid,
+        runner_home_size: &config.runner_home_size,
+        runner_home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
+        secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
+        online_wait_timeout: Duration::from_secs(120),
+        docker_socket_hardening: config.gsr_docker_socket_hardening,
+    };
+    Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
+}
 fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
     let config = config.clone();
     let auto_update = config.auto_container_update;
@@ -777,37 +800,10 @@ fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
                     println!("gitrun-autoscaler: GTUU scheduled run starting");
                     match GtuuLock::acquire(&state_dir) {
                         Ok(_lock) => {
-                            match build_github_client(&config) {
-                                Ok(client) => {
-                                    match resolve_docker_socket_gid() {
-                                        Ok(docker_socket_gid) => {
-                                            let gtuu_config = GtuuConfig {
-                                                image: &config.runner_image,
-                                                repositories: &config.repositories,
-                                                runner_labels: &config.runner_labels,
-                                                ephemeral: config.ephemeral,
-                                                disable_update: config.runner_disable_update,
-                                                cpus: &config.container_cpus,
-                                                memory: &config.container_memory,
-                                                pids_limit: &config.container_pids_limit,
-                                                shared_cache_volume: &config.shared_cache_volume,
-                                                docker_socket_gid: &docker_socket_gid,
-                                                runner_home_size: &config.runner_home_size,
-                                                runner_home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
-                                                secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
-                                                online_wait_timeout: Duration::from_secs(120),
-                                                docker_socket_hardening: config.gsr_docker_socket_hardening,
-                                            };
-                                            match gtuu::update_permanent_containers(&client, &gtuu_config) {
-                                                Ok(count) => println!("gitrun-autoscaler: GTUU updated {count} permanent runner(s)"),
-                                                Err(error) => eprintln!("gitrun-autoscaler: GTUU run failed: {error}"),
-                                            }
-                                        }
-                                        Err(error) => eprintln!("gitrun-autoscaler: GTUU skipped, docker socket unavailable: {error}"),
-                                    }
-                                }
-                                Err(error) => eprintln!("gitrun-autoscaler: GTUU could not build GitHub client: {error}"),
-                            }
+                            match run_gtuu_once() {
+                        Ok(count) => println!("gitrun-autoscaler: GTUU updated {count} permanent runner(s)"),
+                        Err(error) => eprintln!("gitrun-autoscaler: GTUU run failed: {error}"),
+                    }
                         }
                         Err(error) => eprintln!("gitrun-autoscaler: GTUU skipped: {error}"),
                     }

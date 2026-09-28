@@ -71,7 +71,7 @@ export GITRUN_DOCKER_SOCKET=/var/run/docker.sock
 export GITRUN_STATE_DIR="$INSTALL_DIR/state"
 export GITRUN_LOG_DIR="$INSTALL_DIR/logs"
 
-docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" --profile python config -q
+docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" --profile rust config -q
 docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" --profile python up -d --build
 
 # Desktop integration: icon + .desktop entry so GitRun shows up in the

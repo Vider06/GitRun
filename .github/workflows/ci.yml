@@ -76,16 +76,6 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}" >/dev/null
 
-      - name: Verify sudo capability
-        shell: bash
-        run: |
-          set -euo pipefail
-          if sudo -n true 2>/dev/null; then
-            echo "Passwordless sudo is available."
-          else
-            echo "Passwordless sudo is unavailable; privileged CI steps use the repository SUDO_PASSWORD secret through stdin."
-          fi
-
       - name: Verify Docker access
         shell: bash
         run: |
@@ -181,24 +171,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Linux GUI build dependencies
+      - name: Verify Linux GUI build dependencies
         shell: bash
-        env:
-          SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$SUDO_PASSWORD" || {
-            echo "::error::SUDO_PASSWORD secret is required for Linux GUI dependency installation."
-            exit 1
-          }
-          echo "::add-mask::$SUDO_PASSWORD"
-          printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' apt-get update
-          printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xdg-utils
+          for package in libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils; do
+            dpkg-query -W -f='\${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || {
+              echo "::error::Required system dependency is missing: $package"
+              exit 1
+            }
+          done
 
       - name: Prepare Rust bootstrap temp
         shell: bash
@@ -448,24 +430,16 @@ jobs:
             exit 1
           fi
 
-      - name: Install Tauri Linux dependencies
+      - name: Verify Tauri Linux dependencies
         shell: bash
-        env:
-          SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$SUDO_PASSWORD" || {
-            echo "::error::SUDO_PASSWORD secret is required for Tauri dependency installation."
-            exit 1
-          }
-          echo "::add-mask::$SUDO_PASSWORD"
-          printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' apt-get update
-          printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xdg-utils
+          for package in libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils; do
+            dpkg-query -W -f='\${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || {
+              echo "::error::Required system dependency is missing: $package"
+              exit 1
+            }
+          done
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

@@ -970,7 +970,7 @@ jobs:
     timeout-minutes: 60
     env:
       DOCKER_HOST: unix:///var/run/docker.sock
-      DOCKER_CONFIG: /tmp/gitrun-docker-config
+      DOCKER_CONFIG: ${{ github.workspace }}/.gitrun-ci/tools/docker
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Prepare CI environment
@@ -1023,7 +1023,7 @@ jobs:
           "$docker_bin" --version
           "$compose_bin" version
           mkdir -p "$DOCKER_CONFIG/cli-plugins"
-          install -m 0755 "$buildx_bin" "$DOCKER_CONFIG/cli-plugins/docker-buildx"
+          test -x "$DOCKER_CONFIG/cli-plugins/docker-buildx"
           "$docker_bin" buildx version
           echo "$tools_dir" >> "$GITHUB_PATH"
 

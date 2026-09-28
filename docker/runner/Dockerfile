@@ -9,8 +9,14 @@ WORKDIR /usr/src/gitrun
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
-    && test -x target/release/gitrun-gsr-agent
+# syntax=docker/dockerfile:1
+
+RUN --mount=type=cache,id=gitrun-runner-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=gitrun-runner-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=gitrun-runner-target,target=/usr/src/gitrun/target \
+    cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
+    && cp /usr/src/gitrun/target/release/gitrun-gsr-agent /usr/src/gitrun/gitrun-gsr-agent \
+    && test -x /usr/src/gitrun/gitrun-gsr-agent
 
 FROM node:22-bookworm
 
@@ -63,7 +69,7 @@ RUN curl -fsSL -o runner.tar.gz \
     && ./bin/installdependencies.sh \
     && chown -R runner:runner /home/runner/actions-runner
 
-COPY --from=gsr-builder /usr/src/gitrun/target/release/gitrun-gsr-agent /usr/local/bin/gitrun-gsr-agent
+COPY --from=gsr-builder /usr/src/gitrun/gitrun-gsr-agent /usr/local/bin/gitrun-gsr-agent
 RUN chmod 0755 /usr/local/bin/gitrun-gsr-agent
 
 COPY --chown=root:root docker/runner/entrypoint.sh /entrypoint.sh

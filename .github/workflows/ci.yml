@@ -211,10 +211,12 @@ jobs:
       - name: Setup Rust
         shell: bash
         env:
+          TMPDIR: ${{ runner.temp }}/rustup-tmp
           CARGO_HOME: .gitrun-ci/cargo
           RUSTUP_HOME: .gitrun-ci/rustup
         run: |
           set -euo pipefail
+          mkdir -p "$TMPDIR"
           export PATH="$CARGO_HOME/bin:$PATH"
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
@@ -349,10 +351,12 @@ jobs:
         if: needs.detect.outputs.rust == 'true'
         shell: bash
         env:
+          TMPDIR: ${{ runner.temp }}/rustup-tmp
           CARGO_HOME: .gitrun-ci/cargo
           RUSTUP_HOME: .gitrun-ci/rustup
         run: |
           set -euo pipefail
+          mkdir -p "$TMPDIR"
           export PATH="$CARGO_HOME/bin:$PATH"
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
@@ -623,10 +627,12 @@ jobs:
       - name: Setup Rust
         shell: bash
         env:
+          TMPDIR: ${{ runner.temp }}/rustup-tmp
           CARGO_HOME: .gitrun-ci/cargo
           RUSTUP_HOME: .gitrun-ci/rustup
         run: |
           set -euo pipefail
+          mkdir -p "$TMPDIR"
           export PATH="$CARGO_HOME/bin:$PATH"
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
@@ -739,6 +745,7 @@ jobs:
             chmod 0755 "$cached"
             "$cached" --version
             echo "$cache_dir" >> "$GITHUB_PATH"
+          fi
 
       - name: Save ShellCheck cache
         if: success() && steps.shellcheck-cache.outputs.cache-hit != 'true' && hashFiles('.gitrun-ci/tools/shellcheck/shellcheck') != ''
@@ -976,7 +983,9 @@ jobs:
           GITRUN_LOG_DIR: /tmp/gitrun-logs
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/gitrun-docker-compose" config -q
+          compose_bin="$GITHUB_WORKSPACE/.gitrun-ci/tools/docker/docker-compose"
+          test -x "$compose_bin"
+          "$compose_bin" config -q
 
       - name: Build manager image
         shell: bash

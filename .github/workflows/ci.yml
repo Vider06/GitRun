@@ -202,8 +202,14 @@ jobs:
       - uses: actions/checkout@v7
       - name: Ensure PowerShell runtime
         shell: bash
+        env:
+          HOME: ${{ runner.temp }}/powershell-home
+          XDG_CACHE_HOME: ${{ runner.temp }}/powershell-home/.cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/powershell-home/.config
+          XDG_DATA_HOME: ${{ runner.temp }}/powershell-home/.local/share
         run: |
           set -euo pipefail
+          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
           if command -v pwsh >/dev/null 2>&1; then
             pwsh --version
             exit 0
@@ -225,6 +231,11 @@ jobs:
 
       - name: Validate PowerShell syntax
         shell: pwsh
+        env:
+          HOME: ${{ runner.temp }}/powershell-home
+          XDG_CACHE_HOME: ${{ runner.temp }}/powershell-home/.cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/powershell-home/.config
+          XDG_DATA_HOME: ${{ runner.temp }}/powershell-home/.local/share
         run: |
           $ErrorActionPreference = 'Stop'
           Get-ChildItem -Recurse -Filter *.ps1 -File |
@@ -274,10 +285,10 @@ jobs:
           rm -rf "$RUNNER_TEMP/docker" "$RUNNER_TEMP/docker.tgz"
           curl -fsSL -o "$RUNNER_TEMP/gitrun-docker-compose" \
             "https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-x86_64"
-          echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum -c -
-          chmod 0755 "$DOCKER_CONFIG/cli-plugins/docker-compose"
+          echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$RUNNER_TEMP/gitrun-docker-compose" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/gitrun-docker-compose"
           echo "$docker_dir" >> "$GITHUB_PATH"
-          compose_bin="$DOCKER_CONFIG/cli-plugins/docker-compose"
+          compose_bin="$RUNNER_TEMP/gitrun-docker-compose"
           "$docker_dir/docker" --version
           "$compose_bin" version
 
@@ -289,7 +300,7 @@ jobs:
           GITRUN_LOG_DIR: /tmp/gitrun-logs
         run: |
           set -euo pipefail
-          "$DOCKER_CONFIG/cli-plugins/docker-compose" config -q
+          "$RUNNER_TEMP/gitrun-docker-compose" config -q
       - name: Build manager image
         shell: bash
         run: |

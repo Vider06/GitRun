@@ -24,27 +24,8 @@ license/terms through a consent dialog in the GitRun dashboard. See the
 "GSR (GitSecureRun)" section of [README.md](README.md) for what the
 integration does.
 
-MIT License terms (for zizmor, reproduced per the license's own
-requirements — this is zizmor's license, not GitRun's; GitRun's own license
-is in [LICENSE](LICENSE)):
+The zizmor license text is not reproduced here because GitRun does not
+redistribute zizmor. For the authoritative, current license text and copyright
+notice, refer to the upstream license:
 
-> Permission is hereby granted, free of charge, to any person obtaining a copy
-> of this software and associated documentation files (the "Software"), to
-> deal in the Software without restriction, including without limitation the
-> rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-> sell copies of the Software, and to permit persons to whom the Software is
-> furnished to do so, subject to the following conditions:
->
-> The above copyright notice and this permission notice shall be included in
-> all copies or substantial portions of the Software.
->
-> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-> FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-> DEALINGS IN THE SOFTWARE.
-
-For the authoritative, current license text, always refer to
-https://github.com/zizmorcore/zizmor/blob/main/LICENSE rather than this copy.
+https://github.com/zizmorcore/zizmor/blob/main/LICENSE

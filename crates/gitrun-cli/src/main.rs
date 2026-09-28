@@ -701,7 +701,13 @@ fn main() {
             }
         },
         Command::Doctor => run_doctor(),
-        Command::Update { manifest_url } => run_update(manifest_url.as_deref()),
+        Command::Update { manifest_url, only_containers } => {
+            run_update(manifest_url.as_deref(), only_containers)
+        }
+        Command::Scheduler => {
+            gitrun_scheduler::run();
+            0
+        },
         Command::Dashboard => run_dashboard(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),
         Command::Rollback { backup_path } => run_rollback(&backup_path),
@@ -753,9 +759,15 @@ enum Command {
     Doctor,
     /// Check for and apply GitRun updates.
     Update {
+        /// Update only the permanent runner pool without replacing GitRun itself.
+        #[arg(long)]
+        only_containers: bool,
         /// Optional manifest URL to check instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
+    /// Internal scheduler service entry point.
+    #[command(name = "scheduler", hide = true)]
+    Scheduler,
     /// Launch the GitRun dashboard (default when no command is given).
     Dashboard,
     /// Internal: run the elevated installation step (invoked by the setup wizard via pkexec).
@@ -848,7 +860,19 @@ fn run_doctor() -> i32 {
     }
 }
 
-fn run_update(manifest_url: Option<&str>) -> i32 {
+fn run_update(manifest_url: Option<&str>, only_containers: bool) -> i32 {
+    if only_containers {
+        return match gitrun_scheduler::run_gtuu_once() {
+            Ok(count) => {
+                println!("GitRun GTUU: updated {count} permanent runner(s)");
+                0
+            }
+            Err(error) => {
+                eprintln!("GitRun GTUU: FAIL — {error}");
+                1
+            }
+        };
+    }
     // update_command's original signature takes a full args slice with the
     // manifest URL at index 1 — preserved as-is rather than refactored, to
     // keep this change scoped to argument *parsing*, not the update logic

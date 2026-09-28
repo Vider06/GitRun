@@ -256,7 +256,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -367,7 +367,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -687,6 +687,7 @@ jobs:
       - name: Enforce required gates
         shell: bash
         env:
+          DETECT_RESULT: ${{ needs.detect.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           DEPENDENCY_RESULT: ${{ needs.dependency.result }}
@@ -728,6 +729,7 @@ jobs:
             fi
           }
 
+          check_gate detect "$DETECT_RESULT" true
           check_gate python "$PYTHON_RESULT" "$PYTHON_ENABLED"
           check_gate rust "$RUST_RESULT" "$RUST_ENABLED"
           check_gate dependency "$DEPENDENCY_RESULT" "$DEPENDENCY_ENABLED"

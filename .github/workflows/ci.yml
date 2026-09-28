@@ -83,7 +83,7 @@ jobs:
           if sudo -n true 2>/dev/null; then
             echo "Passwordless sudo is available."
           else
-            echo "::warning::Passwordless sudo is unavailable on this runner; jobs requiring sudo must fail explicitly."
+            echo "Passwordless sudo is unavailable; privileged CI steps use the repository SUDO_PASSWORD secret through stdin."
           fi
 
       - name: Verify Docker access
@@ -183,10 +183,17 @@ jobs:
 
       - name: Install Linux GUI build dependencies
         shell: bash
+        env:
+          SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          test -n "$SUDO_PASSWORD" || {
+            echo "::error::SUDO_PASSWORD secret is required for Linux GUI dependency installation."
+            exit 1
+          }
+          echo "::add-mask::$SUDO_PASSWORD"
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' apt-get update
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
@@ -442,10 +449,18 @@ jobs:
           fi
 
       - name: Install Tauri Linux dependencies
+        shell: bash
+        env:
+          SUDO_PASSWORD: ${{ secrets.SUDO_PASSWORD }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          test -n "$SUDO_PASSWORD" || {
+            echo "::error::SUDO_PASSWORD secret is required for Tauri dependency installation."
+            exit 1
+          }
+          echo "::add-mask::$SUDO_PASSWORD"
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' apt-get update
+          printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \

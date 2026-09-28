@@ -8,5 +8,5 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends docker.io ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /build/target/release/gitrun-autoscaler /usr/local/bin/gitrun-autoscaler
+COPY --from=build /build/gitrun-autoscaler /usr/local/bin/gitrun-autoscaler
 CMD ["/usr/local/bin/gitrun-autoscaler"]

@@ -619,7 +619,14 @@ jobs:
           set -euo pipefail
           mapfile -d '' files < <(find . -type f -name '*.sh' -not -path './.git/*' -print0)
           if [ "${#files[@]}" -gt 0 ]; then
-            "$RUNNER_TEMP/shellcheck" "${files[@]}"
+            if command -v shellcheck >/dev/null 2>&1; then
+              shellcheck "${files[@]}"
+            elif [ -x "$RUNNER_TEMP/shellcheck" ]; then
+              "$RUNNER_TEMP/shellcheck" "${files[@]}"
+            else
+              echo "ShellCheck binary is unavailable."
+              exit 1
+            fi
           fi
       - name: CLI smoke checks
         env:

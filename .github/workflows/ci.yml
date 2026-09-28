@@ -608,37 +608,57 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Restore ShellCheck cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/shellcheck
+          key: ${{ runner.os }}-${{ runner.arch }}-shellcheck-v0.11.0-v1
+
       - name: Install shellcheck
         shell: bash
         run: |
           set -euo pipefail
+          version="v0.11.0"
+          cache_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/shellcheck"
+          cached="$cache_dir/shellcheck"
+          mkdir -p "$cache_dir"
           if command -v shellcheck >/dev/null 2>&1; then
             shellcheck --version
-            exit 0
-          fi
-          version="v0.11.0"
-          archive="shellcheck-${version}.linux.x86_64.tar.xz"
-          curl -fsSL -o "$archive" \
-            "https://github.com/koalaman/shellcheck/releases/download/${version}/${archive}"
-          python3 - "$archive" "$RUNNER_TEMP/shellcheck" <<'PY'
-          import pathlib
-          import sys
-          import tarfile
+          elif [ -x "$cached" ]; then
+            "$cached" --version
+            echo "$cache_dir" >> "$GITHUB_PATH"
+          else
+            archive="$RUNNER_TEMP/shellcheck-${version}.linux.x86_64.tar.xz"
+            curl -fsSL -o "$archive" \
+              "https://github.com/koalaman/shellcheck/releases/download/${version}/shellcheck-${version}.linux.x86_64.tar.xz"
+            python3 - "$archive" "$cached" <<'PY'
+            import pathlib
+            import sys
+            import tarfile
 
-          archive, destination = sys.argv[1:]
-          destination = pathlib.Path(destination)
-          destination.parent.mkdir(parents=True, exist_ok=True)
-          with tarfile.open(archive, "r:xz") as tf:
-              member = next(m for m in tf.getmembers() if m.name.endswith("/shellcheck"))
-              source = tf.extractfile(member)
-              if source is None:
-                  raise SystemExit("shellcheck binary missing from archive")
-              destination.write_bytes(source.read())
-              destination.chmod(0o755)
-          PY
-          chmod 0755 "$RUNNER_TEMP/shellcheck"
-          "$RUNNER_TEMP/shellcheck" --version
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+            archive, destination = sys.argv[1:]
+            destination = pathlib.Path(destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(archive, "r:xz") as tf:
+                member = next(m for m in tf.getmembers() if m.name.endswith("/shellcheck"))
+                source = tf.extractfile(member)
+                if source is None:
+                    raise SystemExit("shellcheck binary missing from archive")
+                destination.write_bytes(source.read())
+                destination.chmod(0o755)
+            PY
+            chmod 0755 "$cached"
+            "$cached" --version
+            echo "$cache_dir" >> "$GITHUB_PATH"
+
+      - name: Save ShellCheck cache
+        if: success() && hashFiles('.gitrun-ci/tools/shellcheck/shellcheck') != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/shellcheck
+          key: ${{ runner.os }}-${{ runner.arch }}-shellcheck-v0.11.0-v1
+
       - name: Syntax check
         shell: bash
         run: |
@@ -654,8 +674,8 @@ jobs:
           if [ "${#files[@]}" -gt 0 ]; then
             if command -v shellcheck >/dev/null 2>&1; then
               shellcheck "${files[@]}"
-            elif [ -x "$RUNNER_TEMP/shellcheck" ]; then
-              "$RUNNER_TEMP/shellcheck" "${files[@]}"
+            elif [ -x ".gitrun-ci/tools/shellcheck/shellcheck" ]; then
+              ".gitrun-ci/tools/shellcheck/shellcheck" "${files[@]}"
             else
               echo "ShellCheck binary is unavailable."
               exit 1

@@ -979,3 +979,5 @@ jobs:
           check_gate repository "$REPOSITORY_RESULT" true
 
           echo "All applicable GitRun verification gates passed."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+

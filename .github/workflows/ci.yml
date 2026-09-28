@@ -129,8 +129,7 @@ jobs:
           { [ -f docker-compose.yml ] || find docker -name 'Dockerfile*' -print -quit 2>/dev/null | grep -q .; } && docker=true
           find . -name '*.ps1' -not -path './.git/*' -print -quit | grep -q . && powershell=true
           find . -name package.json -not -path './.git/*' -not -path '*/node_modules/*' -print -quit | grep -q . && node=true
-          if [ -f crates/gitrun-dashboard-tauri/src-tauri/Cargo.toml ] &&
-             [ -f crates/gitrun-dashboard-tauri/package.json ]; then
+          if [ -f crates/gitrun-dashboard-tauri/src-tauri/Cargo.toml ] && [ -f crates/gitrun-dashboard-tauri/package.json ]; then
             tauri=true
           fi
 

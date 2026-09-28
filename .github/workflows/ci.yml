@@ -101,8 +101,9 @@ jobs:
           echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ${{ runner.temp }}/cargo/registry
@@ -128,6 +129,17 @@ jobs:
         run: cargo build --workspace --all-features --release --locked --exclude gitrun-dashboard --exclude gitrun-dashboard-tauri
       - name: Tests core/control-plane workspace
         run: cargo test --workspace --all-features --locked --exclude gitrun-dashboard --exclude gitrun-dashboard-tauri
+      # Preserve partial Cargo progress even when a later gate fails.
+      # The normal cache action only creates a new cache after a successful job.
+      - name: Save Cargo cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   shell:
     name: Shell validation

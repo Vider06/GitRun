@@ -47,7 +47,7 @@ const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const VM_BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone)]
-enum VmResolution {
+pub enum VmResolution {
     /// A background thread is already working on this VM; don't spawn a
     /// second one.
     Resolving,

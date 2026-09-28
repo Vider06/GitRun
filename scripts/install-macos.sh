@@ -66,5 +66,5 @@ export GITRUN_STATE_DIR="$INSTALL_DIR/state"
 export GITRUN_LOG_DIR="$INSTALL_DIR/logs"
 
 docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" --profile rust config -q
-docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" up -d --build
+docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" --profile rust up -d --build
 echo "GitRun installed and started."

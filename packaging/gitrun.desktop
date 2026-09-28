@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=GitRun
+Comment=Self-hosted GitHub Actions runner manager
+Exec=/usr/bin/gitrun-dashboard
+Icon=gitrun
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true

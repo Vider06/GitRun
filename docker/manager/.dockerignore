@@ -1,0 +1,9 @@
+.git
+.gitignore
+README.md
+scripts
+systemd
+config
+bin
+*.md
+*.log

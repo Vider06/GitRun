@@ -1,0 +1,19 @@
+[Unit]
+Description=GitRun GSR (GitSecureRun) watchdog
+After=gitrun.service
+Wants=gitrun.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/gitrun/gitrun.env
+ExecStart=/usr/bin/gitrun-gsr
+Restart=always
+RestartSec=5
+# GSR is deliberately not sandboxed as tightly as a typical service unit
+# might be: it needs to observe another process's PID file and, for
+# graphical notifications, potentially reach a user session's notification
+# bus. Review this unit's hardening options (ProtectSystem, NoNewPrivileges,
+# etc.) as GSR's hardening half of its scope is built out.
+
+[Install]
+WantedBy=multi-user.target

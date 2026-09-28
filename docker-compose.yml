@@ -1,0 +1,50 @@
+services:
+  gitrun-manager:
+    profiles: ["python"]
+    build:
+      context: .
+      dockerfile: docker/manager/Dockerfile
+    container_name: gitrun-manager
+    restart: unless-stopped
+    env_file:
+      - ${GITRUN_CONFIG_FILE:-/etc/gitrun/gitrun.env}
+    volumes:
+      - ${GITRUN_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${GITRUN_STATE_DIR:-/var/lib/gitrun}:/var/lib/gitrun
+      - ${GITRUN_LOG_DIR:-/var/log/gitrun}:/var/log/gitrun
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os; raise SystemExit(0 if os.path.exists('/var/run/docker.sock') else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Rust autoscaler (see docs/RUST_MIGRATION.md). Not started by default:
+  # `docker compose up` without --profile activates neither manager unless
+  # you also set COMPOSE_PROFILES, so switching is an explicit choice, not an
+  # accidental one. Activate with: docker compose --profile rust up -d
+  gitrun-manager-rs:
+    profiles: ["rust"]
+    build:
+      context: .
+      dockerfile: docker/manager-rs/Dockerfile
+    container_name: gitrun-manager-rs
+    restart: unless-stopped
+    env_file:
+      - ${GITRUN_CONFIG_FILE:-/etc/gitrun/gitrun.env}
+    volumes:
+      - ${GITRUN_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${GITRUN_STATE_DIR:-/var/lib/gitrun}:/var/lib/gitrun
+      - ${GITRUN_LOG_DIR:-/var/log/gitrun}:/var/log/gitrun
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "test", "-S", "/var/run/docker.sock"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  gitrun-runner-shared:
+    name: ${GITRUN_SHARED_CACHE_VOLUME:-gitrun-runner-shared}

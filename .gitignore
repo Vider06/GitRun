@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+config/*.env
+!config/config.example.env
+data/
+logs/
+run/
+state/
+*.log
+.DS_Store

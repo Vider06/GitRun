@@ -1,0 +1,21 @@
+[package]
+name = "gitrun-gsr"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "GSR (GitSecureRun): external watchdog + hardening layer for GitRun's runner processes"
+
+[dependencies]
+gitrun-core = { path = "../gitrun-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+signal-hook = "0.3"
+thiserror = "1"
+
+[[bin]]
+name = "gitrun-gsr"
+path = "src/main.rs"
+
+[[bin]]
+name = "gitrun-gsr-agent"
+path = "src/bin/gitrun-gsr-agent.rs"

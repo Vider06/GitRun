@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitRun</title>
+  <link rel="stylesheet" href="css/theme.css" />
+</head>
+<body>
+  <div id="app">
+    <nav class="sidebar" aria-label="Primary">
+      <div class="brand">
+        <span class="brand-mark">GitRun</span>
+      </div>
+      <ul class="nav-list" id="repo-nav-list">
+        <li><button class="nav-item active" data-view="overview">Overview</button></li>
+      </ul>
+      <div class="nav-section-label">Repositories</div>
+      <ul class="nav-list" id="repo-list"></ul>
+      <div class="nav-section-label">System</div>
+      <ul class="nav-list">
+        <li><button class="nav-item" data-view="gitvault">GitVault</button></li>
+        <li><button class="nav-item" data-view="gsr">GSR</button></li>
+        <li><button class="nav-item" data-view="settings">Settings</button></li>
+      </ul>
+    </nav>
+
+    <main class="content" id="content">
+      <!-- Views are rendered here by js/app.js -->
+    </main>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

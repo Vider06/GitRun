@@ -26,6 +26,11 @@ jobs:
     name: Build and publish GitRun
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
+      RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -63,16 +68,6 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_number=$expected_version" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 22
 
       - name: Prepare release caches
         shell: bash
@@ -115,6 +110,16 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-npm-v1-${{ hashFiles('crates/gitrun-dashboard-tauri/package.json') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-npm-v1-
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
 
       - name: Install Tauri frontend dependencies
         working-directory: crates/gitrun-dashboard-tauri

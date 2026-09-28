@@ -1842,6 +1842,7 @@ version = "0.4.0"
 dependencies = [
  "clap",
  "gitrun-core",
+ "gitrun-scheduler",
  "gitrun-dashboard",
  "gitrun-setup",
  "gitrun-updater",

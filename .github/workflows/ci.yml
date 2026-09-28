@@ -113,16 +113,6 @@ jobs:
           key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-v2-
-      - name: Diagnose Cargo.lock
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp Cargo.lock "$RUNNER_TEMP/Cargo.lock.before"
-          cargo generate-lockfile
-          echo "=== CARGO LOCK DIFF ==="
-          git diff --unified=0 -- Cargo.lock | head -n 500 || true
-          echo "=== END CARGO LOCK DIFF ==="
-
       - name: Format
         run: cargo fmt --all
       - name: Format check

@@ -587,11 +587,67 @@ jobs:
             }
           done
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
+      - name: Prepare Tauri Rust cache directories
+        shell: bash
+        env:
+          CARGO_HOME: .gitrun-ci/cargo
+          RUSTUP_HOME: .gitrun-ci/rustup
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$CARGO_TARGET_DIR"
 
+      - name: Restore Rust common cache for Tauri
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo
+            .gitrun-ci/rustup
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
+
+      - name: Restore Tauri target cache
+        id: tauri-target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v3-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v3-
+
+      - name: Setup Rust
+        shell: bash
+        env:
+          CARGO_HOME: .gitrun-ci/cargo
+          RUSTUP_HOME: .gitrun-ci/rustup
+        run: |
+          set -euo pipefail
+          export PATH="$CARGO_HOME/bin:$PATH"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
+              https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION" --no-modify-path
+            export PATH="$CARGO_HOME/bin:$PATH"
+          fi
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustc --version
+          cargo --version
+
+      - name: Persist Tauri Rust toolchain paths
+        shell: bash
+        env:
+          CARGO_HOME: .gitrun-ci/cargo
+          RUSTUP_HOME: .gitrun-ci/rustup
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -euo pipefail
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -614,6 +670,14 @@ jobs:
         working-directory: crates/gitrun-dashboard-tauri
         run: npm run tauri build -- --ci
 
+      - name: Save Tauri target cache
+        if: success() && steps.tauri-target-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v3-${{ hashFiles('Cargo.lock') }}
+
       - name: Upload Tauri bundles
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -629,37 +693,58 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Restore ShellCheck cache
+        id: shellcheck-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/shellcheck
+          key: ${{ runner.os }}-${{ runner.arch }}-shellcheck-v0.11.0-v1
+
       - name: Install shellcheck
         shell: bash
         run: |
           set -euo pipefail
+          version="v0.11.0"
+          cache_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/shellcheck"
+          cached="$cache_dir/shellcheck"
+          mkdir -p "$cache_dir"
           if command -v shellcheck >/dev/null 2>&1; then
             shellcheck --version
-            exit 0
-          fi
-          version="v0.11.0"
-          archive="shellcheck-${version}.linux.x86_64.tar.xz"
-          curl -fsSL -o "$archive" \
-            "https://github.com/koalaman/shellcheck/releases/download/${version}/${archive}"
-          python3 - "$archive" "$RUNNER_TEMP/shellcheck" <<'PY'
-          import pathlib
-          import sys
-          import tarfile
+          elif [ -x "$cached" ]; then
+            "$cached" --version
+            echo "$cache_dir" >> "$GITHUB_PATH"
+          else
+            archive="$RUNNER_TEMP/shellcheck-${version}.linux.x86_64.tar.xz"
+            curl -fsSL -o "$archive" \
+              "https://github.com/koalaman/shellcheck/releases/download/${version}/shellcheck-${version}.linux.x86_64.tar.xz"
+            python3 - "$archive" "$cached" <<'PY'
+            import pathlib
+            import sys
+            import tarfile
 
-          archive, destination = sys.argv[1:]
-          destination = pathlib.Path(destination)
-          destination.parent.mkdir(parents=True, exist_ok=True)
-          with tarfile.open(archive, "r:xz") as tf:
-              member = next(m for m in tf.getmembers() if m.name.endswith("/shellcheck"))
-              source = tf.extractfile(member)
-              if source is None:
-                  raise SystemExit("shellcheck binary missing from archive")
-              destination.write_bytes(source.read())
-              destination.chmod(0o755)
-          PY
-          chmod 0755 "$RUNNER_TEMP/shellcheck"
-          "$RUNNER_TEMP/shellcheck" --version
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+            archive, destination = sys.argv[1:]
+            destination = pathlib.Path(destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(archive, "r:xz") as tf:
+                member = next(m for m in tf.getmembers() if m.name.endswith("/shellcheck"))
+                source = tf.extractfile(member)
+                if source is None:
+                    raise SystemExit("shellcheck binary missing from archive")
+                destination.write_bytes(source.read())
+                destination.chmod(0o755)
+            PY
+            chmod 0755 "$cached"
+            "$cached" --version
+            echo "$cache_dir" >> "$GITHUB_PATH"
+
+      - name: Save ShellCheck cache
+        if: success() && steps.shellcheck-cache.outputs.cache-hit != 'true' && hashFiles('.gitrun-ci/tools/shellcheck/shellcheck') != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/shellcheck
+          key: ${{ runner.os }}-${{ runner.arch }}-shellcheck-v0.11.0-v1
+
       - name: Syntax check
         shell: bash
         run: |
@@ -675,8 +760,8 @@ jobs:
           if [ "${#files[@]}" -gt 0 ]; then
             if command -v shellcheck >/dev/null 2>&1; then
               shellcheck "${files[@]}"
-            elif [ -x "$RUNNER_TEMP/shellcheck" ]; then
-              "$RUNNER_TEMP/shellcheck" "${files[@]}"
+            elif [ -x ".gitrun-ci/tools/shellcheck/shellcheck" ]; then
+              ".gitrun-ci/tools/shellcheck/shellcheck" "${files[@]}"
             else
               echo "ShellCheck binary is unavailable."
               exit 1
@@ -707,18 +792,40 @@ jobs:
             echo "Potential credential material found in tracked source."
             exit 1
           fi
+      - name: Restore zizmor cache
+        id: zizmor-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/zizmor
+          key: ${{ runner.os }}-${{ runner.arch }}-zizmor-v1.30.1-v1
+
       - name: Install zizmor
         shell: bash
         run: |
           set -euo pipefail
-          install_dir="$RUNNER_TEMP/zizmor"
+          install_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/zizmor"
           mkdir -p "$install_dir"
-          python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
-            --target "$install_dir" "zizmor==1.30.1"
+          if [ -x "$install_dir/bin/zizmor" ] && "$install_dir/bin/zizmor" --version | grep -q "zizmor 1.30.1"; then
+            :
+          else
+            rm -rf "$install_dir"
+            mkdir -p "$install_dir"
+            python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
+              --target "$install_dir" "zizmor==1.30.1"
+          fi
           "$install_dir/bin/zizmor" --version
+
       - name: Audit GitHub Actions workflows
         run: |
-          "$RUNNER_TEMP/zizmor/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
+          "$GITHUB_WORKSPACE/.gitrun-ci/tools/zizmor/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
+
+      - name: Save zizmor cache
+        if: success() && steps.zizmor-cache.outputs.cache-hit != 'true' && hashFiles('.gitrun-ci/tools/zizmor/bin/zizmor') != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/zizmor
+          key: ${{ runner.os }}-${{ runner.arch }}-zizmor-v1.30.1-v1
 
   powershell:
     name: PowerShell validation
@@ -728,6 +835,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Restore PowerShell cache
+        id: powershell-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/powershell
+          key: ${{ runner.os }}-${{ runner.arch }}-powershell-7.6.6-v1
+
       - name: Ensure PowerShell runtime
         shell: bash
         env:
@@ -742,11 +856,15 @@ jobs:
             pwsh --version
             exit 0
           fi
-
           version="7.6.6"
-          archive="$RUNNER_TEMP/powershell-${version}-linux-x64.tar.gz"
-          install_dir="$RUNNER_TEMP/powershell"
-
+          install_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/powershell"
+          cached_pwsh="$install_dir/pwsh"
+          if [ -x "$cached_pwsh" ] && "$cached_pwsh" --version | grep -q "PowerShell 7.6.6"; then
+            echo "$install_dir" >> "$GITHUB_PATH"
+            "$cached_pwsh" --version
+            exit 0
+          fi
+          archive="${{ runner.temp }}/powershell-${version}-linux-x64.tar.gz"
           curl -fsSL -o "$archive" \
             "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-x64.tar.gz"
           echo "ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc $archive" | sha256sum -c -
@@ -756,6 +874,14 @@ jobs:
           chmod 0755 "$install_dir/pwsh"
           echo "$install_dir" >> "$GITHUB_PATH"
           "$install_dir/pwsh" --version
+
+      - name: Save PowerShell cache
+        if: success() && steps.powershell-cache.outputs.cache-hit != 'true' && hashFiles('.gitrun-ci/tools/powershell/pwsh') != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/powershell
+          key: ${{ runner.os }}-${{ runner.arch }}-powershell-7.6.6-v1
 
       - name: Validate PowerShell syntax
         shell: pwsh
@@ -797,26 +923,47 @@ jobs:
           sed -i 's|^GITRUN_REPOSITORIES=.*|GITRUN_REPOSITORIES=Vider06/GitRun|' /tmp/gitrun.env
           mkdir -p /tmp/gitrun-state /tmp/gitrun-logs
 
+      - name: Restore Docker tool cache
+        id: docker-tools-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/docker
+          key: ${{ runner.os }}-${{ runner.arch }}-docker-cli-29.8.1-compose-5.5.1-v1
+
       - name: Ensure Docker CLI and Compose
         shell: bash
         run: |
           set -euo pipefail
           docker_version="29.8.1"
           compose_version="5.5.1"
-          docker_dir="$RUNNER_TEMP/gitrun-docker"
-          mkdir -p "$docker_dir"
-          curl -fsSL -o "$RUNNER_TEMP/docker.tgz" \
-            "https://download.docker.com/linux/static/stable/x86_64/docker-${docker_version}.tgz"
-          tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP"
-          install -m 0755 "$RUNNER_TEMP/docker/docker" "$docker_dir/docker"
-          rm -rf "$RUNNER_TEMP/docker" "$RUNNER_TEMP/docker.tgz"
-          curl -fsSL -o "$RUNNER_TEMP/gitrun-docker-compose" \
-            "https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-x86_64"
-          echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$RUNNER_TEMP/gitrun-docker-compose" | sha256sum -c -
-          chmod 0755 "$RUNNER_TEMP/gitrun-docker-compose"
-          echo "$docker_dir" >> "$GITHUB_PATH"
-          "$docker_dir/docker" --version
-          "$RUNNER_TEMP/gitrun-docker-compose" version
+          tools_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/docker"
+          docker_bin="$tools_dir/docker"
+          compose_bin="$tools_dir/docker-compose"
+          mkdir -p "$tools_dir"
+          if [ ! -x "$docker_bin" ]; then
+            curl -fsSL -o "$RUNNER_TEMP/docker.tgz" \
+              "https://download.docker.com/linux/static/stable/x86_64/docker-${docker_version}.tgz"
+            tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP"
+            install -m 0755 "$RUNNER_TEMP/docker/docker" "$docker_bin"
+            rm -rf "$RUNNER_TEMP/docker" "$RUNNER_TEMP/docker.tgz"
+          fi
+          if [ ! -x "$compose_bin" ]; then
+            curl -fsSL -o "$compose_bin" \
+              "https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-x86_64"
+            echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$compose_bin" | sha256sum -c -
+            chmod 0755 "$compose_bin"
+          fi
+          "$docker_bin" --version
+          "$compose_bin" version
+          echo "$tools_dir" >> "$GITHUB_PATH"
+
+      - name: Save Docker tool cache
+        if: success() && steps.docker-tools-cache.outputs.cache-hit != 'true' && hashFiles('.gitrun-ci/tools/docker/docker', '.gitrun-ci/tools/docker/docker-compose') != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/docker
+          key: ${{ runner.os }}-${{ runner.arch }}-docker-cli-29.8.1-compose-5.5.1-v1
 
       - name: Validate Compose
         env:

@@ -1008,7 +1008,7 @@ jobs:
           echo "$tools_dir" >> "$GITHUB_PATH"
 
       - name: Save Docker tool cache
-        if: success() && steps.docker-tools-cache.outputs.cache-hit != 'true' && hashFiles('.gitrun-ci/tools/docker/docker', '.gitrun-ci/tools/docker/docker-compose') != ''
+        if: success() && steps.docker-tools-cache.outputs.cache-hit != 'true' && hashFiles('.gitrun-ci/tools/docker/docker', '.gitrun-ci/tools/docker/docker-compose', '.gitrun-ci/tools/docker/cli-plugins/docker-buildx') != ''
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:

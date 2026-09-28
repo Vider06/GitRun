@@ -25,6 +25,16 @@ pub struct SetupReport {
     pub log_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapAuth {
+    Pat(String),
+    GitHubApp {
+        app_id: String,
+        installation_id: String,
+        private_key_path: String,
+    },
+}
+
 #[derive(Debug, Error)]
 pub enum SetupError {
     #[error("failed to create setup directory: {0}")]
@@ -93,6 +103,20 @@ pub fn bootstrap_linux(
     app_binary: &Path,
     owner_uid: Option<u32>,
 ) -> Result<SetupReport, SetupError> {
+    bootstrap_linux_with_auth(
+        BootstrapAuth::Pat(github_token.to_owned()),
+        repositories,
+        app_binary,
+        owner_uid,
+    )
+}
+
+pub fn bootstrap_linux_with_auth(
+    auth: BootstrapAuth,
+    repositories: &str,
+    app_binary: &Path,
+    owner_uid: Option<u32>,
+) -> Result<SetupReport, SetupError> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err(SetupError::UnsupportedPlatform);
     }
@@ -114,9 +138,7 @@ pub fn bootstrap_linux(
             return Err(SetupError::InvalidRepository((*repo).to_owned()));
         }
     }
-    if github_token.trim().is_empty() {
-        return Err(SetupError::Command("GitHub token is empty".into()));
-    }
+    validate_bootstrap_auth(&auth)?;
 
     ensure_docker()?;
 
@@ -138,9 +160,21 @@ pub fn bootstrap_linux(
     write_resource(Path::new("/etc/systemd/system/gitrun.service"), resources::SYSTEMD_SERVICE, 0o644)?;
 
     let config_path = config_dir.join("gitrun.env");
+    let auth_lines = match &auth {
+        BootstrapAuth::Pat(token) => format!("GITHUB_TOKEN={}\n", token.trim()),
+        BootstrapAuth::GitHubApp {
+            app_id,
+            installation_id,
+            private_key_path,
+        } => format!(
+            "GITRUN_GITHUB_APP_ID={}\nGITRUN_GITHUB_APP_INSTALLATION_ID={}\nGITRUN_GITHUB_APP_PRIVATE_KEY_PATH={}\n",
+            app_id.trim(),
+            installation_id.trim(),
+            private_key_path.trim(),
+        ),
+    };
     let rendered = format!(
-        "GITHUB_TOKEN={}\nGITRUN_REPOSITORIES={}\nGITRUN_MIN_RUNNERS=3\nGITRUN_MAX_RUNNERS=8\nGITRUN_IDLE_TIMEOUT=120\nGITRUN_POLL_INTERVAL=5\nGITRUN_AUTO_CONTAINER_UPDATE=false\nGITRUN_CONTAINER_UPDATE_TIME=03:00\nGITRUN_RUNNER_IMAGE=gitrun-runner:latest\nGITRUN_RUNNER_LABELS=self-hosted,Linux,X64\nGITRUN_EPHEMERAL=false\nGITRUN_DISABLE_UPDATE=false\nGITRUN_CONTAINER_CPUS=1\nGITRUN_CONTAINER_MEMORY=1g\nGITRUN_CONTAINER_PIDS=1024\nGITRUN_LOG_LEVEL=INFO\nGITRUN_STATE_DIR=/var/lib/gitrun\nGITRUN_LOG_DIR=/var/log/gitrun\nGITRUN_SHARED_CACHE_VOLUME=gitrun-runner-shared\nGITRUN_RUNNER_HOME_SIZE=8g\nGITRUN_GITHUB_CONNECT_TIMEOUT=5\nGITRUN_GITHUB_REQUEST_TIMEOUT=20\n# GitHub App auth (optional, replaces GITHUB_TOKEN above when all three are set):\n# GITRUN_GITHUB_APP_ID=\n# GITRUN_GITHUB_APP_INSTALLATION_ID=\n# GITRUN_GITHUB_APP_PRIVATE_KEY_PATH=\n",
-        github_token.trim(),
+        "{auth_lines}GITRUN_REPOSITORIES={}\nGITRUN_MIN_RUNNERS=3\nGITRUN_MAX_RUNNERS=8\nGITRUN_IDLE_TIMEOUT=120\nGITRUN_POLL_INTERVAL=5\nGITRUN_AUTO_CONTAINER_UPDATE=false\nGITRUN_CONTAINER_UPDATE_TIME=03:00\nGITRUN_RUNNER_IMAGE=gitrun-runner:latest\nGITRUN_RUNNER_LABELS=self-hosted,Linux,X64\nGITRUN_EPHEMERAL=false\nGITRUN_DISABLE_UPDATE=false\nGITRUN_CONTAINER_CPUS=1\nGITRUN_CONTAINER_MEMORY=1g\nGITRUN_CONTAINER_PIDS=1024\nGITRUN_LOG_LEVEL=INFO\nGITRUN_STATE_DIR=/var/lib/gitrun\nGITRUN_LOG_DIR=/var/log/gitrun\nGITRUN_SHARED_CACHE_VOLUME=gitrun-runner-shared\nGITRUN_RUNNER_HOME_SIZE=8g\nGITRUN_GITHUB_CONNECT_TIMEOUT=5\nGITRUN_GITHUB_REQUEST_TIMEOUT=20\n# GSR and other optional settings use their Config defaults.\n",
         repositories.join(",")
     );
     write_resource(&config_path, &rendered, 0o600)?;
@@ -185,6 +219,43 @@ pub fn bootstrap_linux(
         state_dir,
         log_dir,
     })
+}
+
+fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
+    match auth {
+        BootstrapAuth::Pat(token) => {
+            validate_env_value(token, "GITHUB_TOKEN")?;
+        }
+        BootstrapAuth::GitHubApp {
+            app_id,
+            installation_id,
+            private_key_path,
+        } => {
+            validate_env_value(app_id, "GITRUN_GITHUB_APP_ID")?;
+            validate_env_value(installation_id, "GITRUN_GITHUB_APP_INSTALLATION_ID")?;
+            validate_env_value(private_key_path, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?;
+
+            let key = fs::read_to_string(private_key_path)
+                .map_err(|error| SetupError::Command(format!(
+                    "unable to read GitHub App private key at {private_key_path}: {error}"
+                )))?;
+            gitrun_core::AppAuth::new(app_id, installation_id, &key)
+                .map_err(|error| SetupError::Command(format!(
+                    "invalid GitHub App authentication data: {error}"
+                )))?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_env_value(value: &str, key: &str) -> Result<(), SetupError> {
+    if value.trim().is_empty() {
+        return Err(SetupError::Command(format!("{key} must not be empty")));
+    }
+    if value.chars().any(|character| character == '\n' || character == '\r') {
+        return Err(SetupError::Command(format!("{key} must not contain newlines")));
+    }
+    Ok(())
 }
 
 fn ensure_docker() -> Result<(), SetupError> {
@@ -386,5 +457,10 @@ mod tests {
         assert!(valid_repo("Vider06/GitRun"));
         assert!(!valid_repo("bad"));
         assert!(!valid_repo("/repo"));
+    }
+
+    #[test]
+    fn rejects_newline_in_bootstrap_secret() {
+        assert!(validate_env_value("token\nINJECTED=value", "GITHUB_TOKEN").is_err());
     }
 }

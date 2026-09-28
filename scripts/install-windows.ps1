@@ -70,5 +70,5 @@ $env:GITRUN_LOG_DIR = $logs
 $env:GITRUN_DOCKER_SOCKET = "/var/run/docker.sock"
 
 docker compose --env-file $EnvFile -f (Join-Path $InstallDir "docker-compose.yml") --profile rust config -q
-docker compose --env-file $EnvFile -f (Join-Path $InstallDir "docker-compose.yml") up -d --build
+docker compose --env-file $EnvFile -f (Join-Path $InstallDir "docker-compose.yml") --profile rust up -d --build
 Write-Host "GitRun installed and started."

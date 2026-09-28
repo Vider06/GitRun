@@ -298,17 +298,17 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ${{ runner.temp}/cargo-tools
-            ${{ runner.temp}/cargo/registry
-            ${{ runner.temp}/cargo/git
-          key: ${{ runner.os}-${{ runner.arch}-cargo-auditors-v1-audit-0.22.2-deny-0.20.2
+            ${{ runner.temp }}/cargo-tools
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-auditors-v1-audit-0.22.2-deny-0.20.2
 
       - name: Install Rust dependency auditors
         if: needs.detect.outputs.rust == 'true'
         shell: bash
         env:
-          CARGO_HOME: ${{ runner.temp}/cargo
-          AUDITOR_ROOT: ${{ runner.temp}/cargo-tools
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          AUDITOR_ROOT: ${{ runner.temp }}/cargo-tools
         run: |
           set -euo pipefail
           mkdir -p "$AUDITOR_ROOT/bin" "$CARGO_HOME/registry" "$CARGO_HOME/git"
@@ -329,10 +329,10 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            ${{ runner.temp}/cargo-tools
-            ${{ runner.temp}/cargo/registry
-            ${{ runner.temp}/cargo/git
-          key: ${{ runner.os}-${{ runner.arch}-cargo-auditors-v1-audit-0.22.2-deny-0.20.2
+            ${{ runner.temp }}/cargo-tools
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-auditors-v1-audit-0.22.2-deny-0.20.2
 
       - name: Cargo audit
         if: needs.detect.outputs.rust == 'true'

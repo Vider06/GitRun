@@ -2324,6 +2324,8 @@ dependencies = [
 name = "gitrun-core"
 version = "0.2.0"
 dependencies = [
+ "jsonwebtoken 10.4.0",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

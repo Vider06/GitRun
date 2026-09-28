@@ -67,17 +67,21 @@ for command in [
     if f"{command})" not in cli and f"{command}|repos)" not in cli:
         errors.append(f"CLI command missing: {command}")
 
-manager = (ROOT / "autoscaler/gitrun_manager.py").read_text(encoding="utf-8")
+scheduler_lib = (ROOT / "crates/gitrun-scheduler/src/lib.rs").read_text(encoding="utf-8")
 for required in [
-    "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS", "GITRUN_IDLE_TIMEOUT",
-    "GITRUN_REPOSITORIES", "registration-token", "status=queued", "self-hosted",
-    "docker", "def docker(*args", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME",
-    "GITRUN_AUTO_CONTAINER_RECOVERY", "GITRUN_CONTAINER_RECOVERY_COOLDOWN", "restart_container", "container_recovery",
-    "GITRUN_SHARED_CACHE_VOLUME", "shared_cache_volume", "ensure_shared_cache_volume", "CARGO_HOME", "CARGO_TARGET_DIR",
-    "gtuu_schedule_loop",
+    "pub mod reconcile",
+    "pub mod github",
+    "pub mod gtuu",
+    "pub fn run()",
+    "pub fn run_gtuu_once()",
 ]:
-    if required not in manager:
-        errors.append(f"autoscaler feature missing: {required}")
+    if required not in scheduler_lib:
+        errors.append(f"Rust scheduler feature missing: {required}")
+
+cli_source = (ROOT / "crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+for required in ["gitrun_scheduler::run()", "gitrun_scheduler::run_gtuu_once()", "only_containers", 'name = "scheduler"']:
+    if required not in cli_source:
+        errors.append(f"Rust CLI scheduler integration missing: {required}")
 
 config = (ROOT / "config/config.example.env").read_text(encoding="utf-8")
 for key, expected in [

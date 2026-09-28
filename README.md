@@ -54,7 +54,15 @@ The repository also contains platform-specific setup and release tooling for mac
 
 ### Linux server
 
-For the current Rust-based setup flow, build or install the `gitrun` binary and run:
+After installing GitRun, open the application normally (for example, by double-clicking its application launcher). GitRun launches the dashboard like a normal desktop application; on a first run, the graphical setup wizard guides you through the initial configuration.
+
+If you prefer to start setup explicitly from a terminal, use:
+
+```bash
+gitrun setup
+```
+
+For a terminal-only interactive setup, use:
 
 ```bash
 gitrun setup --terminal
@@ -93,11 +101,11 @@ cd /opt/gitrun-source
 sudo ./scripts/install-server.sh
 ```
 
-Use the Rust setup wizard when configuring a new installation rather than manually creating credentials in the environment file.
+Use the normal graphical setup wizard for a regular first-run installation. The terminal setup is an alternative when you prefer a terminal workflow; manually creating credentials in the environment file is not required for first-run setup.
 
 ## Configuration
 
-Start from `config/config.example.env`.
+GitRun manages its runtime configuration during setup. `config/config.example.env` documents the supported environment variables for installations that need to manage configuration through an environment file; it is not a prerequisite for normal first-run setup.
 
 GitRun supports two GitHub authentication modes.
 
@@ -223,7 +231,7 @@ gitrun rollback <backup-path>
 
 `gitrun` without a command launches the dashboard.
 
-`gitrun setup` performs the normal setup/preflight path. `gitrun setup --terminal` runs the interactive first-run wizard and supports both PAT and GitHub App authentication.
+`gitrun setup` starts the normal setup/preflight path. On a graphical installation, the normal first-run experience is the application dashboard and its setup wizard. `gitrun setup --terminal` runs the interactive terminal setup and supports both PAT and GitHub App authentication.
 
 `gitrun config` prints the active configuration as JSON. Do not run it where its output could be exposed to untrusted users or logs.
 

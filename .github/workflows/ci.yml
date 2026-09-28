@@ -184,6 +184,29 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - name: Ensure PowerShell runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh --version
+            exit 0
+          fi
+
+          version="7.6.6"
+          archive="$RUNNER_TEMP/powershell-${version}-linux-x64.tar.gz"
+          install_dir="$RUNNER_TEMP/powershell"
+
+          curl -fsSL -o "$archive" \
+            "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-x64.tar.gz"
+          echo "ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc $archive" | sha256sum -c -
+          rm -rf "$install_dir"
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir"
+          chmod 0755 "$install_dir/pwsh"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          "$install_dir/pwsh" --version
+
       - name: Validate PowerShell syntax
         shell: pwsh
         run: |
@@ -233,8 +256,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP"
           install -m 0755 "$RUNNER_TEMP/docker/docker" "$docker_dir/docker"
           rm -rf "$RUNNER_TEMP/docker" "$RUNNER_TEMP/docker.tgz"
-          mkdir -p "$DOCKER_CONFIG/cli-plugins"
-          curl -fsSL -o "$DOCKER_CONFIG/cli-plugins/docker-compose" \
+          curl -fsSL -o "$RUNNER_TEMP/gitrun-docker-compose" \
             "https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-x86_64"
           echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum -c -
           chmod 0755 "$DOCKER_CONFIG/cli-plugins/docker-compose"

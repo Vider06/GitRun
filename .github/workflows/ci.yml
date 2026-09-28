@@ -271,17 +271,6 @@ jobs:
       - name: Rust documentation
         run: cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked
 
-      - name: Save Cargo dependency cache
-        if: success()
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            .gitrun-ci/cargo/registry
-            .gitrun-ci/cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-cargo-v7-${{ hashFiles('Cargo.lock') }}
-
-
       - name: Save Rust common cache
         if: success()
         continue-on-error: true
@@ -307,6 +296,8 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
       - name: Setup Node.js
         if: needs.detect.outputs.node == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -407,10 +398,6 @@ jobs:
           "$AUDITOR_ROOT/bin/cargo-audit" --version
           "$AUDITOR_ROOT/bin/cargo-deny" --version
           echo "$AUDITOR_ROOT/bin" >> "$GITHUB_PATH"
-
-      - name: Cargo audit
-        if: needs.detect.outputs.rust == 'true'
-        run: cargo audit
 
       - name: Cargo audit
         if: needs.detect.outputs.rust == 'true'

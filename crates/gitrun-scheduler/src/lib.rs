@@ -17,37 +17,37 @@ pub use github::{GitHubClient, GitHubError, Runner};
 pub use logic_containers::{Backend, LogicRule};
 pub use reconcile::{Action, ReconcileInput};
 
-//! GitRun autoscaler entry point. Rust replacement for `autoscaler/gitrun_manager.py`'s
-//! `main()`/reconcile loop.
-//!
-//! Flow per poll cycle, per configured repository:
-//! 1. Snapshot the world: managed Docker containers, GitHub runner
-//!    registrations, queued self-hosted jobs.
-//! 2. Feed the snapshot to `reconcile::plan()` (pure, no I/O) to get an
-//!    ordered `Vec<Action>`.
-//! 3. Execute each action against Docker/GitHub, logging and continuing past
-//!    individual failures instead of aborting the whole cycle — an
-//!    improvement over the Python version, where one unhandled exception
-//!    anywhere in `reconcile()` skipped that repo entirely for the cycle.
-//! 4. Persist idle/recovery timestamps.
-//!
-//! GTUU runs on its own schedule in a background thread, same shape as the
-//! Python `gtuu_schedule_loop`.
+// GitRun autoscaler entry point. Rust replacement for `autoscaler/gitrun_manager.py`'s
+// `main()`/reconcile loop.
+//
+// Flow per poll cycle, per configured repository:
+// 1. Snapshot the world: managed Docker containers, GitHub runner
+//    registrations, queued self-hosted jobs.
+// 2. Feed the snapshot to `reconcile::plan()` (pure, no I/O) to get an
+//    ordered `Vec<Action>`.
+// 3. Execute each action against Docker/GitHub, logging and continuing past
+//    individual failures instead of aborting the whole cycle — an
+//    improvement over the Python version, where one unhandled exception
+//    anywhere in `reconcile()` skipped that repo entirely for the cycle.
+// 4. Persist idle/recovery timestamps.
+//
+// GTUU runs on its own schedule in a background thread, same shape as the
+// Python `gtuu_schedule_loop`.
 
 use gitrun_core::{Config, GitHubAuth};
-use gitrun_scheduler::backoff::RateLimitTracker;
-use gitrun_scheduler::docker::{self, ManagedContainer};
-use gitrun_scheduler::github::{GitHubClient, GitHubError};
-use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
-use gitrun_scheduler::gsr_poll;
-use gitrun_scheduler::gtuu::{self, GtuuConfig, GtuuLock};
-use gitrun_scheduler::logic_containers;
-use gitrun_scheduler::reconcile::{
+use crate::backoff::RateLimitTracker;
+use crate::docker::{self, ManagedContainer};
+use crate::github::{GitHubClient, GitHubError};
+use crate::gsr_bridge::VaultToGsrBridge;
+use crate::gsr_poll;
+use crate::gtuu::{self, GtuuConfig, GtuuLock};
+use crate::logic_containers;
+use crate::reconcile::{
     self, Action, ContainerHealth, ContainerView, IdleInfo, ReconcileInput, RunnerView,
 };
-use gitrun_scheduler::state::SchedulerState;
-use gitrun_scheduler::vm;
-use gitrun_scheduler::vm_resolution::{self, VmResolutionRegistry};
+use crate::state::SchedulerState;
+use crate::vm;
+use crate::vm_resolution::{self, VmResolutionRegistry};
 use gitrun_vault::Vault;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -816,7 +816,7 @@ fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
 }
 
 /// Spawns GSR's Layer 2 (external, host-side) enforcement poll loop — see
-/// `gitrun_scheduler::gsr_poll` for the full design and
+/// `crate::gsr_poll` for the full design and
 /// `gitrun_gsr::agent` for Layer 1 (internal, preventive). Started only
 /// when `Config::gsr_command_policy_enabled` is true; when it's false
 /// there is no policy to enforce and this thread has nothing to do, so it

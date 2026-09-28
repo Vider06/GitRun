@@ -202,13 +202,13 @@ pub fn bootstrap_linux_with_auth(
         &root.join("docker/runner/Dockerfile"),
     )?;
 
-    run_command(Command::new("systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
-
     let installed = PathBuf::from("/usr/local/bin/gitrun");
     fs::copy(app_binary, &installed)?;
     fs::set_permissions(&installed, fs::Permissions::from_mode(0o755))?;
+
+    run_command(Command::new("systemctl").args(["daemon-reload"]))?;
+    run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
+    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
 
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),

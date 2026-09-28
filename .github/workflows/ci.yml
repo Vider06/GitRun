@@ -293,11 +293,46 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Restore Rust dependency auditor cache
+        if: needs.detect.outputs.rust == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ runner.temp}/cargo-tools
+            ${{ runner.temp}/cargo/registry
+            ${{ runner.temp}/cargo/git
+          key: ${{ runner.os}-${{ runner.arch}-cargo-auditors-v1-audit-0.22.2-deny-0.20.2
+
       - name: Install Rust dependency auditors
         if: needs.detect.outputs.rust == 'true'
+        shell: bash
+        env:
+          CARGO_HOME: ${{ runner.temp}/cargo
+          AUDITOR_ROOT: ${{ runner.temp}/cargo-tools
         run: |
-          cargo install --locked cargo-audit
-          cargo install --locked cargo-deny
+          set -euo pipefail
+          mkdir -p "$AUDITOR_ROOT/bin" "$CARGO_HOME/registry" "$CARGO_HOME/git"
+          export PATH="$AUDITOR_ROOT/bin:$CARGO_HOME/bin:$PATH"
+          if [ ! -x "$AUDITOR_ROOT/bin/cargo-audit" ]; then
+            cargo install --locked --version 0.22.2 --root "$AUDITOR_ROOT" cargo-audit
+          fi
+          if [ ! -x "$AUDITOR_ROOT/bin/cargo-deny" ]; then
+            cargo install --locked --version 0.20.2 --root "$AUDITOR_ROOT" cargo-deny
+          fi
+          "$AUDITOR_ROOT/bin/cargo-audit" --version
+          "$AUDITOR_ROOT/bin/cargo-deny" --version
+          echo "$AUDITOR_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Save Rust dependency auditor cache
+        if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ runner.temp}/cargo-tools
+            ${{ runner.temp}/cargo/registry
+            ${{ runner.temp}/cargo/git
+          key: ${{ runner.os}-${{ runner.arch}-cargo-auditors-v1-audit-0.22.2-deny-0.20.2
 
       - name: Cargo audit
         if: needs.detect.outputs.rust == 'true'

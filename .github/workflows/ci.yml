@@ -108,7 +108,7 @@ jobs:
       dependency: ${{ steps.detect.outputs.dependency }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
       - name: Detect
@@ -153,7 +153,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Verify Python runtime
         run: python3 --version
       - name: Compile Python sources
@@ -168,7 +168,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Verify Linux GUI build dependencies
         shell: bash
@@ -225,7 +225,7 @@ jobs:
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
 
       - name: Restore Cargo cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ${{ runner.temp }}/cargo/registry
@@ -240,24 +240,24 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Rust workspace check
-        run: cargo check --workspace --all-targets --all-features --locked
+        run: cargo check --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked
 
       - name: Rust workspace clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked -- -D warnings
 
       - name: Rust release build
-        run: cargo build --workspace --all-features --release --locked
+        run: cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --release --locked
 
       - name: Rust tests
-        run: cargo test --workspace --all-features --locked -- --no-fail-fast
+        run: cargo test --workspace --exclude gitrun-dashboard-tauri --all-features --locked -- --no-fail-fast
 
       - name: Rust documentation
-        run: cargo doc --workspace --all-features --no-deps --locked
+        run: cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked
 
       - name: Save Cargo cache
         if: success()
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ${{ runner.temp }}/cargo/registry
@@ -272,7 +272,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Prepare Cargo for dependency tooling
         if: needs.detect.outputs.rust == 'true'
@@ -295,7 +295,7 @@ jobs:
 
       - name: Restore Rust dependency auditor cache
         if: needs.detect.outputs.rust == 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ${{ runner.temp }}/cargo-tools
@@ -326,7 +326,7 @@ jobs:
       - name: Save Rust dependency auditor cache
         if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request'
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ${{ runner.temp }}/cargo-tools
@@ -367,15 +367,15 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
 
       - name: Restore npm cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/npm-cache
           key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
@@ -441,7 +441,7 @@ jobs:
       - name: Save npm cache
         if: success()
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/npm-cache
           key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
@@ -453,7 +453,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Verify prerequisite jobs
         env:
@@ -478,15 +478,15 @@ jobs:
           done
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
 
       - name: Restore npm cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/npm-cache
           key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
@@ -503,7 +503,7 @@ jobs:
 
       - name: Upload Tauri bundles
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gitrun-tauri-bundles
           path: target/release/bundle/**
@@ -513,7 +513,7 @@ jobs:
       - name: Save npm cache
         if: success()
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/npm-cache
           key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
@@ -523,7 +523,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install shellcheck
         shell: bash
         run: |
@@ -586,7 +586,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Secret pattern scan
         shell: bash
         run: |
@@ -615,7 +615,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Ensure PowerShell runtime
         shell: bash
         env:
@@ -677,7 +677,7 @@ jobs:
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_CONFIG: /tmp/gitrun-docker-config
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Prepare CI environment
         run: |
           cp config/config.example.env /tmp/gitrun.env
@@ -737,7 +737,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Check tracked secrets and generated files
         shell: bash
         run: |

@@ -18,7 +18,7 @@ ARG RUNNER_VERSION=2.337.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     RUNNER_ALLOW_RUNASROOT=1 \
-    RUNNER_VERSION=\${RUNNER_VERSION} \
+    RUNNER_VERSION=${RUNNER_VERSION} \
     RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
     PATH=/opt/cargo/bin:$PATH \
@@ -56,7 +56,7 @@ RUN useradd --create-home --shell /bin/bash runner \
 WORKDIR /home/runner/actions-runner
 
 RUN curl -fsSL -o runner.tar.gz \
-      "https://github.com/actions/runner/releases/download/v\${RUNNER_VERSION}/actions-runner-linux-x64-\${RUNNER_VERSION}.tar.gz" \
+      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
     && tar xzf runner.tar.gz \
     && rm runner.tar.gz \
     && ./bin/installdependencies.sh \

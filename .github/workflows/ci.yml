@@ -706,15 +706,40 @@ jobs:
             echo "Potential credential material found in tracked source."
             exit 1
           fi
+      - name: Restore zizmor cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/zizmor
+          key: ${{ runner.os }}-${{ runner.arch }}-zizmor-v1.30.1-v1
+
       - name: Install zizmor
         shell: bash
         run: |
           set -euo pipefail
-          install_dir="$RUNNER_TEMP/zizmor"
+          install_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/zizmor"
           mkdir -p "$install_dir"
-          python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
-            --target "$install_dir" "zizmor==1.30.1"
+          if [ -x "$install_dir/bin/zizmor" ] && "$install_dir/bin/zizmor" --version | grep -q "zizmor 1.30.1"; then
+            :
+          else
+            rm -rf "$install_dir"
+            mkdir -p "$install_dir"
+            python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
+              --target "$install_dir" "zizmor==1.30.1"
+          fi
           "$install_dir/bin/zizmor" --version
+
+      - name: Audit GitHub Actions workflows
+        run: |
+          "$GITHUB_WORKSPACE/.gitrun-ci/tools/zizmor/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
+
+      - name: Save zizmor cache
+        if: success() && hashFiles('.gitrun-ci/tools/zizmor/bin/zizmor') != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/zizmor
+          key: ${{ runner.os }}-${{ runner.arch }}-zizmor-v1.30.1-v1
+
       - name: Audit GitHub Actions workflows
         run: |
           "$RUNNER_TEMP/zizmor/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
@@ -727,6 +752,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Restore PowerShell cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/powershell
+          key: ${{ runner.os }}-${{ runner.arch }}-powershell-7.6.6-v1
+
       - name: Ensure PowerShell runtime
         shell: bash
         env:
@@ -743,9 +774,15 @@ jobs:
           fi
 
           version="7.6.6"
-          archive="$RUNNER_TEMP/powershell-${version}-linux-x64.tar.gz"
-          install_dir="$RUNNER_TEMP/powershell"
+          install_dir="$GITHUB_WORKSPACE/.gitrun-ci/tools/powershell"
+          cached_pwsh="$install_dir/pwsh"
+          if [ -x "$cached_pwsh" ] && "$cached_pwsh" --version | grep -q "PowerShell 7.6.6"; then
+            echo "$install_dir" >> "$GITHUB_PATH"
+            "$cached_pwsh" --version
+            exit 0
+          fi
 
+          archive="${{ runner.temp }}/powershell-${version}-linux-x64.tar.gz"
           curl -fsSL -o "$archive" \
             "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-x64.tar.gz"
           echo "ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc $archive" | sha256sum -c -
@@ -755,6 +792,14 @@ jobs:
           chmod 0755 "$install_dir/pwsh"
           echo "$install_dir" >> "$GITHUB_PATH"
           "$install_dir/pwsh" --version
+
+      - name: Save PowerShell cache
+        if: success() && hashFiles('.gitrun-ci/tools/powershell/pwsh') != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/tools/powershell
+          key: ${{ runner.os }}-${{ runner.arch }}-powershell-7.6.6-v1
 
       - name: Validate PowerShell syntax
         shell: pwsh

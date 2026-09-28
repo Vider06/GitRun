@@ -1,0 +1,42 @@
+name: Temporary CI repair
+
+on:
+  push:
+    branches: [BigRework]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: "!contains(github.event.head_commit.message, '[ci-repair]')"
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Repair formatting and Cargo lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+          rustup component add rustfmt
+          cargo fmt --all
+          cargo update -p jsonwebtoken --precise 10.3.0
+          cargo fmt --all -- --check
+          cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --locked --dry-run
+      - name: Commit repairs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "GitHub Actions"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- Cargo.lock ':(glob)crates/**/*.rs'; then
+            echo "No repair changes required."
+            exit 0
+          fi
+          git add Cargo.lock ':(glob)crates/**/*.rs'
+          git commit -m "ci: repair formatting and Cargo lock [ci-repair]"
+          git push origin HEAD:BigRework

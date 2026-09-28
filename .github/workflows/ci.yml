@@ -696,15 +696,18 @@ jobs:
         working-directory: crates/gitrun-dashboard-tauri
         shell: bash
         env:
+          TMPDIR: ${{ runner.temp }}/tauri-tmp
+          XDG_CACHE_HOME: ${{ runner.temp }}/tauri-cache
           CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
           RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           set -euo pipefail
+          mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
           export PATH="$CARGO_HOME/bin:$PATH"
           command -v cargo
           cargo --version
-          npm run tauri build -- --ci
+          npm run tauri build -- --ci --no-bundle
 
       - name: Save Tauri target cache
         if: success() && steps.tauri-target-cache.outputs.cache-hit != 'true'
@@ -713,6 +716,23 @@ jobs:
         with:
           path: target
           key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v3-${{ hashFiles('Cargo.lock') }}
+
+      - name: Bundle Tauri application
+        working-directory: crates/gitrun-dashboard-tauri
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}/tauri-tmp
+          XDG_CACHE_HOME: ${{ runner.temp }}/tauri-cache
+          CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
+          RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          command -v cargo
+          cargo --version
+          npm run tauri bundle -- --bundles deb,appimage --no-binary-patching
 
       - name: Upload Tauri bundles
         if: always()

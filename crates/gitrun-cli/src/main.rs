@@ -3,8 +3,8 @@ use gitrun_core::{AppAuth, Config, GitHubAuth, Runner};
 use gitrun_setup::{bootstrap_linux_with_auth, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
     apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest,
-    latest_manifest, pin_runner_image, refresh_docker_stack, rollback,
-    update_incompatible_dependencies, update_runner_image, BackupRecord, UpdatePaths,
+    latest_manifest, pin_runner_image, rollback, update_incompatible_dependencies,
+    update_runner_image, BackupRecord, UpdatePaths,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -168,11 +168,10 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    if let Ok(compose) = std::env::var("GITRUN_COMPOSE_FILE") {
-        if let Err(error) = refresh_docker_stack(&compose) {
-            rollback(&paths, &backup)?;
-            return Err(format!("Docker refresh failed; GitRun was rolled back: {error}").into());
-        }
+
+    if let Err(error) = restart_scheduler_service() {
+        rollback(&paths, &backup)?;
+        return Err(format!("scheduler restart failed; GitRun was rolled back: {error}").into());
     }
 
     let version_file = paths.install_dir.join("version.txt");
@@ -186,6 +185,24 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(Path::new("."))
             .display()
     );
+    Ok(())
+}
+
+fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
+    if !cfg!(target_os = "linux") || !Path::new("/etc/systemd/system/gitrun.service").is_file() {
+        return Ok(());
+    }
+    let output = std::process::Command::new("systemctl")
+        .args(["restart", "gitrun.service"])
+        .output()?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            "systemctl restart gitrun.service failed".into()
+        } else {
+            detail.into()
+        });
+    }
     Ok(())
 }
 
@@ -701,7 +718,14 @@ fn main() {
             }
         },
         Command::Doctor => run_doctor(),
-        Command::Update { manifest_url } => run_update(manifest_url.as_deref()),
+        Command::Update {
+            manifest_url,
+            only_containers,
+        } => run_update(manifest_url.as_deref(), only_containers),
+        Command::Scheduler => {
+            gitrun_scheduler::run();
+            0
+        }
         Command::Dashboard => run_dashboard(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),
         Command::Rollback { backup_path } => run_rollback(&backup_path),
@@ -753,9 +777,15 @@ enum Command {
     Doctor,
     /// Check for and apply GitRun updates.
     Update {
+        /// Update only the permanent runner pool without replacing GitRun itself.
+        #[arg(long)]
+        only_containers: bool,
         /// Optional manifest URL to check instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
+    /// Internal scheduler service entry point.
+    #[command(name = "scheduler", hide = true)]
+    Scheduler,
     /// Launch the GitRun dashboard (default when no command is given).
     Dashboard,
     /// Internal: run the elevated installation step (invoked by the setup wizard via pkexec).
@@ -848,7 +878,19 @@ fn run_doctor() -> i32 {
     }
 }
 
-fn run_update(manifest_url: Option<&str>) -> i32 {
+fn run_update(manifest_url: Option<&str>, only_containers: bool) -> i32 {
+    if only_containers {
+        return match gitrun_scheduler::run_gtuu_once() {
+            Ok(count) => {
+                println!("GitRun GTUU: updated {count} permanent runner(s)");
+                0
+            }
+            Err(error) => {
+                eprintln!("GitRun GTUU: FAIL — {error}");
+                1
+            }
+        };
+    }
     // update_command's original signature takes a full args slice with the
     // manifest URL at index 1 — preserved as-is rather than refactored, to
     // keep this change scoped to argument *parsing*, not the update logic

@@ -211,11 +211,10 @@ jobs:
 
           root="$RUNNER_TEMP/gitrun-release"
           rm -rf "$root"
-          mkdir -p "$root/server" "$root/gtuu"
+          mkdir -p "$root/server"
 
           deb="GitRun-${VERSION}-${TARGET}.deb"
           server_archive="GitRun-${VERSION}-${TARGET}-server.tar.gz"
-          gtuu_archive="GitRun-GTUU-${VERSION}-linux-x86_64.tar.gz"
 
           cp "$deb_source" "$root/$deb"
 
@@ -223,24 +222,9 @@ jobs:
           cp LICENSE README.md config/config.example.env "$root/server/"
           tar -C "$root/server" -czf "$root/$server_archive" .
 
-          install -m 0755 autoscaler/gitrun_updater_utility.py "$root/gtuu/gitrun_updater_utility.py"
-          cat > "$root/gtuu/README.md" <<'EOF'
-          # GitRun Updater Utility (GTUU)
-
-          External maintenance utility for GitRun permanent runner containers.
-
-          Requirements: Python 3.10+, Docker CLI/daemon access, and GitHub credentials
-          supplied through the GitRun environment.
-
-          Usage:
-            python3 gitrun_updater_utility.py --only-containers
-          EOF
-          tar -C "$root/gtuu" -czf "$root/$gtuu_archive" .
 
           deb_sha="$(sha256sum "$root/$deb" | awk '{print $1}')"
           server_sha="$(sha256sum "$root/$server_archive" | awk '{print $1}')"
-          gtuu_sha="$(sha256sum "$root/$gtuu_archive" | awk '{print $1}')"
-
           cat > "$root/release-manifest.json" <<JSON
           {
             "name": "GitRun",
@@ -257,11 +241,6 @@ jobs:
                 "target": "linux-x86_64-deb",
                 "file": "${deb}",
                 "sha256": "${deb_sha}"
-              },
-              {
-                "target": "gtuu-linux-x86_64",
-                "file": "${gtuu_archive}",
-                "sha256": "${gtuu_sha}"
               }
             ]
           }
@@ -270,7 +249,6 @@ jobs:
           echo "root=$root" >> "$GITHUB_OUTPUT"
           echo "deb=$deb" >> "$GITHUB_OUTPUT"
           echo "server_archive=$server_archive" >> "$GITHUB_OUTPUT"
-          echo "gtuu_archive=$gtuu_archive" >> "$GITHUB_OUTPUT"
 
       - name: Verify release artifacts
         shell: bash
@@ -279,14 +257,11 @@ jobs:
           ROOT: ${{ steps.artifacts.outputs.root }}
           DEB: ${{ steps.artifacts.outputs.deb }}
           SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
-          GTUU_ARCHIVE: ${{ steps.artifacts.outputs.gtuu_archive }}
         run: |
           set -euo pipefail
           deb="$ROOT/$DEB"
           server="$ROOT/$SERVER_ARCHIVE"
-          gtuu="$ROOT/$GTUU_ARCHIVE"
-
-          test -f "$deb" && test -f "$server" && test -f "$gtuu" && test -f "$ROOT/release-manifest.json"
+          test -f "$deb" && test -f "$server" && test -f "$ROOT/release-manifest.json"
 
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
           dpkg-deb --contents "$deb" | grep -E '/gitrun-dashboard-tauri$'
@@ -297,12 +272,6 @@ jobs:
           tar -xzf "$server" -C "$RUNNER_TEMP/server-check"
           test -x "$RUNNER_TEMP/server-check/gitrun-rs"
           test "$(od -An -t x1 -N 4 "$RUNNER_TEMP/server-check/gitrun-rs" | tr -d '[:space:]')" = "7f454c46"
-
-          rm -rf "$RUNNER_TEMP/gtuu-check"
-          mkdir -p "$RUNNER_TEMP/gtuu-check"
-          tar -xzf "$gtuu" -C "$RUNNER_TEMP/gtuu-check"
-          test -f "$RUNNER_TEMP/gtuu-check/gitrun_updater_utility.py"
-          python3 -m py_compile "$RUNNER_TEMP/gtuu-check/gitrun_updater_utility.py"
 
           python3 - "$ROOT/release-manifest.json" "$VERSION" "$GITHUB_SHA" <<'PY'
           import json
@@ -315,7 +284,7 @@ jobs:
           assert data["version"] == version
           assert data["git_commit"] == commit
           targets = {a["target"] for a in data["artifacts"]}
-          assert {"x86_64-unknown-linux-gnu", "linux-x86_64-deb", "gtuu-linux-x86_64"} <= targets
+          assert {"x86_64-unknown-linux-gnu", "linux-x86_64-deb"} <= targets
           for artifact in data["artifacts"]:
               assert len(artifact["sha256"]) == 64
               assert all(c in "0123456789abcdef" for c in artifact["sha256"])
@@ -330,14 +299,12 @@ jobs:
           ROOT: ${{ steps.artifacts.outputs.root }}
           DEB: ${{ steps.artifacts.outputs.deb }}
           SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
-          GTUU_ARCHIVE: ${{ steps.artifacts.outputs.gtuu_archive }}
         shell: bash
         run: |
           set -euo pipefail
           assets=(
             "$ROOT/$DEB"
             "$ROOT/$SERVER_ARCHIVE"
-            "$ROOT/$GTUU_ARCHIVE"
             "$ROOT/release-manifest.json"
           )
           if gh release view "$VERSION" >/dev/null 2>&1; then

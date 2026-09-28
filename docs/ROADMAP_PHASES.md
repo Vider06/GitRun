@@ -16,7 +16,13 @@ A real release updater is now implemented around the Phase 3 precompiled artifac
 The native Rust/egui dashboard is now an operator UI rather than read-only telemetry. It loads the effective GitRun configuration, persisted health/crash state and managed Docker runner containers; shows global pool metrics, per-repository runner counts and target pools, health/recovery information, and a runner-container table with state/image/uptime. It refreshes automatically every five seconds and provides persistent configuration editing, GitRun systemd start/stop/restart controls on Linux, and per-runner Docker start/stop/restart controls. Secret and unknown environment keys are preserved and are never rendered in the UI.
 
 ## Phase 6 — Integration and finalization
-Workspace-wide formatting/check/test gates and an additive migration contract so the current Python/Docker deployment is not broken.
+
+The Rust scheduler is now the authoritative runtime. The installed Linux service launches
+the scheduler through the main `gitrun` executable, with no Python manager or external
+GTUU process.
 
 ## Scheduled runner maintenance — GTUU
-The GitRun Updater Utility (GTUU) provides a single maintenance path for permanent warm runner containers. It can be invoked manually with `gitrun update --only-containers`, exposed by the Rust dashboard, or scheduled at a configured daily time. GTUU pulls the configured runner image, compares image IDs, skips busy permanent runners, and replaces outdated permanent runners strictly one at a time. Dynamic runners are not proactively rotated; they use the current configured image when the autoscaler recreates them.
+GTUU is implemented inside the Rust scheduler. It can run automatically at the configured
+daily time or manually with `gitrun update --only-containers`. Permanent runners are
+updated one at a time and busy runners are skipped; dynamic runners use the current image
+when the autoscaler recreates them.

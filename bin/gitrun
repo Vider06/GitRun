@@ -5,9 +5,6 @@ APP_NAME="GitRun"
 CONFIG_FILE="${GITRUN_CONFIG:-${GITRUN_CONFIG_FILE:-/etc/gitrun/gitrun.env}}"
 STATE_DIR="${GITRUN_STATE_DIR:-/var/lib/gitrun}"
 LOG_DIR="${GITRUN_LOG_DIR:-/var/log/gitrun}"
-COMPOSE_FILE="${GITRUN_COMPOSE_FILE:-/opt/gitrun/docker-compose.yml}"
-GTUU_SCRIPT="${GITRUN_GTUU_SCRIPT:-/opt/gitrun/gitrun_updater_utility.py}"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 load_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -62,7 +59,7 @@ Lifecycle:
   start                    Start the GitRun stack.
   stop                     Stop the GitRun stack.
   restart                  Restart the GitRun stack.
-  update [--only-containers] Update GitRun itself, or run GTUU for permanent runners.
+  update [--only-containers] Update GitRun itself, or update permanent runners.
 
 Configuration:
   connect <owner/repo>     Add a repository to GitRun.
@@ -88,7 +85,6 @@ GitRun configuration
   config file:      $CONFIG_FILE
   state dir:        $STATE_DIR
   log dir:          $LOG_DIR
-  compose file:     $COMPOSE_FILE
   min runners:      $GITRUN_MIN_RUNNERS
   max runners:      $GITRUN_MAX_RUNNERS
   idle timeout:     $GITRUN_IDLE_TIMEOUT s
@@ -117,16 +113,6 @@ cmd_doctor() {
     check "docker command" have docker
     check "Docker daemon" docker_available
     check "config syntax" bash -n "$0"
-
-    if [[ -f "$COMPOSE_FILE" ]]; then
-        if docker_available; then
-            check "compose file" docker compose -f "$COMPOSE_FILE" config -q
-        else
-            echo "[SKIP] compose validation (Docker daemon unavailable)"
-        fi
-    else
-        echo "[WARN] compose file missing: $COMPOSE_FILE"
-    fi
 
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
         echo "[PASS] GitHub token configured"
@@ -175,8 +161,8 @@ cmd_logs() {
         return
     fi
 
-    if docker ps -a --format '{{.Names}}' | grep -Fxq gitrun-manager; then
-        docker logs --tail 200 gitrun-manager
+    if systemctl is-active --quiet gitrun.service; then
+        journalctl -u gitrun.service -n 200 --no-pager
         return
     fi
 
@@ -240,13 +226,11 @@ cmd_health() {
         echo "[PASS] Runner capacity: $GITRUN_MIN_RUNNERS..$GITRUN_MAX_RUNNERS"
     fi
 
-    if docker_available; then
-        if docker ps -a --format '{{.Names}}' | grep -Fxq gitrun-manager; then
-            echo "[PASS] GitRun manager container"
-        else
-            echo "[FAIL] GitRun manager container missing"
-            failed=1
-        fi
+    if systemctl is-active --quiet gitrun.service; then
+        echo "[PASS] GitRun scheduler service"
+    else
+        echo "[FAIL] GitRun scheduler service is not active"
+        failed=1
     fi
 
     if (( failed )); then
@@ -279,18 +263,15 @@ cmd_overview() {
 }
 
 cmd_start() {
-    [[ -f "$COMPOSE_FILE" ]] || die "Compose file not found: $COMPOSE_FILE"
-    docker compose -f "$COMPOSE_FILE" up -d
+    systemctl start gitrun.service
 }
 
 cmd_stop() {
-    [[ -f "$COMPOSE_FILE" ]] || die "Compose file not found: $COMPOSE_FILE"
-    docker compose -f "$COMPOSE_FILE" stop
+    systemctl stop gitrun.service
 }
 
 cmd_restart() {
-    [[ -f "$COMPOSE_FILE" ]] || die "Compose file not found: $COMPOSE_FILE"
-    docker compose -f "$COMPOSE_FILE" restart
+    systemctl restart gitrun.service
 }
 
 cmd_repositories() {
@@ -308,13 +289,7 @@ cmd_repositories() {
 cmd_update() {
     local mode="${1:-}"
     if [[ "$mode" == "--only-containers" ]]; then
-        if [[ -f "$GTUU_SCRIPT" ]]; then
-            exec python3 "$GTUU_SCRIPT" --only-containers
-        elif [[ -f "$ROOT_DIR/autoscaler/gitrun_updater_utility.py" ]]; then
-            exec python3 "$ROOT_DIR/autoscaler/gitrun_updater_utility.py" --only-containers
-        else
-            die "GTUU utility not found. Expected: $GTUU_SCRIPT"
-        fi
+        exec /usr/local/bin/gitrun update --only-containers
     fi
 
     if [[ -n "$mode" ]]; then

@@ -1,8 +1,8 @@
 # GitRun
 
-GitRun is a lightweight control plane for Docker-based GitHub Actions self-hosted runners.
+GitRun is a self-contained Rust control plane for Docker-based GitHub Actions self-hosted runners.
 
-It is designed for administrators running their own repositories on a small private server. GitRun handles runner lifecycle, autoscaling, health checks and host integration without Kubernetes.
+It is designed for administrators running their own repositories on a small private server. GitRun handles runner lifecycle, autoscaling, health checks, GitHub authentication, recovery, updates and host integration without Kubernetes.
 
 ## Features
 
@@ -16,7 +16,8 @@ It is designed for administrators running their own repositories on a small priv
 - Automatic container recovery when queued jobs have no online managed runner
 - Shared persistent Docker cache/storage across managed runners
 - Linux, macOS and Windows setup scripts
-- CLI for status, health and service management
+- Rust CLI for setup, configuration, diagnostics, updates, dashboard launch and repository connection
+- PAT and GitHub App authentication
 - Rust setup preflight for configuration, directories and host dependencies
 - Self-hosted Linux x64 release deployment; Windows/macOS builds remain available through the local release scripts
 - Versioned updater with checksum verification, dependency compatibility checks and rollback
@@ -38,16 +39,30 @@ Multiple repositories can share one installation. Each repository currently has 
 
 ## Requirements
 
-The current release uses:
+For the supported Linux server installation, GitRun uses:
 
-- Docker Engine with Compose v2 on Linux
-- Docker Desktop on macOS and Windows
+- Linux x86_64 for the current prebuilt server release
+- Docker Engine with Compose v2
 - Git
-- Python 3 for the local installer helpers
+- `sudo` for the privileged installation step when setup is run as a normal user
 
-The manager and runner dependencies are contained in their Docker images. Runner images include the Docker CLI and PowerShell; managed runners receive the host Docker socket for Docker-backed CI jobs. GitRun does not require Node.js, Python packages or Rust on the host beyond what the installer itself needs.
+The GitRun Rust binary contains the manager CLI and runtime components. Runner dependencies are contained in the runner image. Managed runners receive the host Docker socket for Docker-backed CI jobs.
+
+The repository also contains platform-specific setup and release tooling for macOS and Windows. Exact platform support depends on the relevant installer and release path.
 
 ## Installation
+
+### Linux server
+
+For the current Rust-based setup flow, build or install the `gitrun` binary and run:
+
+```bash
+gitrun setup --terminal
+```
+
+The terminal wizard asks for either a GitHub Personal Access Token or GitHub App credentials, verifies repository access, then performs the privileged installation/configuration step.
+
+The repository also contains installer scripts for platform-specific or compatibility workflows:
 
 ### Linux
 
@@ -76,32 +91,49 @@ For a permanent Linux server installation:
 git clone https://github.com/Vider06/GitRun.git /opt/gitrun-source
 cd /opt/gitrun-source
 sudo ./scripts/install-server.sh
-sudo nano /etc/gitrun/gitrun.env
-sudo systemctl start gitrun
 ```
+
+Use the Rust setup wizard when configuring a new installation rather than manually creating credentials in the environment file.
 
 ## Configuration
 
-Start from `config/config.example.env`:
+Start from `config/config.example.env`.
+
+GitRun supports two GitHub authentication modes.
+
+### Personal Access Token
 
 ```env
 GITHUB_TOKEN=
 GITRUN_REPOSITORIES=owner/repository
-
-GITRUN_MIN_RUNNERS=3
-GITRUN_MAX_RUNNERS=8
-GITRUN_IDLE_TIMEOUT=120
-GITRUN_POLL_INTERVAL=5
-GITRUN_AUTO_CONTAINER_RECOVERY=true
-GITRUN_CONTAINER_RECOVERY_COOLDOWN=60
-GITRUN_SHARED_CACHE_VOLUME=gitrun-runner-shared
 ```
 
-The GitHub token must have enough repository permissions to manage self-hosted runners and read Actions workflow/job state for every configured repository.
+### GitHub App
 
-GitHub runner registration tokens are generated on demand and expire after one hour. The long-lived GitHub token is used only by the manager.
+```env
+GITRUN_GITHUB_APP_ID=
+GITRUN_GITHUB_APP_INSTALLATION_ID=
+GITRUN_GITHUB_APP_PRIVATE_KEY_PATH=/secure/path/to/private-key.pem
+GITRUN_REPOSITORIES=owner/repository
+```
 
-The native dashboard can edit and persist the non-secret `GITRUN_*` settings when `GITRUN_CONFIG_FILE` points to the runtime env file. `GITHUB_TOKEN` and unknown environment keys are preserved but never displayed by the dashboard.
+The GitHub App private key is referenced by path rather than copied into the GitRun environment file. Keep that key readable only by the account that needs it.
+
+For either authentication mode, the configured credential must have enough repository permissions to manage self-hosted runners and read Actions workflow/job state for every configured repository.
+
+GitHub runner registration tokens are generated on demand and expire after one hour. Long-lived GitHub credentials are used by the manager to obtain the required GitHub API access.
+
+The native dashboard supports both PAT and GitHub App authentication during setup. It can edit and persist non-secret GitRun settings; credentials are not displayed as ordinary dashboard configuration values.
+
+### Connecting another repository
+
+After GitRun is configured, add another repository with:
+
+```bash
+gitrun connect owner/repository
+```
+
+`gitrun connect` reuses the currently configured PAT or GitHub App authentication. It verifies access before changing the persistent configuration. Restart GitRun after connecting a repository so the scheduler reloads the repository list.
 
 ## Autoscaling
 
@@ -165,31 +197,46 @@ Docker-socket-mount hardening (dropped Linux capabilities, `no-new-privileges`) 
 
 ## CLI
 
-```text
-gitrun overview
-gitrun status
-gitrun repositories
-gitrun runners
-gitrun jobs
-gitrun health
-gitrun doctor
-gitrun logs
-gitrun last-crash
-gitrun usage
-gitrun config
-gitrun connect owner/repository
-gitrun service status
-gitrun start
-gitrun stop
-gitrun restart
+The primary executable is `gitrun`.
+
+### Version
+
+```bash
+gitrun -V
+gitrun -v
+gitrun --version
 ```
+
+### Commands
+
+```text
+gitrun setup
+gitrun setup --terminal
+gitrun connect owner/repository
+gitrun config
+gitrun desired <min> <max> <busy> <queued>
+gitrun doctor
+gitrun update [manifest-url]
+gitrun dashboard
+gitrun rollback <backup-path>
+```
+
+`gitrun` without a command launches the dashboard.
+
+`gitrun setup` performs the normal setup/preflight path. `gitrun setup --terminal` runs the interactive first-run wizard and supports both PAT and GitHub App authentication.
+
+`gitrun config` prints the active configuration as JSON. Do not run it where its output could be exposed to untrusted users or logs.
+
+`gitrun doctor` performs a quick configuration health check.
+
+`gitrun update` checks for and applies GitRun updates. `gitrun rollback` restores a recorded updater backup.
 
 ## Dashboard
 
 Launch the native dashboard with:
 
 ```bash
-gitrun-rs dashboard
+gitrun dashboard
 ```
 
 The dashboard refreshes every five seconds and provides:
@@ -213,13 +260,13 @@ For a configured host:
 
 ```bash
 gitrun doctor
-gitrun health
-gitrun-rs setup
-gitrun-rs update
-gitrun-rs dashboard
+gitrun doctor
+gitrun setup
+gitrun update
+gitrun dashboard
 ```
 
-The updater resolves the latest GitHub release, selects the native precompiled artifact, verifies its SHA-256 checksum, preserves configuration/state, creates a rollback backup, validates the new installation with `doctor`, and updates the version-pinned runner image only when its digest is not already present. Set `GITRUN_REPOSITORY`, `GITRUN_UPDATE_DIR`, `GITRUN_INSTALL_DIR`, `GITRUN_BACKUP_DIR`, `GITRUN_CONFIG_DIR`, `GITRUN_SERVICE_CONFIG` and `GITRUN_COMPOSE_FILE` to control update locations and preserved service configuration. `gitrun-rs rollback <backup.json>` restores a recorded backup.
+The updater resolves the latest GitHub release, selects the native precompiled artifact, verifies its SHA-256 checksum, preserves configuration/state, creates a rollback backup, validates the new installation with `doctor`, and updates the version-pinned runner image only when its digest is not already present. Set `GITRUN_REPOSITORY`, `GITRUN_UPDATE_DIR`, `GITRUN_INSTALL_DIR`, `GITRUN_BACKUP_DIR`, `GITRUN_CONFIG_DIR`, `GITRUN_SERVICE_CONFIG` and `GITRUN_COMPOSE_FILE` to control update locations and preserved service configuration. `gitrun rollback <backup-path>` restores a recorded backup.
 
 Static validation does not contact GitHub and does not prove that live runners are healthy.
 
@@ -227,15 +274,10 @@ Tagged releases are built and published on the self-hosted Linux x64 runner with
 
 ## Current architecture
 
-GitRun is transitioning from its original Python/Docker control plane toward a Rust workspace. The Phase 1–6 branch adds:
+BigRework is migrating GitRun's manager and operator tooling into a Rust workspace. The workspace contains the Rust core, CLI, setup, updater, recovery, scheduler, vault, GSR, dashboard and Tauri dashboard components.
 
-- Rust core for typed configuration, runner state, health and crash state.
-- Rust CLI foundation for configuration and runner-pool operations.
-- Updater and recovery primitives with explicit staging semantics.
-- Cross-platform release build entry points.
-- A native egui operator dashboard for configuration, health/recovery, repositories, Docker runner state and local controls.
-- Workspace-wide Rust formatting, clippy and test gates in CI.
+The Rust CLI is the primary operator entry point. The scheduler and dashboard use the shared core configuration and GitHub authentication abstractions so PAT and GitHub App behavior remains consistent across terminal and graphical setup.
 
-The existing Python/Docker manager remains the deployment-compatible path during migration. The Rust components are intentionally additive; the manager API and runner lifecycle are migrated only after each replacement is independently verified.
+Some repository tooling and compatibility paths remain Python/Docker-based during the migration. They are retained where still required by the current deployment and release workflows rather than being presented as the primary CLI.
 
 See [docs/ROADMAP_PHASES.md](docs/ROADMAP_PHASES.md) and [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).

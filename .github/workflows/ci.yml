@@ -264,6 +264,14 @@ jobs:
             .gitrun-ci/cargo/git
           key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-cargo-v7-${{ hashFiles('Cargo.lock') }}
 
+
+  dependency:
+    name: Dependency and supply-chain audit
+    needs: detect
+    if: needs.detect.outputs.dependency == 'true'
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
       - name: Setup Node.js
         if: needs.detect.outputs.node == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020

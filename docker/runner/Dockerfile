@@ -1,13 +1,29 @@
+# Build the GSR shell agent with a modern Rust toolchain. The runner image
+# itself is deliberately kept on the existing Node/Debian base below.
+FROM rust:1.85.1-bookworm AS gsr-builder
+
+WORKDIR /usr/src/gitrun
+
+# Copy the workspace manifests and sources. Cargo will only build the
+# gitrun-gsr binary and its actual dependency graph, not the whole workspace.
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+RUN cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
+    && test -x target/release/gitrun-gsr-agent
+
 FROM node:22-bookworm
 
 ARG RUNNER_VERSION=2.337.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     RUNNER_ALLOW_RUNASROOT=1 \
-    RUNNER_VERSION=${RUNNER_VERSION} \
+    RUNNER_VERSION=\${RUNNER_VERSION} \
     RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
-    PATH=/opt/cargo/bin:$PATH
+    PATH=/opt/cargo/bin:$PATH \
+    GITRUN_GSR_REAL_SHELL=/bin/sh.gitrun-real \
+    GITRUN_GSR_REAL_BASH=/bin/bash.gitrun-real
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -40,15 +56,32 @@ RUN useradd --create-home --shell /bin/bash runner \
 WORKDIR /home/runner/actions-runner
 
 RUN curl -fsSL -o runner.tar.gz \
-      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+      "https://github.com/actions/runner/releases/download/v\${RUNNER_VERSION}/actions-runner-linux-x64-\${RUNNER_VERSION}.tar.gz" \
     && tar xzf runner.tar.gz \
     && rm runner.tar.gz \
     && ./bin/installdependencies.sh \
     && chown -R runner:runner /home/runner/actions-runner
 
+COPY --from=gsr-builder /usr/src/gitrun/target/release/gitrun-gsr-agent /usr/local/bin/gitrun-gsr-agent
+RUN chmod 0755 /usr/local/bin/gitrun-gsr-agent
+
 COPY --chown=root:root docker/runner/entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh
 
 USER root
+
+# Install the GSR agent as both shell entry points. The original symlinks are
+# retained under explicit names so the agent can delegate to the correct shell
+# and preserve sh/bash semantics. This is intentionally the final RUN command:
+# every earlier Dockerfile RUN must still use the normal build-time shell.
+RUN mv /bin/sh /bin/sh.gitrun-real \
+    && mv /bin/bash /bin/bash.gitrun-real \
+    && cp /usr/local/bin/gitrun-gsr-agent /bin/sh \
+    && cp /usr/local/bin/gitrun-gsr-agent /bin/bash \
+    && chmod 0755 /bin/sh /bin/bash /bin/sh.gitrun-real /bin/bash.gitrun-real \
+    && test -x /bin/sh.gitrun-real \
+    && test -x /bin/bash.gitrun-real \
+    && test -x /bin/sh \
+    && test -x /bin/bash
 
 ENTRYPOINT ["/entrypoint.sh"]

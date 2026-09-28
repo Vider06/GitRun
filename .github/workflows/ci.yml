@@ -755,7 +755,7 @@ jobs:
           fi
           parser_dir="$RUNNER_TEMP/pyyaml"
           mkdir -p "$parser_dir"
-          python3 -m pip install --quiet --no-cache-dir --target "$parser_dir" pyyaml
+          python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --target "$parser_dir" "pyyaml==6.0.2"
           echo "PYTHONPATH=$parser_dir${PYTHONPATH:+:$PYTHONPATH}" >> "$GITHUB_ENV"
       - name: YAML parse
         shell: bash

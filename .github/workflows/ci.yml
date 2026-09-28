@@ -318,21 +318,27 @@ jobs:
         shell: bash
         env:
           TMPDIR: ${{ runner.temp }}/rustup-tmp
-          CARGO_HOME: .gitrun-ci/cargo-audit
-          RUSTUP_HOME: ${{ runner.temp }}/rustup
+          CARGO_HOME: .gitrun-ci/cargo
+          RUSTUP_HOME: .gitrun-ci/rustup
           CARGO_TARGET_DIR: .gitrun-ci/cargo-target
         run: |
           set -euo pipefail
           mkdir -p "$TMPDIR" "$CARGO_HOME" "$RUSTUP_HOME" "$CARGO_TARGET_DIR"
-          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
-            https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION" --no-modify-path
-          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
           echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
-          export PATH="$CARGO_HOME/bin:$PATH"
           echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
-          rustc --version
-          cargo --version
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Restore Rust common cache for dependency tooling
+        if: needs.detect.outputs.rust == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo
+            .gitrun-ci/rustup
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
 
       - name: Restore Rust dependency auditor cache
         if: needs.detect.outputs.rust == 'true'
@@ -340,19 +346,40 @@ jobs:
         with:
           path: |
             .gitrun-ci/cargo-tools
-            .gitrun-ci/cargo-audit/registry
-            .gitrun-ci/cargo-audit/git
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v5-audit-0.22.2-deny-0.20.2
+            .gitrun-ci/cargo/advisory-dbs
+            .gitrun-ci/cargo-target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-
+
+      - name: Setup Rust for dependency tooling
+        if: needs.detect.outputs.rust == 'true'
+        shell: bash
+        env:
+          CARGO_HOME: .gitrun-ci/cargo
+          RUSTUP_HOME: .gitrun-ci/rustup
+        run: |
+          set -euo pipefail
+          export PATH="$CARGO_HOME/bin:$PATH"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
+              https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION" --no-modify-path
+            export PATH="$CARGO_HOME/bin:$PATH"
+          fi
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustc --version
+          cargo --version
 
       - name: Install Rust dependency auditors
         if: needs.detect.outputs.rust == 'true'
         shell: bash
         env:
-          CARGO_HOME: .gitrun-ci/cargo-audit
+          CARGO_HOME: .gitrun-ci/cargo
           AUDITOR_ROOT: .gitrun-ci/cargo-tools
         run: |
           set -euo pipefail
-          mkdir -p "$AUDITOR_ROOT/bin" "$CARGO_HOME/registry" "$CARGO_HOME/git"
+          mkdir -p "$AUDITOR_ROOT/bin" "$CARGO_HOME/registry" "$CARGO_HOME/git" "$CARGO_HOME/advisory-dbs"
           export PATH="$AUDITOR_ROOT/bin:$CARGO_HOME/bin:$PATH"
           install_auditor() {
             local binary="$1"
@@ -381,16 +408,9 @@ jobs:
           "$AUDITOR_ROOT/bin/cargo-deny" --version
           echo "$AUDITOR_ROOT/bin" >> "$GITHUB_PATH"
 
-      - name: Save Rust dependency auditor cache
-        if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request'
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            .gitrun-ci/cargo-tools
-            .gitrun-ci/cargo-audit/registry
-            .gitrun-ci/cargo-audit/git
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v5-audit-0.22.2-deny-0.20.2
+      - name: Cargo audit
+        if: needs.detect.outputs.rust == 'true'
+        run: cargo audit
 
       - name: Cargo audit
         if: needs.detect.outputs.rust == 'true'
@@ -400,12 +420,24 @@ jobs:
         if: needs.detect.outputs.rust == 'true'
         run: cargo deny check advisories bans
 
+
+      - name: Save Rust dependency auditor cache
+        if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo-tools
+            .gitrun-ci/cargo/advisory-dbs
+            .gitrun-ci/cargo-target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-${{ hashFiles('Cargo.lock') }}
+
       - name: Restore npm cache for dependency audit
         if: needs.detect.outputs.node == 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-npm-v7-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
 
       - name: Prepare npm dependencies for audit
         if: needs.detect.outputs.node == 'true'
@@ -433,7 +465,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-npm-v7-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
 
       - name: Node dependency audit
         if: needs.detect.outputs.node == 'true'
@@ -469,7 +501,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-npm-v7-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
       - name: Validate frontend packages
         shell: bash
         env:
@@ -535,7 +567,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-npm-v7-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
 
   tauri:
     name: Tauri GUI build and package
@@ -582,7 +614,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-npm-v7-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v8-${{ hashFiles('**/package.json', '**/package-lock.json', '**/npm-shrinkwrap.json') }}
       - name: Install Tauri frontend dependencies
         working-directory: crates/gitrun-dashboard-tauri
         env:

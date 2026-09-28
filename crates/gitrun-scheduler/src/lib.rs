@@ -34,15 +34,13 @@ pub use reconcile::{Action, ReconcileInput};
 // GTUU runs on its own schedule in a background thread, same shape as the
 // Python `gtuu_schedule_loop`.
 
-use gitrun_core::{Config, GitHubAuth};
 use crate::docker::ManagedContainer;
 use crate::gsr_bridge::VaultToGsrBridge;
 use crate::gtuu::{GtuuConfig, GtuuLock};
-use crate::reconcile::{
-    ContainerHealth, ContainerView, IdleInfo, RunnerView,
-};
+use crate::reconcile::{ContainerHealth, ContainerView, IdleInfo, RunnerView};
 use crate::state::SchedulerState;
 use crate::vm_resolution::VmResolutionRegistry;
+use gitrun_core::{Config, GitHubAuth};
 use gitrun_vault::Vault;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

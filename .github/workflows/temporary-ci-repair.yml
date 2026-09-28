@@ -30,7 +30,7 @@ jobs:
           cargo fmt --all
           cargo update -p jsonwebtoken --precise 10.3.0
           cargo fmt --all -- --check
-          cargo metadata --workspace --all-features --locked --format-version 1 >/dev/null
+          cargo metadata --all-features --locked --format-version 1 >/dev/null
       - name: Commit repairs
         shell: bash
         env:

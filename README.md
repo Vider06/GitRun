@@ -260,7 +260,6 @@ For a configured host:
 
 ```bash
 gitrun doctor
-gitrun doctor
 gitrun setup
 gitrun update
 gitrun dashboard

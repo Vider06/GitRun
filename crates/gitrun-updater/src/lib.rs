@@ -510,22 +510,6 @@ pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
     Ok(())
 }
 
-pub fn refresh_docker_stack(compose_file: impl AsRef<Path>) -> Result<(), UpdateError> {
-    run_command(Command::new("docker").args(
-        [
-            "compose",
-            "-f",
-            compose_file.as_ref().to_str().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "invalid compose path")
-            })?,
-            "up",
-            "-d",
-            "--no-build",
-            "--remove-orphans",
-        ],
-    ))
-}
-
 pub fn health_check_binary(
     install_dir: &Path,
     config_dir: Option<&Path>,

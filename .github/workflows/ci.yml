@@ -268,8 +268,6 @@ jobs:
   dependency:
     name: Dependency and supply-chain audit
     needs: detect
-    env:
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     if: needs.detect.outputs.dependency == 'true'
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
@@ -330,8 +328,6 @@ jobs:
   frontend:
     name: JavaScript, TypeScript and CSS validation
     needs: detect
-    env:
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     if: needs.detect.outputs.node == 'true'
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
@@ -418,8 +414,6 @@ jobs:
   tauri:
     name: Tauri GUI build and package
     needs: [detect, rust, frontend]
-    env:
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     if: needs.detect.outputs.tauri == 'true'
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60

@@ -75,13 +75,19 @@ jobs:
           test -w "$CARGO_HOME"
           test -w "$RUSTUP_HOME"
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        shell: bash
         env:
           TMPDIR: ${{ runner.temp }}/rustup-tmp
           CARGO_HOME: ${{ runner.temp }}/cargo
           RUSTUP_HOME: ${{ runner.temp }}/rustup
-        with:
-          components: rustfmt, clippy
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
+            https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
+          export PATH="$CARGO_HOME/bin:$PATH"
+          rustup component add rustfmt clippy
+          rustc --version
+          cargo --version
       - name: Persist Rust toolchain paths
         shell: bash
         env:

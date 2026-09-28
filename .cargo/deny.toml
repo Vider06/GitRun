@@ -1,5 +1,5 @@
-# cargo-deny still reports unmaintained transitive dependencies, but they are
-# not actionable vulnerabilities by themselves. Keep them visible as warnings while
-# allowing the advisory gate to fail on actual security/unsoundness advisories.
+# Restrict unmaintained-advisory failures to crates that are direct
+# dependencies of this workspace. Transitive dependencies remain visible to
+# cargo-audit, but do not fail the cargo-deny gate solely for being unmaintained.
 [advisories]
-unmaintained = "warn"
+unmaintained = "workspace"

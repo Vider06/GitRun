@@ -157,6 +157,9 @@ pub struct Vault {
     events: Box<dyn VaultEventSink>,
 }
 
+// aes-gcm currently exposes generic-array 0.x constructors that Clippy flags
+// as deprecated; keep the dependency API localized until aes-gcm is upgraded.
+#[allow(deprecated)]
 impl Vault {
     /// Opens (or initializes) a vault at `dir`, generating a new master key
     /// on first use. `dir` should be a path only GitRun's own processes can

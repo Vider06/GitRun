@@ -130,8 +130,8 @@ jobs:
         run: cargo build --workspace --all-features --release --locked --exclude gitrun-dashboard --exclude gitrun-dashboard-tauri
       - name: Tests core/control-plane workspace
         run: cargo test --workspace --all-features --locked --exclude gitrun-dashboard --exclude gitrun-dashboard-tauri
-      # Preserve partial Cargo progress even when a later gate fails.
-      # The normal cache action only creates a new cache after a successful job.
+      # A restore miss/failure must not block the build; save only after a successful Rust job
+      # so an incomplete or broken build never becomes the reusable Cargo cache.
       - name: Save Cargo cache
         if: success()
         continue-on-error: true

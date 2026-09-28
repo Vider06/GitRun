@@ -15,8 +15,98 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  environment:
+    name: Runner environment verification
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Verify runner identity and platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Runner: $RUNNER_NAME"
+          echo "OS: $RUNNER_OS / $RUNNER_ARCH"
+          echo "Workspace: $GITHUB_WORKSPACE"
+          uname -a
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64 || test "$RUNNER_ARCH" = ARM64
+
+      - name: Verify filesystem and writable runner directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$GITHUB_WORKSPACE" && test -w "$GITHUB_WORKSPACE"
+          test -d "$RUNNER_TEMP" && test -w "$RUNNER_TEMP"
+          test -d "$RUNNER_TOOL_CACHE" && test -w "$RUNNER_TOOL_CACHE"
+          probe="$RUNNER_TEMP/gitrun-ci-write-test"
+          printf 'ok\n' > "$probe"
+          test "$(cat "$probe")" = ok
+          rm -f "$probe"
+
+      - name: Verify required commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          for command in bash git curl python3 tar gzip xz sha256sum; do
+            command -v "$command" >/dev/null || { echo "Missing command: $command"; exit 1; }
+          done
+          git --version
+          curl --version | head -n 1
+          python3 --version
+
+      - name: Verify network and DNS access
+        shell: bash
+        run: |
+          set -euo pipefail
+          getent hosts github.com >/dev/null
+          getent hosts api.github.com >/dev/null
+          curl --fail --silent --show-error --location --max-time 20 https://api.github.com/zen >/dev/null
+
+      - name: Verify GitHub repository access
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}" >/dev/null
+
+      - name: Verify sudo capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          if sudo -n true 2>/dev/null; then
+            echo "Passwordless sudo is available."
+          else
+            echo "Passwordless sudo is NOT available. CI jobs requiring sudo will fail."
+            exit 1
+          fi
+
+      - name: Verify Docker access
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker >/dev/null || { echo "Docker CLI is not installed."; exit 1; }
+          docker --version
+          test -S /var/run/docker.sock || { echo "Docker socket unavailable."; exit 1; }
+          docker info >/dev/null
+
+      - name: Verify GitHub Actions environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GITHUB_REPOSITORY" && test -n "$GITHUB_SHA"
+          test -n "$GITHUB_WORKSPACE" && test -n "$RUNNER_NAME"
+          test -n "$RUNNER_TEMP"
+          echo "GitHub Actions environment is usable."
   detect:
     name: Detect project components
+    needs: environment
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     outputs:
@@ -670,6 +760,7 @@ jobs:
     name: Verification summary
     if: always()
     needs:
+      - environment
       - detect
       - python
       - rust
@@ -687,6 +778,7 @@ jobs:
       - name: Enforce required gates
         shell: bash
         env:
+          ENVIRONMENT_RESULT: ${{ needs.environment.result }}
           DETECT_RESULT: ${{ needs.detect.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
           RUST_RESULT: ${{ needs.rust.result }}
@@ -729,6 +821,7 @@ jobs:
             fi
           }
 
+          check_gate environment "$ENVIRONMENT_RESULT" true
           check_gate detect "$DETECT_RESULT" true
           check_gate python "$PYTHON_RESULT" "$PYTHON_ENABLED"
           check_gate rust "$RUST_RESULT" "$RUST_ENABLED"

@@ -8,11 +8,13 @@ A GitHub Actions runner executes repository-controlled workflow code. A compromi
 
 The manager requires Docker socket access because it creates and removes runner containers. Keep the manager isolated, do not expose Docker's API publicly, and restrict host access.
 
+Linux runner containers may also receive the host Docker socket when Docker-backed CI compatibility is explicitly enabled for the repository/customer. This is a high-risk compatibility mode: code running inside such a runner can use the Docker API available through the mounted socket. GSR container hardening reduces other container and kernel attack surfaces, but it does not remove the privileges exposed by the Docker socket.
+
 ## Credential handling
 
 - Never commit `GITHUB_TOKEN` or runtime environment files.
 - Keep `/etc/gitrun/gitrun.env` mode 0600.
-- Use a dedicated GitHub credential with only the repository/Actions permissions required by the installation.
+- Use a dedicated GitHub credential with only the repository/Actions permissions required by the installation. GitHub App authentication is supported as an alternative to PAT authentication; protect the App private key as a high-value credential.
 - Registration tokens are short-lived and should never be persisted.
 - Prefer ephemeral runners for untrusted or isolation-sensitive workloads.
 - Runner tokens are unset in the runner process environment after configuration.
@@ -20,9 +22,11 @@ The manager requires Docker socket access because it creates and removes runner 
 
 ## Container hardening
 
-Runner containers use CPU, memory and PID limits. The default runner configuration also uses a read-only root filesystem and a private temporary filesystem.
+Linux runner containers use CPU, memory and PID limits. The default Linux runner configuration also uses a read-only root filesystem and private temporary filesystems.
 
-Do not add privileged mode, host networking, host PID/IPC namespaces, host filesystem mounts, or the Docker socket to runner containers.
+The Docker socket is not equivalent to an ordinary container mount. When Docker-backed CI compatibility is enabled, the Linux runner receives /var/run/docker.sock intentionally so workflows can control the Docker daemon. Treat this as a dangerous, privileged compatibility mode and enable it only for repositories/customers whose workflow code is trusted to use Docker with host-level consequences.
+
+Runner containers should not otherwise receive privileged mode, host networking, host PID/IPC namespaces, or arbitrary host filesystem mounts. When Docker socket compatibility is disabled, the runner should not receive the Docker socket.
 
 The manager itself necessarily has access to the Docker socket and must therefore be treated as a host-administrator component.
 
@@ -43,7 +47,7 @@ Before production:
 1. Create a dedicated least-privilege GitHub credential.
 2. Restrict access to the GitRun host.
 3. Enable ephemeral runners for untrusted workloads.
-4. Verify runner containers have no Docker socket or host mounts.
+4. Verify Docker socket compatibility is disabled unless the repository/customer explicitly requires Docker-backed CI; when enabled, verify that the runner has no additional privileged flags, host namespaces, or arbitrary host mounts.
 5. Keep Docker, the runner image, GitRun and the host OS patched.
 6. Test recovery and credential rotation.
 

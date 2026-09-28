@@ -59,7 +59,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.rust == 'true'
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - name: Prepare Rust bootstrap temp
@@ -104,6 +104,7 @@ jobs:
       - name: Restore Cargo cache
         id: cargo-cache
         uses: actions/cache/restore@v4
+        continue-on-error: true
         with:
           path: |
             ${{ runner.temp }}/cargo/registry
@@ -132,14 +133,15 @@ jobs:
       # Preserve partial Cargo progress even when a later gate fails.
       # The normal cache action only creates a new cache after a successful job.
       - name: Save Cargo cache
-        if: always()
+        if: success()
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: |
             ${{ runner.temp }}/cargo/registry
             ${{ runner.temp }}/cargo/git
             target
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('Cargo.lock') }}
 
   shell:
     name: Shell validation

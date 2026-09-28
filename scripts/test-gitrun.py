@@ -103,29 +103,41 @@ for key, expected in [
 
 release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 for required in [
-    "runs-on: [self-hosted, Linux, X64]",
+    "runs-on: [self-hosted, Linux]",
+    "timeout-minutes: 60",
     "gh release create",
+    "gh release upload",
     "cargo build --locked --release -p gitrun-cli --bin gitrun",
     "test -x target/release/gitrun",
-    "./scripts/build-deb.sh",
-    "dpkg-deb --info",
-    "gh release upload",
-    "gitrun.deb",
+    "npm run tauri build -- --ci --no-bundle",
+    "npm run tauri bundle -- --bundles deb --no-binary-patching",
+    "package-manager-cache: false",
+    "x86_64-unknown-linux-gnu",
+    "release-manifest.json",
+    "gitrun_updater_utility.py",
+    "dpkg-deb -f",
 ]:
     if required not in release_workflow:
         errors.append(f"release workflow requirement missing: {required}")
 
-if "gh release upload \"$VERSION\" target/release/gitrun" in release_workflow:
-    errors.append("release workflow still uploads the raw binary directly")
+if "./scripts/build-deb.sh" in release_workflow:
+    errors.append("release workflow still uses the legacy build-deb.sh path")
+
+if "runs-on: [self-hosted, Linux, X64]" in release_workflow:
+    errors.append("release workflow still requires the legacy X64 label")
 
 if "ubuntu-latest" in release_workflow or "windows-latest" in release_workflow or "macos-" in release_workflow:
     errors.append("release workflow still references GitHub-hosted OS runners")
 
-if "x86_64-unknown-linux-gnu" not in release_workflow:
-    errors.append("release workflow Linux x86_64 target missing")
+if "DOCKER_CONFIG: /tmp/gitrun-docker-config" in release_workflow:
+    errors.append("release workflow retains obsolete Docker credential isolation")
 
-if "DOCKER_CONFIG: /tmp/gitrun-docker-config" not in release_workflow:
-    errors.append("release workflow Docker credential isolation missing")
+if "target/release/bundle/deb" not in release_workflow:
+    errors.append("release workflow Tauri Debian output path missing")
+
+if "linux-x86_64-deb" not in release_workflow:
+    errors.append("release workflow Debian manifest target missing")
+
 
 cli_manifest = (ROOT / "crates/gitrun-cli/Cargo.toml").read_text(encoding="utf-8")
 if 'name = "gitrun"' not in cli_manifest:

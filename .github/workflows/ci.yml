@@ -169,3 +169,677 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Prepare Rust bootstrap temp
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}/rustup-tmp
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          RUSTUP_HOME: ${{ runner.temp }}/rustup
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR" "$CARGO_HOME" "$RUSTUP_HOME"
+          test -w "$TMPDIR"
+          test -w "$CARGO_HOME"
+          test -w "$RUSTUP_HOME"
+
+      - name: Setup Rust
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}/rustup-tmp
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          RUSTUP_HOME: ${{ runner.temp }}/rustup
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
+            https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
+          export PATH="$CARGO_HOME/bin:$PATH"
+          rustup component add rustfmt clippy
+          export PATH="$CARGO_HOME/bin:$PATH"
+          rustc --version
+          cargo --version
+
+      - name: Persist Rust toolchain paths
+        shell: bash
+        env:
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          RUSTUP_HOME: ${{ runner.temp }}/rustup
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_TARGET_DIR"
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Restore Cargo cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
+            target
+          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-v3-
+            ${{ runner.os }}-cargo-v2-
+
+      - name: Rust format check
+        run: cargo fmt --all -- --check
+
+      - name: Rust workspace check
+        run: cargo check --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked
+
+      - name: Rust workspace clippy
+        run: cargo clippy --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked -- -D warnings
+
+      - name: Rust release build
+        run: cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --release --locked
+
+      - name: Rust tests
+        run: cargo test --workspace --exclude gitrun-dashboard-tauri --all-features --locked -- --no-fail-fast
+
+      - name: Rust documentation
+        run: cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked
+
+      - name: Save Cargo cache
+        if: success()
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
+            target
+          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('Cargo.lock') }}
+
+  dependency:
+    name: Dependency and supply-chain audit
+    needs: detect
+    if: needs.detect.outputs.dependency == 'true'
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Prepare Cargo for dependency tooling
+        if: needs.detect.outputs.rust == 'true'
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}/rustup-tmp
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          RUSTUP_HOME: ${{ runner.temp }}/rustup
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR" "$CARGO_HOME" "$RUSTUP_HOME"
+          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
+            https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+          rustc --version
+          cargo --version
+
+      - name: Restore Rust dependency auditor cache
+        if: needs.detect.outputs.rust == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-tools
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-auditors-v1-audit-0.22.2-deny-0.20.2
+
+      - name: Install Rust dependency auditors
+        if: needs.detect.outputs.rust == 'true'
+        shell: bash
+        env:
+          CARGO_HOME: ${{ runner.temp }}/cargo
+          AUDITOR_ROOT: ${{ runner.temp }}/cargo-tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDITOR_ROOT/bin" "$CARGO_HOME/registry" "$CARGO_HOME/git"
+          export PATH="$AUDITOR_ROOT/bin:$CARGO_HOME/bin:$PATH"
+          if [ ! -x "$AUDITOR_ROOT/bin/cargo-audit" ]; then
+            cargo install --locked --version 0.22.2 --root "$AUDITOR_ROOT" cargo-audit
+          fi
+          if [ ! -x "$AUDITOR_ROOT/bin/cargo-deny" ]; then
+            cargo install --locked --version 0.20.2 --root "$AUDITOR_ROOT" cargo-deny
+          fi
+          "$AUDITOR_ROOT/bin/cargo-audit" --version
+          "$AUDITOR_ROOT/bin/cargo-deny" --version
+          echo "$AUDITOR_ROOT/bin" >> "$GITHUB_PATH"
+
+      - name: Save Rust dependency auditor cache
+        if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-tools
+            ${{ runner.temp }}/cargo/registry
+            ${{ runner.temp }}/cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-auditors-v1-audit-0.22.2-deny-0.20.2
+
+      - name: Cargo audit
+        if: needs.detect.outputs.rust == 'true'
+        run: cargo audit
+
+      - name: Cargo deny advisories and bans
+        if: needs.detect.outputs.rust == 'true'
+        run: cargo deny check advisories bans
+
+      - name: Node dependency audit
+        if: needs.detect.outputs.node == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' package_json; do
+            dir="$(dirname "$package_json")"
+            (
+              cd "$dir"
+              if [ -f package-lock.json ]; then
+                npm ci --ignore-scripts --no-audit --no-fund
+              else
+                npm install --ignore-scripts --no-audit --no-fund
+              fi
+              npm audit --audit-level=high
+            )
+          done < <(find . -name package.json -not -path './.git/*' -not -path '*/node_modules/*' -print0)
+
+  frontend:
+    name: JavaScript, TypeScript and CSS validation
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+
+      - name: Restore npm cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-v3-
+
+      - name: Validate frontend packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r -d '' package_json; do
+            dir="$(dirname "$package_json")"
+            echo "::group::Frontend package $dir"
+            (
+              cd "$dir"
+
+              if [ -f package-lock.json ]; then
+                npm ci --ignore-scripts --no-audit --no-fund
+              else
+                npm install --ignore-scripts --no-audit --no-fund
+              fi
+
+              if node -e 'const p=require("./package.json"); process.exit(p.scripts?.lint ? 0 : 1)'; then
+                npm run lint
+              fi
+
+              if node -e 'const p=require("./package.json"); process.exit(p.scripts?.typecheck ? 0 : 1)'; then
+                npm run typecheck
+              fi
+
+              if [ -f tsconfig.json ] && [ -x node_modules/.bin/tsc ]; then
+                node_modules/.bin/tsc --noEmit --pretty false
+              fi
+
+              if [ -f eslint.config.js ] || [ -f eslint.config.mjs ] || [ -f .eslintrc ] || [ -f .eslintrc.json ]; then
+                if [ -x node_modules/.bin/eslint ]; then
+                  node_modules/.bin/eslint . --max-warnings=0
+                fi
+              fi
+
+              if [ -f stylelint.config.js ] || [ -f stylelint.config.mjs ] || [ -f .stylelintrc ] || [ -f .stylelintrc.json ]; then
+                if [ -x node_modules/.bin/stylelint ]; then
+                  node_modules/.bin/stylelint '**/*.css'
+                fi
+              fi
+
+              while IFS= read -r -d '' js; do
+                node --check "$js"
+              done < <(find . -type f -name '*.js' -not -path './node_modules/*' -print0)
+
+              if node -e 'const p=require("./package.json"); process.exit(p.scripts?.test ? 0 : 1)'; then
+                npm test
+              fi
+
+              if node -e 'const p=require("./package.json"); process.exit(p.scripts?.build ? 0 : 1)'; then
+                npm run build
+              fi
+            )
+            echo "::endgroup::"
+          done < <(find . -name package.json -not -path './.git/*' -not -path '*/node_modules/*' -print0)
+
+      - name: Save npm cache
+        if: success()
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
+
+  tauri:
+    name: Tauri GUI build and package
+    needs: [detect, rust, frontend]
+    if: needs.detect.outputs.tauri == 'true'
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Verify prerequisite jobs
+        env:
+          RUST_RESULT: ${{ needs.rust.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          set -euo pipefail
+          if [ "$RUST_RESULT" != success ] || [ "$FRONTEND_RESULT" != success ]; then
+            echo "Tauri build prerequisites failed: Rust=$RUST_RESULT Frontend=$FRONTEND_RESULT"
+            exit 1
+          fi
+
+      - name: Verify Tauri Linux dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils; do
+            dpkg-query -W -f='\${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || {
+              echo "::error::Required system dependency is missing: $package"
+              exit 1
+            }
+          done
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+
+      - name: Restore npm cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-v3-
+
+      - name: Install Tauri frontend dependencies
+        working-directory: crates/gitrun-dashboard-tauri
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Build Tauri application
+        working-directory: crates/gitrun-dashboard-tauri
+        run: npm run tauri build -- --ci
+
+      - name: Upload Tauri bundles
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gitrun-tauri-bundles
+          path: target/release/bundle/**
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Save npm cache
+        if: success()
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
+
+  shell:
+    name: Shell validation
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --version
+            exit 0
+          fi
+          version="v0.11.0"
+          archive="shellcheck-${version}.linux.x86_64.tar.xz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/${version}/${archive}"
+          python3 - "$archive" "$RUNNER_TEMP/shellcheck" <<'PY'
+          import pathlib
+          import sys
+          import tarfile
+
+          archive, destination = sys.argv[1:]
+          destination = pathlib.Path(destination)
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          with tarfile.open(archive, "r:xz") as tf:
+              member = next(m for m in tf.getmembers() if m.name.endswith("/shellcheck"))
+              source = tf.extractfile(member)
+              if source is None:
+                  raise SystemExit("shellcheck binary missing from archive")
+              destination.write_bytes(source.read())
+              destination.chmod(0o755)
+          PY
+          chmod 0755 "$RUNNER_TEMP/shellcheck"
+          "$RUNNER_TEMP/shellcheck" --version
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Syntax check
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done < <(find . -type f -name '*.sh' -not -path './.git/*' -print0)
+      - name: ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find . -type f -name '*.sh' -not -path './.git/*' -print0)
+          if [ "${#files[@]}" -gt 0 ]; then
+            "$RUNNER_TEMP/shellcheck" "${files[@]}"
+          fi
+      - name: CLI smoke checks
+        env:
+          GITRUN_CONFIG: ${{ runner.temp }}/gitrun-ci.env
+        run: |
+          set -euo pipefail
+          test -f bin/gitrun
+          : > "$GITRUN_CONFIG"
+          bash bin/gitrun --help >/dev/null
+
+  workflow-security:
+    name: GitHub Actions security audit
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Secret pattern scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!docs/ROADMAP_PHASES.md' ':!SECURITY.md'; then
+            echo "Potential credential material found in tracked source."
+            exit 1
+          fi
+      - name: Install zizmor
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/zizmor"
+          mkdir -p "$install_dir"
+          python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
+            --target "$install_dir" "zizmor==1.30.1"
+          "$install_dir/bin/zizmor" --version
+      - name: Audit GitHub Actions workflows
+        run: |
+          "$RUNNER_TEMP/zizmor/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
+
+  powershell:
+    name: PowerShell validation
+    needs: detect
+    if: needs.detect.outputs.powershell == 'true'
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Ensure PowerShell runtime
+        shell: bash
+        env:
+          HOME: ${{ runner.temp }}/powershell-home
+          XDG_CACHE_HOME: ${{ runner.temp }}/powershell-home/.cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/powershell-home/.config
+          XDG_DATA_HOME: ${{ runner.temp }}/powershell-home/.local/share
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh --version
+            exit 0
+          fi
+
+          version="7.6.6"
+          archive="$RUNNER_TEMP/powershell-${version}-linux-x64.tar.gz"
+          install_dir="$RUNNER_TEMP/powershell"
+
+          curl -fsSL -o "$archive" \
+            "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-x64.tar.gz"
+          echo "ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc $archive" | sha256sum -c -
+          rm -rf "$install_dir"
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir"
+          chmod 0755 "$install_dir/pwsh"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          "$install_dir/pwsh" --version
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        env:
+          HOME: ${{ runner.temp }}/powershell-home
+          XDG_CACHE_HOME: ${{ runner.temp }}/powershell-home/.cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/powershell-home/.config
+          XDG_DATA_HOME: ${{ runner.temp }}/powershell-home/.local/share
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-ChildItem -Recurse -Filter *.ps1 -File |
+            Where-Object { $_.FullName -notmatch '[/\\]\.git[/\\]' } |
+            ForEach-Object {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                $_.FullName, [ref]$tokens, [ref]$errors
+              ) | Out-Null
+              if ($errors.Count -gt 0) {
+                throw "PowerShell parse errors in $($_.FullName): $($errors -join '; ')"
+              }
+            }
+
+  docker:
+    name: Docker and Compose validation
+    needs: detect
+    if: needs.detect.outputs.docker == 'true'
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    env:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_CONFIG: /tmp/gitrun-docker-config
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Prepare CI environment
+        run: |
+          cp config/config.example.env /tmp/gitrun.env
+          sed -i 's|^GITHUB_TOKEN=.*|GITHUB_TOKEN=ci-placeholder|' /tmp/gitrun.env
+          sed -i 's|^GITRUN_REPOSITORIES=.*|GITRUN_REPOSITORIES=Vider06/GitRun|' /tmp/gitrun.env
+          mkdir -p /tmp/gitrun-state /tmp/gitrun-logs
+
+      - name: Ensure Docker CLI and Compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker_version="29.8.1"
+          compose_version="5.5.1"
+          docker_dir="$RUNNER_TEMP/gitrun-docker"
+          mkdir -p "$docker_dir"
+          curl -fsSL -o "$RUNNER_TEMP/docker.tgz" \
+            "https://download.docker.com/linux/static/stable/x86_64/docker-${docker_version}.tgz"
+          tar -xzf "$RUNNER_TEMP/docker.tgz" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/docker/docker" "$docker_dir/docker"
+          rm -rf "$RUNNER_TEMP/docker" "$RUNNER_TEMP/docker.tgz"
+          curl -fsSL -o "$RUNNER_TEMP/gitrun-docker-compose" \
+            "https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-x86_64"
+          echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 *$RUNNER_TEMP/gitrun-docker-compose" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/gitrun-docker-compose"
+          echo "$docker_dir" >> "$GITHUB_PATH"
+          "$docker_dir/docker" --version
+          "$RUNNER_TEMP/gitrun-docker-compose" version
+
+      - name: Validate Compose
+        env:
+          GITRUN_CONFIG_FILE: /tmp/gitrun.env
+          GITRUN_DOCKER_SOCKET: /var/run/docker.sock
+          GITRUN_STATE_DIR: /tmp/gitrun-state
+          GITRUN_LOG_DIR: /tmp/gitrun-logs
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/gitrun-docker-compose" config -q
+
+      - name: Build manager image
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -S /var/run/docker.sock
+          docker info >/dev/null
+          docker build --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
+
+      - name: Build runner image
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -S /var/run/docker.sock
+          docker info >/dev/null
+          docker build --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .
+
+  repository:
+    name: Repository hygiene
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check tracked secrets and generated files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)(\.env|\.env\.|.*\.pem|.*\.key)$' | grep -vE '(^|/)config/config\.example\.env$'; then
+            echo "Potential secret/config file tracked by Git."
+            exit 1
+          fi
+      - name: Install YAML parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python3 -c 'import yaml' >/dev/null 2>&1; then
+            exit 0
+          fi
+          parser_dir="$RUNNER_TEMP/pyyaml"
+          mkdir -p "$parser_dir"
+          python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --target "$parser_dir" "pyyaml==6.0.2"
+          echo "PYTHONPATH=$parser_dir${PYTHONPATH:+:$PYTHONPATH}" >> "$GITHUB_ENV"
+      - name: YAML parse
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          try:
+              import yaml
+          except ImportError:
+              raise SystemExit("PyYAML unavailable")
+          for path in pathlib.Path('.').rglob('*.y*ml'):
+              if '.git' in path.parts:
+                  continue
+              yaml.safe_load(path.read_text())
+          print("YAML validation passed")
+          PY
+      - name: Git diff sanity
+        run: git diff --check
+
+  summary:
+    name: Verification summary
+    if: always()
+    needs:
+      - environment
+      - detect
+      - python
+      - rust
+      - dependency
+      - frontend
+      - tauri
+      - shell
+      - workflow-security
+      - powershell
+      - docker
+      - repository
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - name: Enforce required gates
+        shell: bash
+        env:
+          ENVIRONMENT_RESULT: ${{ needs.environment.result }}
+          DETECT_RESULT: ${{ needs.detect.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          TAURI_RESULT: ${{ needs.tauri.result }}
+          SHELL_RESULT: ${{ needs.shell.result }}
+          SECURITY_RESULT: ${{ needs.workflow-security.result }}
+          POWERSHELL_RESULT: ${{ needs.powershell.result }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
+          PYTHON_ENABLED: ${{ needs.detect.outputs.python }}
+          RUST_ENABLED: ${{ needs.detect.outputs.rust }}
+          DEPENDENCY_ENABLED: ${{ needs.detect.outputs.dependency }}
+          FRONTEND_ENABLED: ${{ needs.detect.outputs.node }}
+          TAURI_ENABLED: ${{ needs.detect.outputs.tauri }}
+          POWERSHELL_ENABLED: ${{ needs.detect.outputs.powershell }}
+          DOCKER_ENABLED: ${{ needs.detect.outputs.docker }}
+        run: |
+          set -euo pipefail
+
+          check_gate() {
+            local name="$1"
+            local result="$2"
+            local enabled="$3"
+
+            if [ "$enabled" = true ]; then
+              if [ "$result" != success ]; then
+                echo "Verification gate failed: $name=$result"
+                return 1
+              fi
+            else
+              case "$result" in
+                success|skipped) ;;
+                *)
+                  echo "Unexpected disabled gate result: $name=$result"
+                  return 1
+                  ;;
+              esac
+            fi
+          }
+
+          check_gate environment "$ENVIRONMENT_RESULT" true
+          check_gate detect "$DETECT_RESULT" true
+          check_gate python "$PYTHON_RESULT" "$PYTHON_ENABLED"
+          check_gate rust "$RUST_RESULT" "$RUST_ENABLED"
+          check_gate dependency "$DEPENDENCY_RESULT" "$DEPENDENCY_ENABLED"
+          check_gate frontend "$FRONTEND_RESULT" "$FRONTEND_ENABLED"
+          check_gate tauri "$TAURI_RESULT" "$TAURI_ENABLED"
+          check_gate shell "$SHELL_RESULT" true
+          check_gate workflow-security "$SECURITY_RESULT" true
+          check_gate powershell "$POWERSHELL_RESULT" "$POWERSHELL_ENABLED"
+          check_gate docker "$DOCKER_RESULT" "$DOCKER_ENABLED"
+          check_gate repository "$REPOSITORY_RESULT" true
+
+          echo "All applicable GitRun verification gates passed."

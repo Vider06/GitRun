@@ -9,6 +9,7 @@
 use eframe::egui::{self, Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle};
 
 /// Base surfaces, from furthest-back to closest-to-the-user.
+#[allow(dead_code)]
 pub struct Palette {
     pub bg_app: Color32,
     pub bg_panel: Color32,
@@ -76,41 +77,41 @@ pub fn install(ctx: &egui::Context) {
 
     visuals.widgets.noninteractive.bg_fill = p.bg_card;
     visuals.widgets.noninteractive.weak_bg_fill = p.bg_panel;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border_subtle);
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, p.text_secondary);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.border_subtle);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, p.text_secondary);
     visuals.widgets.noninteractive.corner_radius = CornerRadius::same(8);
 
     visuals.widgets.inactive.bg_fill = p.bg_card;
     visuals.widgets.inactive.weak_bg_fill = p.bg_card;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, p.border);
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, p.text_secondary);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, p.border);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, p.text_secondary);
     visuals.widgets.inactive.corner_radius = CornerRadius::same(8);
 
     visuals.widgets.hovered.bg_fill = p.bg_card_hover;
     visuals.widgets.hovered.weak_bg_fill = p.bg_card_hover;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, p.accent_muted);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, p.text_primary);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.accent_muted);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, p.text_primary);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(8);
 
     visuals.widgets.active.bg_fill = p.accent_muted;
     visuals.widgets.active.weak_bg_fill = p.accent_muted;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, p.accent);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, p.text_primary);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, p.text_primary);
     visuals.widgets.active.corner_radius = CornerRadius::same(8);
 
     visuals.widgets.open.bg_fill = p.bg_card_hover;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, p.accent_muted);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, p.accent_muted);
     visuals.widgets.open.corner_radius = CornerRadius::same(8);
 
     visuals.selection.bg_fill = p.accent_muted;
-    visuals.selection.stroke = Stroke::new(1.0, p.accent);
+    visuals.selection.stroke = Stroke::new(1.0_f32, p.accent);
 
     visuals.hyperlink_color = p.accent;
     visuals.warn_fg_color = p.warning;
     visuals.error_fg_color = p.danger;
 
     visuals.window_corner_radius = CornerRadius::same(10);
-    visuals.window_stroke = Stroke::new(1.0, p.border);
+    visuals.window_stroke = Stroke::new(1.0_f32, p.border);
     visuals.menu_corner_radius = CornerRadius::same(8);
 
     style.visuals = visuals;
@@ -145,10 +146,11 @@ pub fn status_color(running: bool) -> Color32 {
 /// Small helper for the recurring "section card" look: a slightly raised panel
 /// with a subtle border, used to group related widgets (a runner row, a config
 /// section, a summary stat).
+#[allow(dead_code)]
 pub fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(PALETTE.bg_card)
-        .stroke(Stroke::new(1.0, PALETTE.border_subtle))
+        .stroke(Stroke::new(1.0_f32, PALETTE.border_subtle))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(egui::Margin::same(14))
         .show(ui, add_contents);
@@ -160,7 +162,7 @@ pub fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
 pub fn status_pill(ui: &mut egui::Ui, label: &str, color: Color32) {
     egui::Frame::new()
         .fill(color.gamma_multiply(0.16))
-        .stroke(Stroke::new(1.0, color.gamma_multiply(0.55)))
+        .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.55)))
         .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(8, 2))
         .show(ui, |ui| {

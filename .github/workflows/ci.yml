@@ -207,6 +207,7 @@ jobs:
             https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
           export PATH="$CARGO_HOME/bin:$PATH"
           rustup component add rustfmt clippy
+          export PATH="$CARGO_HOME/bin:$PATH"
           rustc --version
           cargo --version
 
@@ -268,6 +269,8 @@ jobs:
   dependency:
     name: Dependency and supply-chain audit
     needs: detect
+    env:
+      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     if: needs.detect.outputs.dependency == 'true'
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
@@ -288,6 +291,7 @@ jobs:
             https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
           echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+          export PATH="$CARGO_HOME/bin:$PATH"
           echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
           rustc --version
           cargo --version
@@ -327,6 +331,8 @@ jobs:
   frontend:
     name: JavaScript, TypeScript and CSS validation
     needs: detect
+    env:
+      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     if: needs.detect.outputs.node == 'true'
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
@@ -341,10 +347,10 @@ jobs:
       - name: Restore npm cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-v2-${{ hashFiles('**/package.json', '**/package-lock.json') }}
+          path: ${{ runner.temp }}/npm-cache
+          key: ${{ runner.os }}-npm-v3-${{ hashFiles('**/package.json', '**/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-npm-v2-
+            ${{ runner.os }}-npm-v3-
 
       - name: Validate frontend packages
         shell: bash
@@ -413,6 +419,8 @@ jobs:
   tauri:
     name: Tauri GUI build and package
     needs: [detect, rust, frontend]
+    env:
+      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
     if: needs.detect.outputs.tauri == 'true'
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
@@ -578,7 +586,7 @@ jobs:
           cargo install --locked --target-dir "$RUNNER_TEMP/zizmor-target" zizmor
           "$CARGO_HOME/bin/zizmor" --version
       - name: Audit GitHub Actions workflows
-        run: zizmor --min-severity=high --strict-collection --collect=workflows .github/workflows
+        run: "$RUNNER_TEMP/zizmor-cargo/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
 
   powershell:
     name: PowerShell validation

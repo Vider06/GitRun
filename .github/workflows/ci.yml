@@ -60,8 +60,16 @@ jobs:
     if: needs.detect.outputs.rust == 'true'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 25
+    env:
+      TMPDIR: ${{ runner.temp }}/rustup-tmp
     steps:
       - uses: actions/checkout@v7
+      - name: Prepare Rust bootstrap temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          test -w "$TMPDIR"
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:

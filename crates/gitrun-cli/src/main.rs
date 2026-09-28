@@ -391,10 +391,8 @@ fn write_repositories_to_config(path: &Path, repositories: &[String]) -> Result<
         output.push(format!("GITRUN_REPOSITORIES={repository_value}"));
     }
 
-    let mut rendered = output.join("
-");
-    rendered.push('
-');
+    let mut rendered = output.join("\n");
+    rendered.push('\n');
 
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let temp = parent.join(format!(

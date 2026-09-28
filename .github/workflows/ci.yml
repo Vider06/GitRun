@@ -238,7 +238,7 @@ jobs:
         run: cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --release --locked
 
       - name: Rust tests
-        run: cargo test --workspace --exclude gitrun-dashboard-tauri --all-features --locked -- --no-fail-fast
+        run: cargo test --workspace --exclude gitrun-dashboard-tauri --all-features --locked --no-fail-fast
 
       - name: Rust documentation
         run: cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked

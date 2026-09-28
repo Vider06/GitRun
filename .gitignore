@@ -10,15 +10,13 @@ node_modules/
 __pycache__/
 .pytest_cache/
 .venv/
-dist/
-!crates/gitrun-dashboard-tauri/dist/
-!crates/gitrun-dashboard-tauri/dist/**
+/dist/
 
 # Local runtime data.
-data/
-logs/
-run/
-state/
+/data/
+/logs/
+/run/
+/state/
 
 *.log
 .DS_Store

@@ -58,6 +58,22 @@ const REAL_BASH_ENV: &str = "GITRUN_GSR_REAL_BASH";
 const REAL_SHELL_FALLBACK: &str = "/bin/sh.gitrun-real";
 const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 
+fn is_bash_invocation(invocation: &str) -> bool {
+    invocation.ends_with("/bash") || invocation == "bash"
+}
+
+fn real_shell_for_invocation(
+    invocation: &str,
+    shell_env: Option<&str>,
+    bash_env: Option<&str>,
+) -> String {
+    if is_bash_invocation(invocation) {
+        bash_env.unwrap_or(REAL_BASH_FALLBACK).to_owned()
+    } else {
+        shell_env.unwrap_or(REAL_SHELL_FALLBACK).to_owned()
+    }
+}
+
 /// Extracts the full command line this invocation represents, from `sh -c
 /// "<script>"`-style argv. GitHub Actions always invokes the step shell as
 /// `sh -c <script> [args...]` (with the script as a single argv element,
@@ -122,14 +138,15 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
         },
     };
     let invocation = env::args().next().unwrap_or_else(|| "sh".to_owned());
-    let is_bash = invocation.ends_with("/bash") || invocation == "bash";
-    let real_shell_env = if is_bash {
-        env::var(REAL_BASH_ENV).ok().or_else(|| Some(REAL_BASH_FALLBACK.to_owned()))
-    } else {
-        env::var(REAL_SHELL_ENV).ok().or_else(|| Some(REAL_SHELL_FALLBACK.to_owned()))
-    };
+    let real_shell_env = env::var(REAL_SHELL_ENV).ok();
+    let real_bash_env = env::var(REAL_BASH_ENV).ok();
+    let real_shell = real_shell_for_invocation(
+        &invocation,
+        real_shell_env.as_deref(),
+        real_bash_env.as_deref(),
+    );
 
-    match decide(&policy, &args, real_shell_env.as_deref()) {
+    match decide(&policy, &args, Some(&real_shell)) {
         AgentDecision::Delegate { real_shell } => {
             // exec replaces this process; on success this call never
             // returns. On failure (real shell missing/not executable),
@@ -221,6 +238,30 @@ mod tests {
             }
             other => panic!("expected Refuse, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn bash_invocation_uses_bash_real_shell() {
+        assert_eq!(
+            real_shell_for_invocation("bash", Some("/real/sh"), Some("/real/bash")),
+            "/real/bash"
+        );
+        assert_eq!(
+            real_shell_for_invocation("/bin/bash", None, None),
+            REAL_BASH_FALLBACK
+        );
+    }
+
+    #[test]
+    fn sh_invocation_uses_sh_real_shell() {
+        assert_eq!(
+            real_shell_for_invocation("sh", Some("/real/sh"), Some("/real/bash")),
+            "/real/sh"
+        );
+        assert_eq!(
+            real_shell_for_invocation("/bin/sh", None, None),
+            REAL_SHELL_FALLBACK
+        );
     }
 
     #[test]

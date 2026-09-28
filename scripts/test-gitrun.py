@@ -24,10 +24,7 @@ for path in [
     "docker-compose.yml",
     "docker/runner/Dockerfile",
     "docker/runner/entrypoint.sh",
-    "docker/manager/Dockerfile",
     "systemd/gitrun.service",
-    "autoscaler/gitrun_manager.py",
-    "autoscaler/gitrun_updater_utility.py",
     "scripts/install-server.sh",
     "scripts/install-linux.sh",
     "scripts/install-macos.sh",
@@ -60,8 +57,6 @@ for path in [
 ]:
     require(path)
 
-check_python("autoscaler/gitrun_manager.py")
-check_python("autoscaler/gitrun_updater_utility.py")
 
 cli = (ROOT / "bin/gitrun").read_text(encoding="utf-8")
 for command in [
@@ -114,14 +109,13 @@ for required in [
     "package-manager-cache: false",
     "x86_64-unknown-linux-gnu",
     "release-manifest.json",
-    "gitrun_updater_utility.py",
     "dpkg-deb -f",
 ]:
     if required not in release_workflow:
         errors.append(f"release workflow requirement missing: {required}")
 
-if "./scripts/build-deb.sh" in release_workflow:
-    errors.append("release workflow still uses the legacy build-deb.sh path")
+if "autoscaler/" in release_workflow or "gitrun_updater_utility.py" in release_workflow:
+    errors.append("release workflow still references retired Python GTUU")
 
 if "runs-on: [self-hosted, Linux, X64]" in release_workflow:
     errors.append("release workflow still requires the legacy X64 label")
@@ -138,6 +132,18 @@ if "target/release/bundle/deb" not in release_workflow:
 if "linux-x86_64-deb" not in release_workflow:
     errors.append("release workflow Debian manifest target missing")
 
+
+for retired in ["autoscaler/gitrun_manager.py", "autoscaler/gitrun_updater_utility.py", "docker/manager/Dockerfile"]:
+    if (ROOT / retired).exists():
+        errors.append(f"retired file still present: {retired}")
+
+compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+if "legacy-python" in compose or "docker/manager/Dockerfile" in compose:
+    errors.append("compose still references the retired Python manager")
+
+systemd = (ROOT / "systemd/gitrun.service").read_text(encoding="utf-8")
+if "docker compose" in systemd or "--profile python" in systemd:
+    errors.append("systemd still launches the legacy manager")
 
 cli_manifest = (ROOT / "crates/gitrun-cli/Cargo.toml").read_text(encoding="utf-8")
 if 'name = "gitrun"' not in cli_manifest:

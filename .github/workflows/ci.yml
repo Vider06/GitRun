@@ -93,10 +93,13 @@ jobs:
         env:
           CARGO_HOME: ${{ runner.temp }}/cargo
           RUSTUP_HOME: ${{ runner.temp }}/rustup
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           set -euo pipefail
+          mkdir -p "$CARGO_TARGET_DIR"
           echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
           echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" >> "$GITHUB_ENV"
           echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -314,12 +317,20 @@ jobs:
             echo "Docker daemon socket unavailable on this runner; manager image build skipped."
             exit 0
           fi
+          if ! docker info >/dev/null 2>&1; then
+            echo "Docker API is present but inaccessible to this self-hosted runner; manager image build skipped."
+            exit 0
+          fi
           docker build --network=host -f docker/manager/Dockerfile -t gitrun-manager:ci .
       - name: Build runner image
         shell: bash
         run: |
           if [ ! -S /var/run/docker.sock ]; then
             echo "Docker daemon socket unavailable on this runner; runner image build skipped."
+            exit 0
+          fi
+          if ! docker info >/dev/null 2>&1; then
+            echo "Docker API is present but inaccessible to this self-hosted runner; runner image build skipped."
             exit 0
           fi
           docker build --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .

@@ -14,6 +14,20 @@ SHARED_CACHE_DIR="${GITRUN_SHARED_CACHE_DIR:-/var/lib/gitrun/shared}"
 
 mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
+
+if [[ -S /var/run/docker.sock ]]; then
+  socket_gid="$(stat -c '%g' /var/run/docker.sock)"
+  if [[ "$socket_gid" != "0" ]]; then
+    if getent group "$socket_gid" >/dev/null 2>&1; then
+      docker_socket_group="$(getent group "$socket_gid" | cut -d: -f1)"
+    else
+      docker_socket_group="docker-host"
+      groupadd --gid "$socket_gid" "$docker_socket_group"
+    fi
+    usermod -aG "$docker_socket_group" runner
+  fi
+fi
+
 sudo -u runner -E mkdir -p   "$SHARED_CACHE_DIR/cargo"   "$SHARED_CACHE_DIR/cargo-target"   "$SHARED_CACHE_DIR/pip"   "$SHARED_CACHE_DIR/npm"
 
 if [[ -f .runner ]]; then

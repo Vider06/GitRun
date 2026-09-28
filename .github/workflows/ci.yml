@@ -562,25 +562,16 @@ jobs:
           fi
       - name: Install zizmor
         shell: bash
-        env:
-          TMPDIR: ${{ runner.temp }}/zizmor-tmp
-          CARGO_HOME: ${{ runner.temp }}/zizmor-cargo
-          RUSTUP_HOME: ${{ runner.temp }}/zizmor-rustup
-          CARGO_TARGET_DIR: ${{ runner.temp }}/zizmor-target
         run: |
           set -euo pipefail
-          mkdir -p "$TMPDIR" "$CARGO_HOME" "$RUSTUP_HOME" "$CARGO_TARGET_DIR"
-          if [ ! -x "$CARGO_HOME/bin/cargo" ]; then
-            curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail \
-              https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path
-          fi
-          export PATH="$CARGO_HOME/bin:$PATH"
-          unset CARGO_BUILD_BUILD_DIR CARGO_TARGET_DIR
-          cargo install --locked --target-dir "$RUNNER_TEMP/zizmor-target" zizmor
-          "$CARGO_HOME/bin/zizmor" --version
+          install_dir="$RUNNER_TEMP/zizmor"
+          mkdir -p "$install_dir"
+          python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir \
+            --target "$install_dir" "zizmor==1.30.1"
+          "$install_dir/bin/zizmor" --version
       - name: Audit GitHub Actions workflows
         run: |
-          "$RUNNER_TEMP/zizmor-cargo/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
+          "$RUNNER_TEMP/zizmor/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
 
   powershell:
     name: PowerShell validation

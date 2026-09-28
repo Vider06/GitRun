@@ -23,9 +23,9 @@
 //!      against the same policy, catching a command that reached a
 //!      container whose internal agent was bypassed or removed. See that
 //!      module for `ViolationAction` handling (kill/log/kill_and_ban).
-//!    Docker-socket-mount hardening (`--cap-drop`, `no-new-privileges`)
-//!    lives in `gitrun-scheduler::docker` since it's a `docker run` flag
-//!    decision, not something GSR itself applies at runtime.
+//!      Docker-socket-mount hardening (`--cap-drop`, `no-new-privileges`)
+//!      lives in `gitrun-scheduler::docker` since it's a `docker run` flag
+//!      decision, not something GSR itself applies at runtime.
 //!
 //! `events.rs` is the integration point other GitRun modules use to report
 //! into GSR without depending on it — see that module's docs, and

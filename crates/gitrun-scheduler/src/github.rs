@@ -351,10 +351,10 @@ impl GitHubClient {
     /// runner performs happens only after the container starts and picks
     /// up a job, which is too late for a pre-flight check to matter.
     ///
-    /// Returns an empty list (not an error) if the directory doesn't exist
-    /// - a repo with no workflows yet is not a validation failure, mirroring
-    /// `workflow_validation::validate_workflows_dir`'s same treatment of a
-    /// missing local directory.
+    /// Returns an empty list (not an error) if the directory doesn't exist.
+    /// A repo with no workflows yet is not a validation failure; this mirrors
+    /// the same missing-directory treatment used by
+    /// `workflow_validation::validate_workflows_dir`.
     pub fn workflow_files(&self, repo: &str) -> Result<Vec<(String, String)>> {
         let (owner, name) = split_repo(repo)?;
         let list_url = format!("{API_BASE}/repos/{owner}/{name}/contents/.github/workflows");

@@ -47,7 +47,6 @@ pub enum SupervisorError {
     Syscall(&'static str, std::io::Error),
     #[error("ptrace setup failed: {0}")]
     Ptrace(&'static str),
-    #[error("seccomp setup failed: {0}")]
     #[error("exec inspection failed for pid {0}")]
     InspectFailed(i32),
 }
@@ -639,6 +638,11 @@ mod linux {
     fn terminate_process_group(root_pid: libc::pid_t) {
         unsafe {
             libc::kill(-root_pid, libc::SIGTERM);
+        }
+    }
+
+    fn kill_process_group(root_pid: libc::pid_t) {
+        unsafe {
             libc::kill(-root_pid, libc::SIGKILL);
         }
     }

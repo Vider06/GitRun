@@ -1,38 +1,31 @@
-//! GSR (GitSecureRun): GitRun's security layer, in two parts per the
-//! operator's explicit scope correction mid-project — this is not just a
-//! crash/error handler:
+//! GSR (GitSecureRun): GitRun's security layer, in three enforcement pieces
+//! plus the independent crash watchdog:
 //!
-//! 1. **Watchdog** (`watchdog.rs`): an external, separate process that
-//!    supervises GitRun's other processes (starting with
-//!    `gitrun-autoscaler`) via PID liveness checks, independent of
-//!    them — so it can observe and report a hard crash (segfault, OOM-kill,
-//!    `SIGKILL`) that a thread inside the crashed process could never see
-//!    happen to itself. Shows an error graphically when possible, falls
-//!    back to a terminal message, and always writes to a durable event log
-//!    (`events.rs`).
-//! 2. **Hardening**, in two layers agreed with the operator (defense in
-//!    depth: internal enforcement as the primary control, external
-//!    polling as the safety net if the internal layer is bypassed):
-//!    - **Internal** (`agent.rs`, this crate's `gitrun-gsr-agent` binary):
-//!      installed as the shell inside runner containers, evaluating every
-//!      `run:` step's command line against `gitrun_core::command_policy`
-//!      *before* it executes, refusing to run anything denied.
-//!    - **External** (`gitrun-scheduler::gsr_poll`, since it needs
-//!      `gitrun-scheduler`'s Docker host access): polls `docker top` on
-//!      running containers from the host and re-evaluates what it sees
-//!      against the same policy, catching a command that reached a
-//!      container whose internal agent was bypassed or removed. See that
-//!      module for `ViolationAction` handling (kill/log/kill_and_ban).
-//!      Docker-socket-mount hardening (`--cap-drop`, `no-new-privileges`)
-//!      lives in `gitrun-scheduler::docker` since it's a `docker run` flag
-//!      decision, not something GSR itself applies at runtime.
+//! 1. Watchdog (watchdog.rs): a separate process that supervises
+//!    gitrun-autoscaler so it can report hard crashes the watched process
+//!    could never observe itself.
+//! 2. Shell Layer 1 (agent.rs): the lightweight shell replacement in
+//!    runner containers, evaluating GitHub Actions run commands before the
+//!    real shell starts.
+//! 3. Kernel Layer 1.5 (exec_supervisor.rs): a root PID-1 supervisor
+//!    that traces the unprivileged Actions runner and all descendants. A
+//!    seccomp filter converts execve/execveat to ptrace stops, allowing the
+//!    same command policy to be checked synchronously before any executable
+//!    starts. This closes the direct-execve and short-lived-process gaps that
+//!    a shell wrapper plus periodic docker top polling cannot close.
+//! 4. External Layer 2 (gitrun-scheduler::gsr_poll): host-side polling
+//!    remains as defense in depth for containers whose kernel supervisor is
+//!    absent or compromised. It can terminate the whole container regardless
+//!    of what happened inside it.
 //!
-//! `events.rs` is the integration point other GitRun modules use to report
-//! into GSR without depending on it — see that module's docs, and
-//! `gitrun-vault`'s `VaultEventSink` trait for the first concrete producer.
+//! The Docker runner keeps CAP_SYS_PTRACE only for the PID-1 supervisor. The
+//! supervisor permanently drops the capability set before launching the
+//! Actions runner, so workflow code does not inherit that tracing capability.
+//! events.rs remains the shared integration point for durable security events.
 
 pub mod agent;
 pub mod events;
+pub mod exec_supervisor;
 pub mod watchdog;
 
 pub use events::{SecurityEvent, Severity};

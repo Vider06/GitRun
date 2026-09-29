@@ -233,7 +233,9 @@ fn dashboard_executable() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
     #[cfg(windows)]
     {
-        candidates.push(PathBuf::from(r"C:\Program Files\GitRun\gitrun-dashboard-tauri.exe"));
+        candidates.push(PathBuf::from(
+            r"C:\Program Files\GitRun\gitrun-dashboard-tauri.exe",
+        ));
     }
 
     candidates.push(PathBuf::from(if cfg!(windows) {
@@ -256,11 +258,7 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "GitRun dashboard exited with status {}",
-            status
-        )
-        .into())
+        Err(format!("GitRun dashboard exited with status {}", status).into())
     }
 }
 

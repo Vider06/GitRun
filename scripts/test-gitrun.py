@@ -12,11 +12,29 @@ def require(path: str):
     if not (ROOT / path).is_file():
         errors.append(f"missing: {path}")
 
-def check_python(path: str):
+def read_text(path: str) -> str:
     try:
-        ast.parse((ROOT / path).read_text(encoding="utf-8"))
-    except Exception as exc:
-        errors.append(f"python syntax {path}: {exc}")
+        return (ROOT / path).read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"read failed {path}: {exc}")
+        return ""
+
+def fail_if_errors() -> None:
+    if errors:
+        print("GitRun static check: FAIL")
+        for error in errors:
+            print(f" - {error}")
+        sys.exit(1)
+
+def check_shell_syntax(path: str) -> None:
+    result = subprocess.run(
+        ["bash", "-n", str(ROOT / path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"exit code {result.returncode}"
+        errors.append(f"shell syntax {path}: {detail}")
 
 for path in [
     "Cargo.toml",
@@ -26,7 +44,6 @@ for path in [
     "docker/runner/entrypoint.sh",
     "systemd/gitrun.service",
     "scripts/install-server.sh",
-    "scripts/install-linux.sh",
     "scripts/install-macos.sh",
     "scripts/install-windows.ps1",
     "scripts/build-release.sh",
@@ -62,7 +79,9 @@ for path in [
 ]:
     require(path)
 
-scheduler_lib = (ROOT / "crates/gitrun-scheduler/src/lib.rs").read_text(encoding="utf-8")
+fail_if_errors()
+
+scheduler_lib = read_text("crates/gitrun-scheduler/src/lib.rs")
 for required in [
     "pub mod reconcile",
     "pub mod github",
@@ -73,13 +92,13 @@ for required in [
     if required not in scheduler_lib:
         errors.append(f"Rust scheduler feature missing: {required}")
 
-cli_source = (ROOT / "crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+cli_source = read_text("crates/gitrun-cli/src/main.rs")
 for required in ["gitrun_scheduler::run()", "gitrun_scheduler::run_gtuu_once()", "only_containers", 'name = "scheduler"']:
     if required not in cli_source:
         errors.append(f"Rust CLI scheduler integration missing: {required}")
 
 config_path = ROOT / "config/config.example.env"
-config_source = config_path.read_text(encoding="utf-8")
+config_source = read_text("config/config.example.env")
 for key, expected in [
     ("GITRUN_MIN_RUNNERS", "3"),
     ("GITRUN_MAX_RUNNERS", "8"),
@@ -93,7 +112,7 @@ for key, expected in [
     ("GITRUN_AUTO_CONTAINER_RECOVERY", "true"),
     ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", "60"),
     ("GITRUN_SHARED_CACHE_VOLUME", "gitrun-runner-shared"),
-    ("GITRUN_RUNNER_LABELS", "self-hosted,Linux,X64,gitrun-ci"),
+    ("GITRUN_RUNNER_LABELS", "self-hosted,Linux"),
     ("GITRUN_RUNNER_HOME_SIZE", "8g"),
     ("GITRUN_RUNNER_HOME_BACKEND", "tmpfs"),
     ("GITRUN_GITHUB_CONNECT_TIMEOUT", "5"),

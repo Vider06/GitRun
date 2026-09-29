@@ -52,10 +52,7 @@ pub enum SupervisorError {
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-pub fn run(
-    _events_path: &Path,
-    _policy: &CommandPolicy,
-) -> Result<i32, SupervisorError> {
+pub fn run(_events_path: &Path, _policy: &CommandPolicy) -> Result<i32, SupervisorError> {
     Err(SupervisorError::UnsupportedPlatform)
 }
 
@@ -117,10 +114,7 @@ mod linux {
 
     /// Runs the Actions runner as an unprivileged tracee and supervises all
     /// descendant execs synchronously in the parent.
-    pub(super) fn run(
-        events_path: &Path,
-        policy: &CommandPolicy,
-    ) -> Result<i32, SupervisorError> {
+    pub(super) fn run(events_path: &Path, policy: &CommandPolicy) -> Result<i32, SupervisorError> {
         let runner = lookup_runner()?;
         let stopping = Arc::new(AtomicBool::new(false));
         signal_hook::flag::register(signal_hook::consts::SIGTERM, stopping.clone())
@@ -289,7 +283,9 @@ mod linux {
     ) -> Result<i32, SupervisorError> {
         let wait_result = wait_for_initial_stop(root_pid)?;
         if !is_stopped(wait_result) {
-            return Err(SupervisorError::Ptrace("root tracee did not stop for setup"));
+            return Err(SupervisorError::Ptrace(
+                "root tracee did not stop for setup",
+            ));
         }
 
         let options = PTRACE_O_TRACEFORK
@@ -424,14 +420,8 @@ mod linux {
 
     fn ptrace_event_pid(pid: libc::pid_t) -> Result<libc::pid_t, SupervisorError> {
         let mut value: libc::c_ulong = 0;
-        let result = unsafe {
-            libc::ptrace(
-                PTRACE_GETEVENTMSG,
-                pid,
-                0,
-                &mut value as *mut libc::c_ulong,
-            )
-        };
+        let result =
+            unsafe { libc::ptrace(PTRACE_GETEVENTMSG, pid, 0, &mut value as *mut libc::c_ulong) };
         if result == -1 {
             return Err(SupervisorError::Ptrace("PTRACE_GETEVENTMSG"));
         }
@@ -450,27 +440,24 @@ mod linux {
         events_path: &Path,
     ) -> Result<ExecDecision, SupervisorError> {
         let mut registers = std::mem::MaybeUninit::<libc::user_regs_struct>::uninit();
-        let result = unsafe {
-            libc::ptrace(
-                PTRACE_GETREGS,
-                pid,
-                0,
-                registers.as_mut_ptr(),
-            )
-        };
+        let result = unsafe { libc::ptrace(PTRACE_GETREGS, pid, 0, registers.as_mut_ptr()) };
         if result == -1 {
             return Err(SupervisorError::Ptrace("PTRACE_GETREGS"));
         }
         let registers = unsafe { registers.assume_init() };
 
-        let (path_ptr, argv_ptr, dirfd, flags) =
-            if registers.orig_rax == libc::SYS_execve as u64 {
-                (registers.rdi, registers.rsi, -1i64, 0u64)
-            } else if registers.orig_rax == libc::SYS_execveat as u64 {
-                (registers.rsi, registers.rdx, registers.rdi as i64, registers.r10)
-            } else {
-                return Err(SupervisorError::InspectFailed(pid));
-            };
+        let (path_ptr, argv_ptr, dirfd, flags) = if registers.orig_rax == libc::SYS_execve as u64 {
+            (registers.rdi, registers.rsi, -1i64, 0u64)
+        } else if registers.orig_rax == libc::SYS_execveat as u64 {
+            (
+                registers.rsi,
+                registers.rdx,
+                registers.rdi as i64,
+                registers.r10,
+            )
+        } else {
+            return Err(SupervisorError::InspectFailed(pid));
+        };
 
         let mut path = if path_ptr == 0 {
             "<execveat-empty>".to_owned()
@@ -484,7 +471,8 @@ mod linux {
             }
         };
 
-        if path.is_empty() && registers.orig_rax == libc::SYS_execveat as u64
+        if path.is_empty()
+            && registers.orig_rax == libc::SYS_execveat as u64
             && (flags & EXECVEAT_AT_EMPTY_PATH) != 0
         {
             match resolve_execveat_empty_path(pid, dirfd) {
@@ -531,14 +519,7 @@ mod linux {
 
     fn deny_and_continue(pid: libc::pid_t) -> Result<(), SupervisorError> {
         let mut registers = std::mem::MaybeUninit::<libc::user_regs_struct>::uninit();
-        let result = unsafe {
-            libc::ptrace(
-                PTRACE_GETREGS,
-                pid,
-                0,
-                registers.as_mut_ptr(),
-            )
-        };
+        let result = unsafe { libc::ptrace(PTRACE_GETREGS, pid, 0, registers.as_mut_ptr()) };
         if result == -1 {
             return Err(SupervisorError::Ptrace("PTRACE_GETREGS"));
         }
@@ -583,10 +564,7 @@ mod linux {
         Ok(String::from_utf8_lossy(&buffer[..end]).into_owned())
     }
 
-    fn read_argv(
-        pid: libc::pid_t,
-        address: u64,
-    ) -> Result<Vec<String>, SupervisorError> {
+    fn read_argv(pid: libc::pid_t, address: u64) -> Result<Vec<String>, SupervisorError> {
         if address == 0 {
             return Ok(Vec::new());
         }
@@ -599,16 +577,12 @@ mod linux {
         for chunk_index in 0..(MAX_ARGC / CHUNK) {
             let mut pointers = vec![0u64; CHUNK];
             let remote_address = address + (chunk_index * CHUNK) as u64 * POINTER_SIZE;
-            let bytes = read_process_memory(
-                pid,
-                remote_address,
-                unsafe {
-                    std::slice::from_raw_parts_mut(
-                        pointers.as_mut_ptr() as *mut u8,
-                        pointers.len() * std::mem::size_of::<u64>(),
-                    )
-                },
-            )?;
+            let bytes = read_process_memory(pid, remote_address, unsafe {
+                std::slice::from_raw_parts_mut(
+                    pointers.as_mut_ptr() as *mut u8,
+                    pointers.len() * std::mem::size_of::<u64>(),
+                )
+            })?;
 
             if bytes == 0 || bytes % std::mem::size_of::<u64>() != 0 {
                 return Err(SupervisorError::InspectFailed(pid));
@@ -709,10 +683,7 @@ mod linux {
     }
 }
 
-pub fn run_supervisor(
-    events_path: &Path,
-    policy: &CommandPolicy,
-) -> Result<i32, SupervisorError> {
+pub fn run_supervisor(events_path: &Path, policy: &CommandPolicy) -> Result<i32, SupervisorError> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         return linux::run(events_path, policy);

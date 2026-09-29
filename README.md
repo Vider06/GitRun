@@ -70,13 +70,7 @@ gitrun setup --terminal
 
 The terminal wizard asks for either a GitHub Personal Access Token or GitHub App credentials, verifies repository access, then performs the privileged installation/configuration step.
 
-The repository also contains installer scripts for platform-specific or compatibility workflows:
-
-### Linux
-
-```bash
-./scripts/install-linux.sh
-```
+The repository also contains compatibility/desktop installer scripts for macOS and Windows:
 
 ### macOS
 

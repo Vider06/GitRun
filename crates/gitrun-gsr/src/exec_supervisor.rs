@@ -375,9 +375,7 @@ mod linux {
                 continue;
             }
 
-            if signal == libc::SIGTRAP && event == PTRACE_EVENT_EXEC as i32 {
-                continue_tracee(pid)?;
-            } else if signal == libc::SIGSTOP || signal == libc::SIGTRAP {
+            if signal == libc::SIGSTOP || signal == libc::SIGTRAP {
                 continue_tracee(pid)?;
             } else {
                 continue_tracee_with_signal(pid, signal)?;
@@ -686,7 +684,7 @@ mod linux {
 pub fn run_supervisor(events_path: &Path, policy: &CommandPolicy) -> Result<i32, SupervisorError> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        return linux::run(events_path, policy);
+        linux::run(events_path, policy)
     }
 
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]

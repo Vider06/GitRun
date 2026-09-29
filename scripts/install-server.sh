@@ -4,7 +4,6 @@ umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_BINARY="$ROOT/target/release/gitrun"
-INSTALL_BINARY="/usr/local/bin/gitrun"
 
 if [[ "$(id -u)" -ne 0 ]]; then
     echo "Run as root: sudo $0" >&2

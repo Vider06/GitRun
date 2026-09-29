@@ -103,7 +103,7 @@ pub enum AgentDecision {
     Refuse { reason: String },
 }
 
-/// Pure decision logic, taking the policy and raw argv (excluding argv[0],
+/// Pure decision logic, taking the policy and raw argv (excluding `argv[0]`,
 /// i.e. what the shell was invoked with) rather than reading the
 /// environment/process directly, so it's fully unit-testable.
 pub fn decide(

@@ -281,7 +281,7 @@ Tagged releases are built and published on the self-hosted Linux x64 runner with
 
 ## Current architecture
 
-BigRework is migrating GitRun's manager and operator tooling into a Rust workspace. The workspace contains the Rust core, CLI, setup, updater, recovery, scheduler, vault, GSR, dashboard and Tauri dashboard components.
+BigRework is migrating GitRun's manager and operator tooling into a Rust workspace. The workspace contains the Rust core, CLI, setup, updater, recovery, scheduler, vault, GSR and the Tauri dashboard component.
 
 The Rust CLI is the primary operator entry point. The scheduler and dashboard use the shared core configuration and GitHub authentication abstractions so PAT and GitHub App behavior remains consistent across terminal and graphical setup.
 

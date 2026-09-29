@@ -287,4 +287,4 @@ The Rust CLI is the primary operator entry point. The scheduler and dashboard us
 
 GitRun's runtime control plane is Rust-native. The graphical dashboard is the Tauri application, while the installed Linux service runs the scheduler directly through the `gitrun` executable. The CLI launches the Tauri dashboard for `gitrun dashboard` and when no command is supplied.
 
-See [docs/ROADMAP_PHASES.md](docs/ROADMAP_PHASES.md) and [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).
+See [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).

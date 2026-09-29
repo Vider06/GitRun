@@ -443,7 +443,7 @@ fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, St
             )
         }
     };
-    gitrun_setup_bridge::update_env_file(&path, &config).map_err(|e| e.to_string())?;
+    gitrun_setup::update_env_file(&path, &config).map_err(|e| e.to_string())?;
     gitrun_core::ensure_zizmor_installed().map_err(|e| e.to_string())
 }
 

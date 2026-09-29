@@ -23,10 +23,15 @@
 //! deliberately fail closed instead of silently falling back to the weaker
 //! shell-only implementation.
 
-use gitrun_core::command_policy::{CommandPolicy, Decision};
+use gitrun_core::command_policy::CommandPolicy;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use gitrun_core::command_policy::Decision;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use std::ffi::{CStr, CString};
 use std::path::Path;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -43,7 +48,6 @@ pub enum SupervisorError {
     #[error("ptrace setup failed: {0}")]
     Ptrace(&'static str),
     #[error("seccomp setup failed: {0}")]
-    Seccomp(&'static str),
     #[error("exec inspection failed for pid {0}")]
     InspectFailed(i32),
 }
@@ -164,6 +168,11 @@ mod linux {
     fn child_main(runner: &RunnerIdentity) -> ! {
         unsafe {
             if libc::setpgid(0, 0) != 0 {
+                libc::_exit(125);
+            }
+            // Protect against the tiny pre-PTRACE_O_EXITKILL window if the
+            // PID-1 supervisor dies before it can configure ptrace options.
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) != 0 {
                 libc::_exit(125);
             }
 
@@ -468,23 +477,25 @@ mod linux {
         } else {
             match read_c_string(pid, path_ptr) {
                 Ok(value) => value,
-                Err(_) => return Err(SupervisorError::InspectFailed(pid)),
+                Err(_) => {
+                    emit_inspection_failure(events_path, pid, "could not read executable path");
+                    return Ok(ExecDecision::Deny);
+                }
             }
         };
 
         let argv = match read_argv(pid, argv_ptr) {
             Ok(value) => value,
-            Err(_) => return Err(SupervisorError::InspectFailed(pid)),
+            Err(_) => {
+                emit_inspection_failure(events_path, pid, "could not read executable arguments");
+                return Ok(ExecDecision::Deny);
+            }
         };
 
-        let command_line = if argv.is_empty() {
-            path.clone()
-        } else {
-            std::iter::once(path.as_str())
-                .chain(argv.iter().skip(1).map(String::as_str))
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
+        let command_line = std::iter::once(path.as_str())
+            .chain(argv.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
 
         match policy.evaluate(&command_line) {
             Decision::Allowed => Ok(ExecDecision::Allow),
@@ -552,35 +563,48 @@ mod linux {
             return Ok(Vec::new());
         }
 
-        let mut pointers = vec![0u64; MAX_ARGC];
-        let bytes = read_process_memory(
-            pid,
-            address,
-            unsafe {
-                std::slice::from_raw_parts_mut(
-                    pointers.as_mut_ptr() as *mut u8,
-                    pointers.len() * std::mem::size_of::<u64>(),
-                )
-            },
-        )?;
-
-        if bytes != pointers.len() * std::mem::size_of::<u64>() {
-            return Err(SupervisorError::InspectFailed(pid));
-        }
-
+        const CHUNK: usize = 32;
+        const POINTER_SIZE: u64 = std::mem::size_of::<u64>() as u64;
         let mut args = Vec::new();
-        let mut saw_null = false;
-        for &pointer in &pointers {
-            if pointer == 0 {
-                saw_null = true;
-                break;
+        let mut total_bytes = 0usize;
+
+        for chunk_index in 0..(MAX_ARGC / CHUNK) {
+            let mut pointers = vec![0u64; CHUNK];
+            let remote_address = address + (chunk_index * CHUNK) as u64 * POINTER_SIZE;
+            let bytes = read_process_memory(
+                pid,
+                remote_address,
+                unsafe {
+                    std::slice::from_raw_parts_mut(
+                        pointers.as_mut_ptr() as *mut u8,
+                        pointers.len() * std::mem::size_of::<u64>(),
+                    )
+                },
+            )?;
+
+            if bytes == 0 || bytes % std::mem::size_of::<u64>() != 0 {
+                return Err(SupervisorError::InspectFailed(pid));
             }
-            args.push(read_c_string(pid, pointer)?);
+
+            let pointer_count = bytes / std::mem::size_of::<u64>();
+            for &pointer in &pointers[..pointer_count] {
+                if pointer == 0 {
+                    return Ok(args);
+                }
+                let value = read_c_string(pid, pointer)?;
+                total_bytes = total_bytes.saturating_add(value.len());
+                if total_bytes > 64 * 1024 {
+                    return Err(SupervisorError::InspectFailed(pid));
+                }
+                args.push(value);
+            }
+
+            if bytes < CHUNK * std::mem::size_of::<u64>() {
+                return Err(SupervisorError::InspectFailed(pid));
+            }
         }
-        if !saw_null {
-            return Err(SupervisorError::InspectFailed(pid));
-        }
-        Ok(args)
+
+        Err(SupervisorError::InspectFailed(pid))
     }
 
     fn read_process_memory(

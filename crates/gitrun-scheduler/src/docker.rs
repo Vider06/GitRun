@@ -542,29 +542,23 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
 }
 
 /// Extra `docker run` flags applied to a Linux runner container when
-/// `RunnerSpec::docker_socket_hardening` is true (the default — see the
-/// GSR "danger gate", `gitrun_core::Config::gsr_docker_socket_hardening`).
+/// `RunnerSpec::docker_socket_hardening` is true (the default).
 ///
-/// **What this does and does not do**, stated plainly because it's easy to
-/// over-trust a list like this: the mounted `/var/run/docker.sock` still
-/// gives the runner's own processes full Docker control by design (that's
-/// the whole point of the mount — Docker-in-Docker for build/test jobs).
-/// Nothing short of removing that mount (a larger, separately-scoped
-/// change — see the GSR session notes) closes that specific door. What
-/// these flags DO reduce is the container's *own* kernel-level attack
-/// surface for an attacker who has code execution in the job but hasn't
-/// yet reached the socket, or who is trying to escalate via the container
-/// runtime itself rather than via Docker API calls it's already allowed to
-/// make:
-/// - `--cap-drop=ALL` plus back only `CHOWN`/`SETUID`/`SETGID`/`DAC_OVERRIDE`
-///   (needed for the runner process and build tools to `chown`/run as
-///   themselves and write normal files) removes every other Linux
-///   capability, including `SYS_ADMIN` (mount/namespace operations),
-///   `SYS_PTRACE` (process injection/debugging), and `NET_RAW`.
-/// - `--security-opt no-new-privileges` blocks setuid/setgid/file-capability
-///   escalation for the lifetime of the container, closing the most common
-///   "gained a foothold, now escalate" path even if a setuid binary exists
-///   somewhere in the image.
+/// The runner container deliberately retains `CAP_SYS_PTRACE` because the
+/// GSR PID-1 supervisor needs it to trace the unprivileged Actions runner and
+/// inspect exec arguments after the kernel's seccomp TRACE stop. The
+/// supervisor is the only long-lived root process in that container; it
+/// permanently drops the runner child to the dedicated `runner` uid/gid
+/// without retaining capabilities before the Actions workload starts.
+///
+/// The mounted `/var/run/docker.sock` remains a separate, intentional trust
+/// boundary: anything that can successfully use the socket can control the
+/// Docker daemon. These flags reduce the container's kernel attack surface
+/// around that boundary without pretending the socket itself is a sandbox.
+///
+/// Dangerous capabilities stay removed: `SYS_ADMIN`, `NET_RAW`,
+/// `SYS_MODULE`, and every capability other than the small bootstrap set
+/// plus `SYS_PTRACE` are absent. `no-new-privileges` remains enabled.
 fn docker_socket_hardening_args() -> Vec<String> {
     [
         "--cap-drop",
@@ -577,6 +571,8 @@ fn docker_socket_hardening_args() -> Vec<String> {
         "SETGID",
         "--cap-add",
         "DAC_OVERRIDE",
+        "--cap-add",
+        "SYS_PTRACE",
         "--security-opt",
         "no-new-privileges",
     ]
@@ -643,9 +639,10 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|w| w == ["--security-opt", "no-new-privileges"]));
-        // SYS_ADMIN and SYS_PTRACE must never be added back - that would
-        // defeat the point of dropping ALL in the first place.
-        assert!(!args.iter().any(|a| a == "SYS_ADMIN" || a == "SYS_PTRACE"));
+        // The GSR supervisor needs SYS_PTRACE; the unprivileged Actions
+        // runner child drops its capability set before any job code runs.
+        assert!(args.iter().any(|a| a == "SYS_PTRACE"));
+        assert!(!args.iter().any(|a| a == "SYS_ADMIN" || a == "NET_RAW"));
     }
 
     #[test]

@@ -234,10 +234,11 @@ for required in [
     "sha256sum -c -",
     "DOCKER_GPG_FINGERPRINT=",
     "rust:1.98.1-bookworm@sha256:",
+    "--supervise-runner",
 ]:
     if required not in runner_image:
         errors.append(f"runner image hardening requirement missing: {required}")
-for obsolete in ["packages.microsoft.com/config/debian/12", "https://sh.rustup.rs"]:
+for obsolete in ["packages.microsoft.com/config/debian/12", "https://sh.rustup.rs", "RUNNER_ALLOW_RUNASROOT"]:
     if obsolete in runner_image:
         errors.append(f"runner image still contains obsolete dependency bootstrap: {obsolete}")
 
@@ -245,6 +246,24 @@ compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR", "GITRUN_LOG_DIR"]:
     if required not in compose:
         errors.append(f"compose portability setting missing: {required}")
+
+gsr_supervisor = (ROOT / "crates/gitrun-gsr/src/exec_supervisor.rs").read_text(encoding="utf-8")
+for required in [
+    "PTRACE_O_TRACESECCOMP",
+    "PTRACE_O_TRACEFORK",
+    "PTRACE_O_TRACECLONE",
+    "PTRACE_O_EXITKILL",
+    "SYS_execve",
+    "SYS_execveat",
+    "SECCOMP_RET_TRACE",
+    "PR_SET_NO_NEW_PRIVS",
+]:
+    if required not in gsr_supervisor:
+        errors.append(f"GSR kernel supervisor requirement missing: {required}")
+
+docker_source = (ROOT / "crates/gitrun-scheduler/src/docker.rs").read_text(encoding="utf-8")
+if '--cap-add", "SYS_PTRACE' not in docker_source and '"SYS_PTRACE"' not in docker_source:
+    errors.append("GSR Docker hardening must retain SYS_PTRACE for the PID-1 supervisor")
 
 for script in [
     "scripts/install-linux.sh", "scripts/install-macos.sh",

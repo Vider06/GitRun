@@ -17,6 +17,7 @@ let state = {
   view: "overview",
   selectedRepo: null,
   overview: null,
+  firstRun: false,
 };
 
 async function refreshOverview() {
@@ -770,6 +771,105 @@ function openHypervisorDecisionModal(decision) {
 }
 
 // ---------------------------------------------------------------------
+// First-run setup
+// ---------------------------------------------------------------------
+
+function setDashboardShell(visible) {
+  const sidebar = document.querySelector(".sidebar");
+  if (sidebar) sidebar.style.display = visible ? "" : "none";
+  if (content) {
+    content.style.gridColumn = visible ? "" : "1 / -1";
+    content.style.padding = visible ? "" : "48px";
+  }
+}
+
+function renderFirstRun() {
+  setDashboardShell(false);
+  content.innerHTML = `
+    <div class="view-header">
+      <h1 class="view-title">Welcome to GitRun</h1>
+      <p class="view-subtitle">Complete the one-time setup before the dashboard can manage your runners.</p>
+    </div>
+
+    <div class="section" style="max-width:640px">
+      <div class="card">
+        <div class="field">
+          <label for="setup-token">GitHub Personal Access Token</label>
+          <input type="password" id="setup-token" autocomplete="off" spellcheck="false"
+                 placeholder="github_pat_…" />
+          <p class="field-hint">
+            The token is sent only to the local privileged setup step and is not persisted by the dashboard itself.
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="setup-repositories">Repositories</label>
+          <input type="text" id="setup-repositories" autocomplete="off"
+                 placeholder="owner/repository, owner/another-repository" />
+          <p class="field-hint">
+            Enter one or more repositories in owner/repository form, separated by commas.
+          </p>
+        </div>
+
+        <div class="toolbar" style="margin-top:20px">
+          <span id="setup-status" class="field-hint"></span>
+          <button class="btn btn-primary" id="setup-submit">Install and start GitRun</button>
+        </div>
+
+        <p class="field-hint" style="margin-top:16px">
+          GitHub App authentication is also available through <code>gitrun setup --terminal</code>.
+        </p>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("setup-submit").addEventListener("click", async () => {
+    const tokenEl = document.getElementById("setup-token");
+    const reposEl = document.getElementById("setup-repositories");
+    const statusEl = document.getElementById("setup-status");
+    const button = document.getElementById("setup-submit");
+
+    const token = tokenEl.value.trim();
+    const repositories = reposEl.value.trim();
+    if (!token) {
+      statusEl.textContent = "GitHub token is required.";
+      statusEl.style.color = "var(--danger)";
+      tokenEl.focus();
+      return;
+    }
+    if (!repositories) {
+      statusEl.textContent = "At least one repository is required.";
+      statusEl.style.color = "var(--danger)";
+      reposEl.focus();
+      return;
+    }
+
+    button.disabled = true;
+    tokenEl.disabled = true;
+    reposEl.disabled = true;
+    statusEl.textContent = "Authorizing the privileged GitRun setup…";
+    statusEl.style.color = "var(--text-secondary)";
+
+    try {
+      await invoke("run_first_setup", { token, repositories });
+      tokenEl.value = "";
+      state.firstRun = false;
+      setDashboardShell(true);
+      await refreshOverview();
+      renderRepoNav();
+      renderOverview();
+      pollHypervisorDecisions();
+    } catch (error) {
+      statusEl.textContent = "Setup failed: " + error;
+      statusEl.style.color = "var(--danger)";
+      button.disabled = false;
+      tokenEl.disabled = false;
+      reposEl.disabled = false;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------
 
@@ -807,6 +907,18 @@ document.addEventListener("click", (event) => {
 
 // Initial load
 (async () => {
+  try {
+    state.firstRun = await invoke("is_first_run");
+  } catch (error) {
+    content.innerHTML = errorBanner("Unable to determine GitRun setup state: " + error);
+    return;
+  }
+
+  if (state.firstRun) {
+    renderFirstRun();
+    return;
+  }
+
   await refreshOverview();
   renderRepoNav();
   navigate("overview");

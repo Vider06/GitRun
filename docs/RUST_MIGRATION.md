@@ -9,6 +9,11 @@ The old Python autoscaler and external GTUU are retired. The current Rust runtim
 provides GitHub pagination, rate-limit handling, persistent scheduler state, runner
 recovery and the Rust GTUU implementation.
 
+The operator dashboard is now the Tauri 2 application in
+`crates/gitrun-dashboard-tauri`. The CLI launches that application for `gitrun dashboard`
+and when no command is supplied; the retired egui dashboard is no longer a workspace
+member or release artifact.
+
 A Rust-only Docker Compose manager profile remains available for source-based
 development/compatibility workflows; it is not required by the installed Linux service.
 `systemd/gitrun.service` launches `/usr/local/bin/gitrun scheduler` directly.

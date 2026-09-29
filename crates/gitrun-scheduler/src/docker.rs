@@ -436,14 +436,12 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.extend([
             "--pids-limit".into(),
             spec.pids_limit.into(),
-            "--read-only".into(),
-            // Fix: --read-only alone with only /tmp writable broke the GitHub
-            // runner in practice ("Read-only file system" on .env and on
-            // actions-runner/_diag) — the runner writes its registration state,
-            // diagnostic logs, and job checkouts (_work/) under its home
-            // directory, not just /tmp. Both are now writable, the runner
-            // binary/config baked into the image stays read-only, everything it
-            // needs to write at runtime does not.
+            // Keep the runner root filesystem writable. A general-purpose
+            // GitHub Actions runner is expected to install job-local tools
+            // and packages, and some package managers need to write outside
+            // /home/runner and /tmp. The runner still cannot turn those
+            // writes into privilege escalation because no-new-privileges
+            // and the capability boundary remain enforced.
         ]);
         match spec.home_backend {
             RunnerHomeBackend::Tmpfs => {
@@ -476,7 +474,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         }
         args.extend([
             "--tmpfs".into(),
-            "/tmp:rw,nosuid,nodev,size=256m".into(),
+            "/tmp:rw,nosuid,nodev,exec,size=256m".into(),
             "--volume".into(),
             "/var/run/docker.sock:/var/run/docker.sock".into(),
             "--group-add".into(),

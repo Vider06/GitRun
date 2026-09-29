@@ -14,10 +14,17 @@ try {
         git describe --tags --always --dirty
     }
 
-    cargo build --release -p gitrun-cli -p gitrun-dashboard --target $Target
+    cargo build --locked --release -p gitrun-cli --bin gitrun
 
-    $cliBinary = if ($Target -like '*windows*') { 'gitrun-rs.exe' } else { 'gitrun-rs' }
-    $dashboardBinary = if ($Target -like '*windows*') { 'gitrun-dashboard.exe' } else { 'gitrun-dashboard' }
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm is required to build the Tauri dashboard" }
+    Push-Location "crates\gitrun-dashboard-tauri"
+    try {
+        npm install --ignore-scripts --no-audit --no-fund
+        npm run tauri build -- --ci --no-bundle
+    } finally { Pop-Location }
+
+    $cliBinary = if ($Target -like '*windows*') { 'gitrun.exe' } else { 'gitrun' }
+    $dashboardBinary = if ($Target -like '*windows*') { 'gitrun-dashboard-tauri.exe' } else { 'gitrun-dashboard-tauri' }
 
     $release = Join-Path $Root 'dist\release'
     $package = Join-Path $release 'package'
@@ -26,8 +33,8 @@ try {
     Get-ChildItem $release -Filter 'GitRun-*' -File -ErrorAction SilentlyContinue | Remove-Item -Force
     Get-ChildItem $package -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 
-    Copy-Item (Join-Path $Root "target\$Target\release\$cliBinary") $package
-    Copy-Item (Join-Path $Root "target\$Target\release\$dashboardBinary") $package
+    Copy-Item (Join-Path $Root "target\release\$cliBinary") $package
+    Copy-Item (Join-Path $Root "target\release\$dashboardBinary") $package
     Copy-Item (Join-Path $Root 'LICENSE'), (Join-Path $Root 'README.md'), (Join-Path $Root 'config\config.example.env') $package
 
     $archive = Join-Path $release "GitRun-$Version-$Target.zip"

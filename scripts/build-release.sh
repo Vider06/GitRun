@@ -21,7 +21,7 @@ fi
   exit 2
 }
 
-cargo build --locked --release --target "$TARGET" -p gitrun-cli --bin gitrun
+cargo build --locked --release -p gitrun-cli --bin gitrun
 command -v npm >/dev/null 2>&1 || {
   echo "npm is required to build the Tauri dashboard" >&2
   exit 1

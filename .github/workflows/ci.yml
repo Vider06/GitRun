@@ -14,7 +14,7 @@ env:
   RUST_VERSION: "1.98.1"
 
 concurrency:
-  group: gitrun-ci-${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  group: gitrun-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -200,14 +200,18 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v10-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v9-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
 
       - name: Restore Rust build target cache
         id: rust-target-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v10-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v9-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v8-
 
       - name: Setup Rust
         shell: bash
@@ -282,7 +286,7 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v10-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
 
       - name: Save Rust build target cache
         if: success() && steps.rust-target-cache.outputs.cache-hit != 'true'
@@ -290,7 +294,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v10-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v8-${{ hashFiles('Cargo.lock') }}
 
   dependency:
     name: Dependency and supply-chain audit
@@ -331,7 +335,9 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v10-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
 
       - name: Restore Rust dependency auditor cache
         id: auditor-cache
@@ -342,6 +348,8 @@ jobs:
             .gitrun-ci/cargo-tools
             .gitrun-ci/cargo-target
           key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v7-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-
 
       - name: Setup Rust for dependency tooling
         if: needs.detect.outputs.rust == 'true'
@@ -418,7 +426,7 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v10-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
 
       - name: Save Rust dependency auditor cache
         if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request' && steps.auditor-cache.outputs.cache-hit != 'true'
@@ -428,7 +436,7 @@ jobs:
           path: |
             .gitrun-ci/cargo-tools
             .gitrun-ci/cargo-target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v7-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-${{ hashFiles('Cargo.lock') }}
 
       - name: Restore npm cache for dependency audit
         id: dependency-npm-cache
@@ -436,7 +444,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v10-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-npm-v9-
+            ${{ runner.os }}-${{ runner.arch }}-npm-v8-
 
       - name: Prepare npm dependencies for audit
         if: needs.detect.outputs.node == 'true'
@@ -464,7 +475,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v10-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
 
       - name: Node dependency audit
         if: needs.detect.outputs.node == 'true'
@@ -501,7 +512,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v10-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-npm-v9-
+            ${{ runner.os }}-${{ runner.arch }}-npm-v8-
       - name: Validate frontend packages
         shell: bash
         env:
@@ -567,7 +581,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v10-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
 
   tauri:
     name: Tauri GUI build and package
@@ -616,16 +630,18 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v10-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
 
       - name: Restore Tauri target cache
         id: tauri-target-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v6-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v5-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v6-
+            ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v5-
             ${{ runner.os }}-${{ runner.arch }}-tauri-${{ runner.name }}-${{ env.RUST_VERSION }}-target-v4-
 
       - name: Setup Rust
@@ -670,7 +686,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v10-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-npm-v9-
+            ${{ runner.os }}-${{ runner.arch }}-npm-v8-
       - name: Install Tauri frontend dependencies
         working-directory: crates/gitrun-dashboard-tauri
         env:
@@ -702,7 +721,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v6-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v5-${{ hashFiles('Cargo.lock') }}
 
       - name: Bundle Tauri application
         working-directory: crates/gitrun-dashboard-tauri

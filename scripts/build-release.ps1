@@ -17,6 +17,7 @@ try {
     cargo build --locked --release -p gitrun-cli --bin gitrun
 
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm is required to build the Tauri dashboard" }
+    $TauriVersion = $Version.TrimStart('v')
     Push-Location "crates\gitrun-dashboard-tauri"
     try {
         npm install --ignore-scripts --no-audit --no-fund

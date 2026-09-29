@@ -81,11 +81,7 @@ if [[ -S /var/run/docker.sock ]]; then
   fi
 fi
 
-sudo -u runner -E mkdir -p \
-  "$SHARED_CACHE_DIR/cargo" \
-  "$SHARED_CACHE_DIR/cargo-target" \
-  "$SHARED_CACHE_DIR/pip" \
-  "$SHARED_CACHE_DIR/npm"
+sudo -u runner -E mkdir -p   "$SHARED_CACHE_DIR/cargo"   "$SHARED_CACHE_DIR/cargo-target"   "$SHARED_CACHE_DIR/pip"   "$SHARED_CACHE_DIR/npm"
 
 if [[ -f .runner ]]; then
   chown runner:runner .runner .credentials .credentials_rsaparams 2>/dev/null || true
@@ -107,4 +103,8 @@ unset GITRUN_GSR_COMMAND_WHITELIST_ENABLED
 unset GITRUN_GSR_COMMAND_WHITELIST
 unset GITRUN_GSR_VIOLATION_ACTION
 
-exec sudo -u runner -E ./run.sh
+# GSR supervisor is intentionally the final PID 1 process. It keeps the
+# CAP_SYS_PTRACE retained by the container solely for the supervisor and
+# permanently drops the runner child to the unprivileged "runner" account
+# before the Actions workload begins.
+exec /usr/local/bin/gitrun-gsr-agent --supervise-runner

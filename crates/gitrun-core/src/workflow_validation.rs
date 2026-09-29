@@ -18,7 +18,7 @@
 //!    combined with an explicit checkout of the PR head, unquoted/untrusted
 //!    `${{ }}` expansion directly in `run:`, `ACTIONS_ALLOW_UNSECURE_COMMANDS`).
 //! 2. An optional shell-out to the third-party `zizmor` static analyzer
-//!    (MIT license, https://github.com/zizmorcore/zizmor — credited in
+//!    (MIT license, <https://github.com/zizmorcore/zizmor> — credited in
 //!    this project's README/NOTICE) if installed and enabled via
 //!    `Config::gsr_zizmor_enabled`. `zizmor` is a far more thorough
 //!    workflow analyzer than anything reasonable to reimplement here; we

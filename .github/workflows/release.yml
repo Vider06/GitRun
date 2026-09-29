@@ -88,7 +88,7 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-rust-${{ env.RUST_VERSION }}-v1-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-rust-${{ env.RUST_VERSION }}-v2-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-rust-${{ env.RUST_VERSION }}-v1-${{ hashFiles('Cargo.lock') }}-
             ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-rust-${{ env.RUST_VERSION }}-v1-
@@ -98,7 +98,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-target-v1-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-target-v2-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-target-v1-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-
             ${{ runner.os }}-${{ runner.arch }}-${{ runner.name }}-release-target-v1-${{ env.RUST_VERSION }}-

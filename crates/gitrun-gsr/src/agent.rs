@@ -224,8 +224,10 @@ mod tests {
 
     #[test]
     fn policy_disabled_is_empty_but_still_shared() {
-        let mut config = gitrun_core::Config::default();
-        config.gsr_command_policy_enabled = false;
+        let config = gitrun_core::Config {
+            gsr_command_policy_enabled: false,
+            ..gitrun_core::Config::default()
+        };
         assert_eq!(
             policy_for_config(&config).evaluate("sudo rm -rf /"),
             Decision::Allowed

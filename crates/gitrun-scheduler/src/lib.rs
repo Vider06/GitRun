@@ -777,6 +777,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
     let client = build_github_client(&config)?;
     let docker_socket_gid = resolve_docker_socket_gid()?;
+    let gsr_policy_env = gsr_policy_env(&config);
     let gtuu_config = GtuuConfig {
         image: &config.runner_image,
         repositories: &config.repositories,
@@ -795,6 +796,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
+        gsr_policy_env: &gsr_policy_env,
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }

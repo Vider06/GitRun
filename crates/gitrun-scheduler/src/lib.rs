@@ -698,6 +698,12 @@ fn vault_env_for_repo(config: &Config, repo: &str) -> Vec<(String, String)> {
         .resolve_for_repo(repo, &groups)
         .into_iter()
         .filter(|(name, _)| {
+            if is_reserved_security_env_name(name) {
+                eprintln!(
+                    "gitrun-autoscaler: skipping vault secret '{name}': GITRUN_GSR_* is reserved for the runner security policy"
+                );
+                return false;
+            }
             if is_valid_env_var_name(name) {
                 true
             } else {
@@ -713,6 +719,10 @@ fn vault_env_for_repo(config: &Config, repo: &str) -> Vec<(String, String)> {
 /// technically requires, but there's no reason a secret's env var name
 /// should need anything looser, and being strict here is cheap insurance
 /// against shell-metacharacter or injection surprises downstream.
+fn is_reserved_security_env_name(name: &str) -> bool {
+    name.starts_with("GITRUN_GSR_")
+}
+
 fn is_valid_env_var_name(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
@@ -980,6 +990,12 @@ mod tests {
     fn lowercase_or_leading_digit_is_rejected() {
         assert!(!is_valid_env_var_name("deploy_key"));
         assert!(!is_valid_env_var_name("2FA_TOKEN"));
+    }
+
+    #[test]
+    fn gsr_policy_namespace_is_reserved() {
+        assert!(is_reserved_security_env_name("GITRUN_GSR_COMMAND_POLICY_ENABLED"));
+        assert!(!is_reserved_security_env_name("GITRUN_DEPLOY_KEY"));
     }
 
     #[test]

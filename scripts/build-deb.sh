@@ -15,6 +15,11 @@ if [[ "$VERSION" == v* ]]; then
   VERSION="${VERSION#v}"
 fi
 
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+  echo "invalid GitRun version: $VERSION" >&2
+  exit 2
+fi
+
 if [[ ! -x "$BINARY" ]]; then
   echo "GitRun binary is missing or not executable: $BINARY" >&2
   exit 1
@@ -60,15 +65,7 @@ Description: GitRun self-contained GitHub Actions runner manager
  GitHub Actions self-hosted runners.
 CONTROL
 
-cat > "$root/usr/share/applications/gitrun.desktop" <<'DESKTOP'
-[Desktop Entry]
-Type=Application
-Name=GitRun
-Comment=GitHub Actions runner manager
-Exec=/usr/bin/gitrun-dashboard-tauri
-Terminal=false
-Categories=Development;Utility;
-DESKTOP
+install -m 0644 packaging/gitrun.desktop "$root/usr/share/applications/gitrun.desktop"
 
 rm -f "$OUTPUT"
 dpkg-deb --build --root-owner-group "$root" "$OUTPUT" >/dev/null

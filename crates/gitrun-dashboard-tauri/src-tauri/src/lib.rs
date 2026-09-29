@@ -1,5 +1,5 @@
-//! GitRun dashboard backend (Tauri). Replaces the earlier egui dashboard
-//! with a native Rust Tauri application. The backend exposing `#[tauri::command]`s that a web frontend (`../dist`)
+//! GitRun dashboard backend (Tauri).
+//! with a native Rust Tauri application. The backend exposes `#[tauri::command]`s that a web frontend (`../dist`)
 //! calls via `invoke(...)`. No HTTP server involved — Tauri's IPC bridges
 //! JS calls directly into these Rust functions in the same process.
 //!

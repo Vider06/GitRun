@@ -465,7 +465,7 @@ fn disable_zizmor() -> Result<(), String> {
             )
         }
     };
-    gitrun_setup_bridge::update_env_file(&path, &config).map_err(|e| e.to_string())
+    gitrun_setup::update_env_file(&path, &config).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------
@@ -592,166 +592,12 @@ fn save_config(updated: Config) -> Result<(), String> {
             )
         }
     };
-    gitrun_setup_bridge::update_env_file(&path, &updated).map_err(|e| e.to_string())
+    gitrun_setup::update_env_file(&path, &updated).map_err(|e| e.to_string())
 }
 
 /// Small bridge module: writing back to the same env-file format
 /// `gitrun-setup` without depending on any legacy dashboard crate. Mirrors the MANAGED_CONFIG_KEYS approach documented in that
 /// crate.
-mod gitrun_setup_bridge {
-    use gitrun_core::Config;
-    use std::collections::BTreeSet;
-    use std::path::Path;
-
-    const MANAGED_CONFIG_KEYS: &[&str] = &[
-        "GITRUN_REPOSITORIES",
-        "GITRUN_MIN_RUNNERS",
-        "GITRUN_MAX_RUNNERS",
-        "GITRUN_IDLE_TIMEOUT",
-        "GITRUN_POLL_INTERVAL",
-        "GITRUN_RUNNER_IMAGE",
-        "GITRUN_RUNNER_LABELS",
-        "GITRUN_EPHEMERAL",
-        "GITRUN_STATE_DIR",
-        "GITRUN_LOG_DIR",
-        "GITRUN_AUTO_CONTAINER_UPDATE",
-        "GITRUN_CONTAINER_UPDATE_TIME",
-        "GITRUN_AUTO_CONTAINER_RECOVERY",
-        "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
-        // GSR hardening / command policy / workflow validation. Added
-        // alongside the dashboard's GSR settings UI — without these keys
-        // here, toggling any of these settings in the dashboard would
-        // silently fail to persist (save_config would report success, but
-        // gitrun_setup_bridge::update_env_file only ever writes keys in
-        // this list, so the change would be lost on the next config load).
-        "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
-        "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
-        "GITRUN_GSR_COMMAND_POLICY_ENABLED",
-        "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED",
-        "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED",
-        "GITRUN_GSR_COMMAND_BLACKLIST",
-        "GITRUN_GSR_COMMAND_WHITELIST_ENABLED",
-        "GITRUN_GSR_COMMAND_WHITELIST",
-        "GITRUN_GSR_VIOLATION_ACTION",
-        "GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED",
-        "GITRUN_GSR_ZIZMOR_ENABLED",
-        "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
-    ];
-
-    fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
-        vec![
-            ("GITRUN_REPOSITORIES", config.repositories.join(",")),
-            ("GITRUN_MIN_RUNNERS", config.min_runners.to_string()),
-            ("GITRUN_MAX_RUNNERS", config.max_runners.to_string()),
-            ("GITRUN_IDLE_TIMEOUT", config.idle_timeout.to_string()),
-            ("GITRUN_POLL_INTERVAL", config.poll_interval.to_string()),
-            ("GITRUN_RUNNER_IMAGE", config.runner_image.clone()),
-            ("GITRUN_RUNNER_LABELS", config.runner_labels.clone()),
-            ("GITRUN_EPHEMERAL", config.ephemeral.to_string()),
-            ("GITRUN_STATE_DIR", config.state_dir.clone()),
-            ("GITRUN_LOG_DIR", config.log_dir.clone()),
-            (
-                "GITRUN_AUTO_CONTAINER_UPDATE",
-                config.auto_container_update.to_string(),
-            ),
-            (
-                "GITRUN_CONTAINER_UPDATE_TIME",
-                config.container_update_time.clone(),
-            ),
-            (
-                "GITRUN_AUTO_CONTAINER_RECOVERY",
-                config.auto_container_recovery.to_string(),
-            ),
-            (
-                "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
-                config.container_recovery_cooldown.to_string(),
-            ),
-            (
-                "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
-                config.gsr_docker_socket_hardening.to_string(),
-            ),
-            (
-                "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
-                config.gsr_allow_unsafe_runner.to_string(),
-            ),
-            (
-                "GITRUN_GSR_COMMAND_POLICY_ENABLED",
-                config.gsr_command_policy_enabled.to_string(),
-            ),
-            (
-                "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED",
-                config.gsr_command_baseline_blacklist_enabled.to_string(),
-            ),
-            (
-                "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED",
-                config.gsr_command_blacklist_enabled.to_string(),
-            ),
-            (
-                "GITRUN_GSR_COMMAND_BLACKLIST",
-                config.gsr_command_blacklist.clone(),
-            ),
-            (
-                "GITRUN_GSR_COMMAND_WHITELIST_ENABLED",
-                config.gsr_command_whitelist_enabled.to_string(),
-            ),
-            (
-                "GITRUN_GSR_COMMAND_WHITELIST",
-                config.gsr_command_whitelist.clone(),
-            ),
-            (
-                "GITRUN_GSR_VIOLATION_ACTION",
-                config.gsr_violation_action.clone(),
-            ),
-            (
-                "GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED",
-                config.gsr_workflow_validation_enabled.to_string(),
-            ),
-            (
-                "GITRUN_GSR_ZIZMOR_ENABLED",
-                config.gsr_zizmor_enabled.to_string(),
-            ),
-            (
-                "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
-                config.gsr_zizmor_license_accepted.to_string(),
-            ),
-        ]
-    }
-
-    pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
-        let original = std::fs::read_to_string(path)
-            .map_err(|e| format!("unable to read {}: {e}", path.display()))?;
-        let values = config_env_values(config);
-        let managed: BTreeSet<&str> = MANAGED_CONFIG_KEYS.iter().copied().collect();
-        let mut seen = BTreeSet::new();
-        let mut output = Vec::new();
-
-        for line in original.lines() {
-            let trimmed = line.trim();
-            if let Some((key, _)) = trimmed.split_once('=') {
-                let key = key.trim();
-                if managed.contains(key) {
-                    if let Some((_, value)) = values.iter().find(|(k, _)| *k == key) {
-                        output.push(format!("{key}={value}"));
-                        seen.insert(key);
-                        continue;
-                    }
-                }
-            }
-            output.push(line.to_owned());
-        }
-        for (key, value) in &values {
-            if !seen.contains(key) {
-                output.push(format!("{key}={value}"));
-            }
-        }
-
-        let tmp = path.with_extension("env.tmp");
-        std::fs::write(&tmp, output.join("\n") + "\n").map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
-        Ok(())
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

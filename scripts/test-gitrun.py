@@ -225,6 +225,7 @@ for legacy in ["gitrun-dashboard", "gitrun_dashboard", "eframe", "egui"]:
             errors.append(f"legacy dashboard reference in {path}: {legacy}")
 
 runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")
+runner_entrypoint = (ROOT / "docker/runner/entrypoint.sh").read_text(encoding="utf-8")
 for required in [
     "docker-ce-cli=",
     "docker-buildx-plugin=",
@@ -234,10 +235,11 @@ for required in [
     "sha256sum -c -",
     "DOCKER_GPG_FINGERPRINT=",
     "rust:1.98.1-bookworm@sha256:",
-    "--supervise-runner",
 ]:
     if required not in runner_image:
         errors.append(f"runner image hardening requirement missing: {required}")
+if "--supervise-runner" not in runner_entrypoint:
+    errors.append("runner entrypoint does not start the GSR supervisor")
 for obsolete in ["packages.microsoft.com/config/debian/12", "https://sh.rustup.rs", "RUNNER_ALLOW_RUNASROOT"]:
     if obsolete in runner_image:
         errors.append(f"runner image still contains obsolete dependency bootstrap: {obsolete}")

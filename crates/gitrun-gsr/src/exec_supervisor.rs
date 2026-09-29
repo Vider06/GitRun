@@ -518,12 +518,12 @@ mod linux {
         match policy.evaluate(&command_line) {
             Decision::Allowed => Ok(ExecDecision::Allow),
             Decision::Denied { reason } => {
-                let event = gitrun_gsr::SecurityEvent::new(
+                let event = crate::SecurityEvent::new(
                     "gsr-exec-supervisor",
-                    gitrun_gsr::Severity::Critical,
+                    crate::Severity::Critical,
                     format!("blocked execve for pid {pid}: {command_line:?} — {reason}"),
                 );
-                let _ = gitrun_gsr::events::emit(events_path, &event);
+                let _ = crate::events::emit(events_path, &event);
                 Ok(ExecDecision::Deny)
             }
         }
@@ -674,6 +674,25 @@ mod linux {
         unsafe {
             libc::kill(-root_pid, libc::SIGKILL);
         }
+    }
+
+    fn kill_tracees(tracees: &HashSet<libc::pid_t>) {
+        for &pid in tracees {
+            if pid > 0 {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    fn emit_inspection_failure(events_path: &Path, pid: libc::pid_t, detail: &str) {
+        let event = crate::SecurityEvent::new(
+            "gsr-exec-supervisor",
+            crate::Severity::Critical,
+            format!("blocked exec inspection for pid {pid}: {detail}; refusing the exec"),
+        );
+        let _ = crate::events::emit(events_path, &event);
     }
 
     fn is_stopped(status: i32) -> bool {

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import ast
 import re
 import subprocess
 import sys
@@ -97,7 +96,6 @@ for required in ["gitrun_scheduler::run()", "gitrun_scheduler::run_gtuu_once()",
     if required not in cli_source:
         errors.append(f"Rust CLI scheduler integration missing: {required}")
 
-config_path = ROOT / "config/config.example.env"
 config_source = read_text("config/config.example.env")
 for key, expected in [
     ("GITRUN_MIN_RUNNERS", "3"),

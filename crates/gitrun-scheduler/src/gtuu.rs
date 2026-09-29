@@ -178,6 +178,8 @@ pub struct GtuuConfig<'a> {
     pub online_wait_timeout: Duration,
     /// See `Config::gsr_docker_socket_hardening` / `RunnerSpec::docker_socket_hardening`.
     pub docker_socket_hardening: bool,
+    /// GSR policy values snapshotted by the runner entrypoint before startup.
+    pub gsr_policy_env: &'a [(String, String)],
 }
 
 /// Updates every permanent container for the configured repositories whose
@@ -284,6 +286,7 @@ fn update_one(
         runner_home_size: config.runner_home_size,
         home_backend: config.runner_home_backend,
         secret_env: &(config.secret_env_for_repo)(repo),
+        gsr_policy_env: config.gsr_policy_env,
         is_windows: false,
         docker_socket_hardening: config.docker_socket_hardening,
     })?;

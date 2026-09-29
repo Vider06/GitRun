@@ -53,8 +53,6 @@ use std::process::Command;
 /// `docker/runner`'s Dockerfile for the exact relocation step. Falls back
 /// to `/bin/sh.gitrun-real` if unset, so a misconfigured image fails
 /// loudly (real shell not found) rather than silently no-op'ing.
-const REAL_SHELL_ENV: &str = "GITRUN_GSR_REAL_SHELL";
-const REAL_BASH_ENV: &str = "GITRUN_GSR_REAL_BASH";
 const REAL_SHELL_FALLBACK: &str = "/bin/sh.gitrun-real";
 const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 
@@ -62,15 +60,11 @@ fn is_bash_invocation(invocation: &str) -> bool {
     invocation.ends_with("/bash") || invocation == "bash"
 }
 
-fn real_shell_for_invocation(
-    invocation: &str,
-    shell_env: Option<&str>,
-    bash_env: Option<&str>,
-) -> String {
+fn real_shell_for_invocation(invocation: &str) -> &'static str {
     if is_bash_invocation(invocation) {
-        bash_env.unwrap_or(REAL_BASH_FALLBACK).to_owned()
+        REAL_BASH_FALLBACK
     } else {
-        shell_env.unwrap_or(REAL_SHELL_FALLBACK).to_owned()
+        REAL_SHELL_FALLBACK
     }
 }
 
@@ -106,15 +100,11 @@ pub enum AgentDecision {
 /// Pure decision logic, taking the policy and raw argv (excluding `argv[0]`,
 /// i.e. what the shell was invoked with) rather than reading the
 /// environment/process directly, so it's fully unit-testable.
-pub fn decide(
-    policy: &CommandPolicy,
-    args: &[String],
-    real_shell_env: Option<&str>,
-) -> AgentDecision {
+pub fn decide(policy: &CommandPolicy, args: &[String], invocation: &str) -> AgentDecision {
     let command_line = extract_command_line(args);
     match policy.evaluate(&command_line) {
         Decision::Allowed => AgentDecision::Delegate {
-            real_shell: real_shell_env.unwrap_or(REAL_SHELL_FALLBACK).to_owned(),
+            real_shell: real_shell_for_invocation(invocation).to_owned(),
         },
         Decision::Denied { reason } => AgentDecision::Refuse {
             reason: format!(
@@ -144,15 +134,9 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
         },
     };
     let invocation = env::args().next().unwrap_or_else(|| "sh".to_owned());
-    let real_shell_env = env::var(REAL_SHELL_ENV).ok();
-    let real_bash_env = env::var(REAL_BASH_ENV).ok();
-    let real_shell = real_shell_for_invocation(
-        &invocation,
-        real_shell_env.as_deref(),
-        real_bash_env.as_deref(),
-    );
+    let real_shell = real_shell_for_invocation(&invocation);
 
-    match decide(&policy, &args, Some(&real_shell)) {
+    match decide(&policy, &args, &invocation) {
         AgentDecision::Delegate { real_shell } => {
             // exec replaces this process; on success this call never
             // returns. On failure (real shell missing/not executable),
@@ -234,7 +218,7 @@ mod tests {
     fn allowed_command_delegates_to_real_shell() {
         let policy = policy_with_baseline();
         let args = vec!["-c".to_string(), "cargo test".to_string()];
-        let decision = decide(&policy, &args, Some("/bin/sh.gitrun-real"));
+        let decision = decide(&policy, &args, "sh");
         assert_eq!(
             decision,
             AgentDecision::Delegate {
@@ -247,7 +231,7 @@ mod tests {
     fn denied_command_refuses_with_reason_including_command_text() {
         let policy = policy_with_baseline();
         let args = vec!["-c".to_string(), "sudo rm -rf /".to_string()];
-        match decide(&policy, &args, None) {
+        match decide(&policy, &args, "sh") {
             AgentDecision::Refuse { reason } => {
                 assert!(reason.contains("sudo rm -rf /"));
             }
@@ -258,11 +242,11 @@ mod tests {
     #[test]
     fn bash_invocation_uses_bash_real_shell() {
         assert_eq!(
-            real_shell_for_invocation("bash", Some("/real/sh"), Some("/real/bash")),
+            real_shell_for_invocation("bash"),
             "/real/bash"
         );
         assert_eq!(
-            real_shell_for_invocation("/bin/bash", None, None),
+            real_shell_for_invocation("/bin/bash"),
             REAL_BASH_FALLBACK
         );
     }
@@ -270,11 +254,11 @@ mod tests {
     #[test]
     fn sh_invocation_uses_sh_real_shell() {
         assert_eq!(
-            real_shell_for_invocation("sh", Some("/real/sh"), Some("/real/bash")),
+            real_shell_for_invocation("sh"),
             "/real/sh"
         );
         assert_eq!(
-            real_shell_for_invocation("/bin/sh", None, None),
+            real_shell_for_invocation("/bin/sh"),
             REAL_SHELL_FALLBACK
         );
     }
@@ -283,7 +267,7 @@ mod tests {
     fn missing_real_shell_env_uses_fallback_path() {
         let policy = policy_with_baseline();
         let args = vec!["-c".to_string(), "echo hi".to_string()];
-        let decision = decide(&policy, &args, None);
+        let decision = decide(&policy, &args, "sh");
         assert_eq!(
             decision,
             AgentDecision::Delegate {

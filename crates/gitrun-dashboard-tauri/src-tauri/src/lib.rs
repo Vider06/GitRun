@@ -138,7 +138,11 @@ fn run_first_setup(app: AppHandle, token: String, repositories: String) -> Resul
         std::process::id()
     ));
 
-    let payload = format!("AUTH_MODE=pat\nGITHUB_TOKEN={}\nGITRUN_REPOSITORIES={}\n", token, repositories.join(","));
+    let payload = format!(
+        "AUTH_MODE=pat\nGITHUB_TOKEN={}\nGITRUN_REPOSITORIES={}\n",
+        token,
+        repositories.join(",")
+    );
     {
         #[cfg(unix)]
         {

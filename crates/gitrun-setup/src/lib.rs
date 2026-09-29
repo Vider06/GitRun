@@ -518,21 +518,35 @@ mod tests {
     }
 }
 
-
 /// Persist the dashboard-managed configuration fields to GitRun's env file.
 /// Kept in the setup crate so GUI and CLI use one implementation.
 const MANAGED_CONFIG_KEYS: &[&str] = &[
-    "GITRUN_REPOSITORIES", "GITRUN_MIN_RUNNERS", "GITRUN_MAX_RUNNERS",
-    "GITRUN_IDLE_TIMEOUT", "GITRUN_POLL_INTERVAL", "GITRUN_RUNNER_IMAGE",
-    "GITRUN_RUNNER_LABELS", "GITRUN_EPHEMERAL", "GITRUN_STATE_DIR",
-    "GITRUN_LOG_DIR", "GITRUN_AUTO_CONTAINER_UPDATE", "GITRUN_CONTAINER_UPDATE_TIME",
-    "GITRUN_AUTO_CONTAINER_RECOVERY", "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
-    "GITRUN_GSR_DOCKER_SOCKET_HARDENING", "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
-    "GITRUN_GSR_COMMAND_POLICY_ENABLED", "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED",
-    "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED", "GITRUN_GSR_COMMAND_BLACKLIST",
-    "GITRUN_GSR_COMMAND_WHITELIST_ENABLED", "GITRUN_GSR_COMMAND_WHITELIST",
-    "GITRUN_GSR_VIOLATION_ACTION", "GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED",
-    "GITRUN_GSR_ZIZMOR_ENABLED", "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
+    "GITRUN_REPOSITORIES",
+    "GITRUN_MIN_RUNNERS",
+    "GITRUN_MAX_RUNNERS",
+    "GITRUN_IDLE_TIMEOUT",
+    "GITRUN_POLL_INTERVAL",
+    "GITRUN_RUNNER_IMAGE",
+    "GITRUN_RUNNER_LABELS",
+    "GITRUN_EPHEMERAL",
+    "GITRUN_STATE_DIR",
+    "GITRUN_LOG_DIR",
+    "GITRUN_AUTO_CONTAINER_UPDATE",
+    "GITRUN_CONTAINER_UPDATE_TIME",
+    "GITRUN_AUTO_CONTAINER_RECOVERY",
+    "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
+    "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
+    "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
+    "GITRUN_GSR_COMMAND_POLICY_ENABLED",
+    "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED",
+    "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED",
+    "GITRUN_GSR_COMMAND_BLACKLIST",
+    "GITRUN_GSR_COMMAND_WHITELIST_ENABLED",
+    "GITRUN_GSR_COMMAND_WHITELIST",
+    "GITRUN_GSR_VIOLATION_ACTION",
+    "GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED",
+    "GITRUN_GSR_ZIZMOR_ENABLED",
+    "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
 ];
 
 fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
@@ -547,28 +561,76 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
         ("GITRUN_EPHEMERAL", config.ephemeral.to_string()),
         ("GITRUN_STATE_DIR", config.state_dir.clone()),
         ("GITRUN_LOG_DIR", config.log_dir.clone()),
-        ("GITRUN_AUTO_CONTAINER_UPDATE", config.auto_container_update.to_string()),
-        ("GITRUN_CONTAINER_UPDATE_TIME", config.container_update_time.clone()),
-        ("GITRUN_AUTO_CONTAINER_RECOVERY", config.auto_container_recovery.to_string()),
-        ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", config.container_recovery_cooldown.to_string()),
-        ("GITRUN_GSR_DOCKER_SOCKET_HARDENING", config.gsr_docker_socket_hardening.to_string()),
-        ("GITRUN_GSR_ALLOW_UNSAFE_RUNNER", config.gsr_allow_unsafe_runner.to_string()),
-        ("GITRUN_GSR_COMMAND_POLICY_ENABLED", config.gsr_command_policy_enabled.to_string()),
-        ("GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED", config.gsr_command_baseline_blacklist_enabled.to_string()),
-        ("GITRUN_GSR_COMMAND_BLACKLIST_ENABLED", config.gsr_command_blacklist_enabled.to_string()),
-        ("GITRUN_GSR_COMMAND_BLACKLIST", config.gsr_command_blacklist.clone()),
-        ("GITRUN_GSR_COMMAND_WHITELIST_ENABLED", config.gsr_command_whitelist_enabled.to_string()),
-        ("GITRUN_GSR_COMMAND_WHITELIST", config.gsr_command_whitelist.clone()),
-        ("GITRUN_GSR_VIOLATION_ACTION", config.gsr_violation_action.clone()),
-        ("GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED", config.gsr_workflow_validation_enabled.to_string()),
-        ("GITRUN_GSR_ZIZMOR_ENABLED", config.gsr_zizmor_enabled.to_string()),
-        ("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED", config.gsr_zizmor_license_accepted.to_string()),
+        (
+            "GITRUN_AUTO_CONTAINER_UPDATE",
+            config.auto_container_update.to_string(),
+        ),
+        (
+            "GITRUN_CONTAINER_UPDATE_TIME",
+            config.container_update_time.clone(),
+        ),
+        (
+            "GITRUN_AUTO_CONTAINER_RECOVERY",
+            config.auto_container_recovery.to_string(),
+        ),
+        (
+            "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
+            config.container_recovery_cooldown.to_string(),
+        ),
+        (
+            "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
+            config.gsr_docker_socket_hardening.to_string(),
+        ),
+        (
+            "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
+            config.gsr_allow_unsafe_runner.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED",
+            config.gsr_command_policy_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED",
+            config.gsr_command_baseline_blacklist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED",
+            config.gsr_command_blacklist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BLACKLIST",
+            config.gsr_command_blacklist.clone(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_WHITELIST_ENABLED",
+            config.gsr_command_whitelist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_WHITELIST",
+            config.gsr_command_whitelist.clone(),
+        ),
+        (
+            "GITRUN_GSR_VIOLATION_ACTION",
+            config.gsr_violation_action.clone(),
+        ),
+        (
+            "GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED",
+            config.gsr_workflow_validation_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_ZIZMOR_ENABLED",
+            config.gsr_zizmor_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
+            config.gsr_zizmor_license_accepted.to_string(),
+        ),
     ]
 }
 
 pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
-    let original = fs::read_to_string(path)
-        .map_err(|e| format!("unable to read {}: {e}", path.display()))?;
+    let original =
+        fs::read_to_string(path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
     let values = config_env_values(config);
     let managed: std::collections::BTreeSet<&str> = MANAGED_CONFIG_KEYS.iter().copied().collect();
     let mut seen = std::collections::BTreeSet::new();

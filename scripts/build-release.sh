@@ -6,6 +6,8 @@ cd "$ROOT"
 TARGET="${1:-}"
 VERSION="${2:-$(git describe --tags --always --dirty)}"
 [[ -n "$TARGET" ]] || TARGET="$(rustc -vV | awk '/host:/ {print $2}')"
+HOST="$(rustc -vV | awk '/host:/ {print $2}')"
+[[ "$TARGET" == "$HOST" ]] || { echo "Tauri local release builds must target the current Rust host ($HOST); got $TARGET" >&2; exit 1; }
 
 cargo build --locked --release -p gitrun-cli --bin gitrun
 command -v npm >/dev/null 2>&1 || { echo "npm is required to build the Tauri dashboard" >&2; exit 1; }
@@ -22,7 +24,7 @@ BINARY="gitrun"
 case "$TARGET" in *windows*) BINARY="gitrun.exe";; esac
 cp "target/release/$BINARY" dist/release/package/
 DASHBOARD_BINARY="gitrun-dashboard-tauri"
-case "$TARGET" in *windows*) DASHBOARD_BINARY="gitrun-dashboard.exe";; esac
+case "$TARGET" in *windows*) DASHBOARD_BINARY="gitrun-dashboard-tauri.exe";; esac
 cp "target/release/$DASHBOARD_BINARY" dist/release/package/
 cp LICENSE README.md config/config.example.env dist/release/package/
 ARCHIVE="dist/release/GitRun-$VERSION-$TARGET.tar.gz"

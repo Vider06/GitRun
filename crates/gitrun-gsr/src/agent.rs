@@ -1,43 +1,20 @@
-//! GSR's **internal** enforcement layer: `gitrun-gsr-agent`, a tiny binary
-//! installed as `/bin/sh` (and the `/bin/bash` symlink) inside runner
-//! container images, replacing the real shell. This is Layer 1 of the
-//! two-layer design agreed with the operator (preventive, inside the
-//! container) — see `gitrun-scheduler`'s external `docker top` poller for
-//! Layer 2 (the safety net on the host, in case this layer is bypassed or
-//! removed from a compromised container).
+//! GSR's internal enforcement layers inside Linux runner containers.
 //!
-//! # Why replace the shell rather than something else
-//! The official GitHub Actions runner always executes a workflow step's
-//! `run:` block via a shell — `sh -c "<script>"` by default, or `bash -c`
-//! when the step sets `shell: bash` (bash is usually a symlink to the same
-//! binary as `sh`, or a near-identical build, on the images GitRun's
-//! runners are based on). Replacing that one binary is the single
-//! narrowest point that still sees literally every step's command line,
-//! without patching the runner binary itself (which GitHub updates
-//! independently of GitRun and which `gitrun-updater` already handles
-//! updating - re-patching it here would fight that) and without needing a
-//! kernel-level mechanism (ptrace/seccomp-notify) that would need root
-//! inside the container and a lot more surface to get right for a v1.
+//! Layer 1 is the shell replacement: gitrun-gsr-agent is installed as
+//! /bin/sh and /bin/bash and rejects denied run-step command lines before
+//! the real shell starts.
 //!
-//! # What this does and does not catch
-//! Every `run:` step goes through this, because that's how the runner
-//! invokes user commands. What it does NOT see: a compiled program a step
-//! runs that itself forks/execs further children directly (bypassing
-//! `/bin/sh` entirely) — e.g. a Python script using `subprocess.run` calls
-//! the target binary via `execve`, not through this shell, so those child
-//! commands are invisible to this layer. That gap is exactly why Layer 2
-//! (external `docker top` polling, see `gitrun_scheduler::gsr_poll`)
-//! exists: it sees the resulting process table from outside, catching
-//! what this layer's shell-only vantage point misses.
+//! The kernel supervisor in exec_supervisor.rs sits underneath that layer.
+//! It owns PID 1 in the runner container, launches the Actions runner as the
+//! unprivileged runner account, and receives a ptrace stop for every
+//! execve/execveat performed by the runner or one of its descendants. This
+//! catches direct execve calls from Python/Node/compiled helpers and removes
+//! the timing gap in which a short-lived process could evade docker top
+//! polling.
 //!
-//! # Real shell delegation
-//! On `Decision::Allowed`, this execs one of the fixed real shell binaries
-//! relocated by the runner image at build time, using the same arguments, so
-//! allowed commands behave completely normally; this binary is invisible to
-//! a passing step. On `Decision::Denied`, it refuses to exec anything,
-//! writes a security event, and exits non-zero so the step (and therefore the
-//! job) fails the same way a normal shell syntax error would - the person
-//! reviewing the failed job sees a clear message either way.
+//! The real shell binaries are still relocated to fixed paths. That is useful
+//! for the shell layer, while the kernel layer guarantees that directly
+//! invoking those paths does not bypass the policy.
 
 use crate::events::{self, SecurityEvent, Severity};
 use gitrun_core::command_policy::{CommandPolicy, Decision};
@@ -46,10 +23,6 @@ use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
-/// Fixed paths to the real shell binaries relocated at image-build time.
-/// These are deliberately constants rather than environment-controlled
-/// paths, because the command-policy boundary must not be bypassable by
-/// changing the delegation target.
 const REAL_SHELL_FALLBACK: &str = "/bin/sh.gitrun-real";
 const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 
@@ -65,15 +38,22 @@ fn real_shell_for_invocation(invocation: &str) -> &'static str {
     }
 }
 
-/// Extracts the full command line this invocation represents, from `sh -c
-/// "<script>"`-style argv. GitHub Actions always invokes the step shell as
-/// `sh -c <script> [args...]` (with the script as a single argv element,
-/// not already split into words) - see the runner's `run.sh` template
-/// generation - so `args[2]` (after the program name and `-c`) is the
-/// text we evaluate. Falls back to joining all arguments if the shape
-/// doesn't match `-c`, since some shells are invoked directly with a
-/// script file path (`sh /path/to/script`) rather than `-c`; either way
-/// we want *some* representation of what's about to run to check.
+/// Creates the effective policy used by both the shell layer and the kernel
+/// supervisor. A disabled master switch intentionally becomes an empty
+/// policy rather than a special execution path, so the two layers keep the
+/// same semantics.
+fn policy_for_config(config: &gitrun_core::Config) -> CommandPolicy {
+    config.command_policy().unwrap_or_else(|| CommandPolicy {
+        baseline_blacklist: gitrun_core::PatternList::default(),
+        user_blacklist: gitrun_core::PatternList::default(),
+        user_whitelist: gitrun_core::PatternList::default(),
+    })
+}
+
+/// Extracts the command represented by a shell invocation, from sh -c
+/// script-style argv when present. For direct script-file invocations it
+/// falls back to joining argv so a policy still has something concrete to
+/// inspect.
 pub fn extract_command_line(args: &[String]) -> String {
     if let Some(dash_c_pos) = args.iter().position(|a| a == "-c") {
         if let Some(script) = args.get(dash_c_pos + 1) {
@@ -83,20 +63,15 @@ pub fn extract_command_line(args: &[String]) -> String {
     args.join(" ")
 }
 
-/// Outcome of evaluating one invocation, separated from the process exit
-/// itself so it's testable without actually exec'ing anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentDecision {
-    /// Exec the real shell with these exact arguments.
     Delegate { real_shell: String },
-    /// Refuse to run; `reason` is both logged and printed to stderr so the
-    /// job log shows why the step failed.
     Refuse { reason: String },
 }
 
-/// Pure decision logic, taking the policy and raw argv (excluding `argv[0]`,
-/// i.e. what the shell was invoked with) rather than reading the
-/// environment/process directly, so it's fully unit-testable.
+/// Pure decision logic for one shell invocation. It does not read mutable
+/// policy state from the process environment, which keeps the decision easy
+/// to test and prevents a job from changing policy after startup.
 pub fn decide(policy: &CommandPolicy, args: &[String], invocation: &str) -> AgentDecision {
     let command_line = extract_command_line(args);
     match policy.evaluate(&command_line) {
@@ -111,32 +86,16 @@ pub fn decide(policy: &CommandPolicy, args: &[String], invocation: &str) -> Agen
     }
 }
 
-/// Runs the agent's full logic against the real process environment and
-/// argv, and never returns on the `Delegate` path (it `exec`s in place,
-/// replacing this process exactly like a real shell would - so the job
-/// step sees no difference in PID, signal handling, etc.). Returns an exit
-/// code only on the `Refuse` path (or if `exec` itself fails, which means
-/// the image is misconfigured - the real shell binary is missing).
+/// Executes the shell-wrapper layer directly. The kernel supervisor uses the
+/// same policy builder but does not call this function; it supervises the
+/// whole Actions runner process tree instead.
 pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
     let args: Vec<String> = env::args().skip(1).collect();
-    let policy = match config.command_policy() {
-        Some(policy) => policy,
-        // Master switch off: every command is allowed, unconditionally -
-        // still delegate through decide() for a single code path rather
-        // than special-casing "policy disabled" separately here.
-        None => CommandPolicy {
-            baseline_blacklist: gitrun_core::PatternList::default(),
-            user_blacklist: gitrun_core::PatternList::default(),
-            user_whitelist: gitrun_core::PatternList::default(),
-        },
-    };
+    let policy = policy_for_config(config);
     let invocation = env::args().next().unwrap_or_else(|| "sh".to_owned());
+
     match decide(&policy, &args, &invocation) {
         AgentDecision::Delegate { real_shell } => {
-            // exec replaces this process; on success this call never
-            // returns. On failure (real shell missing/not executable),
-            // fall through to report that as a misconfiguration rather
-            // than silently doing nothing.
             #[cfg(unix)]
             {
                 let error = Command::new(&real_shell).args(&args).exec();
@@ -145,13 +104,6 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
             }
             #[cfg(not(unix))]
             {
-                // The agent is Linux-only for now (matches GSR's overall
-                // v1 scope - Windows runner container support is planned
-                // separately, see the project's packaging notes). Spawn +
-                // wait rather than a true exec, since Windows has no
-                // process-replacement primitive exposed the same way;
-                // this is here so the crate at least builds on Windows,
-                // not as a production path yet.
                 match Command::new(&real_shell).args(&args).status() {
                     Ok(status) => status.code().unwrap_or(1),
                     Err(error) => {
@@ -176,10 +128,29 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
     }
 }
 
-/// Command-policy violations inside a job are always at least a Warning
-/// (someone's build tried to do something explicitly disallowed) - never
-/// silently Info, since a false-positive policy match is something an
-/// operator needs to see and possibly tune, not something to bury.
+/// Starts the kernel-backed supervisor. This function intentionally fails
+/// closed if ptrace/seccomp setup or executable inspection is unavailable:
+/// falling back to the weaker shell layer would recreate the bypass this
+/// supervisor is specifically meant to close.
+pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
+    let policy = policy_for_config(config);
+    match crate::exec_supervisor::run_supervisor(events_path, &policy) {
+        Ok(code) => code,
+        Err(error) => {
+            let message = format!("GSR exec supervisor failed closed: {error}");
+            eprintln!("gitrun-gsr-agent: {message}");
+            let event =
+                SecurityEvent::new("gsr-exec-supervisor", Severity::Critical, message.clone());
+            if let Err(write_error) = events::emit(events_path, &event) {
+                eprintln!(
+                    "gitrun-gsr-agent: additionally failed to write supervisor event: {write_error}"
+                );
+            }
+            125
+        }
+    }
+}
+
 fn severity_for(_config: &gitrun_core::Config) -> Severity {
     Severity::Warning
 }
@@ -252,15 +223,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_real_shell_env_uses_fixed_path() {
-        let policy = policy_with_baseline();
-        let args = vec!["-c".to_string(), "echo hi".to_string()];
-        let decision = decide(&policy, &args, "sh");
+    fn policy_disabled_is_empty_but_still_shared() {
+        let mut config = gitrun_core::Config::default();
+        config.gsr_command_policy_enabled = false;
         assert_eq!(
-            decision,
-            AgentDecision::Delegate {
-                real_shell: REAL_SHELL_FALLBACK.into()
-            }
+            policy_for_config(&config).evaluate("sudo rm -rf /"),
+            Decision::Allowed
         );
     }
 }

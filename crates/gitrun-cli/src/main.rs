@@ -276,8 +276,14 @@ fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         "pat" => BootstrapAuth::Pat(required_setup_value(&values, "GITHUB_TOKEN")?),
         "app" => BootstrapAuth::GitHubApp {
             app_id: required_setup_value(&values, "GITRUN_GITHUB_APP_ID")?,
-            installation_id: required_setup_value(&values, "GITRUN_GITHUB_APP_INSTALLATION_ID")?,
-            private_key_path: required_setup_value(&values, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?,
+            installation_id: required_setup_value(
+                &values,
+                "GITRUN_GITHUB_APP_INSTALLATION_ID",
+            )?,
+            private_key_path: required_setup_value(
+                &values,
+                "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH",
+            )?,
         },
         other => return Err(format!("unsupported setup auth mode: {other}").into()),
     };

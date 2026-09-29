@@ -133,9 +133,9 @@ try {
     throw "GitHub token is required."
   }
 
-  $repoList = $repos.Split(",") |
+  $repoList = @($repos.Split(",") |
     ForEach-Object { $_.Trim() } |
-    Where-Object { $_ -ne "" }
+    Where-Object { $_ -ne "" })
 
   if ($repoList.Count -eq 0) {
     throw "At least one repository is required."
@@ -144,6 +144,22 @@ try {
   foreach ($repo in $repoList) {
     if ($repo -notmatch "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") {
       throw "Invalid repository: $repo"
+    }
+
+    $parts = $repo.Split("/", 2)
+    try {
+      Invoke-RestMethod `
+        -Uri "https://api.github.com/repos/$($parts[0])/$($parts[1])" `
+        -Headers @{
+          Accept = "application/vnd.github+json"
+          Authorization = "Bearer $plainToken"
+          "X-GitHub-Api-Version" = "2026-03-10"
+          "User-Agent" = "GitRun/$RepoUrl"
+        } `
+        -Method Get `
+        -TimeoutSec 20 | Out-Null
+    } catch {
+      throw "GitHub access check failed for $repo. Verify the token and repository permissions."
     }
   }
 
@@ -178,7 +194,7 @@ try {
 
 icacls $EnvFile /inheritance:r | Out-Null
 Assert-LastExitCode "Credential file ACL hardening"
-icacls $EnvFile /grant:r "$currentUser:F" "*S-1-5-18:F" "*S-1-5-32-544:F" | Out-Null
+icacls $EnvFile /grant:r "${currentUser}:F" "*S-1-5-18:F" "*S-1-5-32-544:F" | Out-Null
 Assert-LastExitCode "Credential file ACL assignment"
 
 $state = Join-Path $InstallDir "state"

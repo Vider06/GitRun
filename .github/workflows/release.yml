@@ -216,7 +216,12 @@ jobs:
           deb="GitRun-${VERSION}-${TARGET}.deb"
           server_archive="GitRun-${VERSION}-${TARGET}-server.tar.gz"
 
-          cp "$deb_source" "$root/$deb"
+          deb_root="$RUNNER_TEMP/gitrun-tauri-deb"
+          rm -rf "$deb_root"
+          dpkg-deb -R "$deb_source" "$deb_root"
+          install -D -m 0755 target/release/gitrun "$deb_root/usr/bin/gitrun"
+          rm -f "$deb_root/DEBIAN/conffiles" 2>/dev/null || true
+          dpkg-deb --build --root-owner-group "$deb_root" "$root/$deb" >/dev/null
 
           install -m 0755 target/release/gitrun "$root/server/gitrun-rs"
           cp LICENSE README.md config/config.example.env "$root/server/"
@@ -264,8 +269,159 @@ jobs:
           test -f "$deb" && test -f "$server" && test -f "$ROOT/release-manifest.json"
 
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
-          dpkg-deb --contents "$deb" | grep -E '/gitrun-dashboard-tauri$'
-          dpkg-deb --contents "$deb" | grep -E '/usr/share/applications/.*\.desktop$'
+          dpkg-deb --contents "$deb" | grep -E '/gitrun-dashboard-tauri
+
+          rm -rf "$RUNNER_TEMP/server-check"
+          mkdir -p "$RUNNER_TEMP/server-check"
+          tar -xzf "$server" -C "$RUNNER_TEMP/server-check"
+          test -x "$RUNNER_TEMP/server-check/gitrun-rs"
+          test "$(od -An -t x1 -N 4 "$RUNNER_TEMP/server-check/gitrun-rs" | tr -d '[:space:]')" = "7f454c46"
+
+          python3 - "$ROOT/release-manifest.json" "$VERSION" "$GITHUB_SHA" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          path, version, commit = sys.argv[1:]
+          data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+          assert data["name"] == "GitRun"
+          assert data["version"] == version
+          assert data["git_commit"] == commit
+          targets = {a["target"] for a in data["artifacts"]}
+          assert {"x86_64-unknown-linux-gnu", "linux-x86_64-deb"} <= targets
+          for artifact in data["artifacts"]:
+              assert len(artifact["sha256"]) == 64
+              assert all(c in "0123456789abcdef" for c in artifact["sha256"])
+              assert "/" not in artifact["file"] and "\\" not in artifact["file"]
+          print("Release manifest: PASS")
+          PY
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ROOT: ${{ steps.artifacts.outputs.root }}
+          DEB: ${{ steps.artifacts.outputs.deb }}
+          SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            "$ROOT/$DEB"
+            "$ROOT/$SERVER_ARCHIVE"
+            "$ROOT/release-manifest.json"
+          )
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${assets[@]}" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "GitRun $VERSION" \
+              --generate-notes
+          fi
+
+          dpkg-deb --contents "$deb" | grep -E '/usr/bin/gitrun
+
+          rm -rf "$RUNNER_TEMP/server-check"
+          mkdir -p "$RUNNER_TEMP/server-check"
+          tar -xzf "$server" -C "$RUNNER_TEMP/server-check"
+          test -x "$RUNNER_TEMP/server-check/gitrun-rs"
+          test "$(od -An -t x1 -N 4 "$RUNNER_TEMP/server-check/gitrun-rs" | tr -d '[:space:]')" = "7f454c46"
+
+          python3 - "$ROOT/release-manifest.json" "$VERSION" "$GITHUB_SHA" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          path, version, commit = sys.argv[1:]
+          data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+          assert data["name"] == "GitRun"
+          assert data["version"] == version
+          assert data["git_commit"] == commit
+          targets = {a["target"] for a in data["artifacts"]}
+          assert {"x86_64-unknown-linux-gnu", "linux-x86_64-deb"} <= targets
+          for artifact in data["artifacts"]:
+              assert len(artifact["sha256"]) == 64
+              assert all(c in "0123456789abcdef" for c in artifact["sha256"])
+              assert "/" not in artifact["file"] and "\\" not in artifact["file"]
+          print("Release manifest: PASS")
+          PY
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ROOT: ${{ steps.artifacts.outputs.root }}
+          DEB: ${{ steps.artifacts.outputs.deb }}
+          SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            "$ROOT/$DEB"
+            "$ROOT/$SERVER_ARCHIVE"
+            "$ROOT/release-manifest.json"
+          )
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${assets[@]}" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "GitRun $VERSION" \
+              --generate-notes
+          fi
+
+          dpkg-deb --contents "$deb" | grep -E '/usr/share/applications/.*\.desktop
+
+          rm -rf "$RUNNER_TEMP/server-check"
+          mkdir -p "$RUNNER_TEMP/server-check"
+          tar -xzf "$server" -C "$RUNNER_TEMP/server-check"
+          test -x "$RUNNER_TEMP/server-check/gitrun-rs"
+          test "$(od -An -t x1 -N 4 "$RUNNER_TEMP/server-check/gitrun-rs" | tr -d '[:space:]')" = "7f454c46"
+
+          python3 - "$ROOT/release-manifest.json" "$VERSION" "$GITHUB_SHA" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          path, version, commit = sys.argv[1:]
+          data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+          assert data["name"] == "GitRun"
+          assert data["version"] == version
+          assert data["git_commit"] == commit
+          targets = {a["target"] for a in data["artifacts"]}
+          assert {"x86_64-unknown-linux-gnu", "linux-x86_64-deb"} <= targets
+          for artifact in data["artifacts"]:
+              assert len(artifact["sha256"]) == 64
+              assert all(c in "0123456789abcdef" for c in artifact["sha256"])
+              assert "/" not in artifact["file"] and "\\" not in artifact["file"]
+          print("Release manifest: PASS")
+          PY
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ROOT: ${{ steps.artifacts.outputs.root }}
+          DEB: ${{ steps.artifacts.outputs.deb }}
+          SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            "$ROOT/$DEB"
+            "$ROOT/$SERVER_ARCHIVE"
+            "$ROOT/release-manifest.json"
+          )
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${assets[@]}" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "GitRun $VERSION" \
+              --generate-notes
+          fi
+
 
           rm -rf "$RUNNER_TEMP/server-check"
           mkdir -p "$RUNNER_TEMP/server-check"

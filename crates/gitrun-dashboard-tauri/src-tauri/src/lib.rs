@@ -108,7 +108,11 @@ fn run_first_setup(
             let mut parts = repo.split('/');
             let owner = parts.next().unwrap_or_default();
             let name = parts.next().unwrap_or_default();
-            owner.is_empty() || name.is_empty() || parts.next().is_some()
+            repo.contains('\n')
+                || repo.contains('\r')
+                || owner.is_empty()
+                || name.is_empty()
+                || parts.next().is_some()
         })
     {
         return Err("Enter at least one repository as owner/repository".into());

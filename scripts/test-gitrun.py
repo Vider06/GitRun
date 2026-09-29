@@ -57,6 +57,7 @@ for path in [
     "crates/gitrun-dashboard-tauri/src-tauri/src/main.rs",
     "crates/gitrun-dashboard-tauri/src-tauri/src/lib.rs",
     "crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json",
+    "crates/gitrun-dashboard-tauri/src-tauri/permissions/dashboard.toml",
     "crates/gitrun-setup/src/resources.rs",
 ]:
     require(path)
@@ -193,6 +194,20 @@ if "run_first_setup" not in tauri_backend or "is_first_run" not in tauri_backend
     errors.append("Tauri first-run setup bridge missing")
 if 'invoke("run_first_setup"' not in tauri_frontend:
     errors.append("Tauri first-run setup UI missing")
+
+tauri_permissions = (ROOT / "crates/gitrun-dashboard-tauri/src-tauri/permissions/dashboard.toml").read_text(encoding="utf-8")
+for required in ['"is_first_run"', '"run_first_setup"']:
+    if required not in tauri_permissions:
+        errors.append(f"Tauri permission missing: {required}")
+
+workspace_manifest = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+if "crates/gitrun-dashboard" in workspace_manifest:
+    errors.append("workspace still contains the retired egui dashboard")
+
+lock_source = (ROOT / "Cargo.lock").read_text(encoding="utf-8")
+for legacy in ['name = "gitrun-dashboard"', 'name = "eframe"', 'name = "egui"', 'name = "wgpu"']:
+    if legacy in lock_source:
+        errors.append(f"Cargo.lock still contains retired dashboard dependency: {legacy}")
 
 for legacy in ["gitrun-dashboard", "gitrun_dashboard", "eframe", "egui"]:
     for path in [

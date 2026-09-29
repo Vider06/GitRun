@@ -1,35 +1,46 @@
 # syntax=docker/dockerfile:1
 
-# Build the GSR shell agent with a modern Rust toolchain. The runner image
-# itself is deliberately kept on the existing Node/Debian base below.
-FROM rust:1.98.1-bookworm AS gsr-builder
+ARG RUNNER_VERSION=2.337.0
+ARG RUNNER_SHA256=70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613
+ARG DOCKER_CLI_VERSION=5:29.8.1-1~debian.12~bookworm
+ARG DOCKER_BUILDX_VERSION=0.37.1-1~debian.12~bookworm
+ARG DOCKER_COMPOSE_VERSION=5.5.1-1~debian.12~bookworm
+ARG DOCKER_GPG_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+ARG POWERSHELL_VERSION=7.5.9
+ARG POWERSHELL_SHA256=492FF26BB958336BF61E597CE19E07648B4003BD2A08659E02F0E3E0446EBFE0
+
+# Build the GSR shell agent with a pinned Rust toolchain.
+FROM rust:1.98.1-bookworm@sha256:9a73a5088750b4c95158ab26629c854c3d6fc4b173cb7bc8079ad252d8ed7bfa AS gsr-builder
 
 WORKDIR /usr/src/gitrun
 
-# Copy the workspace manifests and sources. Cargo will only build the
-# gitrun-gsr binary and its actual dependency graph, not the whole workspace.
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN --mount=type=cache,id=gitrun-runner-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=gitrun-runner-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=gitrun-runner-target,target=/usr/src/gitrun/target \
+RUN --mount=type=cache,id=gitrun-runner-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=gitrun-runner-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=gitrun-runner-target,target=/usr/src/gitrun/target,sharing=locked \
     cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
     && cp /usr/src/gitrun/target/release/gitrun-gsr-agent /usr/src/gitrun/gitrun-gsr-agent \
+    && strip --strip-unneeded /usr/src/gitrun/gitrun-gsr-agent \
     && test -x /usr/src/gitrun/gitrun-gsr-agent
 
-FROM node:22-bookworm
+FROM node:22.23.3-bookworm@sha256:17b7fd60fd81f1ed83af9c8e5f97cfd6ad76457b2c2a00fd6ec8e9af3aa1a4d5
 
-ARG RUNNER_VERSION=2.337.0
+ARG RUNNER_VERSION
+ARG RUNNER_SHA256
+ARG DOCKER_CLI_VERSION
+ARG DOCKER_BUILDX_VERSION
+ARG DOCKER_COMPOSE_VERSION
+ARG DOCKER_GPG_FINGERPRINT
+ARG POWERSHELL_VERSION
+ARG POWERSHELL_SHA256
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    RUNNER_ALLOW_RUNASROOT=1 \
     RUNNER_VERSION=${RUNNER_VERSION} \
     RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
-    PATH=/opt/cargo/bin:$PATH \
-    GITRUN_GSR_REAL_SHELL=/bin/sh.gitrun-real \
-    GITRUN_GSR_REAL_BASH=/bin/bash.gitrun-real
+    PATH=/opt/cargo/bin:/usr/local/bin:$PATH
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -39,31 +50,49 @@ RUN apt-get update \
        libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev \
        libfontconfig1-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
        librsvg2-dev libxdo-dev patchelf xdg-utils unzip xz-utils \
-       gnupg lsb-release gh \
+       gnupg gh \
     && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
-    && chmod a+r /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list \
-    && curl -fsSL -o /tmp/packages-microsoft-prod.deb https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \
-    && dpkg -i /tmp/packages-microsoft-prod.deb \
-    && rm /tmp/packages-microsoft-prod.deb \
+    && curl -fsSL --proto '=https' --tlsv1.2 \
+       https://download.docker.com/linux/debian/gpg \
+       -o /etc/apt/keyrings/docker.asc \
+    && test "$(gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | awk -F: '$1 == "fpr" {print $10; exit}')" = "$DOCKER_GPG_FINGERPRINT" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+       > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin powershell \
-    && rm -rf /var/lib/apt/lists/* \
+    && apt-get install -y --no-install-recommends \
+       "docker-ce-cli=${DOCKER_CLI_VERSION}" \
+       "docker-buildx-plugin=${DOCKER_BUILDX_VERSION}" \
+       "docker-compose-plugin=${DOCKER_COMPOSE_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PowerShell directly from its immutable GitHub release artifact.
+RUN curl -fsSL --proto '=https' --tlsv1.2 \
+      -o /tmp/powershell.tar.gz \
+      "https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-x64.tar.gz" \
+    && echo "${POWERSHELL_SHA256}  /tmp/powershell.tar.gz" | sha256sum -c - \
+    && mkdir -p "/opt/microsoft/powershell/${POWERSHELL_VERSION}" \
+    && tar -xzf /tmp/powershell.tar.gz -C "/opt/microsoft/powershell/${POWERSHELL_VERSION}" \
+    && ln -s "/opt/microsoft/powershell/${POWERSHELL_VERSION}/pwsh" /usr/local/bin/pwsh \
+    && rm /tmp/powershell.tar.gz \
     && pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
-    && rustc --version \
+# Reuse the verified Rust toolchain from the pinned official Rust image
+# instead of executing a floating remote rustup installer at build time.
+COPY --from=gsr-builder /usr/local/rustup /opt/rustup
+COPY --from=gsr-builder /usr/local/cargo/bin /opt/cargo/bin
+RUN rustc --version \
     && cargo --version
 
 RUN useradd --create-home --shell /bin/bash runner \
-    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared /opt/rustup /opt/cargo \
+    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared \
     && chown -R runner:runner /home/runner /var/lib/gitrun/shared /opt/rustup /opt/cargo
 
 WORKDIR /home/runner/actions-runner
 
-RUN curl -fsSL -o runner.tar.gz \
+RUN curl -fsSL --proto '=https' --tlsv1.2 \
+      -o runner.tar.gz \
       "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+    && echo "${RUNNER_SHA256}  runner.tar.gz" | sha256sum -c - \
     && tar xzf runner.tar.gz \
     && rm runner.tar.gz \
     && ./bin/installdependencies.sh \
@@ -73,14 +102,29 @@ COPY --from=gsr-builder /usr/src/gitrun/gitrun-gsr-agent /usr/local/bin/gitrun-g
 RUN chmod 0755 /usr/local/bin/gitrun-gsr-agent
 
 COPY --chown=root:root docker/runner/entrypoint.sh /entrypoint.sh
-RUN chmod 0755 /entrypoint.sh
+RUN chmod 0755 /entrypoint.sh \
+    && bash -n /entrypoint.sh
+
+# The GSR agent requires a protected policy file. This build-time default is
+# replaced by the root-owned runtime tmpfs policy before the runner starts.
+RUN install -d -o root -g root -m 0755 /run/gitrun \
+    && printf '%s\\n' \
+       'GITRUN_GSR_COMMAND_POLICY_ENABLED=true' \
+       'GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED=true' \
+       'GITRUN_GSR_COMMAND_BLACKLIST_ENABLED=false' \
+       'GITRUN_GSR_COMMAND_BLACKLIST=' \
+       'GITRUN_GSR_COMMAND_WHITELIST_ENABLED=false' \
+       'GITRUN_GSR_COMMAND_WHITELIST=' \
+       'GITRUN_GSR_VIOLATION_ACTION=kill' \
+       > /run/gitrun/gsr-policy.env \
+    && chown root:root /run/gitrun/gsr-policy.env \
+    && chmod 0444 /run/gitrun/gsr-policy.env
 
 USER root
 
-# Install the GSR agent as both shell entry points. The original symlinks are
-# retained under explicit names so the agent can delegate to the correct shell
-# and preserve sh/bash semantics. This is intentionally the final RUN command:
-# every earlier Dockerfile RUN must still use the normal build-time shell.
+# Install the GSR agent as both shell entry points. The original binaries are
+# retained under explicit names so allowed commands preserve normal shell
+# semantics while denied commands never reach them.
 RUN mv /bin/sh /bin/sh.gitrun-real \
     && mv /bin/bash /bin/bash.gitrun-real \
     && cp /usr/local/bin/gitrun-gsr-agent /bin/sh \
@@ -91,10 +135,15 @@ RUN mv /bin/sh /bin/sh.gitrun-real \
     && test -x /bin/sh \
     && test -x /bin/bash
 
-# Smoke-test both delegated shell entry points during the image build. These
-# commands execute through the new agent, which must transparently delegate
-# to the relocated real shells.
+# Smoke-test both delegated shell entry points through the protected
+# build-time default policy file.
 RUN /bin/sh -c 'test "$(printf sh)" = sh' \
-    && /bin/bash -c 'test "$(printf bash)" = bash'
+    && /bin/bash -c 'test "$(printf bash)" = bash' \
+    && /usr/bin/sh -c 'test "$(printf sh)" = sh' \
+    && /usr/bin/bash -c 'test "$(printf bash)" = bash'
+
+LABEL org.opencontainers.image.title="GitRun Actions runner" \
+      org.opencontainers.image.description="GitHub Actions runner with GitSecureRun enforcement" \
+      org.opencontainers.image.source="https://github.com/Vider06/GitRun"
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -503,6 +503,11 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         ]);
         if spec.docker_socket_hardening {
             args.extend(docker_socket_hardening_args());
+        } else {
+            // The kernel GSR supervisor still needs ptrace even when the
+            // operator explicitly allows the broader unsafe-runner posture.
+            // This does not claim the rest of Docker hardening is enabled.
+            args.extend(gsr_supervisor_capability_args());
         }
     }
 
@@ -581,6 +586,13 @@ fn docker_socket_hardening_args() -> Vec<String> {
     .collect()
 }
 
+fn gsr_supervisor_capability_args() -> Vec<String> {
+    ["--cap-add", "SYS_PTRACE"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Appends `extra` to a comma-separated label list if not already present.
 fn ensure_label(labels: &str, extra: &str) -> String {
     if labels.split(',').map(str::trim).any(|part| part == extra) {
@@ -643,6 +655,12 @@ mod tests {
         // runner child drops its capability set before any job code runs.
         assert!(args.iter().any(|a| a == "SYS_PTRACE"));
         assert!(!args.iter().any(|a| a == "SYS_ADMIN" || a == "NET_RAW"));
+    }
+
+    #[test]
+    fn gsr_supervisor_keeps_ptrace_when_optional_hardening_is_disabled() {
+        let args = gsr_supervisor_capability_args();
+        assert_eq!(args, vec!["--cap-add", "SYS_PTRACE"]);
     }
 
     #[test]

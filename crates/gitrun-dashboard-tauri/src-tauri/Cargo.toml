@@ -2,7 +2,7 @@
 name = "gitrun-dashboard-tauri"
 version = "0.1.0"
 edition = "2021"
-description = "GitRun dashboard: Tauri-based UI replacing the earlier egui dashboard"
+description = "GitRun dashboard: Tauri-based operator UI"
 
 [lib]
 name = "gitrun_dashboard_tauri_lib"

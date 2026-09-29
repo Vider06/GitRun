@@ -35,7 +35,6 @@ for path in [
     "scripts/build-deb.sh",
     ".github/workflows/release.yml",
     "SECURITY.md",
-    "docs/ROADMAP_PHASES.md",
     "docs/RUST_MIGRATION.md",
     "crates/gitrun-core/Cargo.toml",
     "crates/gitrun-core/src/lib.rs",

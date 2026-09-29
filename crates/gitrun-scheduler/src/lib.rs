@@ -495,6 +495,27 @@ fn deregister_and_remove(
     Ok(())
 }
 
+fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
+    vec![
+        ("GITRUN_GSR_COMMAND_POLICY_ENABLED".into(), config.gsr_command_policy_enabled.to_string()),
+        (
+            "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED".into(),
+            config.gsr_command_baseline_blacklist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED".into(),
+            config.gsr_command_blacklist_enabled.to_string(),
+        ),
+        ("GITRUN_GSR_COMMAND_BLACKLIST".into(), config.gsr_command_blacklist.clone()),
+        (
+            "GITRUN_GSR_COMMAND_WHITELIST_ENABLED".into(),
+            config.gsr_command_whitelist_enabled.to_string(),
+        ),
+        ("GITRUN_GSR_COMMAND_WHITELIST".into(), config.gsr_command_whitelist.clone()),
+        ("GITRUN_GSR_VIOLATION_ACTION".into(), config.gsr_violation_action.clone()),
+    ]
+}
+
 fn create_runner(
     client: &GitHubClient,
     config: &Config,
@@ -522,6 +543,7 @@ fn create_runner(
     docker::ensure_shared_cache_volume(&config.shared_cache_volume)?;
     let docker_socket_gid = resolve_docker_socket_gid()?;
     let secret_env = vault_env_for_repo(config, repo);
+    let gsr_policy_env = gsr_policy_env(config);
 
     let (backend, image, is_windows) =
         resolve_backend_and_image(config, state_dir, vm_registry, job_labels);
@@ -545,6 +567,7 @@ fn create_runner(
             runner_home_size: &config.runner_home_size,
             home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
             secret_env: &secret_env,
+            gsr_policy_env: &gsr_policy_env,
             is_windows,
             docker_socket_hardening: config.gsr_docker_socket_hardening,
         },

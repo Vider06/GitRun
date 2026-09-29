@@ -56,8 +56,6 @@ for path in [
 ]:
     require(path)
 
-
-
 scheduler_lib = (ROOT / "crates/gitrun-scheduler/src/lib.rs").read_text(encoding="utf-8")
 for required in [
     "pub mod reconcile",
@@ -128,7 +126,7 @@ if "linux-x86_64-deb" not in release_workflow:
     errors.append("release workflow Debian manifest target missing")
 
 
-for retired in ["autoscaler/gitrun_manager.py", "autoscaler/gitrun_updater_utility.py", "docker/manager/Dockerfile"]:
+for retired in ["autoscaler/gitrun_manager.py", "autoscaler/gitrun_updater_utility.py", "docker/manager/Dockerfile", "bin/gitrun"]:
     if (ROOT / retired).exists():
         errors.append(f"retired file still present: {retired}")
 

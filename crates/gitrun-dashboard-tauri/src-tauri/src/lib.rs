@@ -1,6 +1,5 @@
 //! GitRun dashboard backend (Tauri). Replaces the earlier egui dashboard
-//! (`gitrun-dashboard`, kept in the workspace for now rather than deleted —
-//! see the session handoff notes for why) with a Tauri app: a native Rust
+//! with a Tauri app: a native Rust
 //! backend exposing `#[tauri::command]`s that a web frontend (`../dist`)
 //! calls via `invoke(...)`. No HTTP server involved — Tauri's IPC bridges
 //! JS calls directly into these Rust functions in the same process.
@@ -15,6 +14,8 @@ use gitrun_core::Config;
 use gitrun_vault::{Scope, Vault};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager};
 
 fn load_config() -> Result<Config, String> {
     match std::env::var("GITRUN_CONFIG_FILE") {
@@ -22,6 +23,172 @@ fn load_config() -> Result<Config, String> {
         Err(_) => Config::from_env(),
     }
     .map_err(|e| e.to_string())
+}
+
+fn configured_config_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    [
+        PathBuf::from("/etc/gitrun/gitrun.env"),
+        PathBuf::from("config/gitrun.env"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+#[tauri::command]
+fn is_first_run() -> bool {
+    configured_config_path().is_none()
+}
+
+fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join(if cfg!(windows) {
+            "gitrun.exe"
+        } else {
+            "gitrun"
+        }));
+    }
+
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(parent) = current.parent() {
+            candidates.push(parent.join(if cfg!(windows) {
+                "gitrun.exe"
+            } else {
+                "gitrun"
+            }));
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        candidates.push(PathBuf::from("/usr/bin/gitrun"));
+        candidates.push(PathBuf::from("/usr/local/bin/gitrun"));
+    }
+
+    #[cfg(windows)]
+    {
+        candidates.push(PathBuf::from(r"C:\Program Files\GitRun\gitrun.exe"));
+    }
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+#[tauri::command]
+fn run_first_setup(
+    app: AppHandle,
+    token: String,
+    repositories: String,
+) -> Result<(), String> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err("graphical first-run setup currently targets Linux x86_64".into());
+    }
+
+    let token = token.trim();
+    let repositories = repositories
+        .split(',')
+        .map(str::trim)
+        .filter(|repo| !repo.is_empty())
+        .collect::<Vec<_>>();
+
+    if token.is_empty() {
+        return Err("GitHub token is required".into());
+    }
+    if token.chars().any(|c| c == '
+' || c == '') {
+        return Err("GitHub token must not contain newlines".into());
+    }
+    if repositories.is_empty()
+        || repositories.iter().any(|repo| {
+            let mut parts = repo.split('/');
+            let owner = parts.next().unwrap_or_default();
+            let name = parts.next().unwrap_or_default();
+            owner.is_empty() || name.is_empty() || parts.next().is_some()
+        })
+    {
+        return Err("Enter at least one repository as owner/repository".into());
+    }
+
+    if std::process::Command::new("pkexec")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return Err(
+            "pkexec is required for the graphical first-run setup. Run GitRun from a desktop Linux session with PolicyKit enabled."
+                .into(),
+        );
+    }
+
+    let cli = dashboard_cli_path(&app).ok_or(
+        "GitRun CLI executable was not found; install gitrun alongside the dashboard before running graphical setup",
+    )?;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-setup-tauri-{}-{unique}.conf",
+        std::process::id()
+    ));
+
+    let payload = format!("{}\n{}\n", token, repositories.join(","));
+    {
+        #[cfg(unix)]
+        {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .map_err(|e| e.to_string())?;
+            file.write_all(payload.as_bytes())
+                .map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&path, payload.as_bytes()).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let result = std::process::Command::new("pkexec")
+        .arg(&cli)
+        .arg("--install-root")
+        .arg(&path)
+        .output();
+
+    let _ = std::fs::remove_file(&path);
+
+    match result {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            Err(if stderr.is_empty() {
+                if stdout.is_empty() {
+                    format!("privileged GitRun setup failed with status {}", output.status)
+                } else {
+                    stdout
+                }
+            } else {
+                stderr
+            })
+        }
+        Err(error) => Err(format!("unable to start privileged GitRun setup: {error}")),
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -590,6 +757,8 @@ mod gitrun_setup_bridge {
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            is_first_run,
+            run_first_setup,
             get_overview,
             get_repo_detail,
             list_vault_secrets,

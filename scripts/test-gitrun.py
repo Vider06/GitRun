@@ -201,7 +201,7 @@ for required in ['"is_first_run"', '"run_first_setup"']:
         errors.append(f"Tauri permission missing: {required}")
 
 workspace_manifest = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
-if "crates/gitrun-dashboard" in workspace_manifest:
+if "crates/gitrun-dashboard" in workspace_manifest.replace("crates/gitrun-dashboard-tauri", ""):
     errors.append("workspace still contains the retired egui dashboard")
 
 lock_source = (ROOT / "Cargo.lock").read_text(encoding="utf-8")

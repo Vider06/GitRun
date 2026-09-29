@@ -286,7 +286,7 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+          key: ${{ steps.rust-common-cache.outputs.cache-primary-key }}
 
       - name: Save Rust build target cache
         if: success() && steps.rust-target-cache.outputs.cache-hit != 'true'
@@ -294,7 +294,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v8-${{ hashFiles('Cargo.lock') }}
+          key: ${{ steps.rust-target-cache.outputs.cache-primary-key }}
 
   dependency:
     name: Dependency and supply-chain audit
@@ -335,7 +335,7 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v9-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
 
@@ -418,16 +418,6 @@ jobs:
         run: cargo deny check advisories bans
 
 
-      - name: Save Rust common cache for dependency tooling
-        if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request' && steps.dependency-rust-common-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            .gitrun-ci/cargo
-            .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
-
       - name: Save Rust dependency auditor cache
         if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request' && steps.auditor-cache.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -436,7 +426,7 @@ jobs:
           path: |
             .gitrun-ci/cargo-tools
             .gitrun-ci/cargo-target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-${{ hashFiles('Cargo.lock') }}
+          key: ${{ steps.auditor-cache.outputs.cache-primary-key }}
 
       - name: Restore npm cache for dependency audit
         id: dependency-npm-cache
@@ -470,12 +460,12 @@ jobs:
           done < <(find . -name package.json -not -path './.git/*' -not -path '*/node_modules/*' -print0)
 
       - name: Save npm dependency cache
-        if: always() && needs.detect.outputs.node == 'true' && steps.dependency-npm-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: success() && needs.detect.outputs.node == 'true' && steps.dependency-npm-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
+          key: ${{ steps.dependency-npm-cache.outputs.cache-primary-key }}
 
       - name: Node dependency audit
         if: needs.detect.outputs.node == 'true'
@@ -575,14 +565,6 @@ jobs:
             echo "::endgroup::"
           done < <(find . -name package.json -not -path './.git/*' -not -path '*/node_modules/*' -print0)
 
-      - name: Save npm cache
-        if: success() && steps.frontend-npm-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .gitrun-ci/npm-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-npm-v9-${{ hashFiles('**/package.json') }}
-
   tauri:
     name: Tauri GUI build and package
     needs: [detect, rust, frontend]
@@ -630,7 +612,7 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v9-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
 

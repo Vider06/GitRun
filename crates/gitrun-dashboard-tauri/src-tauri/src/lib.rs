@@ -81,11 +81,7 @@ fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 #[tauri::command]
-fn run_first_setup(
-    app: AppHandle,
-    token: String,
-    repositories: String,
-) -> Result<(), String> {
+fn run_first_setup(app: AppHandle, token: String, repositories: String) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical first-run setup currently targets Linux x86_64".into());
     }
@@ -181,7 +177,10 @@ fn run_first_setup(
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
             Err(if stderr.is_empty() {
                 if stdout.is_empty() {
-                    format!("privileged GitRun setup failed with status {}", output.status)
+                    format!(
+                        "privileged GitRun setup failed with status {}",
+                        output.status
+                    )
                 } else {
                     stdout
                 }

@@ -2,7 +2,7 @@
 Type=Application
 Name=GitRun
 Comment=Self-hosted GitHub Actions runner manager
-Exec=/usr/bin/gitrun-dashboard
+Exec=/usr/bin/gitrun-dashboard-tauri
 Icon=gitrun
 Terminal=false
 Categories=Development;Utility;

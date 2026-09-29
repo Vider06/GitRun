@@ -100,8 +100,7 @@ fn run_first_setup(
     if token.is_empty() {
         return Err("GitHub token is required".into());
     }
-    if token.chars().any(|c| c == '
-' || c == '') {
+    if token.chars().any(|c| c == '\n' || c == '\r') {
         return Err("GitHub token must not contain newlines".into());
     }
     if repositories.is_empty()

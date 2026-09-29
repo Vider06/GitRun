@@ -634,9 +634,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ runner.name }}-${{ env.RUST_VERSION }}-target-v4-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v5-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-tauri-${{ runner.name }}-${{ env.RUST_VERSION }}-target-v4-${{ hashFiles('Cargo.lock') }}-
+            ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v5-
             ${{ runner.os }}-${{ runner.arch }}-tauri-${{ runner.name }}-${{ env.RUST_VERSION }}-target-v4-
 
       - name: Setup Rust
@@ -716,7 +716,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ runner.name }}-${{ env.RUST_VERSION }}-target-v4-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v5-${{ hashFiles('Cargo.lock') }}
 
       - name: Bundle Tauri application
         working-directory: crates/gitrun-dashboard-tauri

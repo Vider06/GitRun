@@ -531,3 +531,8 @@ mod tests {
         assert!(validate_env_value("token\nINJECTED=value", "GITHUB_TOKEN").is_err());
     }
 }
+
+
+/// Persist the dashboard-managed configuration fields to GitRun's env file.
+/// Kept in the setup crate so GUI and CLI use one implementation.
+

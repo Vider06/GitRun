@@ -859,6 +859,7 @@ function renderFirstRun() {
       renderRepoNav();
       renderOverview();
       pollHypervisorDecisions();
+      setInterval(pollHypervisorDecisions, 5000);
     } catch (error) {
       statusEl.textContent = "Setup failed: " + error;
       statusEl.style.color = "var(--danger)";

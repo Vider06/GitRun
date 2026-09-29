@@ -195,7 +195,7 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v9-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-common-v8-
 
@@ -204,7 +204,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v8-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v9-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v8-
 
@@ -342,7 +342,7 @@ jobs:
           path: |
             .gitrun-ci/cargo-tools
             .gitrun-ci/cargo-target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v7-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-
 

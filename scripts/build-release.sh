@@ -11,6 +11,17 @@ HOST="$(rustc -vV | awk '/host:/ {print $2}')"
 
 cargo build --locked --release -p gitrun-cli --bin gitrun
 command -v npm >/dev/null 2>&1 || { echo "npm is required to build the Tauri dashboard" >&2; exit 1; }
+TAURI_VERSION="${VERSION#v}"
+python3 - "$TAURI_VERSION" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path("crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json")
+data = json.loads(path.read_text(encoding="utf-8"))
+data["version"] = sys.argv[1]
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
 (
   cd crates/gitrun-dashboard-tauri
   npm install --ignore-scripts --no-audit --no-fund

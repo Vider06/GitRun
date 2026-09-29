@@ -225,9 +225,21 @@ for legacy in ["gitrun-dashboard", "gitrun_dashboard", "eframe", "egui"]:
             errors.append(f"legacy dashboard reference in {path}: {legacy}")
 
 runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")
-for required in ["docker-ce-cli", "docker-compose-plugin", "powershell", "gh", "packages.microsoft.com/config/debian/12", "https://sh.rustup.rs"]:
+for required in [
+    "docker-ce-cli=",
+    "docker-buildx-plugin=",
+    "docker-compose-plugin=",
+    "POWERSHELL_VERSION=",
+    "RUNNER_SHA256=",
+    "sha256sum -c -",
+    "DOCKER_GPG_FINGERPRINT=",
+    "rust:1.98.1-bookworm@sha256:",
+]:
     if required not in runner_image:
-        errors.append(f"runner image CI dependency missing: {required}")
+        errors.append(f"runner image hardening requirement missing: {required}")
+for obsolete in ["packages.microsoft.com/config/debian/12", "https://sh.rustup.rs"]:
+    if obsolete in runner_image:
+        errors.append(f"runner image still contains obsolete dependency bootstrap: {obsolete}")
 
 compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR", "GITRUN_LOG_DIR"]:

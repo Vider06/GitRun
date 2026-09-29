@@ -4,12 +4,6 @@ Provides the current GitRun graphical dashboard as a Tauri 2 app: native
 Rust backend (`src-tauri/`, commands in `src-tauri/src/lib.rs`) + a small
 vanilla HTML/CSS/JS frontend (`dist/`, no framework, no build step).
 
-**Not yet built or run in this environment** — the sandbox this was written
-in has no Rust toolchain and no `cargo`/`tauri-cli` available, so this has
-been written carefully against Tauri 2's documented API shape but never
-actually compiled. Treat the first build as a real first build, not a
-formality — see the handoff notes for what to check first.
-
 ## Prerequisites
 
 - Rust toolchain (this workspace targets edition 2021)
@@ -47,11 +41,15 @@ the same config file the scheduler and CLI use:
 GITRUN_CONFIG_FILE=/etc/gitrun/gitrun.env ./gitrun-dashboard-tauri
 ```
 
-## What's real vs. what's a known gap
+## First-run setup
 
-See the session handoff document for the full list — in short: every
-`#[tauri::command]` in `src-tauri/src/lib.rs` reads/writes real GitRun state
-(no mocked data), but this has never been run, so expect a first-build pass
-to surface at least minor issues (exact Tauri 2 API signatures can shift
-between minor versions; verify against whatever version `npm install`
-actually resolves).
+When no GitRun configuration exists, the dashboard opens its graphical first-run
+wizard. The wizard collects a GitHub PAT and repository list and asks PolicyKit to
+run the existing privileged GitRun setup path. The PAT is passed through a mode-0600
+temporary request file and is removed after setup completes. GitHub App authentication
+remains available through `gitrun setup --terminal`.
+
+## Runtime
+
+All dashboard commands read and write live GitRun state. There is no mock data or
+HTTP server; the frontend uses Tauri IPC directly against the Rust backend.

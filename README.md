@@ -285,6 +285,6 @@ BigRework is migrating GitRun's manager and operator tooling into a Rust workspa
 
 The Rust CLI is the primary operator entry point. The scheduler and dashboard use the shared core configuration and GitHub authentication abstractions so PAT and GitHub App behavior remains consistent across terminal and graphical setup.
 
-GitRun's runtime control plane is Rust-native. A Rust-only Docker Compose manager profile remains available for source-based development, while the installed Linux service runs the scheduler directly through the `gitrun` executable.
+GitRun's runtime control plane is Rust-native. The graphical dashboard is the Tauri application, while the installed Linux service runs the scheduler directly through the `gitrun` executable. The CLI launches the Tauri dashboard for `gitrun dashboard` and when no command is supplied.
 
 See [docs/ROADMAP_PHASES.md](docs/ROADMAP_PHASES.md) and [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).

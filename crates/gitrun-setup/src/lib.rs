@@ -97,20 +97,6 @@ pub fn config_file_path(config_dir: &Path) -> PathBuf {
     config_dir.join("gitrun.env")
 }
 
-pub fn bootstrap_linux(
-    github_token: &str,
-    repositories: &str,
-    app_binary: &Path,
-    owner_uid: Option<u32>,
-) -> Result<SetupReport, SetupError> {
-    bootstrap_linux_with_auth(
-        BootstrapAuth::Pat(github_token.to_owned()),
-        repositories,
-        app_binary,
-        owner_uid,
-    )
-}
-
 pub fn bootstrap_linux_with_auth(
     auth: BootstrapAuth,
     repositories: &str,

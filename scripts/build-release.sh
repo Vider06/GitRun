@@ -7,16 +7,23 @@ TARGET="${1:-}"
 VERSION="${2:-$(git describe --tags --always --dirty)}"
 [[ -n "$TARGET" ]] || TARGET="$(rustc -vV | awk '/host:/ {print $2}')"
 
-cargo build --release -p gitrun-cli -p gitrun-dashboard --target "$TARGET"
+cargo build --locked --release -p gitrun-cli --bin gitrun
+command -v npm >/dev/null 2>&1 || { echo "npm is required to build the Tauri dashboard" >&2; exit 1; }
+(
+  cd crates/gitrun-dashboard-tauri
+  npm install --ignore-scripts --no-audit --no-fund
+  npm run tauri build -- --ci --no-bundle
+)
+
 
 mkdir -p dist/release/package
 rm -f dist/release/GitRun-* dist/release/package/*
-BINARY="gitrun-rs"
-case "$TARGET" in *windows*) BINARY="gitrun-rs.exe";; esac
-cp "target/$TARGET/release/$BINARY" dist/release/package/
-DASHBOARD_BINARY="gitrun-dashboard"
+BINARY="gitrun"
+case "$TARGET" in *windows*) BINARY="gitrun.exe";; esac
+cp "target/release/$BINARY" dist/release/package/
+DASHBOARD_BINARY="gitrun-dashboard-tauri"
 case "$TARGET" in *windows*) DASHBOARD_BINARY="gitrun-dashboard.exe";; esac
-cp "target/$TARGET/release/$DASHBOARD_BINARY" dist/release/package/
+cp "target/release/$DASHBOARD_BINARY" dist/release/package/
 cp LICENSE README.md config/config.example.env dist/release/package/
 ARCHIVE="dist/release/GitRun-$VERSION-$TARGET.tar.gz"
 tar -C dist/release/package -czf "$ARCHIVE" .

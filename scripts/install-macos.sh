@@ -66,10 +66,7 @@ if [[ ! "$GITRUN_REPOSITORIES" =~ ^[^,[:space:]/]+/[^,[:space:]/]+(,[^,[:space:]
 fi
 
 temp_env="$(mktemp "$CONFIG_DIR/.gitrun.env.XXXXXX")"
-cleanup_temp() {
-  rm -f -- "$temp_env"
-}
-trap cleanup_temp EXIT
+trap 'rm -f -- "$temp_env"' EXIT
 
 {
   found_token=false

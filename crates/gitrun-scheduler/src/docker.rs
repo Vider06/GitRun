@@ -494,10 +494,17 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm".into(),
             "-e".into(),
             "DOCKER_CONFIG=/tmp/docker-config".into(),
+            "--tmpfs".into(),
+            "/run/gitrun:rw,nosuid,nodev,noexec,size=16m,mode=0755".into(),
         ]);
         if spec.docker_socket_hardening {
             args.extend(docker_socket_hardening_args());
         }
+    }
+
+    for (name, value) in spec.gsr_policy_env {
+        args.push("-e".into());
+        args.push(format!("{name}={value}"));
     }
 
     args.extend([

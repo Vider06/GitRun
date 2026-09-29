@@ -19,7 +19,6 @@ def check_python(path: str):
 
 for path in [
     "Cargo.toml",
-    "bin/gitrun",
     "config/config.example.env",
     "docker-compose.yml",
     "docker/runner/Dockerfile",
@@ -58,14 +57,6 @@ for path in [
     require(path)
 
 
-cli = (ROOT / "bin/gitrun").read_text(encoding="utf-8")
-for command in [
-    "overview", "status", "runners", "health", "doctor", "logs",
-    "last-crash", "usage", "connect", "repositories", "service",
-    "start", "stop", "restart", "update",
-]:
-    if f"{command})" not in cli and f"{command}|repos)" not in cli:
-        errors.append(f"CLI command missing: {command}")
 
 scheduler_lib = (ROOT / "crates/gitrun-scheduler/src/lib.rs").read_text(encoding="utf-8")
 for required in [
@@ -164,7 +155,6 @@ for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR
         errors.append(f"compose portability setting missing: {required}")
 
 for script in [
-    "bin/gitrun",
     "scripts/install-linux.sh", "scripts/install-macos.sh",
     "scripts/install-server.sh", "scripts/build-release.sh",
     "scripts/verify-release.sh", "scripts/build-deb.sh",

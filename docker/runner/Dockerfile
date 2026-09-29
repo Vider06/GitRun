@@ -25,7 +25,7 @@ RUN --mount=type=cache,id=gitrun-runner-cargo-registry,target=/usr/local/cargo/r
     && strip --strip-unneeded /usr/src/gitrun/gitrun-gsr-agent \
     && test -x /usr/src/gitrun/gitrun-gsr-agent
 
-FROM node:22.23.3-bookworm@sha256:17b7fd60fd81f1ed83af9c8e5f97cfd6ad76457b2c2a00fd6ec8e9af3aa1a4d5
+FROM node:22.23.3-bookworm@sha256:17b7fd60fd812617654c64b95f9b2dde94f103313073b672bc40fdad6dccbaa2
 
 ARG RUNNER_VERSION
 ARG RUNNER_SHA256

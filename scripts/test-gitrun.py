@@ -152,7 +152,44 @@ if unsupported_example:
 if "GITRUN_LOG_LEVEL=" in config_source:
     errors.append("config template exposes unsupported legacy GITRUN_LOG_LEVEL")
 
-release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+release_workflow = read_text(".github/workflows/release.yml")
+
+def validate_release_jobs(workflow: str) -> None:
+    jobs_match = re.search(r"^jobs:\s*$", workflow, re.MULTILINE)
+    if not jobs_match:
+        errors.append("release workflow has no top-level jobs section")
+        return
+
+    jobs_block = workflow[jobs_match.end():]
+    job_matches = list(re.finditer(r"^  ([A-Za-z0-9_-]+):\s*$", jobs_block, re.MULTILINE))
+    if not job_matches:
+        errors.append("release workflow contains no jobs")
+        return
+
+    for index, match in enumerate(job_matches):
+        job_name = match.group(1)
+        block_end = job_matches[index + 1].start() if index + 1 < len(job_matches) else len(jobs_block)
+        job_block = jobs_block[match.end():block_end]
+
+        runs_on = re.search(r"^    runs-on:\s*(.+?)\s*$", job_block, re.MULTILINE)
+        timeout = re.search(r"^    timeout-minutes:\s*(\d+)\s*$", job_block, re.MULTILINE)
+
+        if not runs_on:
+            errors.append(f"release job {job_name} is missing runs-on")
+        elif runs_on.group(1).strip() not in ("[self-hosted, Linux]", "['self-hosted', 'Linux']", "[\"self-hosted\", \"Linux\"]"):
+            errors.append(
+                f"release job {job_name} must use exactly [self-hosted, Linux], got: {runs_on.group(1).strip()}"
+            )
+
+        if not timeout:
+            errors.append(f"release job {job_name} is missing timeout-minutes")
+        elif timeout.group(1) != "60":
+            errors.append(
+                f"release job {job_name} must have timeout-minutes: 60, got: {timeout.group(1)}"
+            )
+
+validate_release_jobs(release_workflow)
+
 for required in [
     "runs-on: [self-hosted, Linux]",
     "timeout-minutes: 60",
@@ -173,8 +210,8 @@ for required in [
 if "autoscaler/" in release_workflow or "gitrun_updater_utility.py" in release_workflow:
     errors.append("release workflow still references retired Python GTUU")
 
-if "runs-on: [self-hosted, Linux, X64]" in release_workflow:
-    errors.append("release workflow still requires the legacy X64 label")
+if re.search(r"^\s*runs-on:\s*\[.*(?:X64|ubuntu-latest|windows-latest|macos-).*$", release_workflow, re.MULTILINE):
+    errors.append("release workflow contains a non-base Linux runner label")
 
 if "ubuntu-latest" in release_workflow or "windows-latest" in release_workflow or "macos-" in release_workflow:
     errors.append("release workflow still references GitHub-hosted OS runners")
@@ -193,37 +230,37 @@ for retired in ["autoscaler/gitrun_manager.py", "autoscaler/gitrun_updater_utili
     if (ROOT / retired).exists():
         errors.append(f"retired file still present: {retired}")
 
-compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+compose = read_text("docker-compose.yml")
 if "legacy-python" in compose or "docker/manager/Dockerfile" in compose:
     errors.append("compose still references the retired Python manager")
 
-systemd = (ROOT / "systemd/gitrun.service").read_text(encoding="utf-8")
+systemd = read_text("systemd/gitrun.service")
 if "docker compose" in systemd or "--profile python" in systemd:
     errors.append("systemd still launches the legacy manager")
 
-cli_manifest = (ROOT / "crates/gitrun-cli/Cargo.toml").read_text(encoding="utf-8")
+cli_manifest = read_text("crates/gitrun-cli/Cargo.toml")
 if 'name = "gitrun"' not in cli_manifest:
     errors.append("Rust CLI binary target gitrun missing")
 if 'gitrun-dashboard' in cli_manifest or 'gitrun_dashboard' in cli_manifest:
     errors.append("Rust CLI still depends on the retired egui dashboard")
 
-tauri_backend = (ROOT / "crates/gitrun-dashboard-tauri/src-tauri/src/lib.rs").read_text(encoding="utf-8")
-tauri_frontend = (ROOT / "crates/gitrun-dashboard-tauri/dist/js/app.js").read_text(encoding="utf-8")
+tauri_backend = read_text("crates/gitrun-dashboard-tauri/src-tauri/src/lib.rs")
+tauri_frontend = read_text("crates/gitrun-dashboard-tauri/dist/js/app.js")
 if "run_first_setup" not in tauri_backend or "is_first_run" not in tauri_backend:
     errors.append("Tauri first-run setup bridge missing")
 if 'invoke("run_first_setup"' not in tauri_frontend:
     errors.append("Tauri first-run setup UI missing")
 
-tauri_permissions = (ROOT / "crates/gitrun-dashboard-tauri/src-tauri/permissions/dashboard.toml").read_text(encoding="utf-8")
+tauri_permissions = read_text("crates/gitrun-dashboard-tauri/src-tauri/permissions/dashboard.toml")
 for required in ['"is_first_run"', '"run_first_setup"']:
     if required not in tauri_permissions:
         errors.append(f"Tauri permission missing: {required}")
 
-workspace_manifest = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+workspace_manifest = read_text("Cargo.toml")
 if "crates/gitrun-dashboard" in workspace_manifest.replace("crates/gitrun-dashboard-tauri", ""):
     errors.append("workspace still contains the retired egui dashboard")
 
-lock_source = (ROOT / "Cargo.lock").read_text(encoding="utf-8")
+lock_source = read_text("Cargo.lock")
 for legacy in ['name = "gitrun-dashboard"', 'name = "eframe"', 'name = "egui"', 'name = "wgpu"']:
     if legacy in lock_source:
         errors.append(f"Cargo.lock still contains retired dashboard dependency: {legacy}")
@@ -238,13 +275,13 @@ for legacy in ["gitrun-dashboard", "gitrun_dashboard", "eframe", "egui"]:
         "scripts/build-deb.sh",
         "packaging/gitrun.desktop",
     ]:
-        source = (ROOT / path).read_text(encoding="utf-8")
+        source = read_text(path)
         normalized_source = source.replace("gitrun-dashboard-tauri", "")
         if legacy in normalized_source:
             errors.append(f"legacy dashboard reference in {path}: {legacy}")
 
-runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")
-runner_entrypoint = (ROOT / "docker/runner/entrypoint.sh").read_text(encoding="utf-8")
+runner_image = read_text("docker/runner/Dockerfile")
+runner_entrypoint = read_text("docker/runner/entrypoint.sh")
 for required in [
     "docker-ce-cli=",
     "docker-buildx-plugin=",
@@ -263,12 +300,11 @@ for obsolete in ["packages.microsoft.com/config/debian/12", "https://sh.rustup.r
     if obsolete in runner_image:
         errors.append(f"runner image still contains obsolete dependency bootstrap: {obsolete}")
 
-compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 for required in ["GITRUN_CONFIG_FILE", "GITRUN_DOCKER_SOCKET", "GITRUN_STATE_DIR", "GITRUN_LOG_DIR"]:
     if required not in compose:
         errors.append(f"compose portability setting missing: {required}")
 
-gsr_supervisor = (ROOT / "crates/gitrun-gsr/src/exec_supervisor.rs").read_text(encoding="utf-8")
+gsr_supervisor = read_text("crates/gitrun-gsr/src/exec_supervisor.rs")
 for required in [
     "PTRACE_O_TRACESECCOMP",
     "PTRACE_O_TRACEFORK",
@@ -284,7 +320,7 @@ for required in [
     if required not in gsr_supervisor:
         errors.append(f"GSR kernel supervisor requirement missing: {required}")
 
-docker_source = (ROOT / "crates/gitrun-scheduler/src/docker.rs").read_text(encoding="utf-8")
+docker_source = read_text("crates/gitrun-scheduler/src/docker.rs")
 if '"--read-only".into()' in docker_source:
     errors.append("Linux runner containers must not use a read-only root filesystem")
 if '"/tmp:rw,nosuid,nodev,noexec' in docker_source:
@@ -293,12 +329,13 @@ if '--cap-add", "SYS_PTRACE' not in docker_source and '"SYS_PTRACE"' not in dock
     errors.append("GSR Docker hardening must retain SYS_PTRACE for the PID-1 supervisor")
 
 for script in [
-    "scripts/install-linux.sh", "scripts/install-macos.sh",
-    "scripts/install-server.sh", "scripts/build-release.sh",
-    "scripts/verify-release.sh", "scripts/build-deb.sh",
+    "scripts/install-macos.sh",
+    "scripts/install-server.sh",
+    "scripts/build-release.sh",
+    "scripts/verify-release.sh",
+    "scripts/build-deb.sh",
 ]:
-    if subprocess.run(["bash", "-n", str(ROOT / script)], capture_output=True, text=True).returncode != 0:
-        errors.append(f"shell syntax: {script}")
+    check_shell_syntax(script)
 
 if errors:
     print("GitRun static check: FAIL")

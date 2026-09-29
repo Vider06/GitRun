@@ -60,6 +60,11 @@ chmod 0444 "$tmp_policy"
 mv -f "$tmp_policy" "$GSR_POLICY_FILE"
 trap - EXIT
 
+GSR_EVENTS_FILE="${GSR_POLICY_DIR}/gsr-events.jsonl"
+touch "$GSR_EVENTS_FILE"
+chown runner:runner "$GSR_EVENTS_FILE"
+chmod 0600 "$GSR_EVENTS_FILE"
+
 mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 

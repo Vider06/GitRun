@@ -81,7 +81,6 @@ mod linux {
     const PTRACE_EVENT_FORK: libc::c_ulong = 1;
     const PTRACE_EVENT_VFORK: libc::c_ulong = 2;
     const PTRACE_EVENT_CLONE: libc::c_ulong = 3;
-    const PTRACE_EVENT_EXEC: libc::c_ulong = 4;
     const PTRACE_EVENT_SECCOMP: libc::c_ulong = 7;
 
     const SECCOMP_MODE_FILTER: libc::c_ulong = 2;

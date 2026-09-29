@@ -291,7 +291,7 @@ mod linux {
             | PTRACE_O_EXITKILL;
 
         if ptrace_setoptions(root_pid, options) == -1 {
-            terminate_process_group(root_pid);
+            kill_process_group(root_pid);
             return Err(SupervisorError::Ptrace("PTRACE_SETOPTIONS"));
         }
         continue_tracee(root_pid)?;
@@ -311,7 +311,7 @@ mod linux {
                 if error.raw_os_error() == Some(libc::EINTR) {
                     continue;
                 }
-                terminate_process_group(root_pid);
+                kill_process_group(root_pid);
                 return Err(SupervisorError::Syscall("waitpid", error));
             }
 

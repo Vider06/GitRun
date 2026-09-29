@@ -329,7 +329,7 @@ mod linux {
                 tracees.remove(&pid);
                 if pid == root_pid {
                     root_exit = Some((status >> 8) & 0xff);
-                    terminate_process_group(root_pid);
+                    kill_process_group(root_pid);
                 }
                 if tracees.is_empty() {
                     break;
@@ -341,7 +341,7 @@ mod linux {
                 tracees.remove(&pid);
                 if pid == root_pid {
                     root_exit = Some(128 + (status & 0x7f));
-                    terminate_process_group(root_pid);
+                    kill_process_group(root_pid);
                 }
                 if tracees.is_empty() {
                     break;
@@ -399,10 +399,7 @@ mod linux {
         Ok(status)
     }
 
-    fn ptrace_setoptions(
-        pid: libc::pid_t,
-        options: libc::c_ulong,
-    ) -> libc::c_long {
+    fn ptrace_setoptions(pid: libc::pid_t, options: libc::c_ulong) -> libc::c_long {
         unsafe { libc::ptrace(PTRACE_SETOPTIONS, pid, 0, options) }
     }
 
@@ -462,14 +459,13 @@ mod linux {
         }
         let registers = unsafe { registers.assume_init() };
 
-        let (syscall, path_ptr, argv_ptr) = if registers.orig_rax == libc::SYS_execve as u64 {
-            (libc::SYS_execve as u64, registers.rdi, registers.rsi)
+        let (path_ptr, argv_ptr) = if registers.orig_rax == libc::SYS_execve as u64 {
+            (registers.rdi, registers.rsi)
         } else if registers.orig_rax == libc::SYS_execveat as u64 {
-            (libc::SYS_execveat as u64, registers.rsi, registers.rdx)
+            (registers.rsi, registers.rdx)
         } else {
             return Err(SupervisorError::InspectFailed(pid));
         };
-        let _ = syscall;
 
         let path = if path_ptr == 0 {
             "<execveat-empty>".to_owned()

@@ -25,10 +25,8 @@ services:
       - no-new-privileges:true
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "test -S /var/run/docker.sock && test \"\$(cat /proc/1/comm 2>/dev/null)\" = gitrun-autoscaler",
-        ]
+        - CMD-SHELL
+        - 'test -S /var/run/docker.sock && test "$(cat /proc/1/comm 2>/dev/null)" = gitrun-autoscaler'
       interval: 30s
       timeout: 5s
       retries: 3

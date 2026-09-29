@@ -460,64 +460,6 @@ fn run_command(command: &mut Command) -> Result<(), SetupError> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{
-        fs,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    #[test]
-    fn config_path_is_inside_config_dir() {
-        assert_eq!(
-            config_file_path(Path::new("/tmp/gitrun")),
-            PathBuf::from("/tmp/gitrun/gitrun.env")
-        );
-    }
-
-    #[test]
-    fn dependency_report_has_required_tools() {
-        let names: Vec<_> = check_dependencies().into_iter().map(|d| d.name).collect();
-        assert!(
-            names.contains(&"docker")
-                && names.contains(&"docker daemon")
-                && names.contains(&"docker compose")
-                && names.contains(&"git")
-        );
-    }
-
-    #[test]
-    fn prepare_directories_rejects_file_as_config_dir() {
-        let path = std::env::temp_dir().join(format!(
-            "gitrun-setup-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::write(&path, "not a directory").unwrap();
-        let config = Config::default();
-        assert!(matches!(
-            prepare_directories(&config, &path),
-            Err(SetupError::InvalidConfigDir(_))
-        ));
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn validates_repositories() {
-        assert!(valid_repo("Vider06/GitRun"));
-        assert!(!valid_repo("bad"));
-        assert!(!valid_repo("/repo"));
-    }
-
-    #[test]
-    fn rejects_newline_in_bootstrap_secret() {
-        assert!(validate_env_value("token\nINJECTED=value", "GITHUB_TOKEN").is_err());
-    }
-}
-
 /// Persist the dashboard-managed configuration fields to GitRun's env file.
 /// Kept in the setup crate so GUI and CLI use one implementation.
 const MANAGED_CONFIG_KEYS: &[&str] = &[
@@ -661,3 +603,62 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn config_path_is_inside_config_dir() {
+        assert_eq!(
+            config_file_path(Path::new("/tmp/gitrun")),
+            PathBuf::from("/tmp/gitrun/gitrun.env")
+        );
+    }
+
+    #[test]
+    fn dependency_report_has_required_tools() {
+        let names: Vec<_> = check_dependencies().into_iter().map(|d| d.name).collect();
+        assert!(
+            names.contains(&"docker")
+                && names.contains(&"docker daemon")
+                && names.contains(&"docker compose")
+                && names.contains(&"git")
+        );
+    }
+
+    #[test]
+    fn prepare_directories_rejects_file_as_config_dir() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "not a directory").unwrap();
+        let config = Config::default();
+        assert!(matches!(
+            prepare_directories(&config, &path),
+            Err(SetupError::InvalidConfigDir(_))
+        ));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn validates_repositories() {
+        assert!(valid_repo("Vider06/GitRun"));
+        assert!(!valid_repo("bad"));
+        assert!(!valid_repo("/repo"));
+    }
+
+    #[test]
+    fn rejects_newline_in_bootstrap_secret() {
+        assert!(validate_env_value("token\nINJECTED=value", "GITHUB_TOKEN").is_err());
+    }
+}
+

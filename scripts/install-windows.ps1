@@ -82,7 +82,7 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
 
   $origin = git -C $InstallDir remote get-url origin
   Assert-LastExitCode "Git repository origin lookup"
-  if ($origin.TrimEnd("/") -ne $RepoUrl.TrimEnd(".git").TrimEnd("/")) {
+  if ($origin.TrimEnd("/") -ne $RepoUrl.TrimEnd("/")) {
     throw "Existing GitRun checkout has an unexpected origin: $origin"
   }
 
@@ -90,7 +90,7 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
   Assert-LastExitCode "GitRun source update"
 } else {
   if (Test-Path $InstallDir) {
-    $entries = Get-ChildItem -LiteralPath $InstallDir -Force
+    $entries = @(Get-ChildItem -LiteralPath $InstallDir -Force)
     if ($entries.Count -gt 0) {
       throw "Install directory exists and is not a GitRun checkout: $InstallDir"
     }
@@ -107,6 +107,13 @@ if (-not (Test-Path $ComposeFile)) {
 }
 
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+
+$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+icacls $ConfigDir /inheritance:r | Out-Null
+Assert-LastExitCode "Config directory ACL hardening"
+icacls $ConfigDir /grant:r "${currentUser}:(OI)(CI)(F)" "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" | Out-Null
+Assert-LastExitCode "Config directory ACL assignment"
+
 if (-not (Test-Path $EnvFile)) {
   Copy-Item (Join-Path $InstallDir "config\config.example.env") $EnvFile
 }
@@ -169,11 +176,6 @@ try {
   $token = $null
 }
 
-$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-icacls $ConfigDir /inheritance:r | Out-Null
-Assert-LastExitCode "Config directory ACL hardening"
-icacls $ConfigDir /grant:r "$currentUser:(OI)(CI)(F)" "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" | Out-Null
-Assert-LastExitCode "Config directory ACL assignment"
 icacls $EnvFile /inheritance:r | Out-Null
 Assert-LastExitCode "Credential file ACL hardening"
 icacls $EnvFile /grant:r "$currentUser:F" "*S-1-5-18:F" "*S-1-5-32-544:F" | Out-Null

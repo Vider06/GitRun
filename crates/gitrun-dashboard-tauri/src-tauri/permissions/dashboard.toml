@@ -2,6 +2,8 @@
 identifier = "dashboard-commands"
 description = "Allows the GitRun dashboard frontend to invoke its application commands."
 commands.allow = [
+  "is_first_run",
+  "run_first_setup",
   "get_overview",
   "get_repo_detail",
   "list_vault_secrets",

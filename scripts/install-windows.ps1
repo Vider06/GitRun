@@ -148,16 +148,13 @@ try {
 
     $parts = $repo.Split("/", 2)
     try {
-      Invoke-RestMethod `
-        -Uri "https://api.github.com/repos/$($parts[0])/$($parts[1])" `
-        -Headers @{
-          Accept = "application/vnd.github+json"
-          Authorization = "Bearer $plainToken"
-          "X-GitHub-Api-Version" = "2026-03-10"
-          "User-Agent" = "GitRun/$RepoUrl"
-        } `
-        -Method Get `
-        -TimeoutSec 20 | Out-Null
+      $headers = @{
+        Accept = "application/vnd.github+json"
+        Authorization = "Bearer $plainToken"
+        "X-GitHub-Api-Version" = "2026-03-10"
+        "User-Agent" = "GitRun-Windows-Installer"
+      }
+      Invoke-RestMethod -Uri "https://api.github.com/repos/$($parts[0])/$($parts[1])" -Headers $headers -Method Get -TimeoutSec 20 | Out-Null
     } catch {
       throw "GitHub access check failed for $repo. Verify the token and repository permissions."
     }

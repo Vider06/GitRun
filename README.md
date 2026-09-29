@@ -131,7 +131,7 @@ For either authentication mode, the configured credential must have enough repos
 
 GitHub runner registration tokens are generated on demand and expire after one hour. Long-lived GitHub credentials are used by the manager to obtain the required GitHub API access.
 
-The native dashboard supports both PAT and GitHub App authentication during setup. It can edit and persist non-secret GitRun settings; credentials are not displayed as ordinary dashboard configuration values.
+The graphical first-run wizard accepts a GitHub PAT. GitHub App authentication is supported by the terminal setup flow with `gitrun setup --terminal`. The dashboard can edit and persist non-secret GitRun settings; credentials are not displayed as ordinary dashboard configuration values.
 
 ### Connecting another repository
 

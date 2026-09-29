@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION=${1:-}
-BINARY=${2:-target/release/gitrun}
+BINARY=${2:-"$ROOT/target/release/gitrun"}
 OUTPUT=${3:-gitrun.deb}
-DASHBOARD_BINARY=${GITRUN_DASHBOARD_BINARY:-target/release/gitrun-dashboard-tauri}
+DASHBOARD_BINARY=${GITRUN_DASHBOARD_BINARY:-"$ROOT/target/release/gitrun-dashboard-tauri"}
 
 if [[ -z "$VERSION" ]]; then
   echo "usage: $0 <version> [binary] [output]" >&2
@@ -65,7 +66,7 @@ Description: GitRun self-contained GitHub Actions runner manager
  GitHub Actions self-hosted runners.
 CONTROL
 
-install -m 0644 packaging/gitrun.desktop "$root/usr/share/applications/gitrun.desktop"
+install -m 0644 "$ROOT/packaging/gitrun.desktop" "$root/usr/share/applications/gitrun.desktop"
 
 rm -f "$OUTPUT"
 dpkg-deb --build --root-owner-group "$root" "$OUTPUT" >/dev/null

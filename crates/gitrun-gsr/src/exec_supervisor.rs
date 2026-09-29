@@ -106,6 +106,7 @@ mod linux {
 
     const MAX_ARGC: usize = 256;
     const MAX_STRING: usize = 4096;
+    const EXECVEAT_AT_EMPTY_PATH: u64 = 0x1000;
 
     #[derive(Clone)]
     struct RunnerIdentity {
@@ -462,15 +463,16 @@ mod linux {
         }
         let registers = unsafe { registers.assume_init() };
 
-        let (path_ptr, argv_ptr) = if registers.orig_rax == libc::SYS_execve as u64 {
-            (registers.rdi, registers.rsi)
-        } else if registers.orig_rax == libc::SYS_execveat as u64 {
-            (registers.rsi, registers.rdx)
-        } else {
-            return Err(SupervisorError::InspectFailed(pid));
-        };
+        let (path_ptr, argv_ptr, dirfd, flags) =
+            if registers.orig_rax == libc::SYS_execve as u64 {
+                (registers.rdi, registers.rsi, -1i64, 0u64)
+            } else if registers.orig_rax == libc::SYS_execveat as u64 {
+                (registers.rsi, registers.rdx, registers.rdi as i64, registers.r10)
+            } else {
+                return Err(SupervisorError::InspectFailed(pid));
+            };
 
-        let path = if path_ptr == 0 {
+        let mut path = if path_ptr == 0 {
             "<execveat-empty>".to_owned()
         } else {
             match read_c_string(pid, path_ptr) {
@@ -481,6 +483,24 @@ mod linux {
                 }
             }
         };
+
+        if path.is_empty() && registers.orig_rax == libc::SYS_execveat as u64
+            && (flags & EXECVEAT_AT_EMPTY_PATH) != 0
+        {
+            match resolve_execveat_empty_path(pid, dirfd) {
+                Some(value) => path = value,
+                None => {
+                    emit_inspection_failure(
+                        events_path,
+                        pid,
+                        "could not resolve execveat AT_EMPTY_PATH file descriptor",
+                    );
+                    return Ok(ExecDecision::Deny);
+                }
+            }
+        } else if path.is_empty() {
+            path = "<execveat-empty>".to_owned();
+        }
 
         let argv = match read_argv(pid, argv_ptr) {
             Ok(value) => value,
@@ -542,6 +562,16 @@ mod linux {
             return Err(SupervisorError::Ptrace("PTRACE_SETREGS"));
         }
         continue_tracee(pid)
+    }
+
+    fn resolve_execveat_empty_path(pid: libc::pid_t, dirfd: i64) -> Option<String> {
+        if dirfd < 0 {
+            return None;
+        }
+        let path = format!("/proc/{pid}/fd/{dirfd}");
+        std::fs::read_link(path)
+            .ok()
+            .map(|value| value.to_string_lossy().into_owned())
     }
 
     fn read_c_string(pid: libc::pid_t, address: u64) -> Result<String, SupervisorError> {

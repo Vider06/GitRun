@@ -595,9 +595,7 @@ fn save_config(updated: Config) -> Result<(), String> {
 }
 
 /// Small bridge module: writing back to the same env-file format
-/// `gitrun-setup` and the old egui dashboard use, without pulling in
-/// `gitrun-dashboard`'s egui-specific code as a dependency just for this one
-/// function. Mirrors the MANAGED_CONFIG_KEYS approach documented in that
+/// `gitrun-setup` without depending on any legacy dashboard crate. Mirrors the MANAGED_CONFIG_KEYS approach documented in that
 /// crate.
 mod gitrun_setup_bridge {
     use gitrun_core::Config;

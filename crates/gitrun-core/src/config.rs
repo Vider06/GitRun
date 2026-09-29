@@ -139,7 +139,7 @@ pub struct Config {
     /// cheap enough to always run.
     pub gsr_workflow_validation_enabled: bool,
     /// Whether to additionally shell out to the third-party `zizmor`
-    /// static analyzer (MIT-licensed, https://github.com/zizmorcore/zizmor)
+    /// static analyzer (MIT-licensed, <https://github.com/zizmorcore/zizmor>)
     /// if it's installed on the host, for deeper workflow analysis than
     /// our own built-in checks. Off by default because it's an optional
     /// external binary GitRun does not install for the operator — see

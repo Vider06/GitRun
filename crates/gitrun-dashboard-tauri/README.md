@@ -1,6 +1,6 @@
 # GitRun Dashboard (Tauri)
 
-Replaces the earlier `gitrun-dashboard` (egui) with a Tauri 2 app: native
+Provides the current GitRun graphical dashboard as a Tauri 2 app: native
 Rust backend (`src-tauri/`, commands in `src-tauri/src/lib.rs`) + a small
 vanilla HTML/CSS/JS frontend (`dist/`, no framework, no build step).
 

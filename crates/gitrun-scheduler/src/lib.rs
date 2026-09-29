@@ -1,4 +1,3 @@
-pub mod app_auth;
 pub mod backoff;
 pub mod docker;
 pub mod github;
@@ -11,7 +10,6 @@ pub mod state;
 pub mod vm;
 pub mod vm_resolution;
 
-pub use app_auth::{AppAuth, AppAuthError};
 pub use backoff::RateLimitTracker;
 pub use github::{GitHubClient, GitHubError, Runner};
 pub use logic_containers::{Backend, LogicRule};

@@ -22,7 +22,7 @@ It is designed for administrators running their own repositories on a small priv
 - Self-hosted Linux x64 release deployment; Windows/macOS builds remain available through the local release scripts
 - Versioned updater with checksum verification, dependency compatibility checks and rollback
 - Version-pinned GHCR runner images with digest validation
-- Native egui operator dashboard for configuration, health, runner pools and local controls
+- Tauri operator dashboard for configuration, health, runner pools and local controls
 - No Kubernetes required
 
 ## Default profile

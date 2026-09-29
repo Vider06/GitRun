@@ -310,6 +310,7 @@ mod linux {
         loop {
             if stopping.load(Ordering::Relaxed) {
                 terminate_process_group(root_pid);
+                kill_tracees(&tracees);
             }
 
             let mut status = 0;
@@ -330,6 +331,7 @@ mod linux {
                 if pid == root_pid {
                     root_exit = Some((status >> 8) & 0xff);
                     kill_process_group(root_pid);
+                    kill_tracees(&tracees);
                 }
                 if tracees.is_empty() {
                     break;
@@ -342,6 +344,7 @@ mod linux {
                 if pid == root_pid {
                     root_exit = Some(128 + (status & 0x7f));
                     kill_process_group(root_pid);
+                    kill_tracees(&tracees);
                 }
                 if tracees.is_empty() {
                     break;

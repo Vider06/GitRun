@@ -611,7 +611,9 @@ fn validate_time(value: &str) -> Result<(), ConfigError> {
 
 fn validate_single_line(key: &str, value: &str) -> Result<(), ConfigError> {
     if value.contains('\n') || value.contains('\r') {
-        return Err(ConfigError::Invalid(format!("{key} must not contain newlines")));
+        return Err(ConfigError::Invalid(format!(
+            "{key} must not contain newlines"
+        )));
     }
     Ok(())
 }

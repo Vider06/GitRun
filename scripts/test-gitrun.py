@@ -49,9 +49,14 @@ for path in [
     "crates/gitrun-updater/src/lib.rs",
     "crates/gitrun-recovery/Cargo.toml",
     "crates/gitrun-recovery/src/lib.rs",
-    "crates/gitrun-dashboard/Cargo.toml",
-    "crates/gitrun-dashboard/src/main.rs",
-    "crates/gitrun-dashboard/src/lib.rs",
+    "crates/gitrun-dashboard-tauri/package.json",
+    "crates/gitrun-dashboard-tauri/dist/index.html",
+    "crates/gitrun-dashboard-tauri/dist/js/app.js",
+    "crates/gitrun-dashboard-tauri/src-tauri/Cargo.toml",
+    "crates/gitrun-dashboard-tauri/src-tauri/build.rs",
+    "crates/gitrun-dashboard-tauri/src-tauri/src/main.rs",
+    "crates/gitrun-dashboard-tauri/src-tauri/src/lib.rs",
+    "crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json",
     "crates/gitrun-setup/src/resources.rs",
 ]:
     require(path)
@@ -179,6 +184,29 @@ if "docker compose" in systemd or "--profile python" in systemd:
 cli_manifest = (ROOT / "crates/gitrun-cli/Cargo.toml").read_text(encoding="utf-8")
 if 'name = "gitrun"' not in cli_manifest:
     errors.append("Rust CLI binary target gitrun missing")
+if 'gitrun-dashboard' in cli_manifest or 'gitrun_dashboard' in cli_manifest:
+    errors.append("Rust CLI still depends on the retired egui dashboard")
+
+tauri_backend = (ROOT / "crates/gitrun-dashboard-tauri/src-tauri/src/lib.rs").read_text(encoding="utf-8")
+tauri_frontend = (ROOT / "crates/gitrun-dashboard-tauri/dist/js/app.js").read_text(encoding="utf-8")
+if "run_first_setup" not in tauri_backend or "is_first_run" not in tauri_backend:
+    errors.append("Tauri first-run setup bridge missing")
+if 'invoke("run_first_setup"' not in tauri_frontend:
+    errors.append("Tauri first-run setup UI missing")
+
+for legacy in ["gitrun-dashboard", "gitrun_dashboard", "eframe", "egui"]:
+    for path in [
+        "Cargo.toml",
+        "crates/gitrun-cli/Cargo.toml",
+        "crates/gitrun-cli/src/main.rs",
+        "scripts/build-release.sh",
+        "scripts/build-release.ps1",
+        "scripts/build-deb.sh",
+        "packaging/gitrun.desktop",
+    ]:
+        source = (ROOT / path).read_text(encoding="utf-8")
+        if legacy in source:
+            errors.append(f"legacy dashboard reference in {path}: {legacy}")
 
 runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")
 for required in ["docker-ce-cli", "docker-compose-plugin", "powershell", "gh", "packages.microsoft.com/config/debian/12", "https://sh.rustup.rs"]:

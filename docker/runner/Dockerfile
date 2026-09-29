@@ -108,7 +108,7 @@ RUN chmod 0755 /entrypoint.sh \
 # The GSR agent requires a protected policy file. This build-time default is
 # replaced by the root-owned runtime tmpfs policy before the runner starts.
 RUN install -d -o root -g root -m 0755 /run/gitrun \
-    && printf '%s\\n' \
+    && printf '%s\n' \
        'GITRUN_GSR_COMMAND_POLICY_ENABLED=true' \
        'GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED=true' \
        'GITRUN_GSR_COMMAND_BLACKLIST_ENABLED=false' \

@@ -497,7 +497,10 @@ fn deregister_and_remove(
 
 fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
     vec![
-        ("GITRUN_GSR_COMMAND_POLICY_ENABLED".into(), config.gsr_command_policy_enabled.to_string()),
+        (
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED".into(),
+            config.gsr_command_policy_enabled.to_string(),
+        ),
         (
             "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED".into(),
             config.gsr_command_baseline_blacklist_enabled.to_string(),
@@ -506,13 +509,22 @@ fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
             "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED".into(),
             config.gsr_command_blacklist_enabled.to_string(),
         ),
-        ("GITRUN_GSR_COMMAND_BLACKLIST".into(), config.gsr_command_blacklist.clone()),
+        (
+            "GITRUN_GSR_COMMAND_BLACKLIST".into(),
+            config.gsr_command_blacklist.clone(),
+        ),
         (
             "GITRUN_GSR_COMMAND_WHITELIST_ENABLED".into(),
             config.gsr_command_whitelist_enabled.to_string(),
         ),
-        ("GITRUN_GSR_COMMAND_WHITELIST".into(), config.gsr_command_whitelist.clone()),
-        ("GITRUN_GSR_VIOLATION_ACTION".into(), config.gsr_violation_action.clone()),
+        (
+            "GITRUN_GSR_COMMAND_WHITELIST".into(),
+            config.gsr_command_whitelist.clone(),
+        ),
+        (
+            "GITRUN_GSR_VIOLATION_ACTION".into(),
+            config.gsr_violation_action.clone(),
+        ),
     ]
 }
 
@@ -994,7 +1006,9 @@ mod tests {
 
     #[test]
     fn gsr_policy_namespace_is_reserved() {
-        assert!(is_reserved_security_env_name("GITRUN_GSR_COMMAND_POLICY_ENABLED"));
+        assert!(is_reserved_security_env_name(
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED"
+        ));
         assert!(!is_reserved_security_env_name("GITRUN_DEPLOY_KEY"));
     }
 

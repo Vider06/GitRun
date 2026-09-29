@@ -259,6 +259,8 @@ for required in [
     "SYS_execveat",
     "SECCOMP_RET_TRACE",
     "PR_SET_NO_NEW_PRIVS",
+    "EXECVEAT_AT_EMPTY_PATH",
+    "resolve_execveat_empty_path",
 ]:
     if required not in gsr_supervisor:
         errors.append(f"GSR kernel supervisor requirement missing: {required}")

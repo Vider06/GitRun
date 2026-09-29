@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import ast
+import re
 import subprocess
 import sys
 
@@ -72,22 +73,60 @@ for required in ["gitrun_scheduler::run()", "gitrun_scheduler::run_gtuu_once()",
     if required not in cli_source:
         errors.append(f"Rust CLI scheduler integration missing: {required}")
 
-config = (ROOT / "config/config.example.env").read_text(encoding="utf-8")
+config_path = ROOT / "config/config.example.env"
+config_source = config_path.read_text(encoding="utf-8")
 for key, expected in [
     ("GITRUN_MIN_RUNNERS", "3"),
     ("GITRUN_MAX_RUNNERS", "8"),
     ("GITRUN_IDLE_TIMEOUT", "120"),
+    ("GITRUN_POLL_INTERVAL", "5"),
     ("GITRUN_CONTAINER_CPUS", "1"),
     ("GITRUN_CONTAINER_MEMORY", "1g"),
+    ("GITRUN_CONTAINER_PIDS", "1024"),
     ("GITRUN_AUTO_CONTAINER_UPDATE", "false"),
     ("GITRUN_CONTAINER_UPDATE_TIME", "03:00"),
     ("GITRUN_AUTO_CONTAINER_RECOVERY", "true"),
     ("GITRUN_CONTAINER_RECOVERY_COOLDOWN", "60"),
     ("GITRUN_SHARED_CACHE_VOLUME", "gitrun-runner-shared"),
     ("GITRUN_RUNNER_LABELS", "self-hosted,Linux,X64,gitrun-ci"),
+    ("GITRUN_RUNNER_HOME_SIZE", "8g"),
+    ("GITRUN_RUNNER_HOME_BACKEND", "tmpfs"),
+    ("GITRUN_GITHUB_CONNECT_TIMEOUT", "5"),
+    ("GITRUN_GITHUB_REQUEST_TIMEOUT", "20"),
+    ("GITRUN_GTUU_SCHEDULE_TIMEZONE", "utc"),
+    ("GITRUN_GSR_DOCKER_SOCKET_HARDENING", "true"),
+    ("GITRUN_GSR_ALLOW_UNSAFE_RUNNER", "false"),
+    ("GITRUN_GSR_COMMAND_POLICY_ENABLED", "true"),
+    ("GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED", "true"),
+    ("GITRUN_GSR_COMMAND_BLACKLIST_ENABLED", "false"),
+    ("GITRUN_GSR_COMMAND_WHITELIST_ENABLED", "false"),
+    ("GITRUN_GSR_VIOLATION_ACTION", "kill"),
+    ("GITRUN_GSR_WORKFLOW_VALIDATION_ENABLED", "true"),
+    ("GITRUN_GSR_ZIZMOR_ENABLED", "false"),
+    ("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED", "false"),
 ]:
-    if f"{key}={expected}" not in config:
+    if f"{key}={expected}" not in config_source:
         errors.append(f"config default mismatch: {key}={expected}")
+
+config_rs = (ROOT / "crates/gitrun-core/src/config.rs").read_text(encoding="utf-8")
+supported = set(re.findall(r'get\("([A-Z][A-Z0-9_]+)"\)', config_rs))
+example_keys = set(
+    match.group(1)
+    for match in re.finditer(r"^(?:#\s*)?([A-Z][A-Z0-9_]+)=", config_source, re.MULTILINE)
+    if match.group(1).startswith("GITRUN_")
+)
+missing_in_example = sorted(supported - example_keys)
+if missing_in_example:
+    errors.append(
+        "config template missing supported variables: " + ", ".join(missing_in_example)
+    )
+unsupported_example = sorted(example_keys - supported)
+if unsupported_example:
+    errors.append(
+        "config template contains unsupported parser variables: " + ", ".join(unsupported_example)
+    )
+if "GITRUN_LOG_LEVEL=" in config_source:
+    errors.append("config template exposes unsupported legacy GITRUN_LOG_LEVEL")
 
 release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 for required in [

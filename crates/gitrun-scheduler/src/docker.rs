@@ -346,6 +346,10 @@ pub struct RunnerSpec<'a> {
     /// list — see `main.rs::vault_env_for_repo`. Names are validated to be
     /// safe environment variable identifiers before reaching here.
     pub secret_env: &'a [(String, String)],
+    /// Security-policy values passed to the container bootstrap. The
+    /// bootstrap snapshots them into a root-owned file before the Actions
+    /// runner starts; the GSR agent never trusts the workflow environment.
+    pub gsr_policy_env: &'a [(String, String)],
     /// True for a Windows container runner (Logic Containers). Changes which
     /// flags are valid: Windows containers don't support `--read-only`,
     /// `--tmpfs`, `--pids-limit`, or Unix-style socket/group-add mounts —

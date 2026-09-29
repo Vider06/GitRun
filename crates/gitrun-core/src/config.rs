@@ -523,6 +523,10 @@ impl Config {
                 self.gsr_violation_action
             )));
         }
+        validate_single_line("GITRUN_GSR_COMMAND_BLACKLIST", &self.gsr_command_blacklist)?;
+        validate_single_line("GITRUN_GSR_COMMAND_WHITELIST", &self.gsr_command_whitelist)?;
+        validate_single_line("GITRUN_GSR_VIOLATION_ACTION", &self.gsr_violation_action)?;
+
         if self.gsr_zizmor_enabled && !self.gsr_zizmor_license_accepted {
             return Err(ConfigError::Invalid(
                 "GITRUN_GSR_ZIZMOR_ENABLED=true requires the zizmor license/terms to have been accepted first (GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED=true) — this is normally set by the dashboard's consent dialog, not by hand".into(),
@@ -601,6 +605,13 @@ fn validate_time(value: &str) -> Result<(), ConfigError> {
         return Err(ConfigError::Invalid(format!(
             "invalid container update time: {value}"
         )));
+    }
+    Ok(())
+}
+
+fn validate_single_line(key: &str, value: &str) -> Result<(), ConfigError> {
+    if value.contains('\n') || value.contains('\r') {
+        return Err(ConfigError::Invalid(format!("{key} must not contain newlines")));
     }
     Ok(())
 }

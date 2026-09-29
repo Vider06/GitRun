@@ -47,12 +47,10 @@ use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
-/// Environment variable pointing at the real shell binary this agent
-/// delegates to on an allowed command. Set once, at image-build time, when
-/// the real `/bin/sh` is moved aside to make room for this binary — see
-/// `docker/runner`'s Dockerfile for the exact relocation step. Falls back
-/// to `/bin/sh.gitrun-real` if unset, so a misconfigured image fails
-/// loudly (real shell not found) rather than silently no-op'ing.
+/// Fixed paths to the real shell binaries relocated at image-build time.
+/// These are deliberately constants rather than environment-controlled
+/// paths, because the command-policy boundary must not be bypassable by
+/// changing the delegation target.
 const REAL_SHELL_FALLBACK: &str = "/bin/sh.gitrun-real";
 const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 
@@ -134,8 +132,6 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
         },
     };
     let invocation = env::args().next().unwrap_or_else(|| "sh".to_owned());
-    let real_shell = real_shell_for_invocation(&invocation);
-
     match decide(&policy, &args, &invocation) {
         AgentDecision::Delegate { real_shell } => {
             // exec replaces this process; on success this call never

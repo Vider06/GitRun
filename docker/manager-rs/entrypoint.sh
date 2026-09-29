@@ -18,13 +18,18 @@ case "$socket_gid" in
         ;;
 esac
 
+if [ "$socket_gid" = "0" ]; then
+    echo "gitrun-manager: refusing Docker socket with GID 0 (root group)" >&2
+    exit 1
+fi
+
 if ! getent group "$socket_gid" >/dev/null 2>&1; then
     groupadd --gid "$socket_gid" gitrun-docker
 fi
 
 docker_group=$(getent group "$socket_gid" | cut -d: -f1)
-if [ -z "$docker_group" ]; then
-    echo "gitrun-manager: could not resolve Docker socket group $socket_gid" >&2
+if [ -z "$docker_group" ] || [ "$docker_group" = "root" ]; then
+    echo "gitrun-manager: could not safely resolve Docker socket group $socket_gid" >&2
     exit 1
 fi
 
@@ -33,4 +38,11 @@ usermod -aG "$docker_group" gitrun-manager
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 chown gitrun-manager:gitrun-manager "$STATE_DIR" "$LOG_DIR"
 
-exec setpriv     --reuid=gitrun-manager     --regid=gitrun-manager     --init-groups     --inh-caps=-all     --bounding-set=-all     --no-new-privs     /usr/local/bin/gitrun-autoscaler
+exec setpriv \
+    --reuid=gitrun-manager \
+    --regid=gitrun-manager \
+    --init-groups \
+    --inh-caps=-all \
+    --bounding-set=-all \
+    --no-new-privs \
+    /usr/local/bin/gitrun-autoscaler

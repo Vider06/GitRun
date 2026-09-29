@@ -16,6 +16,7 @@
 //!    queued workflow runs. This client follows the `Link: rel="next"`
 //!    header until exhausted.
 
+use gitrun_core::AppAuth;
 use serde::Deserialize;
 use std::time::Duration;
 use thiserror::Error;
@@ -111,7 +112,7 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
 /// App installation, which mints and auto-refreshes short-lived tokens.
 enum TokenSource {
     StaticToken(String),
-    App(crate::app_auth::AppAuth),
+    App(AppAuth),
 }
 
 impl TokenSource {
@@ -171,7 +172,7 @@ impl GitHubClient {
     /// tokens as needed — the caller never sees or manages the token
     /// directly, same as with a PAT.
     pub fn with_app_auth(
-        auth: crate::app_auth::AppAuth,
+        auth: AppAuth,
         connect_timeout: Duration,
         request_timeout: Duration,
     ) -> Result<Self> {

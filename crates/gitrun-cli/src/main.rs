@@ -270,38 +270,19 @@ fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|value| value.parse::<u32>().ok());
     let executable = std::env::current_exe()?;
 
-    if raw
-        .lines()
-        .next()
-        .is_some_and(|line| line.starts_with("AUTH_MODE="))
-    {
-        let values = parse_setup_request(&raw)?;
-        let repositories = required_setup_value(&values, "GITRUN_REPOSITORIES")?;
-        let auth = match required_setup_value(&values, "AUTH_MODE")?.as_str() {
-            "pat" => BootstrapAuth::Pat(required_setup_value(&values, "GITHUB_TOKEN")?),
-            "app" => BootstrapAuth::GitHubApp {
-                app_id: required_setup_value(&values, "GITRUN_GITHUB_APP_ID")?,
-                installation_id: required_setup_value(
-                    &values,
-                    "GITRUN_GITHUB_APP_INSTALLATION_ID",
-                )?,
-                private_key_path: required_setup_value(
-                    &values,
-                    "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH",
-                )?,
-            },
-            other => return Err(format!("unsupported setup auth mode: {other}").into()),
-        };
+    let values = parse_setup_request(&raw)?;
+    let repositories = required_setup_value(&values, "GITRUN_REPOSITORIES")?;
+    let auth = match required_setup_value(&values, "AUTH_MODE")?.as_str() {
+        "pat" => BootstrapAuth::Pat(required_setup_value(&values, "GITHUB_TOKEN")?),
+        "app" => BootstrapAuth::GitHubApp {
+            app_id: required_setup_value(&values, "GITRUN_GITHUB_APP_ID")?,
+            installation_id: required_setup_value(&values, "GITRUN_GITHUB_APP_INSTALLATION_ID")?,
+            private_key_path: required_setup_value(&values, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?,
+        },
+        other => return Err(format!("unsupported setup auth mode: {other}").into()),
+    };
 
-        bootstrap_linux_with_auth(auth, &repositories, &executable, owner_uid)?;
-    } else {
-        // Compatibility path for the graphical first-run wizard still using
-        // the original two-line temporary request format.
-        let mut lines = raw.lines();
-        let token = lines.next().unwrap_or_default().trim();
-        let repositories = lines.next().unwrap_or_default().trim();
-        gitrun_setup::bootstrap_linux(token, repositories, &executable, owner_uid)?;
-    }
+    bootstrap_linux_with_auth(auth, &repositories, &executable, owner_uid)?;
 
     println!("GitRun setup: PASS");
     Ok(())

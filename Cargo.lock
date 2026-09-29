@@ -1394,6 +1394,7 @@ dependencies = [
  "gitrun-core",
  "gitrun-gsr",
  "gitrun-scheduler",
+ "gitrun-setup",
  "gitrun-vault",
  "serde",
  "serde_json",

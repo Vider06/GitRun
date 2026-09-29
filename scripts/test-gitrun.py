@@ -266,6 +266,10 @@ for required in [
         errors.append(f"GSR kernel supervisor requirement missing: {required}")
 
 docker_source = (ROOT / "crates/gitrun-scheduler/src/docker.rs").read_text(encoding="utf-8")
+if '"--read-only".into()' in docker_source:
+    errors.append("Linux runner containers must not use a read-only root filesystem")
+if '"/tmp:rw,nosuid,nodev,noexec' in docker_source:
+    errors.append("runner /tmp must remain executable for CI tooling")
 if '--cap-add", "SYS_PTRACE' not in docker_source and '"SYS_PTRACE"' not in docker_source:
     errors.append("GSR Docker hardening must retain SYS_PTRACE for the PID-1 supervisor")
 

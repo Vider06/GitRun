@@ -1,16 +1,15 @@
-//! Entry point for `gitrun-gsr-agent`.
+//! Entry point for gitrun-gsr-agent.
 //!
-//! Security policy is loaded exclusively from the root-owned policy snapshot
-//! created by the runner entrypoint before the GitHub Actions runner starts.
-//! The workflow environment is intentionally not consulted for policy values:
-//! jobs are attacker-controlled input and must never be able to disable or
-//! rewrite the enforcement configuration.
+//! The protected policy snapshot is authoritative. Normal shell invocations
+//! use the lightweight shell layer; runner-container startup passes
+//! --supervise-runner so PID 1 becomes the kernel-backed GSR supervisor.
 
 use gitrun_core::Config;
 use std::path::Path;
 
 const GSR_POLICY_FILE: &str = "/run/gitrun/gsr-policy.env";
 const GSR_EVENTS_PATH: &str = "/run/gitrun/gsr-events.jsonl";
+const SUPERVISE_ARG: &str = "--supervise-runner";
 
 fn main() {
     let config = match Config::from_env_file(GSR_POLICY_FILE) {
@@ -24,5 +23,13 @@ fn main() {
     };
 
     let events_path = Path::new(GSR_EVENTS_PATH);
-    std::process::exit(gitrun_gsr::agent::run(events_path, &config));
+    let supervise = std::env::args().nth(1).as_deref() == Some(SUPERVISE_ARG);
+
+    let exit_code = if supervise {
+        gitrun_gsr::agent::supervise_runner(events_path, &config)
+    } else {
+        gitrun_gsr::agent::run(events_path, &config)
+    };
+
+    std::process::exit(exit_code);
 }

@@ -14,6 +14,11 @@ try {
         git describe --tags --always --dirty
     }
 
+    $HostTarget = (rustc -vV | Select-String 'host:' | ForEach-Object { ($_ -split '\s+')[1] })
+    if ($Target -ne $HostTarget) {
+        throw "Tauri local release builds must target the current Rust host ($HostTarget); got $Target"
+    }
+
     cargo build --locked --release -p gitrun-cli --bin gitrun
 
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm is required to build the Tauri dashboard" }

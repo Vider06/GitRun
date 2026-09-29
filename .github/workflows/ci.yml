@@ -129,7 +129,12 @@ jobs:
 
           [ -f Cargo.toml ] && rust=true
           find . -name '*.py' -not -path './.git/*' -print -quit | grep -q . && python=true
-          { [ -f docker-compose.yml ] || find docker -name 'Dockerfile*' -print -quit 2>/dev/null | grep -q .; } && docker=true
+          if { [ -f docker-compose.yml ] || find docker -name 'Dockerfile*' -print -quit 2>/dev/null | grep -q .; } &&
+             command -v docker >/dev/null 2>&1 &&
+             [ -S /var/run/docker.sock ] &&
+             docker info >/dev/null 2>&1; then
+            docker=true
+          fi
           find . -name '*.ps1' -not -path './.git/*' -print -quit | grep -q . && powershell=true
           find . -name package.json -not -path './.git/*' -not -path '*/node_modules/*' -print -quit | grep -q . && node=true
           if [ -f crates/gitrun-dashboard-tauri/src-tauri/Cargo.toml ] && [ -f crates/gitrun-dashboard-tauri/package.json ]; then

@@ -205,7 +205,8 @@ for legacy in ["gitrun-dashboard", "gitrun_dashboard", "eframe", "egui"]:
         "packaging/gitrun.desktop",
     ]:
         source = (ROOT / path).read_text(encoding="utf-8")
-        if legacy in source:
+        normalized_source = source.replace("gitrun-dashboard-tauri", "")
+        if legacy in normalized_source:
             errors.append(f"legacy dashboard reference in {path}: {legacy}")
 
 runner_image = (ROOT / "docker/runner/Dockerfile").read_text(encoding="utf-8")

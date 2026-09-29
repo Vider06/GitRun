@@ -1,0 +1,41 @@
+name: Temporary lock regeneration
+
+on:
+  push:
+    branches: [BigRework]
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Regenerate Cargo.lock
+        shell: bash
+        env:
+          CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
+          RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          RUST_VERSION: "1.98.1"
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$CARGO_TARGET_DIR"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail               https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION" --no-modify-path
+          fi
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          cargo generate-lockfile
+          test -s Cargo.lock
+          sha256sum Cargo.lock
+      - name: Upload regenerated lockfile
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: regenerated-cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 1

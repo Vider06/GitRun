@@ -18,6 +18,10 @@ try {
 
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm is required to build the Tauri dashboard" }
     $TauriVersion = $Version.TrimStart('v')
+    $TauriConfigPath = Join-Path $Root 'crates\gitrun-dashboard-tauri\src-tauri\tauri.conf.json'
+    $TauriConfig = Get-Content $TauriConfigPath -Raw | ConvertFrom-Json
+    $TauriConfig.version = $TauriVersion
+    $TauriConfig | ConvertTo-Json -Depth 10 | Set-Content $TauriConfigPath -Encoding utf8
     Push-Location "crates\gitrun-dashboard-tauri"
     try {
         npm install --ignore-scripts --no-audit --no-fund

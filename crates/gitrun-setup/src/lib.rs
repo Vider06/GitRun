@@ -661,4 +661,3 @@ mod tests {
         assert!(validate_env_value("token\nINJECTED=value", "GITHUB_TOKEN").is_err());
     }
 }
-

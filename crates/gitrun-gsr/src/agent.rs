@@ -31,14 +31,13 @@
 //! what this layer's shell-only vantage point misses.
 //!
 //! # Real shell delegation
-//! On `Decision::Allowed`, this execs the real shell (relocated to
-//! `GITRUN_GSR_REAL_SHELL`, set up by the runner image's build step — see
-//! `docker/runner`) with the same arguments, so allowed commands behave
-//! completely normally; this binary is invisible to a passing step. On
-//! `Decision::Denied`, it refuses to exec anything, writes a security
-//! event, and exits non-zero so the step (and therefore the job) fails
-//! the same way a normal shell syntax error would - the person reviewing
-//! the failed job sees a clear message either way.
+//! On `Decision::Allowed`, this execs one of the fixed real shell binaries
+//! relocated by the runner image at build time, using the same arguments, so
+//! allowed commands behave completely normally; this binary is invisible to
+//! a passing step. On `Decision::Denied`, it refuses to exec anything,
+//! writes a security event, and exits non-zero so the step (and therefore the
+//! job) fails the same way a normal shell syntax error would - the person
+//! reviewing the failed job sees a clear message either way.
 
 use crate::events::{self, SecurityEvent, Severity};
 use gitrun_core::command_policy::{CommandPolicy, Decision};
@@ -237,30 +236,23 @@ mod tests {
 
     #[test]
     fn bash_invocation_uses_bash_real_shell() {
-        assert_eq!(
-            real_shell_for_invocation("bash"),
-            "/real/bash"
-        );
-        assert_eq!(
-            real_shell_for_invocation("/bin/bash"),
-            REAL_BASH_FALLBACK
-        );
+        assert_eq!(real_shell_for_invocation("bash"), REAL_BASH_FALLBACK);
+        assert_eq!(real_shell_for_invocation("/bin/bash"), REAL_BASH_FALLBACK);
     }
 
     #[test]
     fn sh_invocation_uses_sh_real_shell() {
-        assert_eq!(
-            real_shell_for_invocation("sh"),
-            "/real/sh"
-        );
-        assert_eq!(
-            real_shell_for_invocation("/bin/sh"),
-            REAL_SHELL_FALLBACK
-        );
+        assert_eq!(real_shell_for_invocation("sh"), REAL_SHELL_FALLBACK);
+        assert_eq!(real_shell_for_invocation("/bin/sh"), REAL_SHELL_FALLBACK);
     }
 
     #[test]
-    fn missing_real_shell_env_uses_fallback_path() {
+    fn unknown_invocation_uses_sh_real_shell() {
+        assert_eq!(real_shell_for_invocation("dash"), REAL_SHELL_FALLBACK);
+    }
+
+    #[test]
+    fn missing_real_shell_env_uses_fixed_path() {
         let policy = policy_with_baseline();
         let args = vec!["-c".to_string(), "echo hi".to_string()];
         let decision = decide(&policy, &args, "sh");

@@ -63,7 +63,7 @@ fn decisions_dir(state_dir: &Path) -> PathBuf {
 fn decision_filename(vm_name: &str) -> String {
     let mut encoded = String::new();
     for byte in vm_name.bytes() {
-        if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' {
+        if byte.is_ascii_alphanumeric() || byte == b'-' {
             encoded.push(byte as char);
         } else {
             encoded.push_str(&format!("_{byte:02x}"));

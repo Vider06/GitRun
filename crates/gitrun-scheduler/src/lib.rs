@@ -45,6 +45,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+// The scheduler keeps reconciliation in Rust; the legacy Python path is no longer executed.
 pub fn run() {
     let stopping = Arc::new(AtomicBool::new(false));
     if let Err(error) = install_signal_handlers(&stopping) {

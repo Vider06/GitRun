@@ -33,9 +33,6 @@ pub enum DecisionError {
 
 pub type Result<T> = std::result::Result<T, DecisionError>;
 
-/// The operator's answer, once given. Matches the two options the dashboard
-/// prompt offers: retry the KVM setup that just failed, or use VirtualBox
-/// for this VM instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionChoice {
@@ -46,11 +43,8 @@ pub enum DecisionChoice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingDecision {
     pub vm_name: String,
-    /// The error KVM setup failed with, shown verbatim in the dashboard
-    /// prompt so the operator isn't guessing why.
     pub error: String,
     pub requested_at: u64,
-    /// `None` while waiting; set once the operator responds.
     pub choice: Option<DecisionChoice>,
     pub responded_at: Option<u64>,
 }
@@ -66,9 +60,6 @@ fn decisions_dir(state_dir: &Path) -> PathBuf {
     state_dir.join("hypervisor-decisions")
 }
 
-/// Encodes every non-identifier byte, rather than replacing it with a single
-/// underscore. This keeps filenames safe without making distinct VM names
-/// such as `foo/bar` and `foo_bar` collide.
 fn decision_filename(vm_name: &str) -> String {
     let mut encoded = String::new();
     for byte in vm_name.bytes() {
@@ -107,11 +98,7 @@ fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
     let started = std::time::Instant::now();
 
     loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
+        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(_) => return Ok(DecisionLock { path }),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if let Ok(metadata) = fs::metadata(&path) {
@@ -150,8 +137,7 @@ fn write_record(path: &Path, record: &PendingDecision) -> Result<()> {
         std::process::id(),
         unique
     ));
-    let serialized = serde_json::to_string(record)?;
-    fs::write(&tmp, serialized)?;
+    fs::write(&tmp, serde_json::to_string(record)?)?;
     if let Err(error) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
         return Err(error.into());
@@ -159,23 +145,22 @@ fn write_record(path: &Path, record: &PendingDecision) -> Result<()> {
     Ok(())
 }
 
-/// Called by the autoscaler's background resolution thread when KVM setup
-/// fails: opens (or reopens) a pending decision for the dashboard to show.
 pub fn request(state_dir: &Path, vm_name: &str, error: &str) -> Result<()> {
     let dir = decisions_dir(state_dir);
     fs::create_dir_all(&dir)?;
     let _lock = acquire_lock(state_dir, vm_name)?;
-    let record = PendingDecision {
-        vm_name: vm_name.to_owned(),
-        error: error.to_owned(),
-        requested_at: now(),
-        choice: None,
-        responded_at: None,
-    };
-    write_record(&decision_path(state_dir, vm_name), &record)
+    write_record(
+        &decision_path(state_dir, vm_name),
+        &PendingDecision {
+            vm_name: vm_name.to_owned(),
+            error: error.to_owned(),
+            requested_at: now(),
+            choice: None,
+            responded_at: None,
+        },
+    )
 }
 
-/// Called by the dashboard when the operator picks an option.
 pub fn respond(state_dir: &Path, vm_name: &str, choice: DecisionChoice) -> Result<()> {
     let _lock = acquire_lock(state_dir, vm_name)?;
     let path = decision_path(state_dir, vm_name);
@@ -185,8 +170,6 @@ pub fn respond(state_dir: &Path, vm_name: &str, choice: DecisionChoice) -> Resul
     write_record(&path, &record)
 }
 
-/// Called by the autoscaler's background thread, polled every few seconds
-/// while waiting. `Ok(None)` means the file is gone.
 pub fn poll(state_dir: &Path, vm_name: &str) -> Result<Option<PendingDecision>> {
     match fs::read_to_string(decision_path(state_dir, vm_name)) {
         Ok(raw) => Ok(Some(serde_json::from_str(&raw)?)),
@@ -195,9 +178,6 @@ pub fn poll(state_dir: &Path, vm_name: &str) -> Result<Option<PendingDecision>> 
     }
 }
 
-/// Removes the record once the autoscaler has acted on it (or given up on
-/// timeout). Serialized with dashboard responses so clear cannot race a
-/// response and accidentally delete a newly answered record.
 pub fn clear(state_dir: &Path, vm_name: &str) -> Result<()> {
     let _lock = acquire_lock(state_dir, vm_name)?;
     match fs::remove_file(decision_path(state_dir, vm_name)) {
@@ -207,8 +187,6 @@ pub fn clear(state_dir: &Path, vm_name: &str) -> Result<()> {
     }
 }
 
-/// Lists every decision still awaiting a response (`choice.is_none()`),
-/// for the dashboard to render as open prompts.
 pub fn list_pending(state_dir: &Path) -> Result<Vec<PendingDecision>> {
     let dir = decisions_dir(state_dir);
     let entries = match fs::read_dir(&dir) {
@@ -218,8 +196,7 @@ pub fn list_pending(state_dir: &Path) -> Result<Vec<PendingDecision>> {
     };
     let mut pending = Vec::new();
     for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
+        let path = entry?.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
@@ -310,25 +287,20 @@ mod tests {
     }
 
     #[test]
-    fn response_and_clear_are_serialized_by_the_same_lock() {
+    fn response_waits_for_existing_writer() {
         let dir = temp_dir("lock");
         request(&dir, "vm-a", "boom").unwrap();
         let lock = acquire_lock(&dir, "vm-a").unwrap();
-        let started = std::time::Instant::now();
         let result = {
-            // The lock is deliberately held to prove another writer cannot
-            // enter the critical section immediately.
-            let path = decision_path(&dir, "vm-a");
-            let _ = path;
-            std::thread::spawn({
-                let dir = dir.clone();
-                move || respond(&dir, "vm-a", DecisionChoice::RetryKvm)
-            })
-            .join()
-            .expect("response thread")
+            let dir = dir.clone();
+            std::thread::spawn(move || respond(&dir, "vm-a", DecisionChoice::RetryKvm))
+                .join()
+                .expect("response thread")
         };
-        assert!(result.is_ok());
-        assert!(started.elapsed() >= LOCK_WAIT);
+        assert!(matches!(
+            result,
+            Err(DecisionError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut
+        ));
         drop(lock);
         let _ = fs::remove_dir_all(&dir);
     }

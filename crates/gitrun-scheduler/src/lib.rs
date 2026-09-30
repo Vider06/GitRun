@@ -76,6 +76,7 @@ pub fn run() {
 
     let state_dir = PathBuf::from(&config.state_dir);
     let rate_limits = RateLimitTracker::new();
+    let vm_registry = vm_resolution::new_registry();
     spawn_gtuu_thread(&config, &stopping);
     spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
 
@@ -97,8 +98,6 @@ pub fn run() {
         );
         std::process::exit(2);
     }
-    let vm_registry = vm_resolution::new_registry();
-
     // GSR integration: write our own PID to a well-known file so the
     // separate `gitrun-gsr` watchdog process can supervise us — see
     // `gitrun-gsr/src/watchdog.rs`. Removed on clean shutdown below; if this
@@ -570,6 +569,7 @@ fn create_runner(
         validate_repo_workflows_best_effort(client, config, repo);
     }
 
+    let gsr_policy_env = gsr_policy_env(config);
     let safe = docker::sanitize(repo, '-');
     let name = format!("gitrun-{safe}-{}", uuid_like_suffix());
     docker::ensure_shared_cache_volume(&config.shared_cache_volume)?;
@@ -603,6 +603,7 @@ fn create_runner(
             runner_home_size: &config.runner_home_size,
             home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
             secret_env: &secret_env,
+            gsr_policy_env: &gsr_policy_env(config),
             is_windows,
             docker_socket_hardening: config.gsr_docker_socket_hardening,
         },
@@ -709,6 +710,36 @@ fn write_scratch_workflows(
 /// Failures are logged, not silently swallowed, so an operator relying on a
 /// secret notices it's missing rather than debugging a mysteriously empty
 /// environment variable inside a job.
+fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
+    vec![
+        ("GITRUN_GSR_COMMAND_POLICY_ENABLED".into(), config.gsr_command_policy_enabled.to_string()),
+        (
+            "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED".into(),
+            config.gsr_command_baseline_blacklist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED".into(),
+            config.gsr_command_blacklist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BLACKLIST".into(),
+            config.gsr_command_blacklist.clone(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_WHITELIST_ENABLED".into(),
+            config.gsr_command_whitelist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_WHITELIST".into(),
+            config.gsr_command_whitelist.clone(),
+        ),
+        (
+            "GITRUN_GSR_VIOLATION_ACTION".into(),
+            config.gsr_violation_action.clone(),
+        ),
+    ]
+}
+
 fn vault_env_for_repo(config: &Config, repo: &str) -> Vec<(String, String)> {
     if config.vault_dir.trim().is_empty() {
         return Vec::new();
@@ -830,6 +861,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
+        gsr_policy_env: &gsr_policy_env(&config),
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }

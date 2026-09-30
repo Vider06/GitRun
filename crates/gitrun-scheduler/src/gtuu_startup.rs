@@ -37,8 +37,7 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         containers_error: None,
     };
 
-    let repository =
-        std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
+    let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
 
     let manifest = match gitrun_updater::latest_manifest(&repository) {
         Ok(manifest) => {
@@ -205,7 +204,7 @@ fn current_gitrun_version() -> String {
     std::env::var("GITRUN_VERSION")
         .ok()
         .filter(|value| !value.trim().is_empty())
-.or_else(|| {
+        .or_else(|| {
             std::fs::read_to_string("/usr/share/gitrun/version.txt")
                 .ok()
                 .map(|v| v.trim().to_owned())

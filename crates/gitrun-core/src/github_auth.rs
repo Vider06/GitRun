@@ -35,6 +35,8 @@ impl GitHubAuth {
                 &config.github_app_id,
                 &config.github_app_installation_id,
                 &private_key,
+                std::time::Duration::from_secs(config.github_connect_timeout),
+                std::time::Duration::from_secs(config.github_request_timeout),
             )?));
         }
 

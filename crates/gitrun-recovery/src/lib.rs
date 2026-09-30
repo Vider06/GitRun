@@ -123,13 +123,13 @@ pub fn inspect() -> RecoveryReport {
     let state_ok = match store.read_health() {
         Ok(Some(report)) if !report.healthy => {
             issues.push(RecoveryIssue {
-                code: "health-failed".into(),
-                severity: Severity::Critical,
-                title: "GitRun reported an unhealthy state".into(),
+                code: "previous-health-failed".into(),
+                severity: Severity::Warning,
+                title: "GitRun recorded an unhealthy previous startup".into(),
                 detail: report.message,
-                repairable: true,
+                repairable: false,
             });
-            false
+            true
         }
         Ok(Some(_)) | Ok(None) => true,
         Err(error) => {

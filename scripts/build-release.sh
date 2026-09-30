@@ -72,6 +72,12 @@ esac
 
 cp -- "target/release/$BINARY" dist/release/package/
 cp -- "target/release/$DASHBOARD_BINARY" dist/release/package/
+RECOVERY_BINARY="gitrun-recovery"
+case "$TARGET" in
+  *windows*) RECOVERY_BINARY="gitrun-recovery.exe" ;;
+esac
+
+cp -- "target/release/$RECOVERY_BINARY" dist/release/package/
 cp -- LICENSE README.md config/config.example.env dist/release/package/
 
 ARCHIVE="dist/release/GitRun-$VERSION-$TARGET.tar.gz"

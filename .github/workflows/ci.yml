@@ -262,19 +262,6 @@ jobs:
       - name: Rust format check
         run: cargo fmt --all -- --check
 
-      - name: Diagnose Cargo lock resolution
-        shell: bash
-        run: |
-          set -u
-          report="$RUNNER_TEMP/cargo-lock-resolution.txt"
-          cargo update --verbose > "$report" 2>&1
-          status=$?
-          cat "$report"
-          echo "--- Cargo.lock diff ---"
-          git diff -- Cargo.lock
-          echo "cargo update exit status: $status"
-          exit 0
-
       - name: Rust workspace check
         run: cargo check --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked
 

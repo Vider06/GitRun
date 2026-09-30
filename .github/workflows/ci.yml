@@ -210,8 +210,7 @@ jobs:
         with:
           path: target
           key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v10-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-target-v9-
+          # Deliberately no restore fallback: v10 must be a clean target cache.
 
       - name: Setup Rust
         shell: bash

@@ -431,11 +431,8 @@ mod tests {
         // to accept Some(_) too; documented here rather than silently
         // becoming a flaky test.
         let dir = std::env::temp_dir();
-        let result = run_zizmor_command(
-            "__gitrun_zizmor_binary_that_should_not_exist__",
-            &dir,
-        )
-        .unwrap();
+        let result =
+            run_zizmor_command("__gitrun_zizmor_binary_that_should_not_exist__", &dir).unwrap();
         assert!(result.is_none());
     }
 

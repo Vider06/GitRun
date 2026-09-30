@@ -86,7 +86,11 @@ jobs:
           if ! command -v docker >/dev/null 2>&1; then echo "::warning::Docker CLI is not installed on this runner."; exit 0; fi
           docker --version
           if [ ! -S /var/run/docker.sock ]; then echo "::warning::Docker socket unavailable on this runner."; exit 0; fi
-          if ! docker info >/dev/null 2>&1; then echo "::warning::Docker daemon is unavailable to this runner user."; exit 0; fi
+          if ! docker info; then
+            echo "::warning::Docker daemon is unavailable to this runner user."
+            echo "::warning::Docker diagnostics above are the actual Docker error."
+            exit 0
+          fi
           echo "Docker access is available."
 
       - name: Verify GitHub Actions environment
@@ -129,10 +133,7 @@ jobs:
 
           [ -f Cargo.toml ] && rust=true
           find . -name '*.py' -not -path './.git/*' -print -quit | grep -q . && python=true
-          if { [ -f docker-compose.yml ] || find docker -name 'Dockerfile*' -print -quit 2>/dev/null | grep -q .; } &&
-             command -v docker >/dev/null 2>&1 &&
-             [ -S /var/run/docker.sock ] &&
-             docker info >/dev/null 2>&1; then
+          if [ -f docker-compose.yml ] || find docker -name 'Dockerfile*' -print -quit 2>/dev/null | grep -q .; then
             docker=true
           fi
           find . -name '*.ps1' -not -path './.git/*' -print -quit | grep -q . && powershell=true

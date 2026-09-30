@@ -27,8 +27,7 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     source
 }
 
-pub(crate) const RUNNER_ENTRYPOINT: &str =
-    include_str!("../../../docker/runner/entrypoint.sh");
+pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/entrypoint.sh");
 
 pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
 

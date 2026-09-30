@@ -346,9 +346,9 @@ jobs:
           path: |
             .gitrun-ci/cargo-tools
             .gitrun-ci/cargo-target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v7-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v10-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v6-
+            ${{ runner.os }}-${{ runner.arch }}-rust-${{ env.RUST_VERSION }}-auditors-v9-
 
       - name: Setup Rust for dependency tooling
         if: needs.detect.outputs.rust == 'true'

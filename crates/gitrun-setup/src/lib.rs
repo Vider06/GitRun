@@ -538,7 +538,10 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
         ("GITRUN_CONTAINER_CPUS", config.container_cpus.clone()),
         ("GITRUN_CONTAINER_MEMORY", config.container_memory.clone()),
         ("GITRUN_CONTAINER_PIDS", config.container_pids_limit.clone()),
-        ("GITRUN_DISABLE_UPDATE", config.runner_disable_update.to_string()),
+        (
+            "GITRUN_DISABLE_UPDATE",
+            config.runner_disable_update.to_string(),
+        ),
         (
             "GITRUN_SHARED_CACHE_VOLUME",
             config.shared_cache_volume.clone(),
@@ -557,10 +560,7 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
             config.github_request_timeout.to_string(),
         ),
         ("GITRUN_VAULT_DIR", config.vault_dir.clone()),
-        (
-            "GITRUN_VAULT_GROUPS",
-            config.vault_group_membership.clone(),
-        ),
+        ("GITRUN_VAULT_GROUPS", config.vault_group_membership.clone()),
         (
             "GITRUN_GTUU_SCHEDULE_TIMEZONE",
             config.gtuu_schedule_timezone.clone(),
@@ -656,8 +656,7 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     // Reuse the same atomic 0600 writer used by bootstrap. In particular,
     // never create the temporary env file with the process umask/default
     // permissions: this file can contain the GitHub PAT.
-    write_resource(path, &(output.join("\n") + "\n"), 0o600)
-        .map_err(|e| e.to_string())?;
+    write_resource(path, &(output.join("\n") + "\n"), 0o600).map_err(|e| e.to_string())?;
     Ok(())
 }
 

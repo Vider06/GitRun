@@ -18,6 +18,9 @@ RUN grep -Fq 'pub mod app_auth;' crates/gitrun-core/src/lib.rs \
 RUN --mount=type=cache,id=gitrun-manager-target-${GITRUN_SOURCE_REV},target=/build/target,sharing=locked \
     cargo clean -p gitrun-core
 
+RUN --mount=type=cache,id=gitrun-manager-target-${GITRUN_SOURCE_REV},target=/build/target,sharing=locked \
+    rm -rf /build/target/release/incremental
+
 RUN --mount=type=cache,id=gitrun-manager-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=gitrun-manager-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=gitrun-manager-target-${GITRUN_SOURCE_REV},target=/build/target,sharing=locked \

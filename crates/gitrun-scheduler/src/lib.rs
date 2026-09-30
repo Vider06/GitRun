@@ -12,8 +12,8 @@ pub mod vm;
 pub mod vm_resolution;
 
 pub use backoff::RateLimitTracker;
-pub use gtuu_startup::GtuuStartupReport;
 pub use github::{GitHubClient, GitHubError, Runner};
+pub use gtuu_startup::GtuuStartupReport;
 pub use logic_containers::{Backend, LogicRule};
 pub use reconcile::{Action, ReconcileInput};
 

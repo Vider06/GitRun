@@ -396,9 +396,7 @@ pub fn dashboard_binary() -> Option<PathBuf> {
 pub fn service_unit_is_valid() -> bool {
     let path = Path::new("/etc/systemd/system/gitrun.service");
     fs::read_to_string(path)
-        .map(|content| {
-            content.contains("ExecStart=/usr/local/bin/gitrun-recovery start scheduler")
-        })
+        .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun-recovery start scheduler"))
         .unwrap_or(false)
 }
 

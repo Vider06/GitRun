@@ -228,10 +228,16 @@ pub fn bootstrap_linux_with_auth(
 
 fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {
     [
-        std::env::var("GITRUN_RECOVERY_BINARY").ok().map(PathBuf::from),
+        std::env::var("GITRUN_RECOVERY_BINARY")
+            .ok()
+            .map(PathBuf::from),
         Some(PathBuf::from("/usr/local/bin/gitrun-recovery")),
         app_binary.parent().map(|parent| {
-            parent.join(if cfg!(windows) { "gitrun-recovery.exe" } else { "gitrun-recovery" })
+            parent.join(if cfg!(windows) {
+                "gitrun-recovery.exe"
+            } else {
+                "gitrun-recovery"
+            })
         }),
     ]
     .into_iter()

@@ -1,6 +1,8 @@
 //! Full GTUU orchestration for GitRun startup.
 
-use crate::{build_github_client, load_config, resolve_docker_socket_gid, vault_env_for_repo, GtuuConfig};
+use crate::{
+    build_github_client, load_config, resolve_docker_socket_gid, vault_env_for_repo, GtuuConfig,
+};
 use gitrun_core::Config;
 use gitrun_updater::{self, UpdateError};
 use std::path::PathBuf;
@@ -35,8 +37,8 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         containers_error: None,
     };
 
-    let repository = std::env::var("GITRUN_REPOSITORY")
-        .unwrap_or_else(|_| "Vider06/GitRun".into());
+    let repository =
+        std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
 
     let manifest = match gitrun_updater::latest_manifest(&repository) {
         Ok(manifest) => {
@@ -134,16 +136,27 @@ fn update_gitrun_from_manifest(
     let artifact = manifest.artifact_for(&target)?;
     gitrun_updater::download_and_verify(&plan.artifact_url, &artifact.sha256, &archive)?;
 
-    let gitrun_binary = PathBuf::from(std::env::var("GITRUN_BINARY_PATH")
-        .unwrap_or_else(|_| "/usr/local/bin/gitrun".into()));
-    let dashboard_binary = PathBuf::from(std::env::var("GITRUN_DASHBOARD_BINARY")
-        .unwrap_or_else(|_| "/usr/bin/gitrun-dashboard-tauri".into()));
-    let recovery_binary = PathBuf::from(std::env::var("GITRUN_RECOVERY_BINARY")
-        .unwrap_or_else(|_| "/usr/local/bin/gitrun-recovery".into()));
-    let version_file = PathBuf::from(std::env::var("GITRUN_VERSION_FILE")
-        .unwrap_or_else(|_| "/usr/share/gitrun/version.txt".into()));
-    let backup_root = PathBuf::from(std::env::var("GITRUN_BACKUP_DIR")
-        .unwrap_or_else(|_| PathBuf::from(&config.state_dir).join("backups").display().to_string()));
+    let gitrun_binary = PathBuf::from(
+        std::env::var("GITRUN_BINARY_PATH").unwrap_or_else(|_| "/usr/local/bin/gitrun".into()),
+    );
+    let dashboard_binary = PathBuf::from(
+        std::env::var("GITRUN_DASHBOARD_BINARY")
+            .unwrap_or_else(|_| "/usr/bin/gitrun-dashboard-tauri".into()),
+    );
+    let recovery_binary = PathBuf::from(
+        std::env::var("GITRUN_RECOVERY_BINARY")
+            .unwrap_or_else(|_| "/usr/local/bin/gitrun-recovery".into()),
+    );
+    let version_file = PathBuf::from(
+        std::env::var("GITRUN_VERSION_FILE")
+            .unwrap_or_else(|_| "/usr/share/gitrun/version.txt".into()),
+    );
+    let backup_root = PathBuf::from(std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| {
+        PathBuf::from(&config.state_dir)
+            .join("backups")
+            .display()
+            .to_string()
+    }));
 
     let artifacts = [
         gitrun_updater::InstalledArtifact {
@@ -192,8 +205,16 @@ fn current_gitrun_version() -> String {
     std::env::var("GITRUN_VERSION")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| std::fs::read_to_string("/usr/share/gitrun/version.txt").ok().map(|v| v.trim().to_owned()))
-        .or_else(|| std::fs::read_to_string("version.txt").ok().map(|v| v.trim().to_owned()))
+.or_else(|| {
+            std::fs::read_to_string("/usr/share/gitrun/version.txt")
+                .ok()
+                .map(|v| v.trim().to_owned())
+        })
+        .or_else(|| {
+            std::fs::read_to_string("version.txt")
+                .ok()
+                .map(|v| v.trim().to_owned())
+        })
         .unwrap_or_else(|| "0.0.0".into())
 }
 

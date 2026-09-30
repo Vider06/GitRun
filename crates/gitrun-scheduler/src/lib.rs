@@ -603,7 +603,7 @@ fn create_runner(
             runner_home_size: &config.runner_home_size,
             home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
             secret_env: &secret_env,
-            gsr_policy_env: &gsr_policy_env(config),
+            gsr_policy_env: &gsr_policy_env,
             is_windows,
             docker_socket_hardening: config.gsr_docker_socket_hardening,
         },
@@ -843,6 +843,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
     let client = build_github_client(&config)?;
     let docker_socket_gid = resolve_docker_socket_gid()?;
+    let gsr_policy_env = gsr_policy_env(&config);
     let gtuu_config = GtuuConfig {
         image: &config.runner_image,
         repositories: &config.repositories,
@@ -861,7 +862,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
-        gsr_policy_env: &gsr_policy_env(&config),
+        gsr_policy_env: &gsr_policy_env,
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }

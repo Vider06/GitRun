@@ -169,9 +169,8 @@ impl AppAuth {
                 detail: "GitHub returned an empty installation token".into(),
             });
         }
-        let expires_at = parse_github_timestamp(&parsed.expires_at).ok_or_else(|| {
-            AppAuthError::InvalidTimestamp(parsed.expires_at.clone())
-        })?;
+        let expires_at = parse_github_timestamp(&parsed.expires_at)
+            .ok_or_else(|| AppAuthError::InvalidTimestamp(parsed.expires_at.clone()))?;
         Ok((parsed.token, expires_at))
     }
 }
@@ -226,8 +225,7 @@ fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days_since_epoch = era * 146097 + doe as i64 - 719468;
 
-    let total_secs =
-        days_since_epoch * 86400 + hour * 3600 + minute * 60 + second as i64;
+    let total_secs = days_since_epoch * 86400 + hour * 3600 + minute * 60 + second as i64;
     Some(UNIX_EPOCH + Duration::from_secs(total_secs.max(0) as u64))
 }
 

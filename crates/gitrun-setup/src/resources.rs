@@ -16,7 +16,10 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
         // The setup bootstrap intentionally uses the checked-in dependency
         // lock as its starting point but may prune unrelated workspace
         // packages because only gitrun-core + gitrun-gsr are present.
-        .replace("cargo build --locked --release -p gitrun-gsr", "cargo build --release -p gitrun-gsr");
+        .replace(
+            "cargo build --locked --release -p gitrun-gsr",
+            "cargo build --release -p gitrun-gsr",
+        );
 
     if source.contains(FULL_WORKSPACE_COPY) {
         panic!("runner Dockerfile bootstrap adaptation marker was not replaced");
@@ -145,15 +148,24 @@ mod tests {
 
     #[test]
     fn bootstrap_resources_include_every_required_source() {
-        let paths: Vec<_> = RUNNER_BUILD_FILES.iter().map(|(path, _, _)| *path).collect();
+        let paths: Vec<_> = RUNNER_BUILD_FILES
+            .iter()
+            .map(|(path, _, _)| *path)
+            .collect();
         assert!(paths.contains(&"Cargo.toml"));
         assert!(paths.contains(&"Cargo.lock"));
         assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
-        assert_eq!(RUNNER_ENTRYPOINT, include_str!("../../../docker/runner/entrypoint.sh"));
+        assert_eq!(
+            RUNNER_ENTRYPOINT,
+            include_str!("../../../docker/runner/entrypoint.sh")
+        );
         assert!(RUNNER_ENTRYPOINT.contains("docker_socket_group"));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
-        assert_eq!(SYSTEMD_SERVICE, include_str!("../../../systemd/gitrun.service"));
+        assert_eq!(
+            SYSTEMD_SERVICE,
+            include_str!("../../../systemd/gitrun.service")
+        );
         assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
         assert!(!SYSTEMD_SERVICE.contains("docker compose"));
     }

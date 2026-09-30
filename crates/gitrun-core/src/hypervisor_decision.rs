@@ -101,7 +101,8 @@ fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&path) {
+            .open(&path)
+        {
             Ok(_) => return Ok(DecisionLock { path }),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if let Ok(metadata) = fs::metadata(&path) {
@@ -115,7 +116,9 @@ fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
                 if started.elapsed() >= LOCK_TIMEOUT {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
-                        format!("timed out waiting for hypervisor decision lock for VM '{vm_name}'"),
+                        format!(
+                            "timed out waiting for hypervisor decision lock for VM '{vm_name}'"
+                        ),
                     )
                     .into());
                 }
@@ -136,7 +139,9 @@ fn write_record(path: &Path, record: &PendingDecision) -> Result<()> {
         .unwrap_or(0);
     let tmp = parent.join(format!(
         ".{}.{}.{}.tmp",
-        path.file_stem().and_then(|s| s.to_str()).unwrap_or("decision"),
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("decision"),
         std::process::id(),
         unique
     ));
@@ -231,7 +236,9 @@ mod tests {
     fn request_then_poll_sees_pending_with_no_choice() {
         let dir = temp_dir("pending");
         request(&dir, "win-runner-1", "virsh: connection refused").unwrap();
-        let seen = poll(&dir, "win-runner-1").unwrap().expect("record should exist");
+        let seen = poll(&dir, "win-runner-1")
+            .unwrap()
+            .expect("record should exist");
         assert_eq!(seen.vm_name, "win-runner-1");
         assert!(seen.choice.is_none());
         let _ = fs::remove_dir_all(&dir);

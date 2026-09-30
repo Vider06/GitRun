@@ -183,7 +183,7 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
 
     command_normalized.split(' ').any(|token| {
         token == pattern
-            || token.strip_prefix("./").map_or(false, |p| p == pattern)
+            || token.strip_prefix("./").is_some_and(|p| p == pattern)
             || token.ends_with(&format!("/{pattern}"))
     })
 }

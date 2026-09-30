@@ -175,7 +175,9 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<()> {
                 if process_is_alive(pid) {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::AlreadyExists,
-                        format!("another gitrun-autoscaler instance is already running (pid {pid})"),
+                        format!(
+                "another gitrun-autoscaler instance is already running (pid {pid})"
+            ),
                     ));
                 }
             }

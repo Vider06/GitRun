@@ -712,7 +712,10 @@ fn write_scratch_workflows(
 /// environment variable inside a job.
 fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
     vec![
-        ("GITRUN_GSR_COMMAND_POLICY_ENABLED".into(), config.gsr_command_policy_enabled.to_string()),
+        (
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED".into(),
+            config.gsr_command_policy_enabled.to_string(),
+        ),
         (
             "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED".into(),
             config.gsr_command_baseline_blacklist_enabled.to_string(),

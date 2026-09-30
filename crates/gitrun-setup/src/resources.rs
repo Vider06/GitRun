@@ -1,3 +1,161 @@
-pub(crate) const RUNNER_DOCKERFILE: &str = "# Build the GSR shell agent with a modern Rust toolchain. The runner image\n# itself is deliberately kept on the existing Node/Debian base below.\nFROM rust:1.85.1-bookworm AS gsr-builder\n\nWORKDIR /usr/src/gitrun\n\n# Copy the workspace manifests and sources. Cargo will only build the\n# gitrun-gsr binary and its actual dependency graph, not the whole workspace.\nCOPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates\n\nRUN cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \\\n    && test -x target/release/gitrun-gsr-agent\n\nFROM node:22-bookworm\n\nARG RUNNER_VERSION=2.337.0\n\nENV DEBIAN_FRONTEND=noninteractive \\\n    RUNNER_ALLOW_RUNASROOT=1 \\\n    RUNNER_VERSION=${RUNNER_VERSION} \\\n    RUSTUP_HOME=/opt/rustup \\\n    CARGO_HOME=/opt/cargo \\\n    PATH=/opt/cargo/bin:$PATH \\\n    GITRUN_GSR_REAL_SHELL=/bin/sh.gitrun-real \\\n    GITRUN_GSR_REAL_BASH=/bin/bash.gitrun-real\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n       ca-certificates curl git jq tar gzip sudo python3 python3-pip \\\n       build-essential pkg-config libssl-dev clang cmake shellcheck \\\n       libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev \\\n       libwayland-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev \\\n       libfontconfig1-dev unzip xz-utils \\\n       gnupg lsb-release gh \\\n    && install -m 0755 -d /etc/apt/keyrings \\\n    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \\\n    && chmod a+r /etc/apt/keyrings/docker.gpg \\\n    && echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable\" > /etc/apt/sources.list.d/docker.list \\\n    && curl -fsSL -o /tmp/packages-microsoft-prod.deb https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \\\n    && dpkg -i /tmp/packages-microsoft-prod.deb \\\n    && rm /tmp/packages-microsoft-prod.deb \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin powershell \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'\n\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \\\n    && rustc --version \\\n    && cargo --version\n\nRUN useradd --create-home --shell /bin/bash runner \\\n    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared /opt/rustup /opt/cargo \\\n    && chown -R runner:runner /home/runner /var/lib/gitrun/shared /opt/rustup /opt/cargo\n\nWORKDIR /home/runner/actions-runner\n\nRUN curl -fsSL -o runner.tar.gz \\\n      \"https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz\" \\\n    && tar xzf runner.tar.gz \\\n    && rm runner.tar.gz \\\n    && ./bin/installdependencies.sh \\\n    && chown -R runner:runner /home/runner/actions-runner\n\nCOPY --from=gsr-builder /usr/src/gitrun/target/release/gitrun-gsr-agent /usr/local/bin/gitrun-gsr-agent\nRUN chmod 0755 /usr/local/bin/gitrun-gsr-agent\n\nCOPY --chown=root:root docker/runner/entrypoint.sh /entrypoint.sh\nRUN chmod 0755 /entrypoint.sh\n\nUSER root\n\n# Install the GSR agent as both shell entry points. The original symlinks are\n# retained under explicit names so the agent can delegate to the correct shell\n# and preserve sh/bash semantics. This is intentionally the final RUN command:\n# every earlier Dockerfile RUN must still use the normal build-time shell.\nRUN mv /bin/sh /bin/sh.gitrun-real \\\n    && mv /bin/bash /bin/bash.gitrun-real \\\n    && cp /usr/local/bin/gitrun-gsr-agent /bin/sh \\\n    && cp /usr/local/bin/gitrun-gsr-agent /bin/bash \\\n    && chmod 0755 /bin/sh /bin/bash /bin/sh.gitrun-real /bin/bash.gitrun-real \\\n    && test -x /bin/sh.gitrun-real \\\n    && test -x /bin/bash.gitrun-real \\\n    && test -x /bin/sh \\\n    && test -x /bin/bash\n\n# Smoke-test both delegated shell entry points during the image build. These\n# commands execute through the new agent, which must transparently delegate\n# to the relocated real shells.\nRUN /bin/sh -c 'test \"$(printf sh)\" = sh' \\\n    && /bin/bash -c 'test \"$(printf bash)\" = bash'\n\nENTRYPOINT [\"/entrypoint.sh\"]\n";
-pub(crate) const RUNNER_ENTRYPOINT: &str = "#!/usr/bin/env bash\nset -Eeuo pipefail\ncd /home/runner/actions-runner\n: \"${RUNNER_URL:?RUNNER_URL is required}\"\n: \"${RUNNER_TOKEN:?RUNNER_TOKEN is required}\"\n: \"${RUNNER_NAME:?RUNNER_NAME is required}\"\nRUNNER_LABELS=\"${RUNNER_LABELS:-self-hosted,Linux,X64,gitrun,gitrun-ci}\"\nif [[ \",${RUNNER_LABELS},\" != *,gitrun-ci,* ]]; then\n  RUNNER_LABELS=\"${RUNNER_LABELS},gitrun-ci\"\nfi\nRUNNER_EPHEMERAL=\"${RUNNER_EPHEMERAL:-false}\"\nRUNNER_DISABLE_UPDATE=\"${RUNNER_DISABLE_UPDATE:-false}\"\nSHARED_CACHE_DIR=\"${GITRUN_SHARED_CACHE_DIR:-/var/lib/gitrun/shared}\"\n\nmkdir -p \"$SHARED_CACHE_DIR\"\nchown runner:runner \"$SHARED_CACHE_DIR\"\nsudo -u runner -E mkdir -p   \"$SHARED_CACHE_DIR/cargo\"   \"$SHARED_CACHE_DIR/cargo-target\"   \"$SHARED_CACHE_DIR/pip\"   \"$SHARED_CACHE_DIR/npm\"\n\nif [[ -f .runner ]]; then\n  chown runner:runner .runner .credentials .credentials_rsaparams 2>/dev/null || true\nfi\n\nif [[ ! -f .runner ]]; then\n  args=(--url \"$RUNNER_URL\" --token \"$RUNNER_TOKEN\" --name \"$RUNNER_NAME\" --labels \"$RUNNER_LABELS\" --unattended --replace)\n  [[ \"$RUNNER_EPHEMERAL\" == \"true\" ]] && args+=(--ephemeral)\n  [[ \"$RUNNER_DISABLE_UPDATE\" == \"true\" ]] && args+=(--disableupdate)\n  sudo -u runner -E ./config.sh \"${args[@]}\"\nfi\nunset RUNNER_TOKEN\nexec sudo -u runner -E ./run.sh\n";
-pub(crate) const SYSTEMD_SERVICE: &str = "[Unit]\nDescription=GitRun Docker runner autoscaler\nRequires=docker.service\nAfter=docker.service\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nWorkingDirectory=/opt/gitrun\nExecStart=/usr/bin/docker compose -f /opt/gitrun/docker-compose.yml up -d --build\nExecStop=/usr/bin/docker compose -f /opt/gitrun/docker-compose.yml down\nRemainAfterExit=yes\nTimeoutStartSec=0\nTimeoutStopSec=60\n\n[Install]\nWantedBy=multi-user.target\n";
+/// The runner Dockerfile remains the repository source of truth. The bootstrap
+/// uses the exact same image definition, with one deliberate adjustment: a
+/// packaged GitRun installation does not ship the entire workspace, so the
+/// build context is reduced to the two crates needed by the GSR shell agent.
+pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
+    const FULL_WORKSPACE_COPY: &str = "COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates";
+    const MINIMAL_WORKSPACE_COPY: &str = concat!(
+        "COPY Cargo.toml Cargo.lock ./\n",
+        "COPY crates/gitrun-core ./crates/gitrun-core\n",
+        "COPY crates/gitrun-gsr ./crates/gitrun-gsr"
+    );
+
+    let source = include_str!("../../../docker/runner/Dockerfile");
+    let source = source
+        .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
+        // The setup bootstrap intentionally uses the checked-in dependency
+        // lock as its starting point but may prune unrelated workspace
+        // packages because only gitrun-core + gitrun-gsr are present.
+        .replace("cargo build --locked --release -p gitrun-gsr", "cargo build --release -p gitrun-gsr");
+
+    if source.contains(FULL_WORKSPACE_COPY) {
+        panic!("runner Dockerfile bootstrap adaptation marker was not replaced");
+    }
+    if source.contains("COPY crates ./crates") {
+        panic!("bootstrap Dockerfile must not require the full workspace");
+    }
+    source
+}
+
+pub(crate) const RUNNER_ENTRYPOINT: &str =
+    include_str!("../../../docker/runner/entrypoint.sh");
+
+pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
+
+/// The bootstrap needs a small self-contained Cargo workspace for building the
+/// GSR agent after the GitRun package has been installed. This intentionally
+/// contains only the crates required by gitrun-gsr-agent; it is not the
+/// application's main workspace manifest.
+pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
+resolver = "2"
+members = ["crates/gitrun-core", "crates/gitrun-gsr"]
+"#;
+
+pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
+    ("Cargo.toml", RUNNER_BUILD_CARGO_MANIFEST, 0o644),
+    ("Cargo.lock", include_str!("../../../Cargo.lock"), 0o644),
+    (
+        "crates/gitrun-core/Cargo.toml",
+        include_str!("../../../crates/gitrun-core/Cargo.toml"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/lib.rs",
+        include_str!("../../../crates/gitrun-core/src/lib.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/app_auth.rs",
+        include_str!("../../../crates/gitrun-core/src/app_auth.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/command_policy.rs",
+        include_str!("../../../crates/gitrun-core/src/command_policy.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/config.rs",
+        include_str!("../../../crates/gitrun-core/src/config.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/github_auth.rs",
+        include_str!("../../../crates/gitrun-core/src/github_auth.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/hypervisor_decision.rs",
+        include_str!("../../../crates/gitrun-core/src/hypervisor_decision.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/runner.rs",
+        include_str!("../../../crates/gitrun-core/src/runner.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/state.rs",
+        include_str!("../../../crates/gitrun-core/src/state.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/workflow_validation.rs",
+        include_str!("../../../crates/gitrun-core/src/workflow_validation.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/Cargo.toml",
+        include_str!("../../../crates/gitrun-gsr/Cargo.toml"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/lib.rs",
+        include_str!("../../../crates/gitrun-gsr/src/lib.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/agent.rs",
+        include_str!("../../../crates/gitrun-gsr/src/agent.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/events.rs",
+        include_str!("../../../crates/gitrun-gsr/src/events.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/main.rs",
+        include_str!("../../../crates/gitrun-gsr/src/main.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/watchdog.rs",
+        include_str!("../../../crates/gitrun-gsr/src/watchdog.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs",
+        include_str!("../../../crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"),
+        0o644,
+    ),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
+        let dockerfile = runner_dockerfile_for_bootstrap();
+        assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
+        assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
+        assert!(!dockerfile.contains("COPY crates ./crates"));
+        assert!(dockerfile.contains("cargo build --release -p gitrun-gsr"));
+    }
+
+    #[test]
+    fn bootstrap_resources_include_every_required_source() {
+        let paths: Vec<_> = RUNNER_BUILD_FILES.iter().map(|(path, _, _)| *path).collect();
+        assert!(paths.contains(&"Cargo.toml"));
+        assert!(paths.contains(&"Cargo.lock"));
+        assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
+        assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
+        assert_eq!(RUNNER_ENTRYPOINT, include_str!("../../../docker/runner/entrypoint.sh"));
+        assert!(RUNNER_ENTRYPOINT.contains("docker_socket_group"));
+        assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
+        assert_eq!(SYSTEMD_SERVICE, include_str!("../../../systemd/gitrun.service"));
+        assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
+        assert!(!SYSTEMD_SERVICE.contains("docker compose"));
+    }
+}

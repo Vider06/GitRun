@@ -7,9 +7,13 @@ ARG DOCKER_CLI_VERSION=5:29.8.1-1~debian.12~bookworm
 ARG GITRUN_SOURCE_REV=local
 
 FROM rust:1.98.1-slim-bookworm@sha256:ebd900bae66fd508b466cef82d64a83a5fb34682e4c8b2797a42908bddc95a57 AS build
+ARG GITRUN_SOURCE_REV
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+
+RUN test "$(grep -c '^pub mod app_auth;' crates/gitrun-core/src/lib.rs)" -eq 1 \
+    && test -f crates/gitrun-core/src/app_auth.rs
 
 RUN --mount=type=cache,id=gitrun-manager-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=gitrun-manager-cargo-git,target=/usr/local/cargo/git,sharing=locked \

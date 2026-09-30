@@ -203,7 +203,10 @@ pub fn run_zizmor(workflows_dir: &Path) -> std::io::Result<Option<Vec<Finding>>>
     run_zizmor_command("zizmor", workflows_dir)
 }
 
-fn run_zizmor_command(program: &str, workflows_dir: &Path) -> std::io::Result<Option<Vec<Finding>>> {
+fn run_zizmor_command(
+    program: &str,
+    workflows_dir: &Path,
+) -> std::io::Result<Option<Vec<Finding>>> {
     let output = match Command::new(program)
         .arg("--format")
         .arg("json")
@@ -370,7 +373,9 @@ mod tests {
     fn flags_template_injection_inside_multiline_run_block() {
         let workflow = "jobs:\n  build:\n    steps:\n      - run: |\n          echo \"${{ github.event.issue.title }}\"\n";
         let findings = scan("ci.yml", workflow);
-        assert!(findings.iter().any(|f| f.rule == "template-injection-risk" && f.line == Some(5)));
+        assert!(findings
+            .iter()
+            .any(|f| f.rule == "template-injection-risk" && f.line == Some(5)));
     }
 
     #[test]
@@ -425,7 +430,11 @@ mod tests {
         // to accept Some(_) too; documented here rather than silently
         // becoming a flaky test.
         let dir = std::env::temp_dir();
-        let result = run_zizmor_command("__gitrun_zizmor_binary_that_should_not_exist__", &dir).unwrap();
+        let result = run_zizmor_command(
+            "__gitrun_zizmor_binary_that_should_not_exist__",
+            &dir,
+        )
+        .unwrap();
         assert!(result.is_none());
     }
 

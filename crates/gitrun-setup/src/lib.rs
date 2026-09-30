@@ -746,10 +746,12 @@ mod tests {
         )
         .unwrap();
 
-        let mut config = Config::default();
-        config.min_runners = 4;
-        config.max_runners = 6;
-        config.gsr_violation_action = "log_only".into();
+        let config = Config {
+            min_runners: 4,
+            max_runners: 6,
+            gsr_violation_action: "log_only".into(),
+            ..Default::default()
+        };
 
         update_env_file(&path, &config).unwrap();
         let content = fs::read_to_string(&path).unwrap();
@@ -774,8 +776,10 @@ mod tests {
         ));
         fs::write(&path, "GITRUN_REPOSITORIES=owner/repo\n").unwrap();
 
-        let mut config = Config::default();
-        config.runner_labels = "self-hosted\nINJECTED=value".into();
+        let config = Config {
+            runner_labels: "self-hosted\nINJECTED=value".into(),
+            ..Default::default()
+        };
 
         let error = update_env_file(&path, &config).unwrap_err();
         assert!(error.contains("GITRUN_RUNNER_LABELS must not contain newlines"));

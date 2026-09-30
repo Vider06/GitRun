@@ -92,6 +92,7 @@ fn decision_path(state_dir: &Path, vm_name: &str) -> PathBuf {
 /// Overwrites any previous record for this `vm_name` — a fresh KVM failure
 /// supersedes whatever was there before, e.g. an old, already-answered or
 /// timed-out record from a prior attempt.
+// Atomic lock/record handling keeps dashboard responses durable across process boundaries.
 pub fn request(state_dir: &Path, vm_name: &str, error: &str) -> Result<()> {
     let dir = decisions_dir(state_dir);
     fs::create_dir_all(&dir)?;

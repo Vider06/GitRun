@@ -330,7 +330,11 @@ pub fn find_gitrun_binary() -> Option<PathBuf> {
         Some(PathBuf::from("/usr/bin/gitrun")),
         std::env::current_exe().ok().and_then(|path| {
             path.parent().map(|dir| {
-                dir.join(if cfg!(windows) { "gitrun.exe" } else { "gitrun" })
+                dir.join(if cfg!(windows) {
+                    "gitrun.exe"
+                } else {
+                    "gitrun"
+                })
             })
         }),
     ];
@@ -525,8 +529,7 @@ pub enum StartupTarget {
 #[cfg(unix)]
 fn set_file_mode(path: &Path, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))
-        .map_err(|error| error.to_string())
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| error.to_string())
 }
 
 #[cfg(not(unix))]

@@ -177,8 +177,8 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<()> {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::AlreadyExists,
                         format!(
-                "another gitrun-autoscaler instance is already running (pid {pid})"
-            ),
+                            "another gitrun-autoscaler instance is already running (pid {pid})"
+                        ),
                     ));
                 }
             }

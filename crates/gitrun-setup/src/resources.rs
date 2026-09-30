@@ -186,7 +186,9 @@ mod tests {
             SYSTEMD_SERVICE,
             include_str!("../../../systemd/gitrun.service")
         );
-        assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun-recovery start scheduler"));
+        assert!(
+            SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun-recovery start scheduler")
+        );
         assert!(!SYSTEMD_SERVICE.contains("docker compose"));
     }
 }

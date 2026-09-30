@@ -13,6 +13,11 @@ pub enum GitHubAuthError {
         path: String,
         source: std::io::Error,
     },
+    #[error("unable to read authentication env file at {path}: {source}")]
+    EnvFileIo {
+        path: String,
+        source: std::io::Error,
+    },
     #[error(transparent)]
     App(#[from] crate::app_auth::AppAuthError),
     #[error(transparent)]
@@ -41,7 +46,7 @@ impl GitHubAuth {
         }
 
         match std::env::var("GITHUB_TOKEN") {
-            Ok(token) if !token.trim().is_empty() => Ok(Self::Pat(token)),
+            Ok(token) if !token.trim().is_empty() => Ok(Self::Pat(token.trim().to_owned())),
             _ => Err(GitHubAuthError::MissingCredentials),
         }
     }
@@ -50,12 +55,12 @@ impl GitHubAuth {
         if config.uses_github_app() {
             return Self::from_config(config);
         }
-        if let Ok(token) = read_env_file_value(path, "GITHUB_TOKEN") {
-            if !token.trim().is_empty() {
-                return Ok(Self::Pat(token));
-            }
+
+        match read_env_file_value(path, "GITHUB_TOKEN") {
+            Ok(token) if !token.trim().is_empty() => Ok(Self::Pat(token.trim().to_owned())),
+            Ok(_) | Err(GitHubAuthError::MissingCredentials) => Self::from_config(config),
+            Err(error) => Err(error),
         }
-        Self::from_config(config)
     }
 
     pub fn bearer_token(&self) -> Result<String, GitHubAuthError> {
@@ -71,7 +76,7 @@ impl GitHubAuth {
 }
 
 fn read_env_file_value(path: &Path, wanted_key: &str) -> Result<String, GitHubAuthError> {
-    let content = fs::read_to_string(path).map_err(|source| GitHubAuthError::PrivateKeyIo {
+    let content = fs::read_to_string(path).map_err(|source| GitHubAuthError::EnvFileIo {
         path: path.display().to_string(),
         source,
     })?;
@@ -100,4 +105,58 @@ fn unquote(value: &str) -> String {
         }
     }
     value.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_env_file(contents: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-github-auth-{}-{}.env",
+            std::process::id(),
+            std::thread::current()
+                .name()
+                .unwrap_or("test")
+                .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
+        ));
+        fs::write(&path, contents).expect("write temporary env file");
+        path
+    }
+
+    #[test]
+    fn env_file_reads_and_unquotes_token() {
+        let path = temp_env_file("# comment\nGITHUB_TOKEN = \" token \"\nOTHER=value\n");
+        let token = read_env_file_value(&path, "GITHUB_TOKEN").expect("token");
+        fs::remove_file(path).expect("remove temporary env file");
+        assert_eq!(token, " token ");
+    }
+
+    #[test]
+    fn env_file_missing_token_returns_missing_credentials() {
+        let path = temp_env_file("OTHER=value\n");
+        let result = read_env_file_value(&path, "GITHUB_TOKEN");
+        fs::remove_file(path).expect("remove temporary env file");
+        assert!(matches!(result, Err(GitHubAuthError::MissingCredentials)));
+    }
+
+    #[test]
+    fn env_file_io_errors_are_distinct() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-github-auth-missing-{}.env",
+            std::process::id()
+        ));
+        let result = read_env_file_value(&path, "GITHUB_TOKEN");
+        assert!(matches!(result, Err(GitHubAuthError::EnvFileIo { .. })));
+    }
+
+    #[test]
+    fn env_file_token_is_normalized_by_auth_selection() {
+        let path = temp_env_file("GITHUB_TOKEN = \" token \"\n");
+        let config = Config::default();
+        let auth = GitHubAuth::from_config_file(&config, &path).expect("auth");
+        fs::remove_file(path).expect("remove temporary env file");
+        assert!(matches!(auth, GitHubAuth::Pat(token) if token == "token"));
+    }
 }

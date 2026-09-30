@@ -1,3 +1,5 @@
+pub mod ui;
+
 use gitrun_core::StateStore;
 use gitrun_updater::{rollback, BackupRecord, UpdateError, UpdatePaths};
 

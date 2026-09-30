@@ -252,15 +252,45 @@ fn dashboard_executable() -> Result<PathBuf, Box<dyn std::error::Error>> {
         })
 }
 
+fn recovery_executable() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(path) = std::env::var("GITRUN_RECOVERY_BINARY") {
+        if !path.trim().is_empty() {
+            candidates.push(PathBuf::from(path));
+        }
+    }
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(parent) = current.parent() {
+            candidates.push(parent.join(if cfg!(windows) { "gitrun-recovery.exe" } else { "gitrun-recovery" }));
+        }
+    }
+    #[cfg(unix)]
+    candidates.push(PathBuf::from("/usr/local/bin/gitrun-recovery"));
+    #[cfg(windows)]
+    candidates.push(PathBuf::from(r"C:\Program Files\GitRun\gitrun-recovery.exe"));
+    candidates.into_iter().find(|path| path.is_file())
+}
+
 fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(recovery) = recovery_executable() {
+        let status = std::process::Command::new(recovery)
+            .args(["start", "dashboard"])
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err(format!("GitRun Recovery exited with status {status}").into());
+    }
+
     let executable = dashboard_executable()?;
-    let status = std::process::Command::new(&executable).status()?;
+    let status = std::process::Command::new(executable).status()?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("GitRun dashboard exited with status {}", status).into())
+        Err(format!("GitRun dashboard exited with status {status}").into())
     }
 }
+
 
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;

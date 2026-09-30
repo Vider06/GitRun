@@ -1,36 +1,18 @@
 [Unit]
-Description=GitRun Rust scheduler
+Description=GitRun Rust scheduler (via recovery)
 Requires=docker.service
 After=docker.service
 Wants=network-online.target
 After=network-online.target
-StartLimitIntervalSec=5min
-StartLimitBurst=10
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/gitrun scheduler
+ExecStart=/usr/local/bin/gitrun-recovery start scheduler
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60
+KillMode=control-group
 EnvironmentFile=/etc/gitrun/gitrun.env
-
-# The scheduler currently owns the Docker/libvirt control-plane boundary.
-# Keep it as the system service account for now; hardening must not remove
-# its required access to Docker and configured VM backends.
-NoNewPrivileges=yes
-ProtectSystem=full
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-ProtectControlGroups=yes
-RestrictSUIDSGID=yes
-RestrictNamespaces=yes
-RestrictRealtime=yes
-LockPersonality=yes
-UMask=0077
-KillMode=mixed
 
 [Install]
 WantedBy=multi-user.target

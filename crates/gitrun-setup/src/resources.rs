@@ -34,6 +34,26 @@ pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/
 
 pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
 
+pub(crate) const SYSTEMD_SERVICE_DIRECT: &str = r#"[Unit]
+Description=GitRun Rust scheduler
+Requires=docker.service
+After=docker.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gitrun scheduler
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillMode=control-group
+EnvironmentFile=/etc/gitrun/gitrun.env
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
 /// The bootstrap needs a small self-contained Cargo workspace for building the
 /// GSR agent after the GitRun package has been installed. This intentionally
 /// contains only the crates required by gitrun-gsr-agent; it is not the
@@ -166,7 +186,7 @@ mod tests {
             SYSTEMD_SERVICE,
             include_str!("../../../systemd/gitrun.service")
         );
-        assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
+        assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun-recovery start scheduler"));
         assert!(!SYSTEMD_SERVICE.contains("docker compose"));
     }
 }

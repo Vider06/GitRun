@@ -22,6 +22,7 @@ fi
 }
 
 cargo build --locked --release -p gitrun-cli --bin gitrun
+cargo build --locked --release -p gitrun-recovery --bin gitrun-recovery
 command -v npm >/dev/null 2>&1 || {
   echo "npm is required to build the Tauri dashboard" >&2
   exit 1

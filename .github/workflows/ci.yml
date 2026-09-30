@@ -263,19 +263,19 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Rust workspace check
-        run: cargo check --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked
+        run: cargo check --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-targets --all-features --locked
 
       - name: Rust workspace clippy
-        run: cargo clippy --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-targets --all-features --locked -- -D warnings
 
       - name: Rust release build
-        run: cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --release --locked
+        run: cargo build --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --release --locked
 
       - name: Rust tests
-        run: cargo test --workspace --exclude gitrun-dashboard-tauri --all-features --locked --no-fail-fast
+        run: cargo test --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --locked --no-fail-fast
 
       - name: Rust documentation
-        run: cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked
+        run: cargo doc --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --no-deps --locked
 
       - name: Save Rust common cache
         if: success() && steps.rust-common-cache.outputs.cache-hit != 'true'
@@ -729,6 +729,18 @@ jobs:
         with:
           path: target
           key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v5-${{ hashFiles('Cargo.lock') }}
+
+      - name: Test GitRun Recovery
+        shell: bash
+        env:
+          CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
+          RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          set -euo pipefail
+          cargo clippy -p gitrun-recovery --all-targets --locked -- -D warnings
+          cargo test -p gitrun-recovery --locked --all-targets
+          cargo build --locked --release -p gitrun-recovery
 
       - name: Bundle Tauri application
         working-directory: crates/gitrun-dashboard-tauri

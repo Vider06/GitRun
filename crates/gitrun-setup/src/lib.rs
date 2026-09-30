@@ -153,9 +153,21 @@ pub fn bootstrap_linux_with_auth(
     for (relative_path, content, mode) in resources::RUNNER_BUILD_FILES {
         write_resource(&root.join(relative_path), content, *mode)?;
     }
+    let recovery_source = find_recovery_binary(app_binary);
+    if let Some(source) = &recovery_source {
+        let installed_recovery = Path::new("/usr/local/bin/gitrun-recovery");
+        fs::copy(source, installed_recovery)?;
+        fs::set_permissions(installed_recovery, fs::Permissions::from_mode(0o755))?;
+    }
+
+    let service = if recovery_source.is_some() {
+        resources::SYSTEMD_SERVICE
+    } else {
+        resources::SYSTEMD_SERVICE_DIRECT
+    };
     write_resource(
         Path::new("/etc/systemd/system/gitrun.service"),
-        resources::SYSTEMD_SERVICE,
+        service,
         0o644,
     )?;
 
@@ -202,7 +214,7 @@ pub fn bootstrap_linux_with_auth(
 
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),
-        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun\nTerminal=false\nCategories=Development;System;\n",
+        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun-recovery start dashboard\nTerminal=false\nCategories=Development;System;\n",
         0o644,
     )?;
 
@@ -212,6 +224,19 @@ pub fn bootstrap_linux_with_auth(
         state_dir,
         log_dir,
     })
+}
+
+fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {
+    [
+        std::env::var("GITRUN_RECOVERY_BINARY").ok().map(PathBuf::from),
+        Some(PathBuf::from("/usr/local/bin/gitrun-recovery")),
+        app_binary.parent().map(|parent| {
+            parent.join(if cfg!(windows) { "gitrun-recovery.exe" } else { "gitrun-recovery" })
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|path| path.is_file())
 }
 
 fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {

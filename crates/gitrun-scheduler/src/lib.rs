@@ -4,6 +4,7 @@ pub mod github;
 pub mod gsr_bridge;
 pub mod gsr_poll;
 pub mod gtuu;
+pub mod gtuu_startup;
 pub mod logic_containers;
 pub mod reconcile;
 pub mod state;
@@ -11,6 +12,7 @@ pub mod vm;
 pub mod vm_resolution;
 
 pub use backoff::RateLimitTracker;
+pub use gtuu_startup::GtuuStartupReport;
 pub use github::{GitHubClient, GitHubError, Runner};
 pub use logic_containers::{Backend, LogicRule};
 pub use reconcile::{Action, ReconcileInput};

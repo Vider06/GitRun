@@ -438,6 +438,223 @@ pub fn rollback(paths: &UpdatePaths, backup: &BackupRecord) -> Result<(), Update
     )
 }
 
+
+#[derive(Debug, Clone)]
+pub struct InstalledArtifact {
+    pub archive_name: String,
+    pub destination: PathBuf,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstalledArtifactBackup {
+    pub archive_name: String,
+    pub destination: PathBuf,
+    pub backup: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstalledBackupRecord {
+    pub created_at: u64,
+    pub version: String,
+    pub artifacts: Vec<InstalledArtifactBackup>,
+    pub version_file: PathBuf,
+    pub version_file_backup: Option<PathBuf>,
+}
+
+pub fn apply_installed_update(
+    archive: &Path,
+    target: &str,
+    version: &str,
+    artifacts: &[InstalledArtifact],
+    version_file: &Path,
+    backup_root: &Path,
+    health_binary: &Path,
+    config_file: Option<&Path>,
+) -> Result<InstalledBackupRecord, UpdateError> {
+    if !is_version(version) {
+        return Err(UpdateError::InvalidManifest(format!("invalid update version: {version}")));
+    }
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let backup_dir = backup_root.join(format!("system-{version}-{timestamp}"));
+    fs::create_dir_all(&backup_dir)?;
+    let staging = backup_dir.join("staging");
+    let mut backups = Vec::with_capacity(artifacts.len());
+
+    for artifact in artifacts {
+        let backup = if artifact.destination.is_file() {
+            let name = artifact.destination.file_name().and_then(|v| v.to_str()).unwrap_or("artifact");
+            let path = backup_dir.join(format!("artifact-{name}"));
+            fs::copy(&artifact.destination, &path)?;
+            Some(path)
+        } else {
+            None
+        };
+        backups.push(InstalledArtifactBackup {
+            archive_name: artifact.archive_name.clone(),
+            destination: artifact.destination.clone(),
+            backup,
+        });
+    }
+
+    let version_file_backup = if version_file.is_file() {
+        let path = backup_dir.join("version.txt");
+        fs::copy(version_file, &path)?;
+        Some(path)
+    } else {
+        None
+    };
+
+    let record = InstalledBackupRecord {
+        created_at: timestamp,
+        version: version.to_owned(),
+        artifacts: backups,
+        version_file: version_file.to_path_buf(),
+        version_file_backup,
+    };
+
+    let result = (|| -> Result<(), UpdateError> {
+        extract_archive(archive, target, &staging)?;
+        for artifact in artifacts {
+            let source = staging.join(&artifact.archive_name);
+            if !source.is_file() {
+                if artifact.required {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "release archive is missing required artifact {}",
+                        artifact.archive_name
+                    )));
+                }
+                continue;
+            }
+            atomic_replace_installed_file(&source, &artifact.destination, 0o755)?;
+        }
+        atomic_write_installed_file(version_file, version.as_bytes(), 0o644)?;
+        health_check_installed_binary(health_binary, config_file)?;
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        if let Err(rollback_error) = rollback_installed_update(&record) {
+            return Err(UpdateError::RolledBack(format!("{error}; rollback also failed: {rollback_error}")));
+        }
+        return Err(UpdateError::RolledBack(error.to_string()));
+    }
+
+    fs::remove_dir_all(&staging)?;
+    fs::write(backup_dir.join("backup.json"), serde_json::to_vec_pretty(&record)?)?;
+    Ok(record)
+}
+
+pub fn rollback_installed_update(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
+    for artifact in &record.artifacts {
+        if artifact.destination.exists() {
+            fs::remove_file(&artifact.destination)?;
+        }
+        if let Some(backup) = &artifact.backup {
+            let parent = artifact.destination.parent().ok_or_else(|| {
+                UpdateError::Command("installed artifact has no parent".into())
+            })?;
+            fs::create_dir_all(parent)?;
+            fs::copy(backup, &artifact.destination)?;
+            set_file_mode(&artifact.destination, 0o755)?;
+        }
+    }
+    if record.version_file.exists() {
+        fs::remove_file(&record.version_file)?;
+    }
+    if let Some(backup) = &record.version_file_backup {
+        if let Some(parent) = record.version_file.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(backup, &record.version_file)?;
+        set_file_mode(&record.version_file, 0o644)?;
+    }
+    Ok(())
+}
+
+pub fn health_check_installed_binary(
+    binary: &Path,
+    config_file: Option<&Path>,
+) -> Result<(), UpdateError> {
+    if !binary.is_file() {
+        return Err(UpdateError::Command(format!(
+            "installed GitRun binary not found: {}",
+            binary.display()
+        )));
+    }
+    let mut command = Command::new(binary);
+    command.arg("doctor");
+    if let Some(config) = config_file {
+        command.env("GITRUN_CONFIG_FILE", config);
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(UpdateError::Command(format!(
+            "post-update health check failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+fn atomic_replace_installed_file(source: &Path, destination: &Path, mode: u32) -> Result<(), UpdateError> {
+    let parent = destination.parent().ok_or_else(|| {
+        UpdateError::Command("installed artifact has no parent".into())
+    })?;
+    fs::create_dir_all(parent)?;
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let temp = parent.join(format!(".gitrun-update-{}.{}.tmp", std::process::id(), nonce));
+    fs::copy(source, &temp)?;
+    set_file_mode(&temp, mode)?;
+    fs::OpenOptions::new().read(true).open(&temp)?.sync_all()?;
+    #[cfg(windows)]
+    if destination.exists() {
+        fs::remove_file(destination)?;
+    }
+    fs::rename(&temp, destination).map_err(|error| {
+        let _ = fs::remove_file(&temp);
+        UpdateError::Io(error)
+    })?;
+    Ok(())
+}
+
+fn atomic_write_installed_file(destination: &Path, content: &[u8], mode: u32) -> Result<(), UpdateError> {
+    let parent = destination.parent().ok_or_else(|| {
+        UpdateError::Command("installed file has no parent".into())
+    })?;
+    fs::create_dir_all(parent)?;
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let temp = parent.join(format!(".gitrun-update-{}.{}.tmp", std::process::id(), nonce));
+    {
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+    }
+    set_file_mode(&temp, mode)?;
+    #[cfg(windows)]
+    if destination.exists() {
+        fs::remove_file(destination)?;
+    }
+    fs::rename(&temp, destination).map_err(|error| {
+        let _ = fs::remove_file(&temp);
+        UpdateError::Io(error)
+    })?;
+    Ok(())
+}
+
+fn set_file_mode(path: &Path, mode: u32) -> Result<(), UpdateError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+    }
+    Ok(())
+}
+
 pub fn pin_runner_image(
     config_file: impl AsRef<Path>,
     image: &RunnerImage,

@@ -50,6 +50,7 @@ mkdir -p \
 
 install -m 0755 "$BINARY" "$root/usr/local/bin/gitrun"
 install -m 0755 "$DASHBOARD_BINARY" "$root/usr/bin/gitrun-dashboard-tauri"
+install -m 0755 "$RECOVERY_BINARY" "$root/usr/local/bin/gitrun-recovery"
 
 printf '%s\n' "$VERSION" > "$root/usr/share/gitrun/version.txt"
 

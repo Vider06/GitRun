@@ -28,6 +28,7 @@ try {
     }
 
     cargo build --locked --release --target $Target -p gitrun-cli --bin gitrun
+    cargo build --locked --release --target $Target -p gitrun-recovery
 
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
         throw "npm is required to build the Tauri dashboard"
@@ -59,6 +60,7 @@ try {
 
     $cliBinary = if ($Target -like '*windows*') { 'gitrun.exe' } else { 'gitrun' }
     $dashboardBinary = if ($Target -like '*windows*') { 'gitrun-dashboard-tauri.exe' } else { 'gitrun-dashboard-tauri' }
+    $recoveryBinary = if ($Target -like '*windows*') { 'gitrun-recovery.exe' } else { 'gitrun-recovery' }
 
     $release = Join-Path $Root 'dist\release'
     $package = Join-Path $release 'package'
@@ -69,6 +71,7 @@ try {
 
     Copy-Item (Join-Path $Root "target\release\$cliBinary") $package
     Copy-Item (Join-Path $Root "target\release\$dashboardBinary") $package
+    Copy-Item (Join-Path $Root "target\release\$recoveryBinary") $package
     Copy-Item (Join-Path $Root 'LICENSE'), (Join-Path $Root 'README.md'), (Join-Path $Root 'config\config.example.env') $package
 
     $archive = Join-Path $release "GitRun-$Version-$Target.zip"
@@ -81,7 +84,7 @@ try {
     )
 
     Write-Host "GitRun release build complete: $Target -> $archive"
-    Write-Host "Included: $cliBinary, $dashboardBinary"
+    Write-Host "Included: $cliBinary, $dashboardBinary, $recoveryBinary"
 } finally {
     Pop-Location
 }

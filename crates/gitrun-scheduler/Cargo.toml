@@ -9,6 +9,7 @@ description = "GitRun autoscaler: reconciles desired vs actual runner containers
 gitrun-core = { path = "../gitrun-core" }
 gitrun-gsr = { path = "../gitrun-gsr" }
 gitrun-vault = { path = "../gitrun-vault" }
+gitrun-updater = { path = "../gitrun-updater" }
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }

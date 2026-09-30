@@ -903,7 +903,7 @@ fn spawn_gsr_poll_thread(config: &Config, stopping: &Arc<AtomicBool>) {
         .expect("failed to spawn GSR poll thread");
 }
 
-/// Minimal HH:MM + date string, UTC by default, without pulling in `chrono`
+/// Minimal HH:MM + date string, UTC by default, without pulling in the `chrono`
 /// for something checked once every ~15 seconds. Local time (when
 /// `Config::gtuu_schedule_timezone == "local"`) shells out to the system
 /// `date` command instead of hand-rolling timezone/DST math, which is

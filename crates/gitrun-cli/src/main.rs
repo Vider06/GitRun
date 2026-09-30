@@ -574,11 +574,24 @@ fn terminal_setup_command() -> Result<(), Box<dyn std::error::Error>> {
     }
     payload.push_str(&format!("GITRUN_REPOSITORIES={}\n", repositories.join(",")));
 
-    std::fs::write(&path, payload.as_bytes())?;
+    // Create the credential-bearing setup request atomically with restrictive
+    // permissions. A plain write followed by chmod leaves a brief exposure
+    // window in /tmp before the permissions are tightened.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        file.write_all(payload.as_bytes())?;
+        file.sync_all()?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&path, payload.as_bytes())?;
     }
 
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {

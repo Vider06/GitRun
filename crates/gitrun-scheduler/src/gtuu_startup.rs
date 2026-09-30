@@ -83,6 +83,7 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         }
     };
 
+    let gsr_policy_env = super::gsr_policy_env(&config);
     let gtuu_config = GtuuConfig {
         image: &config.runner_image,
         repositories: &config.repositories,
@@ -101,6 +102,7 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
+        gsr_policy_env: &gsr_policy_env,
     };
 
     match crate::gtuu::update_permanent_containers(&client, &gtuu_config) {

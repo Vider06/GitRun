@@ -1057,7 +1057,10 @@ jobs:
           set -euo pipefail
           test -S /var/run/docker.sock
           docker info >/dev/null
-          docker buildx build --load --network=host --build-arg "GITRUN_SOURCE_REV=${GITHUB_SHA}" -f docker/manager-rs/Dockerfile -t gitrun-manager-rs:ci .
+          docker buildx build --load --network=host \
+            --build-arg "GITRUN_SOURCE_REV=${GITHUB_SHA}" \
+            --build-arg "GITRUN_CACHE_SCHEMA=v10" \
+            -f docker/manager-rs/Dockerfile -t gitrun-manager-rs:ci .
 
       - name: Build runner image
         shell: bash

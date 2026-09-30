@@ -249,7 +249,9 @@ mod tests {
         let dir = temp_dir("respond");
         request(&dir, "win-runner-1", "boom").unwrap();
         respond(&dir, "win-runner-1", DecisionChoice::UseVirtualBox).unwrap();
-        let seen = poll(&dir, "win-runner-1").unwrap().expect("record should exist");
+        let seen = poll(&dir, "win-runner-1")
+            .unwrap()
+            .expect("record should exist");
         assert_eq!(seen.choice, Some(DecisionChoice::UseVirtualBox));
         assert!(seen.responded_at.is_some());
         let _ = fs::remove_dir_all(&dir);

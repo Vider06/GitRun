@@ -235,6 +235,29 @@ pub fn run(
     on_violation: impl Fn(&PolledViolation),
     should_stop: impl Fn() -> bool,
 ) {
+    run_with_hosts(
+        state_dir,
+        policy,
+        action,
+        poll_interval,
+        move || vec![host.clone()],
+        on_violation,
+        should_stop,
+    );
+}
+
+/// Polls a dynamically supplied set of Docker daemons each tick. This keeps
+/// GSR enforcement active for both the local daemon and Logic-Containers VM
+/// daemons that become available after the poll thread has started.
+pub fn run_with_hosts(
+    state_dir: &Path,
+    policy: CommandPolicy,
+    action: ViolationAction,
+    poll_interval: Duration,
+    host_provider: impl Fn() -> Vec<DockerHost>,
+    on_violation: impl Fn(&PolledViolation),
+    should_stop: impl Fn() -> bool,
+) {
     let mut ban_store = match BanStore::load(state_dir) {
         Ok(store) => store,
         Err(error) => {
@@ -247,14 +270,16 @@ pub fn run(
     };
 
     while !should_stop() {
-        match poll_once(host, &policy, action, &mut ban_store) {
-            Ok(violations) => {
-                for violation in &violations {
-                    on_violation(violation);
+        for host in host_provider() {
+            match poll_once(&host, &policy, action, &mut ban_store) {
+                Ok(violations) => {
+                    for violation in &violations {
+                        on_violation(violation);
+                    }
                 }
-            }
-            Err(error) => {
-                eprintln!("gitrun-scheduler: gsr_poll tick failed: {error}");
+                Err(error) => {
+                    eprintln!("gitrun-scheduler: gsr_poll tick failed on {host:?}: {error}");
+                }
             }
         }
         std::thread::sleep(poll_interval);

@@ -235,7 +235,8 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
                 &key,
                 std::time::Duration::from_secs(5),
                 std::time::Duration::from_secs(20),
-            ).map_err(|error| {
+            )
+            .map_err(|error| {
                 SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
             })?;
         }

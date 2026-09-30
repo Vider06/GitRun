@@ -507,7 +507,13 @@ fn terminal_setup_command() -> Result<(), Box<dyn std::error::Error>> {
 
             let private_key = std::fs::read_to_string(&private_key_path)
                 .map_err(|error| format!("unable to read private key: {error}"))?;
-            let app = AppAuth::new(&app_id, &installation_id, &private_key)?;
+            let app = AppAuth::new(
+                &app_id,
+                &installation_id,
+                &private_key,
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(20),
+            )?;
             let auth = GitHubAuth::App(app);
             // Force the JWT → installation-token exchange now, rather than
             // accepting merely syntactically valid App fields.

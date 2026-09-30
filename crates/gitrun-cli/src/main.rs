@@ -261,13 +261,19 @@ fn recovery_executable() -> Option<PathBuf> {
     }
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {
-            candidates.push(parent.join(if cfg!(windows) { "gitrun-recovery.exe" } else { "gitrun-recovery" }));
+            candidates.push(parent.join(if cfg!(windows) {
+                "gitrun-recovery.exe"
+            } else {
+                "gitrun-recovery"
+            }));
         }
     }
     #[cfg(unix)]
     candidates.push(PathBuf::from("/usr/local/bin/gitrun-recovery"));
     #[cfg(windows)]
-    candidates.push(PathBuf::from(r"C:\Program Files\GitRun\gitrun-recovery.exe"));
+    candidates.push(PathBuf::from(
+        r"C:\Program Files\GitRun\gitrun-recovery.exe",
+    ));
     candidates.into_iter().find(|path| path.is_file())
 }
 

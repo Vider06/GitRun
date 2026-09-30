@@ -12,7 +12,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN test "$(grep -c '^pub mod app_auth;' crates/gitrun-core/src/lib.rs)" -eq 1 \
+RUN grep -Fq 'pub mod app_auth;' crates/gitrun-core/src/lib.rs \
     && test -f crates/gitrun-core/src/app_auth.rs
 
 RUN --mount=type=cache,id=gitrun-manager-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \

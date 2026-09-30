@@ -51,17 +51,31 @@ impl StateStore {
                 .as_secs(),
             message: message.into(),
         };
-        let tmp = self
-            .root
-            .join(format!("health.json.tmp.{}", std::process::id()));
+        let tmp = self.temp_path("health.json");
         fs::write(&tmp, serde_json::to_vec_pretty(&report)?)?;
-        fs::rename(&tmp, self.health_path())?;
+        if let Err(error) = fs::rename(&tmp, self.health_path()) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
         Ok(())
     }
     pub fn record_crash(&self, message: impl Into<String>) -> Result<(), StateError> {
         fs::create_dir_all(&self.root)?;
-        fs::write(self.crash_path(), message.into())?;
+        let tmp = self.temp_path("last-crash");
+        fs::write(&tmp, message.into())?;
+        if let Err(error) = fs::rename(&tmp, self.crash_path()) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
         Ok(())
+    }
+    fn temp_path(&self, name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        self.root
+            .join(format!("{name}.tmp.{}.{}", std::process::id(), nonce))
     }
     pub fn read_health(&self) -> Result<Option<HealthReport>, StateError> {
         match fs::read_to_string(self.health_path()) {

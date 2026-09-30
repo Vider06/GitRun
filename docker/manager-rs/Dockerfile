@@ -17,6 +17,10 @@ COPY crates ./crates
 RUN grep -Fq 'pub mod app_auth;' crates/gitrun-core/src/lib.rs \
     && test -f crates/gitrun-core/src/app_auth.rs
 
+RUN cp Cargo.lock /tmp/Cargo.lock.before \
+    && cargo update -p yoke-derive --precise 0.8.2 \
+    && diff -u /tmp/Cargo.lock.before Cargo.lock
+
 RUN --mount=type=cache,id=gitrun-manager-target-${GITRUN_CACHE_SCHEMA}-${GITRUN_SOURCE_REV},target=/build/target,sharing=locked \
     cargo clean -p gitrun-core
 

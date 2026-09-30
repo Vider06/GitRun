@@ -297,7 +297,6 @@ fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")

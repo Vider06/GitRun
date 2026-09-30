@@ -139,9 +139,10 @@ pub fn bootstrap_linux_with_auth(
         fs::create_dir_all(path)?;
     }
 
+    let runner_dockerfile = resources::runner_dockerfile_for_bootstrap();
     write_resource(
         &root.join("docker/runner/Dockerfile"),
-        resources::RUNNER_DOCKERFILE,
+        &runner_dockerfile,
         0o644,
     )?;
     write_resource(
@@ -149,6 +150,9 @@ pub fn bootstrap_linux_with_auth(
         resources::RUNNER_ENTRYPOINT,
         0o755,
     )?;
+    for (relative_path, content, mode) in resources::RUNNER_BUILD_FILES {
+        write_resource(&root.join(relative_path), content, *mode)?;
+    }
     write_resource(
         Path::new("/etc/systemd/system/gitrun.service"),
         resources::SYSTEMD_SERVICE,
@@ -229,14 +233,7 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
                     "unable to read GitHub App private key at {private_key_path}: {error}"
                 ))
             })?;
-            gitrun_core::AppAuth::new(
-                app_id,
-                installation_id,
-                &key,
-                std::time::Duration::from_secs(5),
-                std::time::Duration::from_secs(20),
-            )
-            .map_err(|error| {
+            gitrun_core::AppAuth::new(app_id, installation_id, &key).map_err(|error| {
                 SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
             })?;
         }
@@ -484,6 +481,18 @@ const MANAGED_CONFIG_KEYS: &[&str] = &[
     "GITRUN_CONTAINER_UPDATE_TIME",
     "GITRUN_AUTO_CONTAINER_RECOVERY",
     "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
+    "GITRUN_CONTAINER_CPUS",
+    "GITRUN_CONTAINER_MEMORY",
+    "GITRUN_CONTAINER_PIDS",
+    "GITRUN_DISABLE_UPDATE",
+    "GITRUN_SHARED_CACHE_VOLUME",
+    "GITRUN_RUNNER_HOME_SIZE",
+    "GITRUN_RUNNER_HOME_BACKEND",
+    "GITRUN_GITHUB_CONNECT_TIMEOUT",
+    "GITRUN_GITHUB_REQUEST_TIMEOUT",
+    "GITRUN_VAULT_DIR",
+    "GITRUN_VAULT_GROUPS",
+    "GITRUN_GTUU_SCHEDULE_TIMEZONE",
     "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
     "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
     "GITRUN_GSR_COMMAND_POLICY_ENABLED",
@@ -525,6 +534,36 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
         (
             "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
             config.container_recovery_cooldown.to_string(),
+        ),
+        ("GITRUN_CONTAINER_CPUS", config.container_cpus.clone()),
+        ("GITRUN_CONTAINER_MEMORY", config.container_memory.clone()),
+        ("GITRUN_CONTAINER_PIDS", config.container_pids_limit.clone()),
+        ("GITRUN_DISABLE_UPDATE", config.runner_disable_update.to_string()),
+        (
+            "GITRUN_SHARED_CACHE_VOLUME",
+            config.shared_cache_volume.clone(),
+        ),
+        ("GITRUN_RUNNER_HOME_SIZE", config.runner_home_size.clone()),
+        (
+            "GITRUN_RUNNER_HOME_BACKEND",
+            config.runner_home_backend.clone(),
+        ),
+        (
+            "GITRUN_GITHUB_CONNECT_TIMEOUT",
+            config.github_connect_timeout.to_string(),
+        ),
+        (
+            "GITRUN_GITHUB_REQUEST_TIMEOUT",
+            config.github_request_timeout.to_string(),
+        ),
+        ("GITRUN_VAULT_DIR", config.vault_dir.clone()),
+        (
+            "GITRUN_VAULT_GROUPS",
+            config.vault_group_membership.clone(),
+        ),
+        (
+            "GITRUN_GTUU_SCHEDULE_TIMEZONE",
+            config.gtuu_schedule_timezone.clone(),
         ),
         (
             "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
@@ -578,9 +617,18 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
 }
 
 pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
+    config.validate().map_err(|e| e.to_string())?;
     let original =
         fs::read_to_string(path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
     let values = config_env_values(config);
+
+    // Environment-file values are emitted as one physical line per key.
+    // Reject line breaks before writing so a GUI/config value can never
+    // inject an additional environment variable or comment into gitrun.env.
+    for (key, value) in &values {
+        validate_env_file_value(key, value)?;
+    }
+
     let managed: std::collections::BTreeSet<&str> = MANAGED_CONFIG_KEYS.iter().copied().collect();
     let mut seen = std::collections::BTreeSet::new();
     let mut output = Vec::new();
@@ -605,9 +653,18 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
         }
     }
 
-    let tmp = path.with_extension("env.tmp");
-    fs::write(&tmp, output.join("\n") + "\n").map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    // Reuse the same atomic 0600 writer used by bootstrap. In particular,
+    // never create the temporary env file with the process umask/default
+    // permissions: this file can contain the GitHub PAT.
+    write_resource(path, &(output.join("\n") + "\n"), 0o600)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn validate_env_file_value(key: &str, value: &str) -> Result<(), String> {
+    if value.contains('\n') || value.contains('\r') {
+        return Err(format!("{key} must not contain newlines"));
+    }
     Ok(())
 }
 
@@ -666,5 +723,78 @@ mod tests {
     #[test]
     fn rejects_newline_in_bootstrap_secret() {
         assert!(validate_env_value("token\nINJECTED=value", "GITHUB_TOKEN").is_err());
+    }
+
+    #[test]
+    fn update_env_file_preserves_unmanaged_and_updates_managed_values() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "GITRUN_MIN_RUNNERS=1\nUNMANAGED=value\nGITRUN_GSR_VIOLATION_ACTION=kill\n",
+        )
+        .unwrap();
+
+        let mut config = Config::default();
+        config.min_runners = 4;
+        config.max_runners = 6;
+        config.gsr_violation_action = "log_only".into();
+
+        update_env_file(&path, &config).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+
+        assert!(content.contains("GITRUN_MIN_RUNNERS=4"));
+        assert!(content.contains("GITRUN_MAX_RUNNERS=6"));
+        assert!(content.contains("GITRUN_GSR_VIOLATION_ACTION=log_only"));
+        assert!(content.contains("UNMANAGED=value"));
+        assert!(!content.contains("GITRUN_MIN_RUNNERS=1"));
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn update_env_file_rejects_newline_in_managed_value() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-newline-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "GITRUN_REPOSITORIES=owner/repo\n").unwrap();
+
+        let mut config = Config::default();
+        config.runner_labels = "self-hosted\nINJECTED=value".into();
+
+        let error = update_env_file(&path, &config).unwrap_err();
+        assert!(error.contains("GITRUN_RUNNER_LABELS must not contain newlines"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn update_env_file_writes_config_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-mode-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "GITRUN_MIN_RUNNERS=1\n").unwrap();
+
+        let config = Config::default();
+        update_env_file(&path, &config).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        fs::remove_file(path).unwrap();
     }
 }

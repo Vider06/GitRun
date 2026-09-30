@@ -167,7 +167,7 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
     Ok(report)
 }
 
-/// Shells out to `zizmor --format json <path>` if the binary is on `PATH`.
+/// Shells out to `zizmor --format json <path>` when the binary is on `PATH`.
 /// Returns `Ok(None)` (not an error) if `zizmor` isn't installed — this is
 /// an optional third-party enhancement (see module docs), and its absence
 /// must never block a job from running. Returns `Ok(Some(findings))` on a

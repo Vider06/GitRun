@@ -143,9 +143,11 @@ impl CommandPolicy {
             };
         }
         if self.user_whitelist.enabled {
-            let allowed = self.user_whitelist.patterns.iter().any(|pattern| {
-                whitelist_pattern_matches(pattern, &normalized)
-            });
+            let allowed = self
+                .user_whitelist
+                .patterns
+                .iter()
+                .any(|pattern| whitelist_pattern_matches(pattern, &normalized));
             if !allowed {
                 return Decision::Denied {
                     reason: "command not present in whitelist".into(),
@@ -180,7 +182,8 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     }
 
     command_normalized.split(' ').any(|token| {
-        token == pattern || token.strip_prefix("./").map_or(false, |p| p == pattern)
+        token == pattern
+            || token.strip_prefix("./").map_or(false, |p| p == pattern)
             || token.ends_with(&format!("/{pattern}"))
     })
 }

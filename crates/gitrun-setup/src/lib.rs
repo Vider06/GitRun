@@ -229,7 +229,7 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
                     "unable to read GitHub App private key at {private_key_path}: {error}"
                 ))
             })?;
-            gitrun_core::AppAuth::new(app_id, installation_id, &key).map_err(|error| {
+            gitrun_core::AppAuth::new(\n                app_id,\n                installation_id,\n                &key,\n                std::time::Duration::from_secs(5),\n                std::time::Duration::from_secs(20),\n            ).map_err(|error| {
                 SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
             })?;
         }

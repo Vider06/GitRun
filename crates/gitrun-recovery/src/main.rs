@@ -91,8 +91,15 @@ fn start(target: &str) -> i32 {
 
 fn check() -> i32 {
     let report = gitrun_recovery::inspect();
-    println!("{}", serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".into()));
-    if report.has_critical() { 1 } else { 0 }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".into())
+    );
+    if report.has_critical() {
+        1
+    } else {
+        0
+    }
 }
 
 fn gtuu() -> i32 {
@@ -101,7 +108,8 @@ fn gtuu() -> i32 {
             println!(
                 "GTUU: GitRun {}{}; {} permanent runner(s) updated",
                 report.current_version,
-                report.target_version
+                report
+                    .target_version
                     .as_deref()
                     .map(|version| format!(" -> {version}"))
                     .unwrap_or_default(),

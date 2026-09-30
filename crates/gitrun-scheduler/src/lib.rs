@@ -912,9 +912,6 @@ fn spawn_gsr_poll_thread(
                     }
                 },
                 move |violation| {
-                action,
-                poll_interval,
-                move |violation| {
                     let repo_note = violation.repo.as_deref().unwrap_or("unknown repo");
                     let message = format!(
                         "container {} ({repo_note}) ran a denied command: {} — {} (action: {:?})",

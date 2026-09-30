@@ -248,6 +248,7 @@ pub struct ZizmorInfo {
     pub terms_summary: &'static str,
 }
 
+// Keep the optional analyzer metadata centralized so enabling it remains auditable.
 pub fn zizmor_info() -> ZizmorInfo {
     ZizmorInfo {
         name: "zizmor",

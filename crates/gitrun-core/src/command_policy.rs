@@ -22,12 +22,16 @@
 //!
 //! All three can be on simultaneously: a command is allowed only if it
 //! passes whitelist (when enabled) AND is not caught by either enabled
-//! blacklist. Matching is substring-based against the full command line,
-//! case-insensitive — intentionally simple (see `CommandPolicy::evaluate`)
-//! rather than a shell parser, because a job's command line is already
-//! attacker-influenced text and a parser is itself an attack surface; this
-//! trades some false negatives (obfuscated invocations) for a policy that
-//! is easy to audit and cannot itself be exploited via crafted input.
+//! blacklist. Blacklists use case-insensitive substring matching against a
+//! whitespace-normalized command line — intentionally simple (see
+//! `CommandPolicy::evaluate`) rather than a shell parser, because a job's
+//! command line is already attacker-influenced text and a parser is itself
+//! an attack surface. Single-word whitelist entries are additionally matched
+//! at command-token boundaries, preventing an entry such as `cargo` from
+//! accidentally authorizing `my-cargo-wrapper`; multi-word whitelist entries
+//! retain substring matching. This still trades some false negatives
+//! (obfuscated invocations) for a policy that is easy to audit and cannot
+//! itself be exploited via crafted input.
 
 use serde::{Deserialize, Serialize};
 

@@ -15,8 +15,9 @@ COPY crates ./crates
 RUN grep -Fq 'pub mod app_auth;' crates/gitrun-core/src/lib.rs \
     && test -f crates/gitrun-core/src/app_auth.rs
 
-RUN cargo clean -p gitrun-core && \
-    --mount=type=cache,id=gitrun-manager-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+RUN cargo clean -p gitrun-core
+
+RUN --mount=type=cache,id=gitrun-manager-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=gitrun-manager-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=gitrun-manager-target-${GITRUN_SOURCE_REV},target=/build/target,sharing=locked \
     cargo build --locked --release -p gitrun-scheduler --bin gitrun-autoscaler \

@@ -921,6 +921,7 @@ fn spawn_gsr_poll_thread(
     let state_dir = PathBuf::from(&config.state_dir);
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let stopping = stopping.clone();
+    let vm_registry = Arc::clone(vm_registry);
     let poll_interval = Duration::from_secs(5);
 
     std::thread::Builder::new()
@@ -933,7 +934,7 @@ fn spawn_gsr_poll_thread(
                 action,
                 poll_interval,
                 {
-                    let vm_registry = Arc::clone(vm_registry);
+                    let vm_registry = Arc::clone(&vm_registry);
                     move || {
                         let mut hosts = vec![docker::DockerHost::Local];
                         let guard = vm_registry.lock().unwrap_or_else(|p| p.into_inner());

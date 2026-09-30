@@ -32,6 +32,8 @@ pub enum AppAuthError {
     Rejected { status: u16, detail: String },
     #[error("system clock error: {0}")]
     Clock(#[from] std::time::SystemTimeError),
+    #[error("invalid GitHub installation token expiration timestamp: {0}")]
+    InvalidTimestamp(String),
 }
 
 pub type Result<T> = std::result::Result<T, AppAuthError>;
@@ -78,11 +80,14 @@ impl AppAuth {
         app_id: impl Into<String>,
         installation_id: impl Into<String>,
         private_key_pem: &str,
+        connect_timeout: Duration,
+        request_timeout: Duration,
     ) -> Result<Self> {
         let encoding_key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())
             .map_err(AppAuthError::InvalidPrivateKey)?;
         let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(20))
+            .connect_timeout(connect_timeout)
+            .timeout(request_timeout)
             .build()?;
         Ok(Self {
             app_id: app_id.into(),
@@ -158,8 +163,15 @@ impl AppAuth {
             });
         }
         let parsed: InstallationTokenResponse = response.json()?;
-        let expires_at = parse_github_timestamp(&parsed.expires_at)
-            .unwrap_or(SystemTime::now() + Duration::from_secs(3300));
+        if parsed.token.trim().is_empty() {
+            return Err(AppAuthError::Rejected {
+                status: status.as_u16(),
+                detail: "GitHub returned an empty installation token".into(),
+            });
+        }
+        let expires_at = parse_github_timestamp(&parsed.expires_at).ok_or_else(|| {
+            AppAuthError::InvalidTimestamp(parsed.expires_at.clone())
+        })?;
         Ok((parsed.token, expires_at))
     }
 }
@@ -175,10 +187,34 @@ fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
     let year: i64 = date_parts.next()?.parse().ok()?;
     let month: i64 = date_parts.next()?.parse().ok()?;
     let day: i64 = date_parts.next()?.parse().ok()?;
+    if date_parts.next().is_some() || !(1..=12).contains(&month) {
+        return None;
+    }
+
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => unreachable!(),
+    };
+    if !(1..=days_in_month).contains(&day) {
+        return None;
+    }
+
     let mut time_parts = time.split(':');
     let hour: i64 = time_parts.next()?.parse().ok()?;
     let minute: i64 = time_parts.next()?.parse().ok()?;
     let second: f64 = time_parts.next()?.parse().ok()?;
+    if time_parts.next().is_some()
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !second.is_finite()
+        || !(0.0..60.0).contains(&second)
+    {
+        return None;
+    }
 
     // Days-since-epoch from a civil date (inverse of the calculation already
     // used in main.rs's chrono_like_now, same source algorithm).
@@ -190,7 +226,8 @@ fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days_since_epoch = era * 146097 + doe as i64 - 719468;
 
-    let total_secs = days_since_epoch * 86400 + hour * 3600 + minute * 60 + second as i64;
+    let total_secs =
+        days_since_epoch * 86400 + hour * 3600 + minute * 60 + second as i64;
     Some(UNIX_EPOCH + Duration::from_secs(total_secs.max(0) as u64))
 }
 
@@ -208,6 +245,11 @@ mod tests {
     fn rejects_malformed_timestamp() {
         assert!(parse_github_timestamp("not-a-timestamp").is_none());
         assert!(parse_github_timestamp("2026-09-23 12:00:00").is_none()); // missing T/Z
+        assert!(parse_github_timestamp("2026-02-30T12:00:00Z").is_none());
+        assert!(parse_github_timestamp("2026-13-01T12:00:00Z").is_none());
+        assert!(parse_github_timestamp("2026-09-23T24:00:00Z").is_none());
+        assert!(parse_github_timestamp("2026-09-23T12:60:00Z").is_none());
+        assert!(parse_github_timestamp("2026-09-23T12:00:60Z").is_none());
     }
 
     #[test]
@@ -219,7 +261,13 @@ mod tests {
 
     #[test]
     fn rejects_garbage_private_key() {
-        let result = AppAuth::new("12345", "67890", "not a real PEM key");
+        let result = AppAuth::new(
+            "12345",
+            "67890",
+            "not a real PEM key",
+            Duration::from_secs(5),
+            Duration::from_secs(20),
+        );
         assert!(matches!(result, Err(AppAuthError::InvalidPrivateKey(_))));
     }
 }

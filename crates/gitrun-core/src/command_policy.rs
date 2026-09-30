@@ -22,12 +22,16 @@
 //!
 //! All three can be on simultaneously: a command is allowed only if it
 //! passes whitelist (when enabled) AND is not caught by either enabled
-//! blacklist. Matching is substring-based against the full command line,
-//! case-insensitive — intentionally simple (see `CommandPolicy::evaluate`)
-//! rather than a shell parser, because a job's command line is already
-//! attacker-influenced text and a parser is itself an attack surface; this
-//! trades some false negatives (obfuscated invocations) for a policy that
-//! is easy to audit and cannot itself be exploited via crafted input.
+//! blacklist. Blacklists use case-insensitive substring matching against a
+//! whitespace-normalized command line — intentionally simple (see
+//! `CommandPolicy::evaluate`) rather than a shell parser, because a job's
+//! command line is already attacker-influenced text and a parser is itself
+//! an attack surface. Single-word whitelist entries are additionally matched
+//! at command-token boundaries, preventing an entry such as `cargo` from
+//! accidentally authorizing `my-cargo-wrapper`; multi-word whitelist entries
+//! retain substring matching. This still trades some false negatives
+//! (obfuscated invocations) for a policy that is easy to audit and cannot
+//! itself be exploited via crafted input.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,16 +51,19 @@ impl PatternList {
         Self { enabled, patterns }
     }
 
-    /// True if `enabled` and `command_lower` (already lowercased by the
-    /// caller, see `CommandPolicy::evaluate`) contains any pattern.
-    fn matches(&self, command_lower: &str) -> Option<&str> {
+    /// True if `enabled` and the normalized command contains any pattern.
+    ///
+    /// Whitespace is normalized before matching so equivalent shell spellings
+    /// such as `sudo rm`, `sudo\\trm`, and multi-line scripts cannot bypass
+    /// a configured pattern merely by changing horizontal/vertical whitespace.
+    fn matches(&self, command_normalized: &str) -> Option<&str> {
         if !self.enabled {
             return None;
         }
-        self.patterns
-            .iter()
-            .map(|p| p.as_str())
-            .find(|p| !p.is_empty() && command_lower.contains(&p.to_ascii_lowercase()))
+        self.patterns.iter().map(String::as_str).find(|pattern| {
+            let pattern = normalize_command(pattern);
+            !pattern.is_empty() && command_normalized.contains(&pattern)
+        })
     }
 }
 
@@ -123,14 +130,14 @@ pub struct CommandPolicy {
 
 impl CommandPolicy {
     pub fn evaluate(&self, command: &str) -> Decision {
-        let lower = command.to_ascii_lowercase();
+        let normalized = normalize_command(command);
 
-        if let Some(pattern) = self.baseline_blacklist.matches(&lower) {
+        if let Some(pattern) = self.baseline_blacklist.matches(&normalized) {
             return Decision::Denied {
                 reason: format!("matched baseline blacklist pattern {pattern:?}"),
             };
         }
-        if let Some(pattern) = self.user_blacklist.matches(&lower) {
+        if let Some(pattern) = self.user_blacklist.matches(&normalized) {
             return Decision::Denied {
                 reason: format!("matched user blacklist pattern {pattern:?}"),
             };
@@ -140,7 +147,7 @@ impl CommandPolicy {
                 .user_whitelist
                 .patterns
                 .iter()
-                .any(|p| !p.is_empty() && lower.contains(&p.to_ascii_lowercase()));
+                .any(|pattern| whitelist_pattern_matches(pattern, &normalized));
             if !allowed {
                 return Decision::Denied {
                     reason: "command not present in whitelist".into(),
@@ -149,6 +156,36 @@ impl CommandPolicy {
         }
         Decision::Allowed
     }
+}
+
+/// Canonicalize shell whitespace without attempting to parse shell syntax.
+fn normalize_command(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+/// Whitelist entries that contain multiple words keep the documented
+/// substring behavior. A single-word whitelist entry, however, must identify
+/// an actual command token (or an absolute/relative path ending in that
+/// executable name), so `cargo` cannot accidentally authorize
+/// `my-cargo-wrapper`.
+fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
+    let pattern = normalize_command(pattern);
+    if pattern.is_empty() {
+        return false;
+    }
+    if pattern.contains(' ') {
+        return command_normalized.contains(&pattern);
+    }
+
+    command_normalized.split(' ').any(|token| {
+        token == pattern
+            || token.strip_prefix("./").map_or(false, |p| p == pattern)
+            || token.ends_with(&format!("/{pattern}"))
+    })
 }
 
 /// Our shipped baseline: commands/patterns with essentially no legitimate
@@ -303,6 +340,51 @@ mod tests {
             policy.evaluate("curl https://example.com"),
             Decision::Allowed
         );
+    }
+
+    #[test]
+    fn matching_normalizes_shell_whitespace() {
+        let policy = baseline_only();
+        assert!(matches!(
+            policy.evaluate("sudo\\trm -rf /"),
+            Decision::Denied { .. }
+        ));
+        assert!(matches!(
+            policy.evaluate("mount\\n--bind /host /mnt"),
+            Decision::Denied { .. }
+        ));
+    }
+
+    #[test]
+    fn whitelist_single_word_requires_command_boundary() {
+        let policy = CommandPolicy {
+            baseline_blacklist: PatternList::default(),
+            user_blacklist: PatternList::default(),
+            user_whitelist: PatternList::new(true, vec!["cargo".into()]),
+        };
+        assert_eq!(policy.evaluate("cargo build"), Decision::Allowed);
+        assert_eq!(policy.evaluate("/usr/bin/cargo test"), Decision::Allowed);
+        assert!(matches!(
+            policy.evaluate("my-cargo-wrapper build"),
+            Decision::Denied { .. }
+        ));
+    }
+
+    #[test]
+    fn whitelist_multicharacter_pattern_keeps_substring_behavior() {
+        let policy = CommandPolicy {
+            baseline_blacklist: PatternList::default(),
+            user_blacklist: PatternList::default(),
+            user_whitelist: PatternList::new(true, vec!["cargo build --release".into()]),
+        };
+        assert_eq!(
+            policy.evaluate("cargo build --release --locked"),
+            Decision::Allowed
+        );
+        assert!(matches!(
+            policy.evaluate("cargo test"),
+            Decision::Denied { .. }
+        ));
     }
 
     #[test]

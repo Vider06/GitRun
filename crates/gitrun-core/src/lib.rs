@@ -1,4 +1,4 @@
-pub mod app_auth;
+//! Core domain types and shared services for GitRun.\n//!\n//! This crate is the common foundation used by the CLI, scheduler, GSR,\n//! setup, recovery, updater, and dashboard layers.\n//! It intentionally exposes stable domain APIs while keeping implementation\n//! details inside their respective modules.\n\npub mod app_auth;
 pub mod command_policy;
 pub mod config;
 pub mod github_auth;

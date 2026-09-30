@@ -95,31 +95,47 @@ pub fn scan(file_label: &str, content: &str) -> Vec<Finding> {
         });
     }
 
+    const UNTRUSTED_CONTEXTS: [&str; 6] = [
+        "github.event.issue.title",
+        "github.event.issue.body",
+        "github.event.pull_request.title",
+        "github.event.pull_request.body",
+        "github.head_ref",
+        "github.event.comment.body",
+    ];
+
+    let mut run_block_indent: Option<usize> = None;
+
     for (idx, raw_line) in content.lines().enumerate() {
+        let indent = raw_line.chars().take_while(|c| c.is_whitespace()).count();
         let line = raw_line.trim_start();
         let lower_line = line.to_ascii_lowercase();
-        if !lower_line.starts_with("run:") && !line.starts_with('-') {
-            // Cheap pre-filter: only lines that could plausibly be a `run:`
-            // step body are worth the more expensive checks below. This
-            // also catches multi-line `run: |` bodies poorly (each body
-            // line doesn't start with `run:`), so this check is a
-            // best-effort net, not exhaustive - the same tradeoff as the
-            // module-level doc comment describes.
+
+        if let Some(block_indent) = run_block_indent {
+            if !line.is_empty() && indent <= block_indent {
+                run_block_indent = None;
+            } else {
+                for ctx in UNTRUSTED_CONTEXTS {
+                    if lower_line.contains(ctx) && lower_line.contains("${{") {
+                        findings.push(Finding {
+                            file: file_label.to_owned(),
+                            line: Some(idx + 1),
+                            rule: "template-injection-risk".into(),
+                            message: format!("line splices an attacker-controlled expression context ({ctx}) directly into a shell command"),
+                        });
+                    }
+                }
+                continue;
+            }
+        }
+
+        let inline_run = lower_line.starts_with("run:")
+            || lower_line.starts_with("- run:")
+            || lower_line.starts_with("-run:");
+        if !inline_run {
             continue;
         }
-        // Untrusted expression contexts spliced directly into a shell
-        // command: classic template-injection setup (the same class of
-        // bug zizmor's `template-injection` audit targets). We flag the
-        // common attacker-controlled contexts rather than every `${{ }}`
-        // use, since most expression use (e.g. `${{ matrix.os }}`) is safe.
-        const UNTRUSTED_CONTEXTS: [&str; 6] = [
-            "github.event.issue.title",
-            "github.event.issue.body",
-            "github.event.pull_request.title",
-            "github.event.pull_request.body",
-            "github.head_ref",
-            "github.event.comment.body",
-        ];
+
         for ctx in UNTRUSTED_CONTEXTS {
             if lower_line.contains(ctx) && lower_line.contains("${{") {
                 findings.push(Finding {
@@ -130,8 +146,17 @@ pub fn scan(file_label: &str, content: &str) -> Vec<Finding> {
                 });
             }
         }
-    }
 
+        let run_value = lower_line
+            .strip_prefix("run:")
+            .or_else(|| lower_line.strip_prefix("- run:"))
+            .or_else(|| lower_line.strip_prefix("-run:"))
+            .unwrap_or_default()
+            .trim();
+        if matches!(run_value, "|" | ">" | "|-" | "|+" | ">-" | ">+") {
+            run_block_indent = Some(indent);
+        }
+    }
     findings
 }
 
@@ -167,7 +192,7 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
     Ok(report)
 }
 
-/// Shells out to `zizmor --format json <path>` when the binary is on `PATH`.
+/// Shells out to `zizmor --format json <path>` if the binary is on `PATH`.
 /// Returns `Ok(None)` (not an error) if `zizmor` isn't installed — this is
 /// an optional third-party enhancement (see module docs), and its absence
 /// must never block a job from running. Returns `Ok(Some(findings))` on a
@@ -175,7 +200,14 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
 /// the fields this module needs) so an unrecognized future zizmor output
 /// shape degrades to "no additional findings" rather than a hard error.
 pub fn run_zizmor(workflows_dir: &Path) -> std::io::Result<Option<Vec<Finding>>> {
-    let output = match Command::new("zizmor")
+    run_zizmor_command("zizmor", workflows_dir)
+}
+
+fn run_zizmor_command(
+    program: &str,
+    workflows_dir: &Path,
+) -> std::io::Result<Option<Vec<Finding>>> {
+    let output = match Command::new(program)
         .arg("--format")
         .arg("json")
         .arg(workflows_dir)
@@ -278,6 +310,9 @@ pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
     }
     let output = Command::new("cargo")
         .arg("install")
+        .arg("--locked")
+        .arg("--version")
+        .arg("1.30.1")
         .arg("zizmor")
         .output()?;
     if output.status.success() {
@@ -336,6 +371,21 @@ mod tests {
     }
 
     #[test]
+    fn flags_template_injection_inside_multiline_run_block() {
+        let workflow = "jobs:\n  build:\n    steps:\n      - run: |\n          echo \"${{ github.event.issue.title }}\"\n";
+        let findings = scan("ci.yml", workflow);
+        assert!(findings
+            .iter()
+            .any(|f| f.rule == "template-injection-risk" && f.line == Some(5)));
+    }
+
+    #[test]
+    fn does_not_scan_expressions_outside_run_blocks() {
+        let workflow = "env:\n  TITLE: \"${{ github.event.issue.title }}\"\njobs:\n  build:\n    steps:\n      - run: echo safe\n";
+        assert!(scan("ci.yml", workflow).is_empty());
+    }
+
+    #[test]
     fn does_not_flag_safe_expression_contexts() {
         let workflow = "jobs:\n  build:\n    steps:\n      - run: echo \"${{ matrix.os }}\"\n";
         let findings = scan("ci.yml", workflow);
@@ -381,8 +431,12 @@ mod tests {
         // to accept Some(_) too; documented here rather than silently
         // becoming a flaky test.
         let dir = std::env::temp_dir();
-        let result = run_zizmor(&dir).unwrap();
-        assert!(result.is_none() || result.is_some());
+        let result = run_zizmor_command(
+            "__gitrun_zizmor_binary_that_should_not_exist__",
+            &dir,
+        )
+        .unwrap();
+        assert!(result.is_none());
     }
 
     #[test]

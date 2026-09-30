@@ -423,6 +423,11 @@ impl Config {
                 "poll interval must be greater than zero".into(),
             ));
         }
+        if self.idle_timeout == 0 {
+            return Err(ConfigError::Invalid(
+                "idle timeout must be greater than zero".into(),
+            ));
+        }
         if self.container_recovery_cooldown == 0 {
             return Err(ConfigError::Invalid(
                 "container recovery cooldown must be greater than zero".into(),
@@ -438,30 +443,35 @@ impl Config {
                 "runner labels must not be empty".into(),
             ));
         }
-        if self.container_cpus.trim().is_empty() {
-            return Err(ConfigError::Invalid(
-                "container cpus must not be empty".into(),
-            ));
+        if !is_positive_decimal(&self.container_cpus) {
+            return Err(ConfigError::Invalid(format!(
+                "container cpus must be a positive decimal number, got {:?}",
+                self.container_cpus
+            )));
         }
-        if self.container_memory.trim().is_empty() {
-            return Err(ConfigError::Invalid(
-                "container memory must not be empty".into(),
-            ));
+        if !is_positive_docker_size(&self.container_memory) {
+            return Err(ConfigError::Invalid(format!(
+                "container memory must be a positive Docker size, got {:?}",
+                self.container_memory
+            )));
         }
-        if self.container_pids_limit.trim().is_empty() {
-            return Err(ConfigError::Invalid(
-                "container pids limit must not be empty".into(),
-            ));
+        if !is_positive_u64(&self.container_pids_limit) {
+            return Err(ConfigError::Invalid(format!(
+                "container pids limit must be a positive integer, got {:?}",
+                self.container_pids_limit
+            )));
         }
-        if self.shared_cache_volume.trim().is_empty() {
-            return Err(ConfigError::Invalid(
-                "shared cache volume must not be empty".into(),
-            ));
+        if !is_valid_docker_name(&self.shared_cache_volume) {
+            return Err(ConfigError::Invalid(format!(
+                "shared cache volume must be a valid Docker volume name, got {:?}",
+                self.shared_cache_volume
+            )));
         }
-        if self.runner_home_size.trim().is_empty() {
-            return Err(ConfigError::Invalid(
-                "runner home size must not be empty".into(),
-            ));
+        if !is_positive_docker_size(&self.runner_home_size) {
+            return Err(ConfigError::Invalid(format!(
+                "runner home size must be a positive Docker size, got {:?}",
+                self.runner_home_size
+            )));
         }
         if !matches!(self.runner_home_backend.as_str(), "tmpfs" | "volume") {
             return Err(ConfigError::Invalid(format!(
@@ -501,9 +511,16 @@ impl Config {
             ));
         }
         validate_time(&self.container_update_time)?;
+        let mut seen_repositories =
+            std::collections::HashSet::with_capacity(self.repositories.len());
         for repo in &self.repositories {
             if !is_repository(repo) {
                 return Err(ConfigError::Repository(repo.clone()));
+            }
+            if !seen_repositories.insert(repo) {
+                return Err(ConfigError::Invalid(format!(
+                    "duplicate repository configured: {repo}"
+                )));
             }
         }
         // The danger gate: disabling Docker-socket hardening requires the
@@ -619,17 +636,20 @@ fn validate_single_line(key: &str, value: &str) -> Result<(), ConfigError> {
 }
 
 fn parse_repositories(raw: &str) -> Result<Vec<String>, ConfigError> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|repo| {
-            if is_repository(repo) {
-                Ok(repo.to_owned())
-            } else {
-                Err(ConfigError::Repository(repo.to_owned()))
-            }
-        })
-        .collect()
+    let mut repositories = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for repo in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if !is_repository(repo) {
+            return Err(ConfigError::Repository(repo.to_owned()));
+        }
+        if !seen.insert(repo) {
+            return Err(ConfigError::Invalid(format!(
+                "duplicate repository configured: {repo}"
+            )));
+        }
+        repositories.push(repo.to_owned());
+    }
+    Ok(repositories)
 }
 /// Splits a comma-separated config string into trimmed, non-empty patterns.
 /// Used for `gsr_command_blacklist`/`gsr_command_whitelist` — same shape as
@@ -642,6 +662,67 @@ fn split_csv(raw: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
+fn is_positive_u64(value: &str) -> bool {
+    value.trim().parse::<u64>().map(|n| n > 0).unwrap_or(false)
+}
+
+fn is_positive_decimal(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() || value.starts_with('.') || value.ends_with('.') {
+        return false;
+    }
+    let mut dots = 0;
+    let mut digits = 0;
+    for byte in value.bytes() {
+        match byte {
+            b'0'..=b'9' => digits += 1,
+            b'.' => {
+                dots += 1;
+                if dots > 1 {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    digits > 0
+        && value
+            .parse::<f64>()
+            .map(|n| n.is_finite() && n > 0.0)
+            .unwrap_or(false)
+}
+
+fn is_positive_docker_size(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() {
+        return false;
+    }
+    let split_at = value
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(value.len());
+    let number = &value[..split_at];
+    let suffix = value[split_at..].to_ascii_lowercase();
+    if !is_positive_decimal(number) {
+        return false;
+    }
+    matches!(
+        suffix.as_str(),
+        "b" | "k" | "kb" | "m" | "mb" | "g" | "gb" | "t" | "tb" | "p" | "pb"
+    )
+}
+
+fn is_valid_docker_name(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+        && value
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+}
+
 fn is_repository(value: &str) -> bool {
     let mut parts = value.split('/');
     matches!((parts.next(), parts.next(), parts.next()), (Some(a), Some(b), None) if !a.is_empty() && !b.is_empty())
@@ -746,6 +827,50 @@ mod tests {
     #[test]
     fn invalid_boolean_is_rejected() {
         assert!(parse_bool("TEST", "maybe").is_err());
+    }
+
+    #[test]
+    fn idle_timeout_must_be_positive() {
+        let mut config = Config::default();
+        config.idle_timeout = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn duplicate_repositories_are_rejected() {
+        let mut config = Config::default();
+        config.repositories = vec!["owner/repo".into(), "owner/repo".into()];
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn docker_resource_limits_are_validated() {
+        let mut config = Config::default();
+        assert!(config.validate().is_ok());
+
+        config.container_cpus = "0".into();
+        assert!(config.validate().is_err());
+        config.container_cpus = "0.5".into();
+
+        config.container_memory = "banana".into();
+        assert!(config.validate().is_err());
+        config.container_memory = "1g".into();
+
+        config.container_pids_limit = "0".into();
+        assert!(config.validate().is_err());
+        config.container_pids_limit = "1024".into();
+
+        config.runner_home_size = "nope".into();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn shared_cache_volume_name_is_validated() {
+        let mut config = Config::default();
+        config.shared_cache_volume = "gitrun-cache.prod-1".into();
+        assert!(config.validate().is_ok());
+        config.shared_cache_volume = "gitrun/cache".into();
+        assert!(config.validate().is_err());
     }
 
     #[test]

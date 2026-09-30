@@ -418,7 +418,7 @@ jobs:
 
 
       - name: Save Rust dependency auditor cache
-        if: needs.detect.outputs.rust == 'true' && success() && github.event_name != 'pull_request' && steps.auditor-cache.outputs.cache-hit != 'true'
+        if: needs.detect.outputs.rust == 'true' && success() && steps.auditor-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:

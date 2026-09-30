@@ -98,7 +98,10 @@ fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
     let started = std::time::Instant::now();
 
     loop {
-        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path) {
             Ok(_) => return Ok(DecisionLock { path }),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if let Ok(metadata) = fs::metadata(&path) {

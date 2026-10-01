@@ -116,27 +116,20 @@ impl GtuuLock {
     }    }
 }
 
-/// A lock is stale if its age exceeds `STALE_LOCK_AGE`, or if it records a
-/// PID that is no longer running. A dead PID provides fast recovery after a
-/// crash; the age cutoff covers PID files that could not be written reliably
-/// or a long-lived process that has been wedged beyond any reasonable GTUU run.
+/// A lock is stale when its recorded PID is no longer running. If the PID
+/// file is absent or unreadable, the age cutoff provides a conservative
+/// fallback for abandoned locks whose owner cannot be identified.
 fn is_stale(lock_path: &Path) -> bool {
-    let age_exceeded = fs::metadata(lock_path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-        .map(|age| age > STALE_LOCK_AGE)
-        .unwrap_or(false);
-    if age_exceeded {
-        return true;
-    }
-
     let recorded_pid: Option<u32> = fs::read_to_string(lock_path.join("pid"))
         .ok()
         .and_then(|raw| raw.trim().parse().ok());
     match recorded_pid {
         Some(pid) => !process_is_alive(pid),
-        None => false,
+        None => fs::metadata(lock_path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .is_some_and(|age| age > STALE_LOCK_AGE),
     }
 }
 }
@@ -226,8 +219,16 @@ fn pull_image(image: &str) -> Result<String> {
     docker::image_id(image).map_err(Into::into)
 }
 
-fn current_image_id(container_name: &str) -> Result<String> {
-    docker::image_id(container_name).map_err(Into::into)
+fn current_image_id(container_name: &str) -> Result<UpdateCurrentImage> {
+    match docker::container_image_id(container_name)? {
+        Some(id) => Ok(UpdateCurrentImage::Present(id)),
+        None => Ok(UpdateCurrentImage::Missing),
+    }
+}
+
+enum UpdateCurrentImage {
+    Present(String),
+    Missing,
 }
 
 
@@ -238,10 +239,10 @@ fn update_one(
     name: &str,
     new_image_id: &str,
 ) -> Result<UpdateOutcome> {
-    let old_image_id = current_image_id(name)?;
-    if old_image_id.is_empty() {
-        return Ok(UpdateOutcome::Missing);
-    }
+    let old_image_id = match current_image_id(name)? {
+        UpdateCurrentImage::Present(id) => id,
+        UpdateCurrentImage::Missing => return Ok(UpdateOutcome::Missing),
+    };
     if old_image_id == new_image_id {
         return Ok(UpdateOutcome::Current);
     }

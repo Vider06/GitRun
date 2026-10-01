@@ -763,16 +763,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p crates/gitrun-recovery/icons
-          if command -v magick >/dev/null 2>&1; then
-            magick assets/gitrun-icon.svg -background none -alpha on PNG32:crates/gitrun-recovery/icons/icon.png
-          elif command -v convert >/dev/null 2>&1; then
-            convert assets/gitrun-icon.svg -background none -alpha on PNG32:crates/gitrun-recovery/icons/icon.png
-          else
-            echo "::error::ImageMagick (magick/convert) is required to prepare the Recovery icon."
-            exit 1
-          fi
-          file crates/gitrun-recovery/icons/icon.png
+          source_icon="crates/gitrun-dashboard-tauri/src-tauri/icons/icon.png"
+          recovery_icon="crates/gitrun-recovery/icons/icon.png"
+          test -f "$source_icon"
+          mkdir -p "$(dirname "$recovery_icon")"
+          cp "$source_icon" "$recovery_icon"
+          file "$recovery_icon"
 
       - name: Test GitRun Recovery
         shell: bash

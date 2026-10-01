@@ -341,15 +341,18 @@ fn resolve_backend_and_image(
                 return None;
             };
             match vm_resolution::resolve_or_spawn(vm_registry, state_dir, vm_config) {
-                Some(host) => Some((host, image.to_owned(), vm_config.is_windows)),
-                None => {
-                    // Not resolved yet this cycle — a background thread is
-                    // (or is about to be) working on it; see this
-                    // function's doc comment. Not an error, just "not
-                    // ready", so this stays an eprintln rather than a
-                    // recorded crash.
+                vm_resolution::VmResolutionResult::Ready(host) => {
+                    Some((host, image.to_owned(), vm_config.is_windows))
+                }
+                vm_resolution::VmResolutionResult::Resolving => {
                     eprintln!(
-                        "gitrun-autoscaler: VM '{vm_name}' isn't ready yet (hypervisor setup in progress) — using local host for this runner this cycle"
+                        "gitrun-autoscaler: VM '{vm_name}' isn't ready yet; runner creation deferred while hypervisor setup or liveness verification is in progress"
+                    );
+                    None
+                }
+                vm_resolution::VmResolutionResult::Failed(error) => {
+                    eprintln!(
+                        "gitrun-autoscaler: VM '{vm_name}' resolution failed; runner creation deferred: {error}"
                     );
                     None
                 }

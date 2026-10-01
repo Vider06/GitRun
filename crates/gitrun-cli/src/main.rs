@@ -423,7 +423,7 @@ fn read_terminal_secret(prompt: &str) -> Result<String, Box<dyn std::error::Erro
         return match input_result {
             Ok(_) => {
                 Err(format!("unable to restore terminal echo after secret input: {error}").into())
-            },
+            }
             Err(input_error) => Err(format!(
                 "secret input failed: {input_error}; unable to restore terminal echo: {error}"
             )

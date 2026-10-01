@@ -554,11 +554,8 @@ fn execute(
             docker::restart_container(name)?;
         }
         Action::RemoveIdle { name } => {
-            if remove_if_still_idle(client, repo, name)? {
-                state.clear_idle(name);
-            } else {
-                state.clear_idle(name);
-            }
+            let _ = remove_if_still_idle(client, repo, name)?;
+            state.clear_idle(name);
         }
     }
     Ok(())
@@ -1180,6 +1177,23 @@ fn utc_now() -> SimpleNow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dynamic_runner_labels_include_job_labels() {
+        let labels = runner_labels_for_job(
+            "self-hosted,Linux,gitrun-ci",
+            false,
+            &["windows".into(), "GPU".into(), "linux".into()],
+        );
+        assert_eq!(labels, "self-hosted,Linux,gitrun-ci,windows,GPU");
+    }
+
+    #[test]
+    fn permanent_runner_labels_ignore_job_labels() {
+        let labels =
+            runner_labels_for_job("self-hosted,Linux,gitrun-ci", true, &["windows".into()]);
+        assert_eq!(labels, "self-hosted,Linux,gitrun-ci");
+    }
 
     #[test]
     fn valid_env_var_names_are_accepted() {

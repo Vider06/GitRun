@@ -50,6 +50,7 @@ fn setup_config_dir() -> PathBuf {
 fn current_version() -> String {
     std::env::var("GITRUN_VERSION")
         .ok()
+        .filter(|value| !value.trim().is_empty())
         .or_else(|| {
             std::fs::read_to_string("/usr/share/gitrun/version.txt")
                 .ok()
@@ -63,14 +64,14 @@ fn current_version() -> String {
         .unwrap_or_else(|| "0.0.0".into())
 }
 
-fn target_triple() -> String {
+fn target_triple() -> Result<String, Box<dyn std::error::Error>> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => "x86_64-unknown-linux-gnu".into(),
-        ("linux", "aarch64") => "aarch64-unknown-linux-gnu".into(),
-        ("windows", "x86_64") => "x86_64-pc-windows-msvc".into(),
-        ("macos", "x86_64") => "x86_64-apple-darwin".into(),
-        ("macos", "aarch64") => "aarch64-apple-darwin".into(),
-        (os, arch) => format!("{arch}-{os}"),
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu".into()),
+        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu".into()),
+        ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc".into()),
+        ("macos", "x86_64") => Ok("x86_64-apple-darwin".into()),
+        ("macos", "aarch64") => Ok("aarch64-apple-darwin".into()),
+        (os, arch) => Err(format!("unsupported GitRun release target: {os}/{arch}").into()),
     }
 }
 
@@ -102,7 +103,7 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         latest_manifest(&repository)?
     };
     let current = current_version();
-    let target = target_triple();
+    let target = target_triple()?;
     let plan = build_plan(&manifest, &current, &target, &dependency_snapshot())?;
 
     println!(
@@ -138,7 +139,10 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()));
     let state_dir =
         PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
-    let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
+    let config_path = persistent_config_path();
+    let config_dir = config_path
+        .as_ref()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
     let backup_root =
         PathBuf::from(std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()));
     let service_config = std::env::var("GITRUN_SERVICE_CONFIG")
@@ -153,12 +157,25 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         backup_root,
     };
     let backup = apply_update(&paths, &archive, &target, &manifest.version, true)?;
+
+    let version_file = paths.install_dir.join("version.txt");
+    if let Err(error) = write_version_file(&version_file, &manifest.version) {
+        let rollback_error = rollback(&paths, &backup).err();
+        return Err(match rollback_error {
+            Some(rollback_error) => {
+                format!("version metadata update failed: {error}; rollback also failed: {rollback_error}")
+            }
+            None => format!("version metadata update failed; GitRun was rolled back: {error}"),
+        }
+        .into());
+    }
+
     if let Some(image) = &plan.runner_image {
         if let Err(error) = update_runner_image(image) {
             rollback(&paths, &backup)?;
             return Err(format!("runner update failed; GitRun was rolled back: {error}").into());
         }
-        if let Ok(config_file) = std::env::var("GITRUN_CONFIG_FILE") {
+        if let Some(config_file) = config_path.as_deref() {
             if let Err(error) = pin_runner_image(config_file, image) {
                 rollback(&paths, &backup)?;
                 return Err(format!(
@@ -170,12 +187,24 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Err(error) = restart_scheduler_service() {
-        rollback(&paths, &backup)?;
-        return Err(format!("scheduler restart failed; GitRun was rolled back: {error}").into());
-    }
+        let rollback_result = rollback(&paths, &backup);
+        let restore_result = restart_scheduler_service();
 
-    let version_file = paths.install_dir.join("version.txt");
-    std::fs::write(version_file, format!("{}\n", manifest.version))?;
+        return match (rollback_result, restore_result) {
+            (Ok(()), Ok(())) => {
+                Err(format!("scheduler restart failed; GitRun was rolled back and the previous service was restarted: {error}").into())
+            }
+            (Err(rollback_error), Ok(())) => {
+                Err(format!("scheduler restart failed: {error}; rollback also failed: {rollback_error}").into())
+            }
+            (Ok(()), Err(restore_error)) => {
+                Err(format!("scheduler restart failed and the restored service could not be restarted: {error}; restore restart failed: {restore_error}").into())
+            }
+            (Err(rollback_error), Err(restore_error)) => {
+                Err(format!("scheduler restart failed: {error}; rollback failed: {rollback_error}; restoring the previous service also failed: {restore_error}").into())
+            }
+        };
+    }
     println!("GitRun update: PASS");
     println!(
         "backup: {}",
@@ -379,16 +408,23 @@ fn read_terminal_secret(prompt: &str) -> Result<String, Box<dyn std::error::Erro
 
     let echo_disabled = std::process::Command::new("stty")
         .arg("-echo")
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
+        .status()?
+        .success();
+    if !echo_disabled {
+        return Err("unable to disable terminal echo for secret input".into());
+    }
 
     let mut value = String::new();
     let result = io::stdin().read_line(&mut value);
 
-    if echo_disabled {
-        let _ = std::process::Command::new("stty").arg("echo").status();
-        println!();
+    let echo_restored = std::process::Command::new("stty")
+        .arg("echo")
+        .status()?
+        .success();
+    println!();
+
+    if !echo_restored {
+        return Err("unable to restore terminal echo after secret input".into());
     }
 
     Ok(result.map(|_| value.trim().to_owned())?)
@@ -447,6 +483,38 @@ fn verify_repository_access(
             status.as_u16()
         ).into()),
     }
+}
+
+fn write_version_file(path: &Path, version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let temp = parent.join(format!(
+        ".gitrun-version-{}.{}.tmp",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&temp)?;
+        file.write_all(format!("{version}\n").as_bytes())?;
+        file.sync_all()?;
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o644))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&temp, format!("{version}\n"))?;
+    }
+
+    if let Err(error) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error.into());
+    }
+    Ok(())
 }
 
 fn write_repositories_to_config(
@@ -831,7 +899,7 @@ enum Command {
     /// Internal: run the elevated installation step (invoked by the setup wizard via pkexec).
     #[command(name = "--install-root", hide = true)]
     InstallRoot {
-        /// Path to a file containing the GitHub token to install.
+        /// Path to the credential-bearing setup request file.
         token_path: String,
     },
     /// Roll back to a previous backup created by `update`.

@@ -111,6 +111,8 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
 
 fn is_valid_repo_segment(segment: &str) -> bool {
     !segment.is_empty()
+        && segment != "."
+        && segment != ".."
         && segment.len() <= 100
         && segment
             .chars()
@@ -296,7 +298,11 @@ impl GitHubClient {
 
     pub fn registration_token(&self, repo: &str) -> Result<String> {
         let (owner, name) = split_repo(repo)?;
-        let url = format!("{API_BASE}/repos/{}/{}/actions/runners/registration-token",encode_path_segment(owner),encode_path_segment(name));
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runners/registration-token",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
         let response = self.request(reqwest::Method::POST, &url)?;
         let parsed: RegistrationTokenResponse = response.json()?;
         Ok(parsed.token)
@@ -305,7 +311,14 @@ impl GitHubClient {
     pub fn list_runners(&self, repo: &str) -> Result<Vec<Runner>> {
         let (owner, name) = split_repo(repo)?;
         let mut runners = Vec::new();
-        for page in self.get_all_pages(&format!("/repos/{}/{}/actions/runners", encode_path_segment(owner), encode_path_segment(name)),100)? {
+        for page in self.get_all_pages(
+            &format!(
+                "/repos/{}/{}/actions/runners",
+                encode_path_segment(owner),
+                encode_path_segment(name)
+            ),
+            100,
+        )? {
             let parsed: RunnersResponse = serde_json::from_value(page)?;
             runners.extend(parsed.runners);
         }
@@ -314,7 +327,11 @@ impl GitHubClient {
 
     pub fn delete_runner(&self, repo: &str, runner_id: u64) -> Result<()> {
         let (owner, name) = split_repo(repo)?;
-        let url = format!("{API_BASE}/repos/{}/{}/actions/runners/{runner_id}",encode_path_segment(owner),encode_path_segment(name));
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runners/{runner_id}",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
         match self.request(reqwest::Method::DELETE, &url) {
             Ok(_) => Ok(()),
             // Already gone is not an error for our purposes — mirrors the
@@ -339,7 +356,11 @@ impl GitHubClient {
     pub fn queued_self_hosted_jobs_with_labels(&self, repo: &str) -> Result<Vec<Vec<String>>> {
         let (owner, name) = split_repo(repo)?;
         let mut all_labels = Vec::new();
-        let runs_path = format!("/repos/{}/{}/actions/runs", encode_path_segment(owner), encode_path_segment(name));
+        let runs_path = format!(
+            "/repos/{}/{}/actions/runs",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
         let mut url = format!("{API_BASE}{runs_path}?status=queued&per_page=100");
         loop {
             let response = self.request(reqwest::Method::GET, &url)?;
@@ -364,7 +385,9 @@ impl GitHubClient {
     ) -> Result<Vec<Vec<String>>> {
         let mut labels = Vec::new();
         let mut url = format!(
-            &format!("{API_BASE}/repos/{}/{}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",encode_path_segment(owner),encode_path_segment(name))
+            "{API_BASE}/repos/{}/{}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
+            encode_path_segment(owner),
+            encode_path_segment(name)
         );
         loop {
             let response = self.request(reqwest::Method::GET, &url)?;
@@ -406,7 +429,11 @@ impl GitHubClient {
     /// `workflow_validation::validate_workflows_dir`.
     pub fn workflow_files(&self, repo: &str) -> Result<Vec<(String, String)>> {
         let (owner, name) = split_repo(repo)?;
-        let list_url = format!("{API_BASE}/repos/{}/{}/contents/.github/workflows",encode_path_segment(owner),encode_path_segment(name));
+        let list_url = format!(
+            "{API_BASE}/repos/{}/{}/contents/.github/workflows",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
         let entries: Vec<ContentsEntry> = match self.request(reqwest::Method::GET, &list_url) {
             Ok(response) => response.json()?,
             Err(GitHubError::Api { status: 404, .. }) => return Ok(Vec::new()),
@@ -513,6 +540,13 @@ mod tests {
     fn rejects_empty_owner_or_name() {
         assert!(split_repo("/hello-world").is_err());
         assert!(split_repo("octocat/").is_err());
+    }
+
+    #[test]
+    fn rejects_path_traversal_segments() {
+        assert!(split_repo("../repo").is_err());
+        assert!(split_repo("owner/..").is_err());
+        assert!(split_repo("./repo").is_err());
     }
 
     #[test]

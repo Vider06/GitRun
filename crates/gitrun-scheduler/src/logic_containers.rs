@@ -13,10 +13,8 @@
 //! Windows support: a `Backend::Vm` target names a persistent VM whose
 //! Docker daemon is addressed through the VM resolution layer (rather than
 //! a raw address), allowing the VM's IP to change across restarts.
-//!//! VirtualBox VM — see `vm.rs` for the VM lifecycle side of this, which
-//! creates that one shared VM ahead of time rather than one per runner).
 //! Containers are still the unit of scaling: many Windows *containers* run
-//! inside that one VM, exactly like Linux containers run on the bare host.
+//! inside that VM, exactly like Linux containers run on the bare host.
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};

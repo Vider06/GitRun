@@ -39,7 +39,6 @@ const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// separate from `DECISION_TIMEOUT` (that's for the *operator*, this is
 /// for the *VM's boot process* once a hypervisor has been chosen).
 const VM_BOOT_TIMEOUT: Duration = Duration::from_secs(120);
-const VM_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const VM_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
@@ -200,7 +199,7 @@ fn spawn_resolution_worker(
         .spawn(move || {
             let outcome = match work {
                 ResolutionWork::Full => resolve_blocking(&state_dir, &vm_config),
-                ResolutionWork::Verify(kind) => verify_resolved(&vm_config, kind),
+                ResolutionWork::Verify(kind) => refresh_resolved(&vm_config, kind),
             };
             finish_resolution(&registry_for_thread, &vm_config.name, fingerprint, outcome);
         });
@@ -350,25 +349,18 @@ fn resolve_blocking(
     }
 }
 
-/// Re-checks a previously resolved VM without asking the operator again.
-/// This runs in the background so liveness validation never blocks reconciliation.
-fn verify_resolved(
+/// Refreshes a previously resolved VM using the hypervisor already
+/// selected for it. This can recover a VM that was stopped or removed
+/// externally, while keeping the refresh asynchronous.
+fn refresh_resolved(
     vm_config: &VmConfig,
     kind: HypervisorKind,
 ) -> Result<(DockerHost, HypervisorKind), String> {
     let mut config = vm_config.clone();
     config.hypervisor = kind;
-
-    if !vm::is_running(kind, &config.name).map_err(|error| error.to_string())? {
-        return Err(format!("{kind:?} VM '{}' is not running", config.name));
-    }
-
-    let ip = vm::wait_for_ip(kind, &config.name, VM_HEALTH_CHECK_TIMEOUT)
-        .map_err(|error| error.to_string())?;
-    Ok((
-        DockerHost::Remote(vm::docker_host_address(kind, &ip, config.docker_port)),
-        kind,
-    ))
+    provision_and_wait(kind, &config)
+        .map(|host| (host, kind))
+        .map_err(|error| error.to_string())
 }
 /// Ensures the VM exists and is running under `kind`, waits for it to
 /// report an IP, and returns the `DockerHost::Remote` pointed at its

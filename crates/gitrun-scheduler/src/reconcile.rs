@@ -106,10 +106,14 @@ pub enum Action {
     RemoveIdle { name: String },
 }
 
-/// Computes the desired runner count: enough to cover currently busy runners
-/// plus what's queued, clamped to [min, max]. Same formula as the Python
-/// original (`min(max, max(min, busy + queued))`).
-fn job_requires_specialized_runner(job_labels: &[String], configured_runner_labels: &[String]) -> bool {
+/// Determines whether a queued job carries at least one label that is not
+/// already present on every default GitRun runner. Such a job needs a
+/// dedicated dynamic runner when Logic Containers routes it to specialized
+/// capacity.
+fn job_requires_specialized_runner(
+    job_labels: &[String],
+    configured_runner_labels: &[String],
+) -> bool {
     job_labels.iter().any(|job_label| {
         let job_label = job_label.trim();
         !job_label.is_empty()
@@ -122,6 +126,9 @@ fn job_requires_specialized_runner(job_labels: &[String], configured_runner_labe
 }
 
 /// Computes the desired runner count: enough to cover currently busy runners
+/// plus what's queued, clamped to [min, max]. Same formula as the Python
+/// original (`min(max, max(min, busy + queued))`).
+pub fn desired_count(input: &ReconcileInput) -> u32 {
     let busy = input.runners.iter().filter(|r| r.online && r.busy).count() as u32;
     busy
         .saturating_add(input.queued_jobs)
@@ -227,15 +234,11 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         specialized_index += 1;
         current += 1;
     }
-    // Dynamic overflow runners are the ones actually opened "for" queued
-    // jobs (permanents are baseline pool, not tied to any one job), so
-    // attach each one the labels of the next not-yet-covered queued job,
-    // in order. There's no per-job identity tracked elsewhere in the
-    // system (see `resolve_backend_and_image`'s doc comment in main.rs),
-    // so this is positional: the Nth dynamic runner created this pass gets
-    // `queued_job_labels[N]` if present, else an empty label set that
-    // falls through to the configured default (same as before this field
-    // existed).
+    // Generic dynamic overflow is used only for queued jobs whose labels are
+    // already covered by the global runner label set. Specialized jobs were
+    // reserved above, so they aren't duplicated here. There is no per-job
+    // identity tracked elsewhere in the system, so this remains positional
+    // for the generic overflow path.
     let mut dynamic_index = 0usize;
     while current < desired {
         let job_labels = input

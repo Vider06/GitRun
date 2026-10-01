@@ -52,9 +52,9 @@ pub enum UpdateOutcome {
 /// that alone is not a complete guarantee: a `SIGKILL`, an OOM-kill, or a
 /// host power loss skips `Drop` entirely and can leave the lock directory
 /// behind forever, wedging every future GTUU run. To recover from that,
-/// `acquire` also checks whether an *existing* lock is stale — either its
-/// recorded PID is no longer a running process, or it's simply older than
-/// any real GTUU run should take — and reclaims it in that case instead of
+/// `acquire` checks whether an *existing* lock is stale — a recorded PID
+/// must be dead, while a lock with no usable PID may be reclaimed after the
+/// conservative age cutoff — and reclaims it atomically instead of
 /// refusing forever.
 pub struct GtuuLock {
     path: PathBuf,
@@ -413,17 +413,13 @@ mod tests {
     }
 
     #[test]
-    fn stale_lock_from_old_age_is_reclaimed_even_with_live_pid() {
+    fn stale_lock_without_pid_is_reclaimed_after_old_age() {
         let dir =
             std::env::temp_dir().join(format!("gitrun-gtuu-stale-age-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let lock_path = dir.join("gtuu.lock");
         fs::create_dir(&lock_path).unwrap();
-        // Record our own PID (definitely alive) but backdate the directory's
-        // mtime past STALE_LOCK_AGE to simulate a run that's been "stuck"
-        // implausibly long.
-        fs::write(lock_path.join("pid"), std::process::id().to_string()).unwrap();
         let old_time = filetime::FileTime::from_system_time(
             SystemTime::now() - Duration::from_secs(60 * 60 * 2),
         );
@@ -432,7 +428,7 @@ mod tests {
         let reclaimed = GtuuLock::acquire(&dir);
         assert!(
             reclaimed.is_ok(),
-            "expected an implausibly old lock to be reclaimed regardless of PID"
+            "expected an old lock without a usable PID to be reclaimed"
         );
         let _ = fs::remove_dir_all(&dir);
     }

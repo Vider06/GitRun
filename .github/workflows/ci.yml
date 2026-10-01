@@ -589,12 +589,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for package in libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils; do
+          packages=(
+            libwebkit2gtk-4.1-dev
+            libayatana-appindicator3-dev
+            librsvg2-dev
+            patchelf
+            xdg-utils
+          )
+          missing=()
+          for package in "${packages[@]}"; do
+            if ! dpkg-query -W -f='\${Status}' "$package" 2>/dev/null | grep -q 'install ok installed'; then
+              missing+=("$package")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Installing missing Tauri Linux dependencies: ${missing[*]}"
+            if [ "$(id -u)" -ne 0 ]; then
+              echo "::error::Runner is not root and sudo is intentionally not used by GitRun CI."
+              exit 1
+            fi
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+          fi
+
+          for package in "${packages[@]}"; do
             dpkg-query -W -f='\${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || {
-              echo "::error::Required system dependency is missing: $package"
+              echo "::error::Required system dependency is still missing: $package"
               exit 1
             }
           done
+          echo "Tauri Linux dependencies are ready."
 
       - name: Prepare Tauri Rust cache directories
         shell: bash

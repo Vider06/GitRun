@@ -406,38 +406,39 @@ fn read_terminal_secret(prompt: &str) -> Result<String, Box<dyn std::error::Erro
     print!("{prompt}");
     io::stdout().flush()?;
 
-    let echo_disabled = std::process::Command::new("stty")
+    if !std::process::Command::new("stty")
         .arg("-echo")
         .status()?
-        .success();
-    if !echo_disabled {
+        .success()
+    {
         return Err("unable to disable terminal echo for secret input".into());
     }
 
     let mut value = String::new();
-    let result = io::stdin().read_line(&mut value);
+    let input_result = io::stdin().read_line(&mut value);
     let restore_result = std::process::Command::new("stty").arg("echo").status();
     println!();
 
-    match (result, restore_result) {
-        (Err(error), Err(restore_error)) => Err(format!(
-            "secret input failed: {error}; unable to restore terminal echo: {restore_error}"
-        )
-        .into()),
-        (Err(error), Ok(status)) if !status.success() => Err(format!(
-            "secret input failed: {error}; unable to restore terminal echo"
-        )
-        .into()),
-        (Err(error), Ok(_)) => Err(error.into()),
-        (Ok(_), Err(error)) => Err(format!(
-            "unable to restore terminal echo after secret input: {error}"
-        )
-        .into()),
-        (Ok(_), Ok(status)) if !status.success() => {
-            Err("unable to restore terminal echo after secret input".into())
-        }
-        (Ok(_), Ok(_)) => Ok(value.trim().to_owned()),
+    if let Err(error) = restore_result {
+        return match input_result {
+            Ok(_) => Err(format!("unable to restore terminal echo after secret input: {error}").into()),
+            Err(input_error) => Err(format!(
+                "secret input failed: {input_error}; unable to restore terminal echo: {error}"
+            )
+            .into()),
+        };
     }
+
+    if !restore_result.expect("restore result already matched").success() {
+        return match input_result {
+            Ok(_) => Err("unable to restore terminal echo after secret input".into()),
+            Err(input_error) => {
+                Err(format!("secret input failed: {input_error}; unable to restore terminal echo").into())
+            }
+        };
+    }
+
+    input_result.map(|_| value.trim().to_owned()).map_err(Into::into)
 }
 
 fn read_terminal_choice(prompt: &str, max: usize) -> Result<usize, Box<dyn std::error::Error>> {

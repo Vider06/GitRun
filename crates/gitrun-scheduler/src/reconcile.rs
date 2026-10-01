@@ -23,6 +23,7 @@ use std::time::Duration;
 pub enum ContainerHealth {
     Running,
     Exited,
+    Starting,
 }
 
 /// A managed Docker container as far as reconciliation cares.
@@ -106,7 +107,9 @@ pub enum Action {
 /// original (`min(max, max(min, busy + queued))`).
 pub fn desired_count(input: &ReconcileInput) -> u32 {
     let busy = input.runners.iter().filter(|r| r.online && r.busy).count() as u32;
-    (busy + input.queued_jobs).clamp(input.min_runners, input.max_runners)
+    busy
+        .saturating_add(input.queued_jobs)
+        .clamp(input.min_runners, input.max_runners)
 }
 
 /// Produces the ordered list of actions to converge toward the desired state.

@@ -43,9 +43,11 @@ use crate::vm_resolution::VmResolutionRegistry;
 use gitrun_core::{Config, GitHubAuth, StateStore};
 use gitrun_vault::Vault;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+static CONTAINER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 // The scheduler keeps reconciliation in Rust; the legacy Python path is no longer executed.
 pub fn run() {
@@ -79,8 +81,6 @@ pub fn run() {
     let state_dir = PathBuf::from(&config.state_dir);
     let rate_limits = RateLimitTracker::new();
     let vm_registry = vm_resolution::new_registry();
-    spawn_gtuu_thread(&config, &stopping);
-    spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
 
     // Logic Containers' VM backend: the registry (non-blocking hypervisor
     // resolution state) is shared across the process lifetime, but the VM
@@ -113,6 +113,12 @@ pub fn run() {
         );
         std::process::exit(2);
     }
+
+    // Only start background workers after every fatal startup check has passed
+    // and this process owns the singleton PID file. Otherwise GTUU/GSR could
+    // act briefly and concurrently while startup is about to abort.
+    spawn_gtuu_thread(&config, &stopping);
+    spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
 
     println!(
         "gitrun-autoscaler: starting, polling every {}s",
@@ -252,11 +258,17 @@ fn install_signal_handlers(stopping: &Arc<AtomicBool>) -> Result<(), std::io::Er
 
 fn sleep_interruptible(total: Duration, stopping: &Arc<AtomicBool>) {
     let deadline = Instant::now() + total;
-    while Instant::now() < deadline {
+    loop {
         if stopping.load(Ordering::Relaxed) {
             return;
         }
-        std::thread::sleep(Duration::from_millis(200).min(deadline - Instant::now()));
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return;
+        };
+        if remaining.is_zero() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200).min(remaining));
     }
 }
 
@@ -290,11 +302,17 @@ fn resolve_backend_and_image(
     vm_registry: &VmResolutionRegistry,
     job_labels: &[String],
 ) -> Option<(docker::DockerHost, String, bool)> {
-    let rules_path = std::path::Path::new(&config.state_dir).join("logic-containers.json");
-    let rules = logic_containers::load_rules(&rules_path).unwrap_or_else(|error| {
-        eprintln!("gitrun-autoscaler: could not load Logic Containers rules: {error}");
-        Vec::new()
-    });
+    let rules_path = state_dir.join("logic-containers.json");
+    let rules = match logic_containers::load_rules(&rules_path) {
+        Ok(rules) => rules,
+        Err(error) => {
+            eprintln!("gitrun-autoscaler: could not load Logic Containers rules: {error}");
+            // Missing is already represented by Ok(Vec::new()) in load_rules;
+            // every other failure is a real configuration error and must not
+            // silently route a VM-targeted job to the local Docker daemon.
+            return None;
+        }
+    };
 
     match logic_containers::resolve(&rules, job_labels) {
         Some((logic_containers::Backend::LocalLinux, image)) => {
@@ -307,10 +325,15 @@ fn resolve_backend_and_image(
             // restart. `vm-configs.json` is small and this runs once per
             // dynamic runner creation, not in a tight loop, so re-reading
             // it here isn't a meaningful cost.
-            let vm_defs = vm::load_vm_configs(state_dir).unwrap_or_else(|error| {
-                eprintln!("gitrun-autoscaler: could not load VM configs: {error}");
-                Vec::new()
-            });
+            let vm_defs = match vm::load_vm_configs(state_dir) {
+                Ok(defs) => defs,
+                Err(error) => {
+                    eprintln!("gitrun-autoscaler: could not load VM configs: {error}");
+                    // A configured VM target must never degrade to the local
+                    // host because its definition file is unreadable/corrupt.
+                    return None;
+                }
+            };
             let Some(vm_config) = vm::find_vm_config(&vm_defs, vm_name) else {
                 eprintln!(
                     "gitrun-autoscaler: Logic Containers rule targets VM '{vm_name}', but no VM with that name is configured — falling back to local host for this runner"
@@ -370,7 +393,7 @@ fn reconcile_repo(
     let mut state = SchedulerState::load(state_dir)?;
     let live_names: Vec<String> = containers
         .iter()
-        .filter(|c| c.status != "exited")
+        .filter(|c| c.status == "running")
         .map(|c| c.name.clone())
         .collect();
     state.prune(&live_names);
@@ -466,10 +489,13 @@ fn reconcile_repo(
 fn to_container_view(container: &ManagedContainer) -> ContainerView {
     ContainerView {
         name: container.name.clone(),
-        health: if container.status == "exited" {
-            ContainerHealth::Exited
-        } else {
+        // Docker has several states besides "running"/"exited"
+        // (created, restarting, paused, dead, ...). Only the exact
+        // "running" state is healthy enough to be treated as live.
+        health: if container.status == "running" {
             ContainerHealth::Running
+        } else {
+            ContainerHealth::Exited
         },
         permanent: container.permanent,
     }
@@ -540,10 +566,11 @@ fn deregister_and_remove(
     repo: &str,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Ok(runners) = client.list_runners(repo) {
-        if let Some(runner) = runners.iter().find(|r| r.name == name) {
-            client.delete_runner(repo, runner.id)?;
-        }
+    // Do not remove the container if GitHub cannot be queried: otherwise
+    // a transient API failure can leave an orphaned runner registration behind.
+    let runners = client.list_runners(repo)?;
+    if let Some(runner) = runners.iter().find(|r| r.name == name) {
+        client.delete_runner(repo, runner.id)?;
     }
     docker::remove_container(name)?;
     Ok(())
@@ -558,11 +585,14 @@ fn create_runner(
     permanent: bool,
     job_labels: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Ok(ban_store) = gsr_poll::BanStore::load(state_dir) {
-        if ban_store.is_banned(repo) {
-            println!("gitrun-autoscaler: skipping runner creation for {repo}: temporarily banned by GSR after a policy violation");
-            return Ok(());
-        }
+    let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
+        format!(
+            "cannot safely create runner for {repo}: GSR ban state is unreadable: {error}"
+        )
+    })?;
+    if ban_store.is_banned(repo) {
+        println!("gitrun-autoscaler: skipping runner creation for {repo}: temporarily banned by GSR after a policy violation");
+        return Ok(());
     }
 
     let registration_token = client.registration_token(repo)?;
@@ -688,9 +718,26 @@ fn write_scratch_workflows(
     dir: &std::path::Path,
     files: &[(String, String)],
 ) -> std::io::Result<()> {
+    use std::path::Component;
+
     std::fs::create_dir_all(dir)?;
     for (name, content) in files {
-        std::fs::write(dir.join(name), content)?;
+        let relative = std::path::Path::new(name);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| component == Component::ParentDir)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("workflow path escapes scratch directory: {name}"),
+            ));
+        }
+        let target = dir.join(relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(target, content)?;
     }
     Ok(())
 }
@@ -793,15 +840,16 @@ fn is_valid_env_var_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Short random-ish suffix for container names, avoiding a dependency on the
-/// `uuid` crate for eight hex characters.
+/// Unique-enough suffix for container names without adding a dependency:
+/// epoch milliseconds + process ID + an atomic per-process sequence.
 fn uuid_like_suffix() -> String {
-    let nanos = std::time::SystemTime::now()
+    let epoch_millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
     let pid = std::process::id();
-    format!("{:08x}", nanos ^ pid)
+    let sequence = CONTAINER_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{epoch_millis:x}-{pid:x}-{sequence:x}")
 }
 
 #[cfg(unix)]
@@ -890,16 +938,22 @@ fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
                     && last_run_date.as_deref() != Some(&now.date)
                 {
                     println!("gitrun-autoscaler: GTUU scheduled run starting");
+                    let mut completed = false;
                     match GtuuLock::acquire(&state_dir) {
                         Ok(_lock) => match run_gtuu_once() {
-                            Ok(count) => println!(
-                                "gitrun-autoscaler: GTUU updated {count} permanent runner(s)"
-                            ),
+                            Ok(count) => {
+                                println!(
+                                    "gitrun-autoscaler: GTUU updated {count} permanent runner(s)"
+                                );
+                                completed = true;
+                            }
                             Err(error) => eprintln!("gitrun-autoscaler: GTUU run failed: {error}"),
                         },
                         Err(error) => eprintln!("gitrun-autoscaler: GTUU skipped: {error}"),
                     }
-                    last_run_date = Some(now.date);
+                    if completed {
+                        last_run_date = Some(now.date);
+                    }
                 }
                 std::thread::sleep(Duration::from_secs(15));
             }
@@ -997,28 +1051,28 @@ fn chrono_like_now(use_local: bool) -> SimpleNow {
     utc_now()
 }
 
-/// Runs `date +%H:%M` and `date +%Y-%m-%d` (no `-u`, so system local time,
-/// DST-aware) and parses the output. Returns `None` on any failure —
+/// Runs one `date +%H:%M %Y-%m-%d` command (no `-u`, so system local time,
+/// DST-aware) and parses the output. A single command keeps the date/time pair
+/// consistent across a midnight boundary. Returns `None` on any failure —
 /// binary missing, non-zero exit, unparseable output — so the caller can
 /// fall back rather than panic.
 fn local_now_via_date_command() -> Option<SimpleNow> {
-    let time_out = std::process::Command::new("date")
-        .arg("+%H:%M")
+    let output = std::process::Command::new("date")
+        .arg("+%H:%M %Y-%m-%d")
         .output()
         .ok()?;
-    let date_out = std::process::Command::new("date")
-        .arg("+%Y-%m-%d")
-        .output()
-        .ok()?;
-    if !time_out.status.success() || !date_out.status.success() {
+    if !output.status.success() {
         return None;
     }
-    let time_hhmm = String::from_utf8(time_out.stdout).ok()?.trim().to_owned();
-    let date = String::from_utf8(date_out.stdout).ok()?.trim().to_owned();
+    let raw = String::from_utf8(output.stdout).ok()?;
+    let (time_hhmm, date) = raw.trim().split_once(' ')?;
     if time_hhmm.len() != 5 || date.len() != 10 {
         return None; // sanity check: "HH:MM" / "YYYY-MM-DD", reject anything malformed
     }
-    Some(SimpleNow { time_hhmm, date })
+    Some(SimpleNow {
+        time_hhmm: time_hhmm.to_owned(),
+        date: date.to_owned(),
+    })
 }
 
 fn utc_now() -> SimpleNow {

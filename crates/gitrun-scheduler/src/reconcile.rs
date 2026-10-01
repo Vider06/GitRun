@@ -63,6 +63,10 @@ pub struct ReconcileInput {
     /// missing entry the same as an empty label set, which
     /// `logic_containers::resolve` always falls through to the default for.
     pub queued_job_labels: Vec<Vec<String>>,
+    /// Labels that every GitRun-managed runner receives by default. A queued
+    /// job carrying labels outside this set requires dedicated dynamic
+    /// capacity so Logic Containers can route it correctly.
+    pub configured_runner_labels: Vec<String>,
     pub idle: Vec<IdleInfo>,
     pub recovery_enabled: bool,
     pub recovery_cooldown: Duration,
@@ -105,7 +109,19 @@ pub enum Action {
 /// Computes the desired runner count: enough to cover currently busy runners
 /// plus what's queued, clamped to [min, max]. Same formula as the Python
 /// original (`min(max, max(min, busy + queued))`).
-pub fn desired_count(input: &ReconcileInput) -> u32 {
+fn job_requires_specialized_runner(job_labels: &[String], configured_runner_labels: &[String]) -> bool {
+    job_labels.iter().any(|job_label| {
+        let job_label = job_label.trim();
+        !job_label.is_empty()
+            && !configured_runner_labels
+                .iter()
+                .map(|label| label.trim())
+                .filter(|label| !label.is_empty())
+                .any(|label| label.eq_ignore_ascii_case(job_label))
+    })
+}
+
+/// Computes the desired runner count: enough to cover currently busy runners
     let busy = input.runners.iter().filter(|r| r.online && r.busy).count() as u32;
     busy
         .saturating_add(input.queued_jobs)
@@ -179,6 +195,25 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     let mut permanent_count =
         live_containers.iter().filter(|c| c.permanent).count() as u32 + recreating;
 
+    let specialized_jobs: Vec<Vec<String>> = input
+        .queued_job_labels
+        .iter()
+        .filter(|labels| {
+            job_requires_specialized_runner(labels, &input.configured_runner_labels)
+        })
+        .cloned()
+        .collect();
+
+    let mut specialized_index = 0usize;
+    while current < desired && specialized_index < specialized_jobs.len() {
+        actions.push(Action::CreateRunner {
+            permanent: false,
+            job_labels: specialized_jobs[specialized_index].clone(),
+        });
+        specialized_index += 1;
+        current += 1;
+    }
+
     while current < desired && permanent_count < input.min_runners {
         actions.push(Action::CreateRunner {
             permanent: true,
@@ -200,7 +235,11 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     while current < desired {
         let job_labels = input
             .queued_job_labels
-            .get(dynamic_index)
+            .iter()
+            .filter(|labels| {
+                !job_requires_specialized_runner(labels, &input.configured_runner_labels)
+            })
+            .nth(dynamic_index)
             .cloned()
             .unwrap_or_default();
         actions.push(Action::CreateRunner {
@@ -253,6 +292,11 @@ mod tests {
             runners: Vec::new(),
             queued_jobs: 0,
             queued_job_labels: Vec::new(),
+            configured_runner_labels: vec![
+                "self-hosted".into(),
+                "Linux".into(),
+                "gitrun-ci".into(),
+            ],
             idle: Vec::new(),
             recovery_enabled: true,
             recovery_cooldown: Duration::from_secs(60),
@@ -324,6 +368,33 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn specialized_job_gets_dynamic_runner_before_permanent_pool() {
+        let mut input = base_input();
+        input.queued_jobs = 1;
+        input.queued_job_labels = vec![vec![
+            "self-hosted".into(),
+            "windows".into(),
+        ]];
+        let actions = plan(&input);
+        assert_eq!(
+            actions.first(),
+            Some(&Action::CreateRunner {
+                permanent: false,
+                job_labels: vec!["self-hosted".into(), "windows".into()],
+            })
+        );
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| {
+                    matches!(action, Action::CreateRunner { permanent: true, .. })
+                })
+                .count(),
+            2
+        );
     }
 
     #[test]

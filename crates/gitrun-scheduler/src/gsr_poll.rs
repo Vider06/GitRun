@@ -261,11 +261,13 @@ pub fn run_with_hosts(
     let mut ban_store = match BanStore::load(state_dir) {
         Ok(store) => store,
         Err(error) => {
-            eprintln!("gitrun-scheduler: gsr_poll could not load ban state, running without ban persistence: {error}");
-            BanStore {
-                path: state_dir.join("gsr-bans.json"),
-                data: BanFile::default(),
-            }
+            // A corrupt/unreadable ban file must fail closed: continuing with
+            // an empty in-memory store would make KillAndBan ineffective
+            // until the process restarts with a repaired state file.
+            eprintln!(
+                "gitrun-scheduler: gsr_poll could not load ban state; refusing to start enforcement: {error}"
+            );
+            return;
         }
     };
 

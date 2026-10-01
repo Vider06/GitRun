@@ -107,9 +107,10 @@ pub struct VmConfig {
     pub hypervisor: HypervisorKind,
     /// Path to the base disk image to clone from when provisioning — e.g. a
     /// prepared Windows Server image with Docker already installed, or a
-    /// Linux ISO the operator wants to run as a VM instead of a container
-    /// for stronger isolation. Format expectations differ by hypervisor
-    /// (qcow2 for KVM, VDI/VMDK/VHD for VirtualBox) — not validated here.
+    /// Linux image the operator wants to run as a VM instead of a container
+    /// for stronger isolation. The path must point to a regular file;
+    /// hypervisor-specific image format compatibility is checked by the
+    /// hypervisor tools during provisioning.
     pub base_disk_image: String,
     pub memory_mb: u32,
     pub cpus: u32,
@@ -247,8 +248,7 @@ pub fn save_vm_configs(state_dir: &Path, configs: &[VmConfig]) -> Result<()> {
         .open(&tmp)?;
     use std::io::Write;
     file.write_all(serialized.as_bytes())?;
-    file.write_all(b"
-")?;
+    file.write_all(b"\n")?;
     file.sync_all()?;
     drop(file);
 
@@ -483,7 +483,7 @@ fn xml_escape_attr(value: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-        .replace(''', "&apos;")
+        .replace('\\'', "&apos;")
         .replace('"', "&quot;")
 }
 
@@ -970,8 +970,12 @@ mod tests {
     #[test]
     fn docker_host_address_builds_expected_tcp_address() {
         assert_eq!(
-            docker_host_address("192.168.56.10", 2376),
+            docker_host_address(HypervisorKind::Kvm, "192.168.56.10", 2376),
             "tcp://192.168.56.10:2376"
+        );
+        assert_eq!(
+            docker_host_address(HypervisorKind::VirtualBox, "10.0.2.15", 2376),
+            "tcp://127.0.0.1:2376"
         );
     }
 

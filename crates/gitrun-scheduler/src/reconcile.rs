@@ -63,10 +63,10 @@ pub struct ReconcileInput {
     /// missing entry the same as an empty label set, which
     /// `logic_containers::resolve` always falls through to the default for.
     pub queued_job_labels: Vec<Vec<String>>,
-    /// Labels that every GitRun-managed runner receives by default. A queued
-    /// job carrying labels outside this set requires dedicated dynamic
-    /// capacity so Logic Containers can route it correctly.
-    pub configured_runner_labels: Vec<String>,
+    /// Logic Containers rules loaded for this reconciliation cycle. A queued
+    /// job matching one of these rules requires dedicated dynamic capacity
+    /// so it can be created with the selected backend and image.
+    pub logic_rules: Vec<crate::logic_containers::LogicRule>,
     pub idle: Vec<IdleInfo>,
     pub recovery_enabled: bool,
     pub recovery_cooldown: Duration,
@@ -220,7 +220,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         .queued_job_labels
         .iter()
         .filter(|labels| {
-            job_requires_specialized_runner(labels, &input.configured_runner_labels)
+            job_requires_specialized_runner(labels, &input.logic_rules)
         })
         .cloned()
         .collect();
@@ -300,11 +300,7 @@ mod tests {
             runners: Vec::new(),
             queued_jobs: 0,
             queued_job_labels: Vec::new(),
-            configured_runner_labels: vec![
-                "self-hosted".into(),
-                "Linux".into(),
-                "gitrun-ci".into(),
-            ],
+            logic_rules: Vec::new(),
             idle: Vec::new(),
             recovery_enabled: true,
             recovery_cooldown: Duration::from_secs(60),
@@ -376,6 +372,24 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn unmatched_special_label_does_not_force_specialized_capacity() {
+        let mut input = base_input();
+        input.queued_jobs = 1;
+        input.queued_job_labels = vec![vec!["self-hosted".into(), "windows".into()]];
+        input.logic_rules = Vec::new();
+        let actions = plan(&input);
+        assert!(!actions.iter().any(|action| {
+            matches!(
+                action,
+                Action::CreateRunner {
+                    permanent: false,
+                    job_labels
+                } if job_labels.iter().any(|label| label.eq_ignore_ascii_case("windows"))
+            )
+        }));
     }
 
     #[test]

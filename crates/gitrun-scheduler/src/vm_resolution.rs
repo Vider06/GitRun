@@ -215,6 +215,7 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
     Ok(DockerHost::Remote(vm::docker_host_address(
+        kind,
         &ip,
         config.docker_port,
     )))

@@ -313,18 +313,14 @@ fn kvm_device_exists() -> bool {
 
 fn is_kvm_available() -> bool {
     kvm_device_exists()
-        && Command::new("virsh")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
+        && run(HypervisorKind::Kvm, &["list", "--all", "--name"])
+            .map(|output| output.status.success())
             .unwrap_or(false)
 }
 
 pub fn is_virtualbox_installed() -> bool {
-    Command::new("VBoxManage")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
+    run_tool("VBoxManage", &["--version"])
+        .map(|output| output.status.success())
         .unwrap_or(false)
 }
 
@@ -351,17 +347,78 @@ pub fn install_instructions(kind: HypervisorKind) -> &'static str {
     }
 }
 
-fn run(kind: HypervisorKind, args: &[&str]) -> Result<std::process::Output> {
+fn run(kind: HypervisorKind, args: &[&str]) -> Result<Output> {
     let program = match kind {
         HypervisorKind::Kvm => "virsh",
         HypervisorKind::VirtualBox => "VBoxManage",
     };
-    Command::new(program).args(args).output().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            VmError::HypervisorUnavailable(kind)
-        } else {
-            VmError::Io(error)
+    run_tool(program, args).map_err(|error| match error {
+        VmError::ToolUnavailable(_) => VmError::HypervisorUnavailable(kind),
+        other => other,
+    })
+}
+
+fn run_tool(program: &str, args: &[&str]) -> Result<Output> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                VmError::ToolUnavailable(program.to_owned())
+            } else {
+                VmError::Io(error)
+            }
+        })?;
+
+    let stdout = child.stdout.take().map(|mut pipe| {
+        thread::spawn(move || {
+            let mut buffer = Vec::new();
+            let _ = pipe.read_to_end(&mut buffer);
+            buffer
+        })
+    });
+    let stderr = child.stderr.take().map(|mut pipe| {
+        thread::spawn(move || {
+            let mut buffer = Vec::new();
+            let _ = pipe.read_to_end(&mut buffer);
+            buffer
+        })
+    });
+
+    let deadline = Instant::now()
+        .checked_add(HYPERVISOR_COMMAND_TIMEOUT)
+        .unwrap_or_else(Instant::now);
+
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout.map(|handle| handle.join());
+                let _ = stderr.map(|handle| handle.join());
+                return Err(VmError::CommandTimeout(format!(
+                    "{program} {}",
+                    args.join(" ")
+                )));
+            }
+            None => thread::sleep(Duration::from_millis(50)),
         }
+    };
+
+    let stdout = stdout
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stderr = stderr
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
+
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
     })
 }
 
@@ -376,6 +433,19 @@ fn run_checked(kind: HypervisorKind, args: &[&str]) -> Result<String> {
         }));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn run_tool_checked(program: &str, args: &[&str]) -> Result<()> {
+    let output = run_tool(program, args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(VmError::Command(if stderr.is_empty() {
+            format!("{program} command '{}' failed", args.join(" "))
+        } else {
+            stderr
+        }));
+    }
+    Ok(())
 }
 
 /// Creates a VM from `config` if it doesn't already exist, using whichever

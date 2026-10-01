@@ -404,6 +404,32 @@ fn home_volume_name(container_name: &str) -> String {
 pub fn remove_container(name: &str) -> Result<()> {
     remove_container_on(&DockerHost::Local, name)
 }
+pub fn pull_image(image: &str) -> Result<()> {
+    run_checked(&["pull", image])?;
+    Ok(())
+}
+
+pub fn image_id(image_or_container: &str) -> Result<String> {
+    let output = run_checked(&[
+        "inspect",
+        "-f",
+        "{{.Id}}",
+        image_or_container,
+    ])?;
+    let id = output.trim();
+    if id.is_empty() {
+        return Err(DockerError::Command(format!(
+            "docker inspect returned an empty image ID for {image_or_container}"
+        )));
+    }
+    Ok(id.to_owned())
+}
+
+pub fn rename_container(from: &str, to: &str) -> Result<()> {
+    run_checked(&["rename", from, to])?;
+    Ok(())
+}
+
 
 pub fn remove_container_on(host: &DockerHost, name: &str) -> Result<()> {
     let output = run_on(host, &["rm", "-f", name])?;

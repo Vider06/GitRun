@@ -759,6 +759,21 @@ jobs:
           path: target
           key: ${{ runner.os }}-${{ runner.arch }}-tauri-${{ env.RUST_VERSION }}-target-v5-${{ hashFiles('Cargo.lock') }}
 
+      - name: Prepare Recovery icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p crates/gitrun-recovery/icons
+          if command -v magick >/dev/null 2>&1; then
+            magick ../../assets/gitrun-icon.svg -background none -alpha on PNG32:crates/gitrun-recovery/icons/icon.png
+          elif command -v convert >/dev/null 2>&1; then
+            convert ../../assets/gitrun-icon.svg -background none -alpha on PNG32:crates/gitrun-recovery/icons/icon.png
+          else
+            echo "::error::ImageMagick (magick/convert) is required to prepare the Recovery icon."
+            exit 1
+          fi
+          file crates/gitrun-recovery/icons/icon.png
+
       - name: Test GitRun Recovery
         shell: bash
         env:

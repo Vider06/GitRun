@@ -15,9 +15,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use thiserror::Error;
 
 static STATE_TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum StateError {

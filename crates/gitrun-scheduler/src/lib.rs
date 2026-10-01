@@ -455,6 +455,13 @@ fn reconcile_repo(
             .collect(),
         queued_jobs,
         queued_job_labels,
+        configured_runner_labels: config
+            .runner_labels
+            .split(',')
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+            .collect(),
         idle,
         recovery_enabled: config.auto_container_recovery,
         recovery_cooldown: Duration::from_secs(config.container_recovery_cooldown),

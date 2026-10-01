@@ -492,10 +492,10 @@ fn to_container_view(container: &ManagedContainer) -> ContainerView {
         // Docker has several states besides "running"/"exited"
         // (created, restarting, paused, dead, ...). Only the exact
         // "running" state is healthy enough to be treated as live.
-        health: if container.status == "running" {
-            ContainerHealth::Running
-        } else {
-            ContainerHealth::Exited
+        health: match container.status.as_str() {
+            "running" => ContainerHealth::Running,
+            "exited" => ContainerHealth::Exited,
+            _ => ContainerHealth::Starting,
         },
         permanent: container.permanent,
     }
@@ -554,8 +554,11 @@ fn execute(
             docker::restart_container(name)?;
         }
         Action::RemoveIdle { name } => {
-            deregister_and_remove(client, repo, name)?;
-            state.clear_idle(name);
+            if remove_if_still_idle(client, repo, name)? {
+                state.clear_idle(name);
+            } else {
+                state.clear_idle(name);
+            }
         }
     }
     Ok(())
@@ -574,6 +577,37 @@ fn deregister_and_remove(
     }
     docker::remove_container(name)?;
     Ok(())
+}
+
+fn remove_if_still_idle(
+    client: &GitHubClient,
+    repo: &str,
+    name: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let runner = client
+        .list_runners(repo)?
+        .into_iter()
+        .find(|runner| runner.name == name);
+
+    let Some(runner) = runner else {
+        // The registration disappeared on its own; there is no GitHub runner
+        // left to protect, so removing the container is still safe.
+        docker::remove_container(name)?;
+        return Ok(true);
+    };
+
+    if runner.busy || !runner.is_online() {
+        eprintln!(
+            "gitrun-autoscaler: preserving idle-scale-down candidate {name} for {repo}: runner is no longer safely removable (online={}, busy={})",
+            runner.is_online(),
+            runner.busy
+        );
+        return Ok(false);
+    }
+
+    client.delete_runner(repo, runner.id)?;
+    docker::remove_container(name)?;
+    Ok(true)
 }
 
 fn create_runner(
@@ -616,6 +650,8 @@ fn create_runner(
         return Ok(());
     };
 
+    let runner_labels = runner_labels_for_job(&config.runner_labels, permanent, job_labels);
+
     docker::create_runner_on(
         &backend,
         &docker::RunnerSpec {
@@ -624,7 +660,7 @@ fn create_runner(
             permanent,
             registration_token: &registration_token,
             image: &image,
-            labels: &config.runner_labels,
+            labels: &runner_labels,
             ephemeral: config.ephemeral,
             disable_update: config.runner_disable_update,
             cpus: &config.container_cpus,
@@ -641,6 +677,38 @@ fn create_runner(
         },
     )?;
     Ok(())
+}
+
+/// Combines the globally configured runner labels with the labels of the
+/// queued job that caused a dynamic runner to be created. This prevents a
+/// dynamically routed runner (for example a Windows/VM runner) from becoming
+/// eligible for an unrelated job after registration.
+fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String]) -> String {
+    if permanent || job_labels.is_empty() {
+        return configured.to_owned();
+    }
+
+    let mut labels: Vec<String> = configured
+        .split(',')
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    for job_label in job_labels {
+        let job_label = job_label.trim();
+        if job_label.is_empty() {
+            continue;
+        }
+        if !labels
+            .iter()
+            .any(|label| label.eq_ignore_ascii_case(job_label))
+        {
+            labels.push(job_label.to_owned());
+        }
+    }
+
+    labels.join(",")
 }
 
 /// Best-effort pre-flight workflow validation, run just before a runner is

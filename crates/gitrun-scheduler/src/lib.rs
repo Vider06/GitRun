@@ -336,7 +336,7 @@ fn resolve_backend_and_image(
             };
             let Some(vm_config) = vm::find_vm_config(&vm_defs, vm_name) else {
                 eprintln!(
-                    "gitrun-autoscaler: Logic Containers rule targets VM '{vm_name}', but no VM with that name is configured — falling back to local host for this runner"
+                    "gitrun-autoscaler: Logic Containers rule targets VM '{vm_name}', but no VM with that name is configured — runner creation deferred"
                 );
                 return None;
             };
@@ -586,9 +586,9 @@ fn create_runner(
     job_labels: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
-        format!(
+        std::io::Error::other(format!(
             "cannot safely create runner for {repo}: GSR ban state is unreadable: {error}"
-        )
+        ))
     })?;
     if ban_store.is_banned(repo) {
         println!("gitrun-autoscaler: skipping runner creation for {repo}: temporarily banned by GSR after a policy violation");

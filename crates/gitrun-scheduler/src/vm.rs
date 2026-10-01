@@ -215,6 +215,13 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
 
     Ok(())
 }
+/// Validates one VM definition before it enters an asynchronous lifecycle
+/// operation. Kept crate-visible so the resolver can reject bad dashboard
+/// configuration before creating background state or waiting for operator input.
+pub(crate) fn validate_vm_config(config: &VmConfig) -> Result<()> {
+    validate_vm_configs(std::slice::from_ref(config))
+}
+
 
 /// Saves VM definitions to `{state_dir}/vm-configs.json`, same atomic
 /// write-then-rename pattern as `logic_containers::save_rules`. Not

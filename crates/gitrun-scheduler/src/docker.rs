@@ -425,6 +425,34 @@ pub fn image_id(image_or_container: &str) -> Result<String> {
     Ok(id.to_owned())
 }
 
+/// Returns the image ID for an existing container. A container that
+/// disappeared during reconciliation is reported as `None`; real Docker
+/// failures still propagate.
+pub fn container_image_id(name: &str) -> Result<Option<String>> {
+    let output = run_on(
+        &DockerHost::Local,
+        &["inspect", "-f", "{{.Image}}", name],
+    )?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if is_missing_container_error(&stderr) {
+            return Ok(None);
+        }
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker inspect {name} failed")
+        } else {
+            stderr
+        }));
+    }
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if id.is_empty() {
+        return Err(DockerError::Command(format!(
+            "docker inspect returned an empty image ID for container {name}"
+        )));
+    }
+    Ok(Some(id))
+}
+
 pub fn rename_container(from: &str, to: &str) -> Result<()> {
     run_checked(&["rename", from, to])?;
     Ok(())

@@ -37,6 +37,8 @@ pub enum GitHubError {
     RateLimited { retry_after: Option<Duration> },
     #[error("GitHub API error {status}: {detail}")]
     Api { status: u16, detail: String },
+    #[error("unable to decode workflow content for {file}: {detail}")]
+    WorkflowContentDecode { file: String, detail: String },
     #[error("unexpected response shape from GitHub: {0}")]
     Decode(#[from] serde_json::Error),
 }
@@ -99,12 +101,33 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
     let mut parts = repo.splitn(2, '/');
     match (parts.next(), parts.next()) {
         (Some(owner), Some(name))
-            if !owner.is_empty() && !name.is_empty() && !name.contains('/') =>
+            if is_valid_repo_segment(owner) && is_valid_repo_segment(name) =>
         {
             Ok((owner, name))
         }
         _ => Err(GitHubError::InvalidRepository(repo.to_owned())),
     }
+}
+
+fn is_valid_repo_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment.len() <= 100
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn encode_path_segment(segment: &str) -> String {
+    let mut encoded = String::with_capacity(segment.len());
+    for byte in segment.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            write!(&mut encoded, "%{byte:02X}").expect("writing to String cannot fail");
+        }
+    }
+    encoded
 }
 
 /// Where a `GitHubClient` gets its bearer token from. Either a static PAT
@@ -198,39 +221,44 @@ impl GitHubClient {
             .send()?;
 
         let status = response.status();
-        if status == reqwest::StatusCode::FORBIDDEN
-            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
-        {
-            let is_rate_limit = response
-                .headers()
-                .get("x-ratelimit-remaining")
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v == "0")
-                .unwrap_or(status == reqwest::StatusCode::TOO_MANY_REQUESTS);
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_secs);
+        let rate_limit_remaining_zero = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == "0")
+            .unwrap_or(false);
 
-            if is_rate_limit {
-                let retry_after = response
+        // GitHub can return 403 for a secondary rate limit as well as for
+        // ordinary permission failures. A Retry-After header on a 403 is the
+        // decisive signal for the former; a primary rate limit is also
+        // identified by X-RateLimit-Remaining: 0. All 429 responses are
+        // rate limits by definition.
+        let is_rate_limit = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            || (status == reqwest::StatusCode::FORBIDDEN
+                && (retry_after.is_some() || rate_limit_remaining_zero));
+
+        if is_rate_limit {
+            let retry_after = retry_after.or_else(|| {
+                response
                     .headers()
-                    .get("retry-after")
+                    .get("x-ratelimit-reset")
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .map(Duration::from_secs)
-                    .or_else(|| {
-                        response
-                            .headers()
-                            .get("x-ratelimit-reset")
-                            .and_then(|v| v.to_str().ok())
-                            .and_then(|v| v.parse::<i64>().ok())
-                            .map(|reset_epoch| {
-                                let now = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs() as i64)
-                                    .unwrap_or(0);
-                                Duration::from_secs((reset_epoch - now).max(1) as u64)
-                            })
-                    });
-                return Err(GitHubError::RateLimited { retry_after });
-            }
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .map(|reset_epoch| {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        Duration::from_secs((reset_epoch - now).max(1) as u64)
+                    })
+            });
+            return Err(GitHubError::RateLimited { retry_after });
         }
 
         if !status.is_success() {
@@ -268,7 +296,7 @@ impl GitHubClient {
 
     pub fn registration_token(&self, repo: &str) -> Result<String> {
         let (owner, name) = split_repo(repo)?;
-        let url = format!("{API_BASE}/repos/{owner}/{name}/actions/runners/registration-token");
+        let url = format!("{API_BASE}/repos/{}/{}/actions/runners/registration-token",encode_path_segment(owner),encode_path_segment(name));
         let response = self.request(reqwest::Method::POST, &url)?;
         let parsed: RegistrationTokenResponse = response.json()?;
         Ok(parsed.token)
@@ -277,7 +305,7 @@ impl GitHubClient {
     pub fn list_runners(&self, repo: &str) -> Result<Vec<Runner>> {
         let (owner, name) = split_repo(repo)?;
         let mut runners = Vec::new();
-        for page in self.get_all_pages(&format!("/repos/{owner}/{name}/actions/runners"), 100)? {
+        for page in self.get_all_pages(&format!("/repos/{}/{}/actions/runners", encode_path_segment(owner), encode_path_segment(name)),100)? {
             let parsed: RunnersResponse = serde_json::from_value(page)?;
             runners.extend(parsed.runners);
         }
@@ -286,7 +314,7 @@ impl GitHubClient {
 
     pub fn delete_runner(&self, repo: &str, runner_id: u64) -> Result<()> {
         let (owner, name) = split_repo(repo)?;
-        let url = format!("{API_BASE}/repos/{owner}/{name}/actions/runners/{runner_id}");
+        let url = format!("{API_BASE}/repos/{}/{}/actions/runners/{runner_id}",encode_path_segment(owner),encode_path_segment(name));
         match self.request(reqwest::Method::DELETE, &url) {
             Ok(_) => Ok(()),
             // Already gone is not an error for our purposes — mirrors the
@@ -311,7 +339,7 @@ impl GitHubClient {
     pub fn queued_self_hosted_jobs_with_labels(&self, repo: &str) -> Result<Vec<Vec<String>>> {
         let (owner, name) = split_repo(repo)?;
         let mut all_labels = Vec::new();
-        let runs_path = format!("/repos/{owner}/{name}/actions/runs");
+        let runs_path = format!("/repos/{}/{}/actions/runs", encode_path_segment(owner), encode_path_segment(name));
         let mut url = format!("{API_BASE}{runs_path}?status=queued&per_page=100");
         loop {
             let response = self.request(reqwest::Method::GET, &url)?;
@@ -336,7 +364,7 @@ impl GitHubClient {
     ) -> Result<Vec<Vec<String>>> {
         let mut labels = Vec::new();
         let mut url = format!(
-            "{API_BASE}/repos/{owner}/{name}/actions/runs/{run_id}/jobs?filter=latest&per_page=100"
+            &format!("{API_BASE}/repos/{}/{}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",encode_path_segment(owner),encode_path_segment(name))
         );
         loop {
             let response = self.request(reqwest::Method::GET, &url)?;
@@ -378,7 +406,7 @@ impl GitHubClient {
     /// `workflow_validation::validate_workflows_dir`.
     pub fn workflow_files(&self, repo: &str) -> Result<Vec<(String, String)>> {
         let (owner, name) = split_repo(repo)?;
-        let list_url = format!("{API_BASE}/repos/{owner}/{name}/contents/.github/workflows");
+        let list_url = format!("{API_BASE}/repos/{}/{}/contents/.github/workflows",encode_path_segment(owner),encode_path_segment(name));
         let entries: Vec<ContentsEntry> = match self.request(reqwest::Method::GET, &list_url) {
             Ok(response) => response.json()?,
             Err(GitHubError::Api { status: 404, .. }) => return Ok(Vec::new()),
@@ -392,11 +420,18 @@ impl GitHubClient {
                 continue;
             }
             let file_url = format!(
-                "{API_BASE}/repos/{owner}/{name}/contents/.github/workflows/{}",
-                entry.name
+                "{API_BASE}/repos/{}/{}/contents/.github/workflows/{}",
+                encode_path_segment(owner),
+                encode_path_segment(name),
+                encode_path_segment(&entry.name)
             );
             let file: ContentsFile = self.request(reqwest::Method::GET, &file_url)?.json()?;
-            let content = decode_contents_base64(&file.content).unwrap_or_default();
+            let content = decode_contents_base64(&file.content).map_err(|detail| {
+                GitHubError::WorkflowContentDecode {
+                    file: entry.name.clone(),
+                    detail,
+                }
+            })?;
             files.push((entry.name, content));
         }
         Ok(files)
@@ -421,17 +456,16 @@ struct ContentsFile {
 
 /// Decodes a GitHub Contents API `content` field: base64 with embedded
 /// newlines that must be stripped first (GitHub wraps the encoded content
-/// for readability in raw API responses). Returns `None` on any malformed
-/// input or non-UTF-8 result rather than erroring the whole call, since
-/// this is decoding attacker-influenced repository content and a single
-/// unreadable workflow file shouldn't take down the rest of validation.
-fn decode_contents_base64(raw: &str) -> Option<String> {
+/// for readability in raw API responses). Returns the decoding error to the
+/// caller so a workflow that was not actually retrieved is never mistaken for
+/// an empty, successfully fetched file.
+fn decode_contents_base64(raw: &str) -> std::result::Result<String, String> {
     use base64::Engine;
     let cleaned: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(cleaned)
-        .ok()?;
-    String::from_utf8(bytes).ok()
+        .map_err(|error| error.to_string())?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
 /// Parses the `Link` header for a `rel="next"` URL, GitHub's standard
@@ -546,13 +580,21 @@ mod tests {
         // across two lines the way a real API response would.
         let wrapped = "Y2FyZ28g\nYnVpbGQ=";
         assert_eq!(
-            decode_contents_base64(wrapped).as_deref(),
-            Some("cargo build")
+            decode_contents_base64(wrapped).unwrap(),
+            "cargo build"
         );
     }
 
     #[test]
-    fn decode_contents_base64_returns_none_on_garbage() {
-        assert_eq!(decode_contents_base64("not valid base64!!!"), None);
+    fn decode_contents_base64_returns_error_on_garbage() {
+        assert!(decode_contents_base64("not valid base64!!!").is_err());
+    }
+
+    #[test]
+    fn encode_path_segment_escapes_reserved_characters() {
+        assert_eq!(
+            encode_path_segment("hello world#file"),
+            "hello%20world%23file"
+        );
     }
 }

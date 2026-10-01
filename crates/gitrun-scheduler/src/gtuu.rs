@@ -60,10 +60,9 @@ pub struct GtuuLock {
     path: PathBuf,
 }
 
-/// A lock older than this is assumed stale regardless of PID liveness: GTUU
-/// updates one container at a time with a bounded `online_wait_timeout`
-/// (typically ~2 minutes) per container, so even a large fleet finishing
-/// updates back-to-back should not plausibly run past this.
+/// Fallback age for a lock that has no usable PID. A valid live PID is
+/// never reclaimed solely because the run is old, so a slow but legitimate
+/// update cannot accidentally overlap with another GTUU instance.
 const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 
 impl GtuuLock {
@@ -113,7 +112,6 @@ impl GtuuLock {
                 Err(error) => return Err(GtuuError::Io(error)),
             }
         }
-    }    }
 }
 
 /// A lock is stale when its recorded PID is no longer running. If the PID
@@ -131,7 +129,6 @@ fn is_stale(lock_path: &Path) -> bool {
             .and_then(|modified| SystemTime::now().duration_since(modified).ok())
             .is_some_and(|age| age > STALE_LOCK_AGE),
     }
-}
 }
 
 #[cfg(unix)]

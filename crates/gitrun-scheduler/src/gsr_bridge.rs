@@ -40,6 +40,48 @@ impl VaultEventSink for VaultToGsrBridge {
         // (`vault_env_for_repo` in main.rs) still logs the underlying error
         // to stderr independently, so the operator isn't left with zero
         // signal even if this write fails.
-        let _ = gitrun_gsr::events::emit(&self.events_path, &event);
+        if let Err(error) = gitrun_gsr::events::emit(&self.events_path, &event) {
+            eprintln!(
+                "gitrun-autoscaler: failed to emit GitVault decryption-failure event to {}: {error}",
+                self.events_path.display()
+            );
+        }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_state_dir() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gitrun-gsr-bridge-test-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn decryption_failure_is_emitted_to_gsr_queue() {
+        let state_dir = temp_state_dir();
+        let state_dir_str = state_dir.to_string_lossy().into_owned();
+        let bridge = VaultToGsrBridge::new(&state_dir_str);
+
+        bridge.on_decryption_failure("API_KEY");
+
+        let events_path = gitrun_gsr::events::default_queue_path(&state_dir_str);
+        let events = gitrun_gsr::events::read_all(&events_path).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].source, "gitvault");
+        assert_eq!(events[0].severity, Severity::Critical);
+        assert!(events[0].message.contains("API_KEY"));
+
+        let _ = std::fs::remove_dir_all(state_dir);
+    }
+}
+

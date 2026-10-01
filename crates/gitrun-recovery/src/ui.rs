@@ -1,12 +1,12 @@
 #[tauri::command]
-fn get_report() -> Result<gitrun_recovery::RecoveryReport, String> {
-    Ok(gitrun_recovery::inspect())
+fn get_report() -> Result<super::RecoveryReport, String> {
+    Ok(super::inspect())
 }
 
 #[tauri::command]
-fn run_gtuu() -> Result<gitrun_recovery::RecoveryReport, String> {
-    if gitrun_recovery::is_root_for_ui() {
-        gitrun_recovery::run_gtuu()?;
+fn run_gtuu() -> Result<super::RecoveryReport, String> {
+    if super::is_root_for_ui() {
+        super::run_gtuu()?;
     } else {
         let recovery = std::env::var("GITRUN_RECOVERY_BINARY")
             .map(std::path::PathBuf::from)
@@ -20,17 +20,17 @@ fn run_gtuu() -> Result<gitrun_recovery::RecoveryReport, String> {
             return Err(format!("privileged GTUU exited with {status}"));
         }
     }
-    Ok(gitrun_recovery::inspect())
+    Ok(super::inspect())
 }
 
 #[tauri::command]
 fn repair_service() -> Result<(), String> {
-    gitrun_recovery::restart_service()
+    super::restart_service()
 }
 
 #[tauri::command]
 fn open_dashboard() -> Result<(), String> {
-    gitrun_recovery::launch_dashboard().map(|_| ())
+    super::launch_dashboard().map(|_| ())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

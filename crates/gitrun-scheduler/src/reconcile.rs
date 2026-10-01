@@ -400,6 +400,12 @@ mod tests {
             "self-hosted".into(),
             "windows".into(),
         ]];
+        input.logic_rules = vec![crate::logic_containers::LogicRule {
+            name: "windows".into(),
+            match_labels: vec!["windows".into()],
+            backend: crate::logic_containers::Backend::LocalLinux,
+            image: "gitrun-runner:windows".into(),
+        }];
         let actions = plan(&input);
         assert_eq!(
             actions
@@ -421,6 +427,12 @@ mod tests {
         let mut input = base_input();
         input.queued_jobs = 20;
         input.queued_job_labels = (0..20).map(|_| vec!["windows".into()]).collect();
+        input.logic_rules = vec![crate::logic_containers::LogicRule {
+            name: "windows".into(),
+            match_labels: vec!["windows".into()],
+            backend: crate::logic_containers::Backend::LocalLinux,
+            image: "gitrun-runner:windows".into(),
+        }];
         let actions = plan(&input);
         assert_eq!(
             actions

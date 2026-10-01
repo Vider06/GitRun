@@ -461,6 +461,7 @@ pub struct InstalledBackupRecord {
     pub version_file_backup: Option<PathBuf>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn apply_installed_update(
     archive: &Path,
     target: &str,

@@ -12,18 +12,14 @@
 //! loop keeps polling everything else normally.
 //!
 //! Flow, per VM name, the first time it's needed:
-//! 1. Try KVM. If it comes up, done — the thread records the result and
-//!    exits. This is the common case and doesn't involve the operator at
-//!    all.
+//! 1. Try KVM. If it comes up, record the endpoint and selected hypervisor.
 //! 2. If KVM fails, write a pending decision (`gitrun_core::hypervisor_decision`)
 //!    and block *this thread only*, polling for up to 5 minutes for the
 //!    dashboard to answer.
 //! 3. Answered → act on the choice (retry KVM, or set up VirtualBox
 //!    instead) and record the result.
-//! 4. Not answered within 5 minutes → give up *for this attempt*: clear the
-//!    pending decision and record nothing, so the next time reconcile asks
-//!    for this VM (next poll cycle), resolution starts fresh from step 1 —
-//!    self-healing, no separate cooldown timer needed.
+//! 4. Not answered within 5 minutes → clear the pending decision and record
+//!    a failed attempt. The next reconcile cycle retries the VM resolution.
 //!
 //! While a thread is in flight, reconcile's caller receives a non-ready
 //! result immediately and defers creation of the VM-targeted runner for
@@ -76,8 +72,12 @@ pub enum VmResolutionResult {
 /// hot path that needs lock-free structures.
 pub type VmResolutionRegistry = Arc<Mutex<HashMap<String, VmResolution>>>;
 
-fn lock_registry(registry: &VmResolutionRegistry) -> std::sync::MutexGuard<'_, HashMap<String, VmResolution>> {
-    registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock_registry(
+    registry: &VmResolutionRegistry,
+) -> std::sync::MutexGuard<'_, HashMap<String, VmResolution>> {
+    registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn new_registry() -> VmResolutionRegistry {
@@ -442,16 +442,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
     #[test]
-    fn resolve_or_spawn_returns_none_immediately_and_does_not_block() {
-        // This is the core guarantee: even though the spawned thread will
-        // fail fast (virsh/VBoxManage aren't installed in a test
-        // environment) and go on to wait on a decision file that will
-        // never be answered, the *caller* must get control back right
-        // away rather than waiting on any of that. The thread itself keeps
-        // running in the background until its own 5-minute give-up (or
-        // process exit, whichever comes first, and `cargo test` doesn't
-        // wait on non-test threads to exit) — harmless for the test, not
-        // cleaned up here beyond best-effort temp dir removal.
+    fn resolve_or_spawn_returns_resolving_immediately_and_does_not_block() {
+        // Hypervisor setup and operator interaction never block the
+        // reconcile caller; the worker owns the long-running wait.
         let registry = new_registry();
         let dir =
             std::env::temp_dir().join(format!("gitrun-vm-resolution-test-{}", std::process::id()));
@@ -472,9 +465,9 @@ mod tests {
             std::env::temp_dir().join(format!("gitrun-vm-resolution-test-{}", std::process::id()));
         let vm = sample_vm("dup-check");
         let _ = resolve_or_spawn(&registry, &dir, &vm);
-        // Immediately call again: the entry should already be `Resolving`
-        // (inserted synchronously before the thread was spawned), so this
-        // call must also return None without inserting a duplicate state.
+        // Immediately call again: the entry is already Resolving (inserted
+        // synchronously before the worker was spawned), so this call must
+        // not create a second worker.
         let second = resolve_or_spawn(&registry, &dir, &vm);
         assert!(matches!(second, VmResolutionResult::Resolving));
         let guard = registry.lock().unwrap();

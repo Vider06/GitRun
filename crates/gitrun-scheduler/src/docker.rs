@@ -70,23 +70,6 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<std::process::Output> {
     Ok(command.args(args).output()?)
 }
 
-fn run(args: &[&str]) -> Result<std::process::Output> {
-    run_on(&DockerHost::Local, args)
-}
-
-fn run_checked_on(host: &DockerHost, args: &[&str]) -> Result<String> {
-    let output = run_on(host, args)?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(DockerError::Command(if stderr.is_empty() {
-            format!("docker {} failed", args.join(" "))
-        } else {
-            stderr
-        }));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
 fn run_checked(args: &[&str]) -> Result<String> {
     run_checked_on(&DockerHost::Local, args)
 }
@@ -123,10 +106,9 @@ pub fn shared_cache_volume(configured: Option<&str>) -> String {
 }
 
 pub fn ensure_shared_cache_volume(name: &str) -> Result<()> {
-    let inspected = run(&["volume", "inspect", name])?;
-    if inspected.status.success() {
-        return Ok(());
-    }
+    // Docker treats create of an existing volume on the same driver as a
+    // successful reuse, so this single operation avoids an inspect/create
+    // time-of-check/time-of-use race between scheduler threads.
     run_checked(&["volume", "create", "--label", "gitrun.shared=true", name])?;
     Ok(())
 }

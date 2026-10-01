@@ -38,9 +38,18 @@
 //!   `docker_port`.
 
 use serde::{Deserialize, Serialize};
-use std::process::Command;
-use std::time::Duration;
+use std::collections::HashSet;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 use thiserror::Error;
+
+const HYPERVISOR_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub enum VmError {
@@ -48,11 +57,17 @@ pub enum VmError {
     HypervisorUnavailable(HypervisorKind),
     #[error("invalid VM configuration file: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("invalid VM configuration: {0}")]
+    InvalidConfig(String),
     #[error("hypervisor command failed: {0}")]
     Command(String),
+    #[error("external tool '{0}' is not installed or not usable")]
+    ToolUnavailable(String),
+    #[error("hypervisor command timed out: {0}")]
+    CommandTimeout(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("VM '{0}' did not report an IP address within the startup timeout")]
+    #[error("VM '{0}' did not report a usable IPv4 address within the startup timeout")]
     NoIpAddress(String),
 }
 
@@ -124,13 +139,78 @@ pub struct VmConfig {
 /// anything an operator configured through the dashboard would have been
 /// silently invisible to the scheduler. Switched to share the dashboard's
 /// file/format instead of inventing a second, disconnected one.
-pub fn load_vm_configs(state_dir: &std::path::Path) -> Result<Vec<VmConfig>> {
+pub fn load_vm_configs(state_dir: &Path) -> Result<Vec<VmConfig>> {
     let path = state_dir.join("vm-configs.json");
-    match std::fs::read_to_string(&path) {
-        Ok(raw) => Ok(serde_json::from_str(&raw)?),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.into()),
+    let configs = match fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error.into()),
+    };
+    validate_vm_configs(&configs)?;
+    Ok(configs)
+}
+
+fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
+    let mut names = HashSet::with_capacity(configs.len());
+    let mut virtualbox_ports = HashSet::new();
+
+    for config in configs {
+        let name = config.name.trim();
+        if name.is_empty()
+            || name != config.name
+            || config.name.chars().any(char::is_control)
+            || config.name.contains('/')
+            || config.name.contains('\\')
+        {
+            return Err(VmError::InvalidConfig(format!(
+                "VM name '{}' is empty, has surrounding whitespace, control characters, or path separators",
+                config.name
+            )));
+        }
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err(VmError::InvalidConfig(format!(
+                "duplicate VM name (case-insensitive): '{}'",
+                config.name
+            )));
+        }
+
+        let image = config.base_disk_image.trim();
+        if image.is_empty() || image.chars().any(char::is_control) {
+            return Err(VmError::InvalidConfig(format!(
+                "VM '{}' has an invalid base disk image path",
+                config.name
+            )));
+        }
+        if config.memory_mb == 0 {
+            return Err(VmError::InvalidConfig(format!(
+                "VM '{}' must allocate at least 1 MiB",
+                config.name
+            )));
+        }
+        if config.cpus == 0 {
+            return Err(VmError::InvalidConfig(format!(
+                "VM '{}' must have at least 1 CPU",
+                config.name
+            )));
+        }
+        if config.docker_port == 0 {
+            return Err(VmError::InvalidConfig(format!(
+                "VM '{}' must use a non-zero Docker port",
+                config.name
+            )));
+        }
+
+        if matches!(config.hypervisor, HypervisorKind::VirtualBox)
+            && !virtualbox_ports.insert(config.docker_port)
+        {
+            return Err(VmError::InvalidConfig(format!(
+                "duplicate VirtualBox host Docker port: {}",
+                config.docker_port
+            )));
+        }
     }
+
+    Ok(())
 }
 
 /// Saves VM definitions to `{state_dir}/vm-configs.json`, same atomic
@@ -140,14 +220,48 @@ pub fn load_vm_configs(state_dir: &std::path::Path) -> Result<Vec<VmConfig>> {
 /// here so any other future caller (e.g. `gitrun setup`, or a CLI command)
 /// has a single correct implementation to share rather than reinventing
 /// the atomic-write dance.
-pub fn save_vm_configs(state_dir: &std::path::Path, configs: &[VmConfig]) -> Result<()> {
+pub fn save_vm_configs(state_dir: &Path, configs: &[VmConfig]) -> Result<()> {
+    validate_vm_configs(configs)?;
+
     let path = state_dir.join("vm-configs.json");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| VmError::InvalidConfig("invalid VM configuration file name".into()))?;
+    let tmp = parent.join(format!(
+        ".{file_name}.tmp-{}-{sequence}",
+        std::process::id()
+    ));
+
+    let serialized = serde_json::to_string_pretty(configs)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)?;
+    use std::io::Write;
+    file.write_all(serialized.as_bytes())?;
+    file.write_all(b"
+")?;
+    file.sync_all()?;
+    drop(file);
+
+    if let Err(error) = fs::rename(&tmp, &path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(error.into());
     }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(configs)?)?;
-    std::fs::rename(&tmp, &path)?;
+
+    #[cfg(unix)]
+    {
+        fs::File::open(parent)?.sync_all()?;
+    }
+
     Ok(())
 }
 

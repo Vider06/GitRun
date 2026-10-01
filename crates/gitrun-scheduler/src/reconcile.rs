@@ -195,6 +195,20 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     let mut permanent_count =
         live_containers.iter().filter(|c| c.permanent).count() as u32 + recreating;
 
+    while current < desired && permanent_count < input.min_runners {
+        actions.push(Action::CreateRunner {
+            permanent: true,
+            job_labels: Vec::new(),
+        });
+        current += 1;
+        permanent_count += 1;
+    }
+
+    // Specialized queued jobs need capacity in addition to the guaranteed
+    // warm pool when the warm pool's default labels don't cover them. This
+    // intentionally may raise the total above desired_count, but never
+    // above max_runners: the count-based formula assumes runners are
+    // interchangeable, which is not true once Logic Containers exist.
     let specialized_jobs: Vec<Vec<String>> = input
         .queued_job_labels
         .iter()
@@ -205,22 +219,13 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         .collect();
 
     let mut specialized_index = 0usize;
-    while current < desired && specialized_index < specialized_jobs.len() {
+    while current < input.max_runners && specialized_index < specialized_jobs.len() {
         actions.push(Action::CreateRunner {
             permanent: false,
             job_labels: specialized_jobs[specialized_index].clone(),
         });
         specialized_index += 1;
         current += 1;
-    }
-
-    while current < desired && permanent_count < input.min_runners {
-        actions.push(Action::CreateRunner {
-            permanent: true,
-            job_labels: Vec::new(),
-        });
-        current += 1;
-        permanent_count += 1;
     }
     // Dynamic overflow runners are the ones actually opened "for" queued
     // jobs (permanents are baseline pool, not tied to any one job), so
@@ -371,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn specialized_job_gets_dynamic_runner_before_permanent_pool() {
+    fn specialized_job_gets_dynamic_capacity_without_consuming_minimum_pool() {
         let mut input = base_input();
         input.queued_jobs = 1;
         input.queued_job_labels = vec![vec![
@@ -380,20 +385,32 @@ mod tests {
         ]];
         let actions = plan(&input);
         assert_eq!(
-            actions.first(),
-            Some(&Action::CreateRunner {
-                permanent: false,
-                job_labels: vec!["self-hosted".into(), "windows".into()],
-            })
-        );
-        assert_eq!(
             actions
                 .iter()
                 .filter(|action| {
                     matches!(action, Action::CreateRunner { permanent: true, .. })
                 })
                 .count(),
-            2
+            3
+        );
+        assert!(actions.contains(&Action::CreateRunner {
+            permanent: false,
+            job_labels: vec!["self-hosted".into(), "windows".into()],
+        }));
+    }
+
+    #[test]
+    fn specialized_capacity_respects_maximum() {
+        let mut input = base_input();
+        input.queued_jobs = 20;
+        input.queued_job_labels = (0..20).map(|_| vec!["windows".into()]).collect();
+        let actions = plan(&input);
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(action, Action::CreateRunner { .. }))
+                .count(),
+            8
         );
     }
 

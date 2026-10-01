@@ -42,8 +42,15 @@ impl RateLimitTracker {
     /// default rather than not backing off at all.
     pub fn record_rate_limited(&self, repo: &str, retry_after: Option<Duration>) {
         const FALLBACK_COOLDOWN: Duration = Duration::from_secs(60);
-        let until = Instant::now() + retry_after.unwrap_or(FALLBACK_COOLDOWN);
+        let now = Instant::now();
+        let until = now + retry_after.unwrap_or(FALLBACK_COOLDOWN);
         let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Drop expired entries opportunistically before adding the new one,
+        // keeping this bounded even when a repo is rate-limited only once and
+        // never checked again afterward.
+        cooldowns.retain(|_, deadline| *deadline > now);
+
         // Never shorten an existing cooldown — if two calls for the same
         // repo both hit rate limits close together with different
         // Retry-After values, keep whichever pushes furthest out.
@@ -54,12 +61,12 @@ impl RateLimitTracker {
     }
 
     /// Returns how much longer `repo` should be skipped, or `None` if it's
-    /// clear to proceed. Also clears the entry once it's expired, so the
-    /// map doesn't grow forever with stale repo names.
+    /// clear to proceed. Also clears the entry once it's expired.
     pub fn remaining_cooldown(&self, repo: &str) -> Option<Duration> {
+        let now = Instant::now();
         let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
-        match cooldowns.get(repo) {
-            Some(&until) if until > Instant::now() => Some(until - Instant::now()),
+        match cooldowns.get(repo).copied() {
+            Some(until) if until > now => Some(until - now),
             Some(_) => {
                 cooldowns.remove(repo);
                 None
@@ -111,13 +118,24 @@ mod tests {
     fn repeated_rate_limit_extends_but_never_shortens_cooldown() {
         let tracker = RateLimitTracker::new();
         tracker.record_rate_limited("owner/repo", Some(Duration::from_secs(60)));
-        let longer = tracker.remaining_cooldown("owner/repo").unwrap();
+        let before = tracker.cooldowns.lock().unwrap().get("owner/repo").copied();
 
-        // A second, shorter Retry-After should not shorten the existing wait.
+        // A second, shorter Retry-After must not replace the original deadline.
         tracker.record_rate_limited("owner/repo", Some(Duration::from_secs(5)));
-        let after_shorter = tracker.remaining_cooldown("owner/repo").unwrap();
-        assert!(after_shorter <= longer + Duration::from_millis(50)); // allow tiny test timing drift
-        assert!(after_shorter > Duration::from_secs(5));
+        let after = tracker.cooldowns.lock().unwrap().get("owner/repo").copied();
+
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn expired_entries_are_pruned_when_recording_new_cooldown() {
+        let tracker = RateLimitTracker::new();
+        tracker.record_rate_limited("owner/old", Some(Duration::ZERO));
+        tracker.record_rate_limited("owner/new", Some(Duration::from_secs(30)));
+
+        let cooldowns = tracker.cooldowns.lock().unwrap();
+        assert!(!cooldowns.contains_key("owner/old"));
+        assert!(cooldowns.contains_key("owner/new"));
     }
 
     #[test]

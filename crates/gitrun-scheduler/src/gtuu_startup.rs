@@ -149,7 +149,7 @@ fn update_gitrun_from_manifest(
         return Err("system GitRun self-update currently targets Linux".into());
     }
 
-    let target = target_triple_for_gitrun();
+    let target = target_triple_for_gitrun()?;
     let plan = match gitrun_updater::build_plan(manifest, current_version, &target, &[]) {
         Ok(plan) => plan,
         Err(UpdateError::NotNewer) => return Ok(false),

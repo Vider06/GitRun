@@ -180,7 +180,7 @@ pub fn save_rules(path: &std::path::Path, rules: &[LogicRule]) -> Result<(), Log
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .ok_or_else(|| LogicRulesError::Invalid("rules path has no parent directory".into()))?;
+        .unwrap_or_else(|| std::path::Path::new("."));
     std::fs::create_dir_all(parent)?;
 
     let sequence = RULES_TMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -224,6 +224,8 @@ pub enum LogicRulesError {
     Io(#[from] std::io::Error),
     #[error("invalid Logic Containers rules file: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("invalid Logic Containers rule: {0}")]
+    Invalid(String),
 }
 
 #[cfg(test)]

@@ -44,37 +44,32 @@ pub enum DockerHost {
     Remote(String),
 }
 
-impl DockerHost {
-    fn env_value(&self) -> Option<&str> {
-        match self {
-            DockerHost::Local => None,
-            DockerHost::Remote(addr) => Some(addr.as_str()),
-        }
-    }
-}
 
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<std::process::Output> {
     let mut command = Command::new("docker");
 
-    // Local always means GitRun's local Docker daemon, regardless of any
-    // DOCKER_HOST/DOCKER_CONTEXT inherited from the scheduler service
-    // environment. Remote hosts opt into an explicit DOCKER_HOST below.
-    command
-        .env_remove("DOCKER_CONTEXT")
-        .env_remove("DOCKER_TLS_VERIFY")
-        .env_remove("DOCKER_CERT_PATH");
+    // A Docker context inherited from the scheduler environment must never
+    // override the host selected explicitly by GitRun.
+    command.env_remove("DOCKER_CONTEXT");
 
     match host {
         DockerHost::Local => {
-            command.env("DOCKER_HOST", "unix:///var/run/docker.sock");
+            // Local means the host Docker socket, not whichever context the
+            // service environment happened to inherit.
+            command
+                .env_remove("DOCKER_TLS_VERIFY")
+                .env_remove("DOCKER_CERT_PATH")
+                .env("DOCKER_HOST", "unix:///var/run/docker.sock");
         }
         DockerHost::Remote(addr) => {
+            // Keep operator-provided TLS variables for the remote daemon.
             command.env("DOCKER_HOST", addr);
         }
     }
 
     Ok(command.args(args).output()?)
 }
+
 fn run(args: &[&str]) -> Result<std::process::Output> {
     run_on(&DockerHost::Local, args)
 }
@@ -153,9 +148,7 @@ pub fn ensure_shared_cache_volume(name: &str) -> Result<()> {
 pub fn container_command_lines_on(host: &DockerHost, container_name: &str) -> Result<Vec<String>> {
     match run_checked_on(host, &["top", container_name, "-eo", "args"]) {
         Ok(output) => Ok(parse_top_output(&output)),
-        Err(DockerError::Command(message))
-            if message.contains("is not running") || message.contains("No such container") =>
-        {
+        Err(DockerError::Command(message)) if is_missing_container_error(&message) => {
             Ok(Vec::new())
         }
         Err(error) => Err(error),
@@ -242,8 +235,9 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
     Ok(containers)
 }
 
-/// Raw `.State.Status` string (e.g. "running", "exited"), empty if the
-/// container can't be inspected (already removed, etc).
+/// Raw `.State.Status` string (e.g. "running", "exited"). Returns `None`
+/// when the container disappears during a normal reconciliation race; real
+/// Docker/JSON errors are returned to the caller.
 /// Reads the `gitrun.repo` label off a running/existing container — the
 /// same label `create_runner_on` sets at creation (see `RunnerSpec.repo`).
 /// Used by `gsr_poll` to know which repo to (optionally) ban after a
@@ -738,6 +732,7 @@ mod tests {
     fn parse_top_output_on_header_only_is_empty() {
         assert_eq!(parse_top_output("COMMAND\n"), Vec::<String>::new());
     }
+
     #[test]
     fn parse_top_output_without_header_keeps_first_line() {
         let raw = "cargo build --release\nsh -c echo hi\n";
@@ -749,7 +744,7 @@ mod tests {
 
     #[test]
     fn cache_path_key_is_collision_free_for_sanitization_collisions() {
-        assert_ne!(cache_path_key("owner/repo-a"), cache_path_key("owner-repo/a"));
+        assert_ne!(cache_path_key("a_b/c"), cache_path_key("a/b_c"));
         assert_eq!(cache_path_key("owner/repo"), "6f776e65722f7265706f");
     }
 }

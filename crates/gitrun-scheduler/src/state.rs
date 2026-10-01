@@ -25,8 +25,9 @@ pub enum StateError {
     Io(#[from] std::io::Error),
     #[error("invalid state file: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("invalid persisted scheduler state: {0}")]
+    Invalid(String),
 }
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct StateFile {
     /// container name -> unix seconds when it was first observed idle.

@@ -50,6 +50,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 const HYPERVISOR_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const IMAGE_CLONE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
@@ -360,6 +361,14 @@ fn run(kind: HypervisorKind, args: &[&str]) -> Result<Output> {
 }
 
 fn run_tool(program: &str, args: &[&str]) -> Result<Output> {
+    run_tool_with_timeout(program, args, HYPERVISOR_COMMAND_TIMEOUT)
+}
+
+fn run_tool_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Output> {
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -389,7 +398,7 @@ fn run_tool(program: &str, args: &[&str]) -> Result<Output> {
     });
 
     let deadline = Instant::now()
-        .checked_add(HYPERVISOR_COMMAND_TIMEOUT)
+        .checked_add(timeout)
         .unwrap_or_else(Instant::now);
 
     let status = loop {
@@ -438,6 +447,23 @@ fn run_checked(kind: HypervisorKind, args: &[&str]) -> Result<String> {
 
 fn run_tool_checked(program: &str, args: &[&str]) -> Result<()> {
     let output = run_tool(program, args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(VmError::Command(if stderr.is_empty() {
+            format!("{program} command '{}' failed", args.join(" "))
+        } else {
+            stderr
+        }));
+    }
+    Ok(())
+}
+
+fn run_tool_checked_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<()> {
+    let output = run_tool_with_timeout(program, args, timeout)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(VmError::Command(if stderr.is_empty() {
@@ -548,7 +574,7 @@ fn create_kvm_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     }
 
     let clone_str = clone.to_string_lossy().into_owned();
-    run_tool_checked(
+    run_tool_checked_with_timeout(
         "qemu-img",
         &[
             "create",
@@ -558,6 +584,7 @@ fn create_kvm_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
             &config.base_disk_image,
             &clone_str,
         ],
+        IMAGE_CLONE_TIMEOUT,
     )?;
     Ok((clone, true))
 }
@@ -578,7 +605,7 @@ fn create_virtualbox_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     }
 
     let clone_str = clone.to_string_lossy().into_owned();
-    run_tool_checked(
+    run_tool_checked_with_timeout(
         "VBoxManage",
         &[
             "clonemedium",
@@ -587,6 +614,7 @@ fn create_virtualbox_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
             "--format",
             "VDI",
         ],
+        IMAGE_CLONE_TIMEOUT,
     )?;
     Ok((clone, true))
 }

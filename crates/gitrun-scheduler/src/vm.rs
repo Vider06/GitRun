@@ -8,7 +8,8 @@
 //! `logic_containers.rs`); the *containers* inside that VM are still the
 //! scaling unit, created and destroyed the same way Linux runner containers
 //! are — just via a remote Docker host (`docker::DockerHost::Remote`)
-//! pointed at the VM's IP.
+//! pointed at the VM's Docker endpoint (guest IP for KVM, host-side forwarded
+//! localhost endpoint for VirtualBox).
 //!
 //! Hypervisor choice: **KVM/libvirt is preferred** — it's native to the
 //! Linux kernel, has no licensing caveats for commercial use (VirtualBox's
@@ -335,9 +336,7 @@ pub fn is_virtualbox_installed() -> bool {
 pub fn install_instructions(kind: HypervisorKind) -> &'static str {
     match kind {
         HypervisorKind::Kvm => {
-            "Install libvirt + virsh (e.g. `apt install qemu-kvm libvirt-daemon-system virsh` on Debian/Ubuntu), \
-             ensure /dev/kvm exists (check with `ls /dev/kvm`; if missing, verify virtualization is enabled in \
-             the host's BIOS/hypervisor settings), and add the GitRun service user to the `libvirt` group."
+            "Install libvirt + virsh + qemu-img (e.g. `apt install qemu-kvm libvirt-daemon-system libvirt-clients qemu-utils` on Debian/Ubuntu), \n             ensure /dev/kvm exists (check with `ls /dev/kvm`; if missing, verify virtualization is enabled in \n             the host's BIOS/hypervisor settings), and add the GitRun service user to the `libvirt` group."
         }
         HypervisorKind::VirtualBox => {
             "Install VirtualBox from your distro's package manager or Oracle's .deb/.rpm (headless use does not \
@@ -483,8 +482,41 @@ fn xml_escape_attr(value: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-        .replace('\\'', "&apos;")
+        .replace('\'', "&apos;")
         .replace('"', "&quot;")
+}
+
+fn ensure_clone_path_safe(config: &VmConfig, clone: &Path) -> Result<()> {
+    let base = Path::new(&config.base_disk_image);
+    let base_canonical = fs::canonicalize(base)?;
+    let parent = clone
+        .parent()
+        .ok_or_else(|| VmError::InvalidConfig("managed disk path has no parent".into()))?;
+    let parent_canonical = fs::canonicalize(parent)?;
+    let clone_file_name = clone
+        .file_name()
+        .ok_or_else(|| VmError::InvalidConfig("managed disk path has no file name".into()))?;
+    let clone_canonical = parent_canonical.join(clone_file_name);
+
+    if clone_canonical == base_canonical {
+        return Err(VmError::InvalidConfig(format!(
+            "VM '{}' managed disk path would overwrite its base image",
+            config.name
+        )));
+    }
+
+    if fs::symlink_metadata(clone)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(VmError::InvalidConfig(format!(
+            "VM '{}' managed disk path is a symlink: {}",
+            config.name,
+            clone.display()
+        )));
+    }
+
+    Ok(())
 }
 
 fn ensure_base_disk(config: &VmConfig) -> Result<()> {
@@ -501,7 +533,8 @@ fn ensure_base_disk(config: &VmConfig) -> Result<()> {
 fn create_kvm_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     ensure_base_disk(config)?;
     let clone = managed_disk_path(config, "qcow2");
-    if clone.exists() {
+    ensure_clone_path_safe(config, &clone)?;
+    if clone.exists()
         if !clone.is_file() {
             return Err(VmError::InvalidConfig(format!(
                 "VM '{}' managed disk path is not a regular file: {}",
@@ -530,7 +563,8 @@ fn create_kvm_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
 fn create_virtualbox_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     ensure_base_disk(config)?;
     let clone = managed_disk_path(config, "vdi");
-    if clone.exists() {
+    ensure_clone_path_safe(config, &clone)?;
+    if clone.exists()
         if !clone.is_file() {
             return Err(VmError::InvalidConfig(format!(
                 "VM '{}' managed disk path is not a regular file: {}",
@@ -717,10 +751,12 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
     })();
 
     if let Err(error) = result {
-        let _ = run_checked(
-            HypervisorKind::VirtualBox,
-            &["unregistervm", &config.name, "--delete"],
-        );
+        let unregister_args = if created_disk {
+            vec!["unregistervm", config.name.as_str(), "--delete"]
+        } else {
+            vec!["unregistervm", config.name.as_str()]
+        };
+        let _ = run_checked(HypervisorKind::VirtualBox, &unregister_args);
         cleanup_created_disk(&disk, created_disk);
         return Err(error);
     }

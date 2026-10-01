@@ -275,25 +275,23 @@ impl GitHubClient {
         Ok(response)
     }
 
-    /// Follows `Link: rel="next"` pagination, returning every page's raw JSON
-    /// body collected into one `Vec`. (Only `list_runners` uses this
-    /// generically; `queued_self_hosted_jobs` and its per-run helper
-    /// paginate inline instead, since they need to filter+count each page's
-    /// jobs on the fly rather than materialize every page in memory.)
-    fn get_all_pages(&self, path: &str, per_page: u32) -> Result<Vec<serde_json::Value>> {
+    /// Follows `Link: rel="next"` pagination and parses each runners page
+    /// immediately, so a repository with many registered runners does not
+    /// require materializing every page as an intermediate JSON value.
+    fn get_all_runner_pages(&self, path: &str, per_page: u32) -> Result<Vec<Runner>> {
         let mut url = format!("{API_BASE}{path}?per_page={per_page}");
-        let mut pages = Vec::new();
+        let mut runners = Vec::new();
         loop {
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
-            let body: serde_json::Value = response.json()?;
-            pages.push(body);
+            let parsed: RunnersResponse = response.json()?;
+            runners.extend(parsed.runners);
             match next_url {
                 Some(next) => url = next,
                 None => break,
             }
         }
-        Ok(pages)
+        Ok(runners)
     }
 
     pub fn registration_token(&self, repo: &str) -> Result<String> {
@@ -310,19 +308,14 @@ impl GitHubClient {
 
     pub fn list_runners(&self, repo: &str) -> Result<Vec<Runner>> {
         let (owner, name) = split_repo(repo)?;
-        let mut runners = Vec::new();
-        for page in self.get_all_pages(
+        self.get_all_runner_pages(
             &format!(
                 "/repos/{}/{}/actions/runners",
                 encode_path_segment(owner),
                 encode_path_segment(name)
             ),
             100,
-        )? {
-            let parsed: RunnersResponse = serde_json::from_value(page)?;
-            runners.extend(parsed.runners);
-        }
-        Ok(runners)
+        )
     }
 
     pub fn delete_runner(&self, repo: &str, runner_id: u64) -> Result<()> {
@@ -499,19 +492,51 @@ fn decode_contents_base64(raw: &str) -> std::result::Result<String, String> {
 /// pagination mechanism (RFC 8288). Returns `None` when there is no next page.
 fn parse_next_link(headers: &reqwest::header::HeaderMap) -> Option<String> {
     let raw = headers.get(reqwest::header::LINK)?.to_str().ok()?;
-    raw.split(',').find_map(|part| {
+    split_link_values(raw).into_iter().find_map(|part| {
         let mut segments = part.split(';');
         let url_part = segments.next()?.trim();
-        let is_next = segments.any(|s| s.trim() == "rel=\"next\"");
+        if !url_part.starts_with('<') || !url_part.ends_with('>') {
+            return None;
+        }
+        let is_next = segments.any(|s| {
+            let mut pair = s.splitn(2, '=');
+            let key = pair.next().map(str::trim);
+            let value = pair.next().map(str::trim);
+            matches!((key, value), (Some("rel"), Some("\"next\"")) | (Some("rel"), Some("next")))
+        });
         if !is_next {
             return None;
         }
-        url_part
-            .trim_start_matches('<')
-            .trim_end_matches('>')
-            .to_owned()
-            .into()
+        Some(url_part[1..url_part.len() - 1].to_owned())
     })
+}
+
+/// Splits a Link header into link-values while respecting quoted strings.
+/// A comma inside a quoted parameter value therefore cannot accidentally
+/// terminate the current link-value.
+fn split_link_values(raw: &str) -> Vec<&str> {
+    let mut values = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+    let mut escaped = false;
+
+    for (index, byte) in raw.bytes().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match byte {
+            b'\\' if in_quotes => escaped = true,
+            b'"' => in_quotes = !in_quotes,
+            b',' if !in_quotes => {
+                values.push(raw[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    values.push(raw[start..].trim());
+    values
 }
 
 #[cfg(test)]
@@ -563,6 +588,21 @@ mod tests {
         headers.insert(
             reqwest::header::LINK,
             "<https://api.github.com/resource?page=2>; rel=\"next\", <https://api.github.com/resource?page=5>; rel=\"last\""
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(
+            parse_next_link(&headers).as_deref(),
+            Some("https://api.github.com/resource?page=2")
+        );
+    }
+
+    #[test]
+    fn parses_link_header_with_comma_inside_quoted_parameter() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::LINK,
+            "<https://api.github.com/resource?page=2>; title=\"a,b\"; rel=\"next\", <https://api.github.com/resource?page=5>; rel=\"last\""
                 .parse()
                 .unwrap(),
         );

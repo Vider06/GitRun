@@ -100,12 +100,11 @@ pub struct VmConfig {
     /// callers shouldn't assume which one actually owns a given name without
     /// checking `VmConfig::hypervisor`.
     pub name: String,
-    /// Hypervisor to *try first*. Not necessarily what ends up running this
-    /// VM: `resolve_hypervisor_choice`'s KVM-preferred, ask-before-fallback
-    /// flow (see `gitrun-scheduler::vm_resolution`) can end up using
-    /// VirtualBox for a run even when this says `Kvm`, if KVM fails and the
-    /// operator picks the fallback. This field is the configured starting
-    /// point/preference, not a runtime guarantee.
+    /// Hypervisor used by direct VM lifecycle calls. The automatic
+    /// `vm_resolution` flow starts with its KVM-preferred probing policy and
+    /// records the actual hypervisor selected for this VM; this field is still
+    /// part of the persisted VM definition and changes its configuration
+    /// identity.
     pub hypervisor: HypervisorKind,
     /// Path to the base disk image to clone from when provisioning — e.g. a
     /// prepared Windows Server image with Docker already installed, or a
@@ -221,7 +220,6 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
 pub(crate) fn validate_vm_config(config: &VmConfig) -> Result<()> {
     validate_vm_configs(std::slice::from_ref(config))
 }
-
 
 /// Saves VM definitions to `{state_dir}/vm-configs.json`, same atomic
 /// write-then-rename pattern as `logic_containers::save_rules`. Not

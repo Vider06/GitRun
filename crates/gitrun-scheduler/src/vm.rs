@@ -54,7 +54,7 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub enum VmError {
-    #[error("{0:?} is not installed or not usable on this host (no /dev/kvm, or the CLI tool is missing)")]
+    #[error("{0:?} is not installed or not usable on this host")]
     HypervisorUnavailable(HypervisorKind),
     #[error("invalid VM configuration file: {0}")]
     Decode(#[from] serde_json::Error),

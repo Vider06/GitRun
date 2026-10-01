@@ -26,7 +26,7 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
     }
 
     let _lock = crate::gtuu::GtuuLock::acquire(&PathBuf::from(&config.state_dir))?;
-    let current_version = current_gitrun_version();
+    let current_version = current_gitrun_version()?;
     let mut report = GtuuStartupReport {
         current_version: current_version.clone(),
         target_version: None,
@@ -50,21 +50,48 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         }
     };
 
+    let mut runner_image = config.runner_image.clone();
+    let mut runner_image_ready = true;
+
     if let Some(manifest) = manifest.as_ref() {
         match update_gitrun_from_manifest(&config, manifest, &current_version) {
-            Ok(updated) => report.gitrun_updated = updated,
+            Ok(updated) => {
+                report.gitrun_updated = updated;
+                if updated {
+                    report.current_version = manifest.version.clone();
+                }
+            }
             Err(error) => report.gitrun_update_error = Some(error.to_string()),
         }
 
         if let Some(image) = &manifest.runner_image {
-            if let Err(error) = gitrun_updater::update_runner_image(image) {
-                report.runner_image_error = Some(error.to_string());
-            } else if let Some(path) = configured_config_file() {
-                if let Err(error) = gitrun_updater::pin_runner_image(path, image) {
+            match gitrun_updater::update_runner_image(image) {
+                Ok(()) => match configured_config_file() {
+                    Some(path) => match gitrun_updater::pin_runner_image(path, image) {
+                        Ok(()) => runner_image = image.reference.clone(),
+                        Err(error) => {
+                            report.runner_image_error = Some(error.to_string());
+                            runner_image_ready = false;
+                        }
+                    },
+                    None => {
+                        report.runner_image_error =
+                            Some("runner image updated but no GitRun config file is available to pin it".into());
+                        runner_image_ready = false;
+                    }
+                },
+                Err(error) => {
                     report.runner_image_error = Some(error.to_string());
+                    runner_image_ready = false;
                 }
             }
         }
+    }
+
+    if !runner_image_ready {
+        report.containers_error =
+            Some("permanent containers were not reconciled because the runner image state is inconsistent".into());
+        return Ok(report);
     }
 
     let client = match build_github_client(&config) {
@@ -85,7 +112,7 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
 
     let gsr_policy_env = super::gsr_policy_env(&config);
     let gtuu_config = GtuuConfig {
-        image: &config.runner_image,
+        image: &runner_image,
         repositories: &config.repositories,
         runner_labels: &config.runner_labels,
         ephemeral: config.ephemeral,
@@ -202,30 +229,30 @@ fn configured_config_file() -> Option<PathBuf> {
         })
 }
 
-fn current_gitrun_version() -> String {
-    std::env::var("GITRUN_VERSION")
+fn current_gitrun_version() -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(value) = std::env::var("GITRUN_VERSION")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::fs::read_to_string("/usr/share/gitrun/version.txt")
-                .ok()
-                .map(|v| v.trim().to_owned())
-        })
-        .or_else(|| {
-            std::fs::read_to_string("version.txt")
-                .ok()
-                .map(|v| v.trim().to_owned())
-        })
-        .unwrap_or_else(|| "0.0.0".into())
+    {
+        return Ok(value);
+    }
+
+    for path in ["/usr/share/gitrun/version.txt", "version.txt"] {
+        if let Ok(value) = std::fs::read_to_string(path) {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Ok(value.to_owned());
+            }
+        }
+    }
+
+    Err("unable to determine the installed GitRun version".into())
 }
 
-fn target_triple_for_gitrun() -> String {
+fn target_triple_for_gitrun() -> Result<String, Box<dyn std::error::Error>> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => "x86_64-unknown-linux-gnu".into(),
-        ("linux", "aarch64") => "aarch64-unknown-linux-gnu".into(),
-        ("windows", "x86_64") => "x86_64-pc-windows-msvc".into(),
-        ("macos", "x86_64") => "x86_64-apple-darwin".into(),
-        ("macos", "aarch64") => "aarch64-apple-darwin".into(),
-        (os, arch) => format!("{arch}-{os}"),
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu".into()),
+        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu".into()),
+        (os, arch) => Err(format!("unsupported GitRun self-update target: {os}-{arch}").into()),
     }
 }

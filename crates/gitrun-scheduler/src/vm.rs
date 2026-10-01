@@ -336,7 +336,9 @@ pub fn is_virtualbox_installed() -> bool {
 pub fn install_instructions(kind: HypervisorKind) -> &'static str {
     match kind {
         HypervisorKind::Kvm => {
-            "Install libvirt + virsh + qemu-img (e.g. `apt install qemu-kvm libvirt-daemon-system libvirt-clients qemu-utils` on Debian/Ubuntu), \n             ensure /dev/kvm exists (check with `ls /dev/kvm`; if missing, verify virtualization is enabled in \n             the host's BIOS/hypervisor settings), and add the GitRun service user to the `libvirt` group."
+            "Install libvirt + virsh + qemu-img (e.g. `apt install qemu-kvm libvirt-daemon-system libvirt-clients qemu-utils` on Debian/Ubuntu), \
+             ensure /dev/kvm exists (check with `ls /dev/kvm`; if missing, verify virtualization is enabled in \
+             the host's BIOS/hypervisor settings), and add the GitRun service user to the `libvirt` group."
         }
         HypervisorKind::VirtualBox => {
             "Install VirtualBox from your distro's package manager or Oracle's .deb/.rpm (headless use does not \
@@ -534,7 +536,7 @@ fn create_kvm_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     ensure_base_disk(config)?;
     let clone = managed_disk_path(config, "qcow2");
     ensure_clone_path_safe(config, &clone)?;
-    if clone.exists()
+    if clone.exists() {
         if !clone.is_file() {
             return Err(VmError::InvalidConfig(format!(
                 "VM '{}' managed disk path is not a regular file: {}",
@@ -564,7 +566,7 @@ fn create_virtualbox_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     ensure_base_disk(config)?;
     let clone = managed_disk_path(config, "vdi");
     ensure_clone_path_safe(config, &clone)?;
-    if clone.exists()
+    if clone.exists() {
         if !clone.is_file() {
             return Err(VmError::InvalidConfig(format!(
                 "VM '{}' managed disk path is not a regular file: {}",

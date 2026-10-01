@@ -680,6 +680,53 @@ jobs:
           mkdir -p "$NPM_CONFIG_CACHE"
           npm install --ignore-scripts --no-audit --no-fund
 
+      - name: Install ImageMagick
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1; then
+            echo "ImageMagick is already available."
+          else
+            echo "Installing ImageMagick..."
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends imagemagick
+          fi
+          if command -v magick >/dev/null 2>&1; then
+            magick -version | head -n 1
+          elif command -v convert >/dev/null 2>&1; then
+            convert -version | head -n 1
+          else
+            echo "::error::ImageMagick installation did not provide magick or convert."
+            exit 1
+          fi
+
+      - name: Normalize Tauri icons to RGBA
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v magick >/dev/null 2>&1; then
+            IM=(magick)
+          elif command -v convert >/dev/null 2>&1; then
+            IM=(convert)
+          else
+            echo "::error::ImageMagick (magick/convert) is required to normalize Tauri icons."
+            exit 1
+          fi
+
+          shopt -s nullglob
+          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+          if [ "${#icons[@]}" -eq 0 ]; then
+            echo "::error::No Tauri PNG icons found."
+            exit 1
+          fi
+
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            "${IM[@]}" "$icon" -alpha on "PNG32:$tmp"
+            mv "$tmp" "$icon"
+          done
+          echo "Normalized ${#icons[@]} Tauri PNG icons to RGBA."
+
       - name: Generate Tauri icon set
         working-directory: crates/gitrun-dashboard-tauri
         shell: bash

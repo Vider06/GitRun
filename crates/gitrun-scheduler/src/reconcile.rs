@@ -269,6 +269,20 @@ mod tests {
     }
 
     #[test]
+    fn desired_count_saturates_before_clamping() {
+        let mut input = base_input();
+        input.min_runners = 1;
+        input.max_runners = u32::MAX;
+        input.queued_jobs = u32::MAX;
+        input.runners = vec![RunnerView {
+            name: "busy".into(),
+            online: true,
+            busy: true,
+        }];
+        assert_eq!(desired_count(&input), u32::MAX);
+    }
+
+    #[test]
     fn desired_count_scales_with_queue_up_to_maximum() {
         let mut input = base_input();
         input.queued_jobs = 20;
@@ -390,6 +404,20 @@ mod tests {
         assert!(actions
             .iter()
             .all(|a| !matches!(a, Action::CreateRunner { .. })));
+    }
+
+    #[test]
+    fn transitional_container_is_not_treated_as_exited() {
+        let mut input = base_input();
+        input.containers = vec![ContainerView {
+            name: "restarting".into(),
+            health: ContainerHealth::Starting,
+            permanent: true,
+        }];
+        let actions = plan(&input);
+        assert!(!actions.contains(&Action::RemoveExited {
+            name: "restarting".into()
+        }));
     }
 
     #[test]

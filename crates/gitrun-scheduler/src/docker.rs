@@ -55,12 +55,26 @@ impl DockerHost {
 
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<std::process::Output> {
     let mut command = Command::new("docker");
-    if let Some(addr) = host.env_value() {
-        command.env("DOCKER_HOST", addr);
+
+    // Local always means GitRun's local Docker daemon, regardless of any
+    // DOCKER_HOST/DOCKER_CONTEXT inherited from the scheduler service
+    // environment. Remote hosts opt into an explicit DOCKER_HOST below.
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH");
+
+    match host {
+        DockerHost::Local => {
+            command.env("DOCKER_HOST", "unix:///var/run/docker.sock");
+        }
+        DockerHost::Remote(addr) => {
+            command.env("DOCKER_HOST", addr);
+        }
     }
+
     Ok(command.args(args).output()?)
 }
-
 fn run(args: &[&str]) -> Result<std::process::Output> {
     run_on(&DockerHost::Local, args)
 }
@@ -153,14 +167,19 @@ pub fn container_command_lines_on(host: &DockerHost, container_name: &str) -> Re
 /// prints a `COMMAND` header line followed by one full command line per
 /// process.
 fn parse_top_output(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .skip(1) // header line: "COMMAND"
+    let mut lines = output.lines();
+    let first = lines.next();
+    let lines = if first.map(str::trim) == Some("COMMAND") {
+        lines
+    } else {
+        output.lines()
+    };
+
+    lines
         .map(str::to_owned)
         .filter(|line| !line.trim().is_empty())
         .collect()
 }
-
 /// Lists every GitRun-managed runner container regardless of repo — what
 /// `gsr_poll`'s loop needs (it watches all runners at once, not one repo
 /// at a time). Same `gitrun.runner=true` label filter as
@@ -207,7 +226,12 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
 
     let mut containers = Vec::new();
     for name in output.lines().map(str::trim).filter(|n| !n.is_empty()) {
-        let status = container_status_string(host, name).unwrap_or_default();
+        let Some(status) = container_status_string(host, name)? else {
+            // The container disappeared between "docker ps" and "inspect" —
+            // a normal reconciliation race. It must not turn into an empty
+            // status that downstream code could interpret as a dead container.
+            continue;
+        };
         let permanent = container_is_permanent_on(host, name).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
         containers.push(ManagedContainer {
             name: name.to_owned(),
@@ -236,26 +260,49 @@ pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Resul
         ],
     )?;
     if !output.status.success() {
-        return Ok(None);
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if is_missing_container_error(&stderr) {
+            return Ok(None);
+        }
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker inspect {container_name} failed")
+        } else {
+            stderr
+        }));
     }
     let label = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
-fn container_status_string(host: &DockerHost, name: &str) -> Result<String> {
+fn container_status_string(host: &DockerHost, name: &str) -> Result<Option<String>> {
     let output = run_on(host, &["inspect", "-f", "{{json .State}}", name])?;
     if !output.status.success() {
-        return Ok(String::new());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if is_missing_container_error(&stderr) {
+            return Ok(None);
+        }
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker inspect {name} failed")
+        } else {
+            stderr
+        }));
     }
+
     let raw = String::from_utf8_lossy(&output.stdout);
-    let value: Value = serde_json::from_str(raw.trim()).unwrap_or(Value::Null);
-    Ok(value
+    let value: Value = serde_json::from_str(raw.trim())?;
+    let status = value
         .get("Status")
         .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned())
+        .ok_or_else(|| DockerError::Command(format!("docker inspect {name} returned no container status")))?;
+    Ok(Some(status.to_owned()))
 }
 
+fn is_missing_container_error(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("no such container")
+        || normalized.contains("no such object")
+        || normalized.contains("is not running")
+}
 pub fn container_is_permanent(name: &str) -> Result<bool> {
     container_is_permanent_on(&DockerHost::Local, name)
 }
@@ -288,6 +335,17 @@ pub fn restart_container_on(host: &DockerHost, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Produces a collision-free path component from a repository name.
+/// Hex-encoding the original bytes is injective, unlike `sanitize`, which
+/// intentionally replaces different punctuation with the same character.
+fn cache_path_key(repo: &str) -> String {
+    let mut key = String::with_capacity(repo.len() * 2);
+    for byte in repo.bytes() {
+        use std::fmt::Write;
+        write!(&mut key, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    key
+}
 /// Deterministic per-container volume name for `RunnerHomeBackend::Volume`,
 /// so `remove_container_on` can clean it up without having to remember it
 /// separately (the scheduler doesn't persist per-container metadata beyond
@@ -301,18 +359,24 @@ pub fn remove_container(name: &str) -> Result<()> {
 }
 
 pub fn remove_container_on(host: &DockerHost, name: &str) -> Result<()> {
-    // `docker rm -f` on an already-missing container is a no-op failure we
-    // don't care about — mirrors the Python `check=False` + warn-only style.
-    let _ = run_on(host, &["rm", "-f", name]);
+    let output = run_on(host, &["rm", "-f", name])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if !is_missing_container_error(&stderr) {
+            return Err(DockerError::Command(if stderr.is_empty() {
+                format!("docker rm -f {name} failed")
+            } else {
+                stderr
+            }));
+        }
+    }
+
     // Best-effort: remove the disk-backed home volume, if this container
     // was created with RunnerHomeBackend::Volume. Harmless no-op (fails
-    // silently) for tmpfs-backed containers, which never had one — without
-    // this, switching to the "volume" backend would leak one named volume
-    // on disk per runner ever created, forever.
+    // silently) for tmpfs-backed containers, which never had one.
     let _ = run_on(host, &["volume", "rm", "-f", &home_volume_name(name)]);
     Ok(())
 }
-
 /// Parameters needed to create a runner container. Kept as a plain struct
 /// (rather than a long argument list) so `reconcile.rs` can describe "create
 /// this runner" as data without depending on this module's function signature.
@@ -400,7 +464,7 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
 }
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
-    let slug = sanitize(spec.repo, '_');
+    let cache_key = cache_path_key(spec.repo);
     let labels = ensure_label(spec.labels, "gitrun-ci");
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
@@ -489,7 +553,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "-e".into(),
             "CARGO_HOME=/var/lib/gitrun/shared/cargo".into(),
             "-e".into(),
-            format!("CARGO_TARGET_DIR=/var/lib/gitrun/shared/cargo-target/{slug}"),
+            format!("CARGO_TARGET_DIR=/var/lib/gitrun/shared/cargo-target/{cache_key}"),
             "-e".into(),
             "PIP_CACHE_DIR=/var/lib/gitrun/shared/pip".into(),
             "-e".into(),
@@ -673,5 +737,19 @@ mod tests {
     #[test]
     fn parse_top_output_on_header_only_is_empty() {
         assert_eq!(parse_top_output("COMMAND\n"), Vec::<String>::new());
+    }
+    #[test]
+    fn parse_top_output_without_header_keeps_first_line() {
+        let raw = "cargo build --release\nsh -c echo hi\n";
+        assert_eq!(
+            parse_top_output(raw),
+            vec!["cargo build --release", "sh -c echo hi"]
+        );
+    }
+
+    #[test]
+    fn cache_path_key_is_collision_free_for_sanitization_collisions() {
+        assert_ne!(cache_path_key("owner/repo-a"), cache_path_key("owner-repo/a"));
+        assert_eq!(cache_path_key("owner/repo"), "6f776e65722f7265706f");
     }
 }

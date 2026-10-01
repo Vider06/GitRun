@@ -389,6 +389,12 @@ fn reconcile_repo(
     // desired_count()'s formula (busy + queued, clamped) is unchanged.
     let queued_job_labels = client.queued_self_hosted_jobs_with_labels(repo)?;
     let queued_jobs = queued_job_labels.len() as u32;
+    let logic_rules =
+        logic_containers::load_rules(&state_dir.join("logic-containers.json")).map_err(|error| {
+            std::io::Error::other(format!(
+                "invalid Logic Containers configuration for {repo}: {error}"
+            ))
+        })?;
 
     let mut state = SchedulerState::load(state_dir)?;
     let live_names: Vec<String> = containers
@@ -455,13 +461,7 @@ fn reconcile_repo(
             .collect(),
         queued_jobs,
         queued_job_labels,
-        configured_runner_labels: config
-            .runner_labels
-            .split(',')
-            .map(str::trim)
-            .filter(|label| !label.is_empty())
-            .map(str::to_owned)
-            .collect(),
+        logic_rules,
         idle,
         recovery_enabled: config.auto_container_recovery,
         recovery_cooldown: Duration::from_secs(config.container_recovery_cooldown),

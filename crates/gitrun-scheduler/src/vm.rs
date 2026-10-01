@@ -448,6 +448,119 @@ fn run_tool_checked(program: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+fn stable_hash(input: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn managed_disk_path(config: &VmConfig, extension: &str) -> PathBuf {
+    let base = Path::new(&config.base_disk_image);
+    let parent = base.parent().unwrap_or_else(|| Path::new("."));
+    let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("disk");
+    let safe_name = config
+        .name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let hash = stable_hash(&config.base_disk_image);
+    parent.join(format!(
+        "{stem}-gitrun-{safe_name}-{hash:016x}.{extension}"
+    ))
+}
+
+fn xml_escape_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace(''', "&apos;")
+        .replace('"', "&quot;")
+}
+
+fn ensure_base_disk(config: &VmConfig) -> Result<()> {
+    let path = Path::new(&config.base_disk_image);
+    if !path.is_file() {
+        return Err(VmError::InvalidConfig(format!(
+            "VM '{}' base disk image is not a regular file: {}",
+            config.name, config.base_disk_image
+        )));
+    }
+    Ok(())
+}
+
+fn create_kvm_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
+    ensure_base_disk(config)?;
+    let clone = managed_disk_path(config, "qcow2");
+    if clone.exists() {
+        if !clone.is_file() {
+            return Err(VmError::InvalidConfig(format!(
+                "VM '{}' managed disk path is not a regular file: {}",
+                config.name,
+                clone.display()
+            )));
+        }
+        return Ok((clone, false));
+    }
+
+    let clone_str = clone.to_string_lossy().into_owned();
+    run_tool_checked(
+        "qemu-img",
+        &[
+            "create",
+            "-f",
+            "qcow2",
+            "-b",
+            &config.base_disk_image,
+            &clone_str,
+        ],
+    )?;
+    Ok((clone, true))
+}
+
+fn create_virtualbox_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
+    ensure_base_disk(config)?;
+    let clone = managed_disk_path(config, "vdi");
+    if clone.exists() {
+        if !clone.is_file() {
+            return Err(VmError::InvalidConfig(format!(
+                "VM '{}' managed disk path is not a regular file: {}",
+                config.name,
+                clone.display()
+            )));
+        }
+        return Ok((clone, false));
+    }
+
+    let clone_str = clone.to_string_lossy().into_owned();
+    run_tool_checked(
+        "VBoxManage",
+        &[
+            "clonemedium",
+            &config.base_disk_image,
+            &clone_str,
+            "--format",
+            "VDI",
+        ],
+    )?;
+    Ok((clone, true))
+}
+
+fn cleanup_created_disk(path: &Path, created: bool) {
+    if created {
+        let _ = fs::remove_file(path);
+    }
+}
+
 /// Creates a VM from `config` if it doesn't already exist, using whichever
 /// hypervisor `config.hypervisor` names. Idempotent: safe to call on every
 /// GitRun startup for every configured VM.
@@ -459,13 +572,12 @@ pub fn ensure_vm(config: &VmConfig) -> Result<()> {
 }
 
 fn ensure_vm_kvm(config: &VmConfig) -> Result<()> {
+    validate_vm_configs(std::slice::from_ref(config))?;
     if vm_exists(HypervisorKind::Kvm, &config.name)? {
         return Ok(());
     }
-    // virt-install would be the friendlier tool for this, but it's a
-    // separate package from libvirt/virsh; using `virsh define` with a
-    // minimal generated domain XML keeps this to the one CLI tool already
-    // required for everything else in this module.
+
+    let (disk, created_disk) = create_kvm_disk_clone(config)?;
     let xml = format!(
         r#"<domain type='kvm'>
   <name>{name}</name>
@@ -485,77 +597,134 @@ fn ensure_vm_kvm(config: &VmConfig) -> Result<()> {
     <graphics type='none'/>
   </devices>
 </domain>"#,
-        name = config.name,
+        name = xml_escape_attr(&config.name),
         memory_mb = config.memory_mb,
         cpus = config.cpus,
-        disk = config.base_disk_image,
+        disk = xml_escape_attr(&disk.to_string_lossy()),
     );
-    let tmp_path = std::env::temp_dir().join(format!("gitrun-vm-{}.xml", config.name));
-    std::fs::write(&tmp_path, xml)?;
+
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = std::env::temp_dir().join(format!(
+        "gitrun-vm-{}-{}-{}.xml",
+        std::process::id(),
+        sequence,
+        stable_hash(&config.name)
+    ));
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            cleanup_created_disk(&disk, created_disk);
+            return Err(error.into());
+        }
+    };
+    use std::io::Write;
+    if let Err(error) = file
+        .write_all(xml.as_bytes())
+        .and_then(|_| file.sync_all())
+    {
+        let _ = fs::remove_file(&tmp_path);
+        cleanup_created_disk(&disk, created_disk);
+        return Err(error.into());
+    }
+    drop(file);
+
     let path_str = tmp_path.to_string_lossy().into_owned();
-    run_checked(HypervisorKind::Kvm, &["define", &path_str])?;
-    let _ = std::fs::remove_file(&tmp_path);
+    let result = run_checked(HypervisorKind::Kvm, &["define", &path_str]);
+    let _ = fs::remove_file(&tmp_path);
+
+    if let Err(error) = result {
+        cleanup_created_disk(&disk, created_disk);
+        return Err(error);
+    }
     Ok(())
 }
 
 fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
+    validate_vm_configs(std::slice::from_ref(config))?;
     if vm_exists(HypervisorKind::VirtualBox, &config.name)? {
         return Ok(());
     }
-    run_checked(
-        HypervisorKind::VirtualBox,
-        &[
-            "createvm",
-            "--name",
-            &config.name,
-            "--ostype",
-            "Other_64",
-            "--register",
-        ],
-    )?;
-    run_checked(
-        HypervisorKind::VirtualBox,
-        &[
-            "modifyvm",
-            &config.name,
-            "--memory",
-            &config.memory_mb.to_string(),
-            "--cpus",
-            &config.cpus.to_string(),
-            "--nic1",
-            "nat",
-            "--natpf1",
-            &format!("docker,tcp,,{},,{}", config.docker_port, config.docker_port),
-        ],
-    )?;
-    run_checked(
-        HypervisorKind::VirtualBox,
-        &[
-            "storagectl",
-            &config.name,
-            "--name",
-            "SATA",
-            "--add",
-            "sata",
-            "--controller",
-            "IntelAhci",
-        ],
-    )?;
-    run_checked(
-        HypervisorKind::VirtualBox,
-        &[
-            "storageattach",
-            &config.name,
-            "--storagectl",
-            "SATA",
-            "--port",
-            "0",
-            "--type",
-            "hdd",
-            "--medium",
-            &config.base_disk_image,
-        ],
-    )?;
+
+    let (disk, created_disk) = create_virtualbox_disk_clone(config)?;
+    let result = (|| -> Result<()> {
+        run_checked(
+            HypervisorKind::VirtualBox,
+            &[
+                "createvm",
+                "--name",
+                &config.name,
+                "--ostype",
+                "Other_64",
+                "--register",
+            ],
+        )?;
+
+        run_checked(
+            HypervisorKind::VirtualBox,
+            &[
+                "modifyvm",
+                &config.name,
+                "--memory",
+                &config.memory_mb.to_string(),
+                "--cpus",
+                &config.cpus.to_string(),
+                "--nic1",
+                "nat",
+                "--natpf1",
+                &format!(
+                    "docker,tcp,127.0.0.1,,{},,{}",
+                    config.docker_port, config.docker_port
+                ),
+            ],
+        )?;
+
+        run_checked(
+            HypervisorKind::VirtualBox,
+            &[
+                "storagectl",
+                &config.name,
+                "--name",
+                "SATA",
+                "--add",
+                "sata",
+                "--controller",
+                "IntelAhci",
+            ],
+        )?;
+
+        let disk_str = disk.to_string_lossy().into_owned();
+        run_checked(
+            HypervisorKind::VirtualBox,
+            &[
+                "storageattach",
+                &config.name,
+                "--storagectl",
+                "SATA",
+                "--port",
+                "0",
+                "--type",
+                "hdd",
+                "--medium",
+                &disk_str,
+            ],
+        )?;
+
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        let _ = run_checked(
+            HypervisorKind::VirtualBox,
+            &["unregistervm", &config.name, "--delete"],
+        );
+        cleanup_created_disk(&disk, created_disk);
+        return Err(error);
+    }
+
     Ok(())
 }
 

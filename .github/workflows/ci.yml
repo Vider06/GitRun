@@ -680,6 +680,13 @@ jobs:
           mkdir -p "$NPM_CONFIG_CACHE"
           npm install --ignore-scripts --no-audit --no-fund
 
+      - name: Generate Tauri icon set
+        working-directory: crates/gitrun-dashboard-tauri
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run tauri icon ../../assets/gitrun-icon.svg -- --output src-tauri/icons
+
       - name: Build Tauri application
         working-directory: crates/gitrun-dashboard-tauri
         shell: bash

@@ -287,8 +287,8 @@ fn sleep_interruptible(total: Duration, stopping: &Arc<AtomicBool>) {
 /// A `Backend::Vm` match no longer silently falls back to the local host:
 /// it goes through `vm_resolution::resolve_or_spawn`, which is itself
 /// non-blocking (see that module's doc comment) — if the VM isn't resolved
-/// yet this call, THIS cycle still falls back to local, but a background
-/// thread is working on bringing the VM up (KVM preferred, operator asked
+/// yet this call, no runner is created locally, but a background thread
+/// is working on bringing the VM up (KVM preferred, operator asked
 /// via the dashboard if it fails, VirtualBox as the explicit fallback) and
 /// a *later* cycle will get the real `DockerHost::Remote` once it's ready.
 ///

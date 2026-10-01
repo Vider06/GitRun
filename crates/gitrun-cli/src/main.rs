@@ -416,18 +416,28 @@ fn read_terminal_secret(prompt: &str) -> Result<String, Box<dyn std::error::Erro
 
     let mut value = String::new();
     let result = io::stdin().read_line(&mut value);
-
-    let echo_restored = std::process::Command::new("stty")
-        .arg("echo")
-        .status()?
-        .success();
+    let restore_result = std::process::Command::new("stty").arg("echo").status();
     println!();
 
-    if !echo_restored {
-        return Err("unable to restore terminal echo after secret input".into());
+    match (result, restore_result) {
+        (Err(error), Err(restore_error)) => Err(format!(
+            "secret input failed: {error}; unable to restore terminal echo: {restore_error}"
+        )
+        .into()),
+        (Err(error), Ok(status)) if !status.success() => Err(format!(
+            "secret input failed: {error}; unable to restore terminal echo"
+        )
+        .into()),
+        (Err(error), Ok(_)) => Err(error.into()),
+        (Ok(_), Err(error)) => Err(format!(
+            "unable to restore terminal echo after secret input: {error}"
+        )
+        .into()),
+        (Ok(_), Ok(status)) if !status.success() => {
+            Err("unable to restore terminal echo after secret input".into())
+        }
+        (Ok(_), Ok(_)) => Ok(value.trim().to_owned()),
     }
-
-    Ok(result.map(|_| value.trim().to_owned())?)
 }
 
 fn read_terminal_choice(prompt: &str, max: usize) -> Result<usize, Box<dyn std::error::Error>> {
@@ -896,7 +906,7 @@ enum Command {
     Scheduler,
     /// Launch the GitRun dashboard (default when no command is given).
     Dashboard,
-    /// Internal: run the elevated installation step (invoked by the setup wizard via pkexec).
+    /// Internal: run the elevated installation step (invoked by the setup wizard).
     #[command(name = "--install-root", hide = true)]
     InstallRoot {
         /// Path to the credential-bearing setup request file.

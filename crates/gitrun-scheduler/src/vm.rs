@@ -879,11 +879,14 @@ fn is_usable_guest_ip(ip: &str) -> bool {
         && !ip.is_broadcast()
 }
 
-/// Builds the `tcp://ip:port` address string for a VM's Docker daemon once
-/// its IP is known. Returned as a plain String — the caller wraps it in
-/// `docker::DockerHost::Remote(..)`.
-pub fn docker_host_address(ip: &str, docker_port: u16) -> String {
-    format!("tcp://{ip}:{docker_port}")
+/// Builds the Docker endpoint for a VM's Docker daemon.
+/// KVM uses the guest IP directly. VirtualBox uses the host-side NAT
+/// forwarding rule configured by `ensure_vm_virtualbox`.
+pub fn docker_host_address(kind: HypervisorKind, ip: &str, docker_port: u16) -> String {
+    match kind {
+        HypervisorKind::Kvm => format!("tcp://{ip}:{docker_port}"),
+        HypervisorKind::VirtualBox => format!("tcp://127.0.0.1:{docker_port}"),
+    }
 }
 
 #[cfg(test)]

@@ -9,7 +9,8 @@
 //! directly, so it stays testable without Docker installed.
 
 use serde_json::Value;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -25,6 +26,7 @@ pub enum DockerError {
 pub type Result<T> = std::result::Result<T, DockerError>;
 
 const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
+const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Where a Docker command actually runs. `Local` is the existing behavior
 /// (talks to the host's own Docker socket via the CLI's default). `Remote`
@@ -67,12 +69,50 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<std::process::Output> {
         }
     }
 
-    Ok(command.args(args).output()?)
+    let command_name = args.first().copied().unwrap_or("command");
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .args(args)
+        .spawn()?;
+    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
+
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(child.wait_with_output()?);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(DockerError::Command(format!(
+                "docker {command_name} timed out after {}s",
+                DOCKER_COMMAND_TIMEOUT.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn run_checked_on(host: &DockerHost, args: &[&str]) -> Result<String> {
+    let output = run_on(host, args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let command_name = args.first().copied().unwrap_or("command");
+        return Err(DockerError::Command(if stderr.is_empty() {
+            // Never include the complete argument vector here: docker run
+            // arguments can contain runner registration tokens and vault secrets.
+            format!("docker {command_name} failed with status {}", output.status)
+        } else {
+            stderr
+        }));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn run_checked(args: &[&str]) -> Result<String> {
     run_checked_on(&DockerHost::Local, args)
 }
+
 
 /// Sanitizes a string for use as part of a Docker container/volume name or
 /// label value: keeps alphanumerics, `_`, `.`, `-`, replaces everything else

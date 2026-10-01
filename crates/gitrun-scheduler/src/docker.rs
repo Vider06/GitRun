@@ -9,7 +9,9 @@
 //! directly, so it stays testable without Docker installed.
 
 use serde_json::Value;
-use std::process::{Command, Stdio};
+use std::io::Read;
+use std::process::{Command, Output, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -47,7 +49,7 @@ pub enum DockerHost {
 }
 
 
-fn run_on(host: &DockerHost, args: &[&str]) -> Result<std::process::Output> {
+fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
     let mut command = Command::new("docker");
 
     // A Docker context inherited from the scheduler environment must never
@@ -75,21 +77,50 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<std::process::Output> {
         .stderr(Stdio::piped())
         .args(args)
         .spawn()?;
-    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        DockerError::Command(format!("docker {command_name} did not provide stdout"))
+    })?;
+    let mut stderr = child.stderr.take().ok_or_else(|| {
+        DockerError::Command(format!("docker {command_name} did not provide stderr"))
+    })?;
 
+    // Drain both pipes concurrently so a chatty Docker CLI can never block
+    // waiting for the parent process to read a full pipe buffer.
+    let stdout_thread = thread::spawn(move || {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).map(|_| buf)
+    });
+    let stderr_thread = thread::spawn(move || {
+        let mut buf = Vec::new();
+        stderr.read_to_end(&mut buf).map(|_| buf)
+    });
+
+    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
     loop {
-        if child.try_wait()?.is_some() {
-            return Ok(child.wait_with_output()?);
+        if let Some(status) = child.try_wait()? {
+            let stdout = stdout_thread
+                .join()
+                .map_err(|_| DockerError::Command("docker stdout reader panicked".into()))??;
+            let stderr = stderr_thread
+                .join()
+                .map_err(|_| DockerError::Command("docker stderr reader panicked".into()))??;
+            return Ok(Output {
+                status,
+                stdout,
+                stderr,
+            });
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
             return Err(DockerError::Command(format!(
                 "docker {command_name} timed out after {}s",
                 DOCKER_COMMAND_TIMEOUT.as_secs()
             )));
         }
-        std::thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(50));
     }
 }
 

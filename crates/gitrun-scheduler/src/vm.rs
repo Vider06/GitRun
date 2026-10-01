@@ -676,7 +676,7 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
                 "nat",
                 "--natpf1",
                 &format!(
-                    "docker,tcp,127.0.0.1,,{},,{}",
+                    "docker,tcp,127.0.0.1,{},,{}",
                     config.docker_port, config.docker_port
                 ),
             ],
@@ -797,12 +797,19 @@ pub fn force_stop(kind: HypervisorKind, name: &str) -> Result<()> {
 /// Additions — both are the standard mechanism for each hypervisor and are
 /// not installed by this module (part of preparing `base_disk_image`).
 pub fn wait_for_ip(kind: HypervisorKind, name: &str, timeout: Duration) -> Result<String> {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        let ip = match kind {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .unwrap_or_else(Instant::now);
+    let mut last_error = None;
+
+    loop {
+        if Instant::now() >= deadline {
+            break;
+        }
+
+        let probe = match kind {
             HypervisorKind::Kvm => run_checked(kind, &["domifaddr", name])
-                .ok()
-                .and_then(|output| extract_kvm_ip(&output)),
+                .map(|output| extract_kvm_ip(&output)),
             HypervisorKind::VirtualBox => run_checked(
                 kind,
                 &[
@@ -812,17 +819,31 @@ pub fn wait_for_ip(kind: HypervisorKind, name: &str, timeout: Duration) -> Resul
                     "/VirtualBox/GuestInfo/Net/0/V4/IP",
                 ],
             )
-            .ok()
-            .and_then(|output| output.strip_prefix("Value: ").map(|s| s.trim().to_owned())),
+            .map(|output| extract_virtualbox_ip(&output)),
         };
-        if let Some(ip) = ip {
-            if !ip.is_empty() {
-                return Ok(ip);
+
+        match probe {
+            Ok(Some(ip)) if is_usable_guest_ip(&ip) => return Ok(ip),
+            Ok(Some(ip)) => {
+                last_error = Some(VmError::Command(format!(
+                    "VM '{name}' reported an unusable IPv4 address: {ip}"
+                )));
             }
+            Ok(None) => {}
+            Err(error) => last_error = Some(error),
         }
-        std::thread::sleep(Duration::from_secs(2));
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        thread::sleep(remaining.min(Duration::from_secs(2)));
     }
-    Err(VmError::NoIpAddress(name.to_owned()))
+
+    match last_error {
+        Some(error) => Err(error),
+        None => Err(VmError::NoIpAddress(name.to_owned())),
+    }
 }
 
 /// Parses `virsh domifaddr`'s table output for the first IPv4 address, e.g.:
@@ -837,6 +858,25 @@ fn extract_kvm_ip(output: &str) -> Option<String> {
         let ip = cidr.split('/').next()?;
         ip.parse::<std::net::Ipv4Addr>().ok().map(|_| ip.to_owned())
     })
+}
+
+fn extract_virtualbox_ip(output: &str) -> Option<String> {
+    output
+        .strip_prefix("Value: ")
+        .map(str::trim)
+        .filter(|ip| ip.parse::<std::net::Ipv4Addr>().is_ok())
+        .map(str::to_owned)
+}
+
+fn is_usable_guest_ip(ip: &str) -> bool {
+    let Ok(ip) = ip.parse::<std::net::Ipv4Addr>() else {
+        return false;
+    };
+    !ip.is_unspecified()
+        && !ip.is_loopback()
+        && !ip.is_multicast()
+        && !ip.is_link_local()
+        && !ip.is_broadcast()
 }
 
 /// Builds the `tcp://ip:port` address string for a VM's Docker daemon once
@@ -882,6 +922,7 @@ mod tests {
     fn load_vm_configs_on_missing_file_is_an_empty_list_not_an_error() {
         let dir = temp_state_dir("missing");
         assert_eq!(load_vm_configs(&dir).unwrap().len(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -932,18 +973,74 @@ mod tests {
     }
 
     #[test]
-    fn neither_hypervisor_available_does_not_panic() {
-        let choice = resolve_hypervisor_choice();
+    fn hypervisor_choice_probe_does_not_panic() {
+        let _ = resolve_hypervisor_choice();
+    }
+
+    #[test]
+    fn invalid_vm_configs_are_rejected() {
+        let mut config = sample_vm("valid", "/vms/base.qcow2");
+        config.cpus = 0;
         assert!(matches!(
-            choice,
-            HypervisorChoice::NeitherAvailable | HypervisorChoice::AskToFallBackToVirtualBox
+            validate_vm_configs(&[config]),
+            Err(VmError::InvalidConfig(_))
         ));
+
+        let config = sample_vm("bad/name", "/vms/base.qcow2");
+        assert!(matches!(
+            validate_vm_configs(&[config]),
+            Err(VmError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn duplicate_names_and_virtualbox_ports_are_rejected() {
+        let mut first = sample_vm("Runner", "/vms/a.qcow2");
+        first.hypervisor = HypervisorKind::VirtualBox;
+        let mut second = sample_vm("runner", "/vms/b.qcow2");
+        second.hypervisor = HypervisorKind::VirtualBox;
+        assert!(matches!(
+            validate_vm_configs(&[first.clone(), second]),
+            Err(VmError::InvalidConfig(_))
+        ));
+
+        let mut third = sample_vm("runner-b", "/vms/b.qcow2");
+        third.hypervisor = HypervisorKind::VirtualBox;
+        assert!(matches!(
+            validate_vm_configs(&[first, third]),
+            Err(VmError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn xml_attribute_values_are_escaped() {
+        assert_eq!(
+            xml_escape_attr("disk'&\"< >"),
+            "disk&apos;&amp;&quot;&lt; &gt;"
+        );
+    }
+
+    #[test]
+    fn guest_ip_validation_rejects_host_local_addresses() {
+        assert!(!is_usable_guest_ip("127.0.0.1"));
+        assert!(!is_usable_guest_ip("0.0.0.0"));
+        assert!(!is_usable_guest_ip("224.0.0.1"));
+        assert!(is_usable_guest_ip("192.168.122.45"));
     }
 
     #[test]
     fn extract_kvm_ip_parses_domifaddr_table() {
         let sample = " Name       MAC address          Protocol     Address\n-------------------------------------------------------------------------------\n vnet0      52:54:00:aa:bb:cc    ipv4         192.168.122.45/24\n";
         assert_eq!(extract_kvm_ip(sample), Some("192.168.122.45".to_owned()));
+    }
+
+    #[test]
+    fn extract_virtualbox_ip_parses_guest_property() {
+        assert_eq!(
+            extract_virtualbox_ip("Value: 10.0.2.15\n"),
+            Some("10.0.2.15".to_owned())
+        );
+        assert_eq!(extract_virtualbox_ip("No value set!"), None);
     }
 
     #[test]

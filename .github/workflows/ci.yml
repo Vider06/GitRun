@@ -811,17 +811,52 @@ jobs:
           cp "$source_icon" "$recovery_icon"
           file "$recovery_icon"
 
+      - name: Prepare Recovery Rust target cache
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.gitrun-ci/recovery-target
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_TARGET_DIR"
+          test -w "$CARGO_TARGET_DIR"
+
+      - name: Restore Recovery target cache
+        id: recovery-target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/recovery-target
+          key: ${{ runner.os }}-${{ runner.arch }}-recovery-${{ env.RUST_VERSION }}-target-v1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-recovery-${{ env.RUST_VERSION }}-target-v1-
+
+      - name: Report Recovery cache status
+        shell: bash
+        env:
+          RECOVERY_CACHE_HIT: ${{ steps.recovery-target-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          echo "Recovery target cache hit: ${RECOVERY_CACHE_HIT:-false}"
+          du -sh .gitrun-ci/recovery-target 2>/dev/null || true
+
       - name: Test GitRun Recovery
         shell: bash
         env:
           CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
           RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.gitrun-ci/recovery-target
         run: |
           set -euo pipefail
           cargo clippy -p gitrun-recovery --all-targets --locked -- -D warnings
           cargo test -p gitrun-recovery --locked --all-targets
           cargo build --locked --release -p gitrun-recovery
+
+      - name: Save Recovery target cache
+        if: success() && steps.recovery-target-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .gitrun-ci/recovery-target
+          key: ${{ steps.recovery-target-cache.outputs.cache-primary-key }}
 
       - name: Bundle Tauri application
         working-directory: crates/gitrun-dashboard-tauri

@@ -147,6 +147,11 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         0o644,
     ),
     (
+        "crates/gitrun-gsr/src/exec_supervisor.rs",
+        include_str!("../../../crates/gitrun-gsr/src/exec_supervisor.rs"),
+        0o644,
+    ),
+    (
         "crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs",
         include_str!("../../../crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"),
         0o644,
@@ -176,6 +181,7 @@ mod tests {
         assert!(paths.contains(&"Cargo.lock"));
         assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
+        assert!(paths.contains(&"crates/gitrun-gsr/src/exec_supervisor.rs"));
         assert_eq!(
             RUNNER_ENTRYPOINT,
             include_str!("../../../docker/runner/entrypoint.sh")

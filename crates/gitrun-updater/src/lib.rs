@@ -181,8 +181,8 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
     let repo = repository.trim_end_matches('/');
     let api = format!("https://api.github.com/repos/{repo}/releases/latest");
     let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
-    match client.get(&api).send().and_then(|r| r.error_for_status()) {
-        Ok(response) => {
+    match client.get(&api).send() {
+        Ok(response) if response.status().is_success() => {
             let release: serde_json::Value = response.json()?;
             let tag = release
                 .get("tag_name")
@@ -194,7 +194,7 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
                 "https://github.com/{repo}/releases/download/{tag}/release-manifest.json"
             ))
         }
-        Err(_) => {
+        Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
             let version = client
                 .get(format!(
                     "https://raw.githubusercontent.com/{repo}/main/version.txt"
@@ -208,6 +208,13 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
                 "https://github.com/{repo}/releases/download/{version}/release-manifest.json"
             ))
         }
+        Ok(response) => {
+            Err(UpdateError::Command(format!(
+                "GitHub release lookup failed: HTTP {}",
+                response.status()
+            )))
+        }
+        Err(error) => Err(UpdateError::Http(error)),
     }
 }
 
@@ -630,7 +637,15 @@ fn atomic_replace_installed_file(
         std::process::id(),
         nonce
     ));
-    fs::copy(source, &temp)?;
+    {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        let mut source_file = fs::File::open(source)?;
+        io::copy(&mut source_file, &mut file)?;
+        file.sync_all()?;
+    }
     set_file_mode(&temp, mode)?;
     fs::OpenOptions::new().read(true).open(&temp)?.sync_all()?;
     #[cfg(windows)]
@@ -990,9 +1005,11 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
             if path
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
+                || entry.header().entry_type().is_symlink()
+                || entry.header().entry_type().is_hard_link()
             {
                 return Err(UpdateError::InvalidManifest(
-                    "archive contains path traversal".into(),
+                    "archive contains an unsafe path or link".into(),
                 ));
             }
             entry.unpack(destination)?;

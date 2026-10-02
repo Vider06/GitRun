@@ -45,6 +45,8 @@ pub enum SetupError {
     InvalidConfigDir(PathBuf),
     #[error("state/log directories must not be files")]
     InvalidRuntimeDir,
+    #[error("invalid installation binary: {0}")]
+    InvalidInstallBinary(String),
     #[error("setup requires root privileges")]
     NotRoot,
     #[error("unsupported platform: GitRun's bundled installer currently targets Linux")]

@@ -77,7 +77,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
     && tar -xzf /tmp/powershell.tar.gz -C "/opt/microsoft/powershell/${POWERSHELL_VERSION}" \
     && ln -s "/opt/microsoft/powershell/${POWERSHELL_VERSION}/pwsh" /usr/local/bin/pwsh \
     && rm /tmp/powershell.tar.gz \
-    && pwsh -NoLogo -NoProfile -Command "Write-Output \\$PSVersionTable.PSVersion.ToString()"
+    && pwsh -NoLogo -NoProfile -Command "Write-Output \$PSVersionTable.PSVersion.ToString()"
 
 # Reuse the verified Rust toolchain from the pinned official Rust image
 # instead of executing a floating remote rustup installer at build time.
@@ -123,6 +123,7 @@ RUN install -d -o root -g root -m 0755 /run/gitrun \
     && chown root:root /run/gitrun/gsr-policy.env \
     && chmod 0444 /run/gitrun/gsr-policy.env
 
+# hadolint ignore=DL3002 -- entrypoint must remain root to prepare the protected policy, Docker socket group, and runner ownership.
 USER 0
 
 # Install the GSR agent as both shell entry points. The original binaries are

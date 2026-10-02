@@ -175,12 +175,19 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateEr
 pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
     let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
     let response = client.get(url).send()?.error_for_status()?;
-    if response.content_length().is_some_and(|size| size > MAX_MANIFEST_BYTES) {
-        return Err(UpdateError::InvalidManifest("manifest response is too large".into()));
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_MANIFEST_BYTES)
+    {
+        return Err(UpdateError::InvalidManifest(
+            "manifest response is too large".into(),
+        ));
     }
     let body = response.bytes()?;
     if body.len() as u64 > MAX_MANIFEST_BYTES {
-        return Err(UpdateError::InvalidManifest("manifest response is too large".into()));
+        return Err(UpdateError::InvalidManifest(
+            "manifest response is too large".into(),
+        ));
     }
     let manifest: ReleaseManifest = serde_json::from_slice(&body)?;
     manifest.validate()?;
@@ -218,12 +225,10 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
                 "https://github.com/{repo}/releases/download/{version}/release-manifest.json"
             ))
         }
-        Ok(response) => {
-            Err(UpdateError::Command(format!(
-                "GitHub release lookup failed: HTTP {}",
-                response.status()
-            )))
-        }
+        Ok(response) => Err(UpdateError::Command(format!(
+            "GitHub release lookup failed: HTTP {}",
+            response.status()
+        ))),
         Err(error) => Err(UpdateError::Http(error)),
     }
 }
@@ -1025,10 +1030,17 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
             }
             let entry_type = entry.header().entry_type();
             if entry_type.is_symlink() || entry_type.is_hard_link() {
-                return Err(UpdateError::InvalidManifest("archive contains link entry".into()));
+                return Err(UpdateError::InvalidManifest(
+                    "archive contains link entry".into(),
+                ));
             }
-            if entry_type.is_character_special() || entry_type.is_block_special() || entry_type.is_fifo() {
-                return Err(UpdateError::InvalidManifest("archive contains special file entry".into()));
+            if entry_type.is_character_special()
+                || entry_type.is_block_special()
+                || entry_type.is_fifo()
+            {
+                return Err(UpdateError::InvalidManifest(
+                    "archive contains special file entry".into(),
+                ));
             }
             entry.unpack(destination)?;
         }
@@ -1046,7 +1058,9 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                 ));
             };
             if entry.is_symlink() {
-                return Err(UpdateError::InvalidManifest("archive contains symlink entry".into()));
+                return Err(UpdateError::InvalidManifest(
+                    "archive contains symlink entry".into(),
+                ));
             }
             let out = destination.join(enclosed);
             if entry.is_dir() {

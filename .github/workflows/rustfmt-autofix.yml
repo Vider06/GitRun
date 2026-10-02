@@ -3,6 +3,8 @@ name: Rustfmt autofix
 on:
   push:
     branches: ["audit/docker-manager-hardening"]
+  pull_request:
+    branches: ["main"]
 
 permissions:
   contents: write
@@ -17,6 +19,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          ref: audit/docker-manager-hardening
 
       - name: Apply rustfmt
         shell: bash

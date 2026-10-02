@@ -11,6 +11,9 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     );
 
     let source = include_str!("../../../docker/runner/Dockerfile");
+    if !source.contains(FULL_WORKSPACE_COPY) {
+        panic!("runner Dockerfile bootstrap adaptation marker is missing");
+    }
     let source = source.replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY);
 
     if source.contains(FULL_WORKSPACE_COPY) {

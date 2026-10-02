@@ -139,7 +139,11 @@ impl BanStore {
         Ok(())
     }
 
-    pub fn ban(&mut self, repo: &str, duration: Duration) -> Result<(), GsrPollError> {
+    pub fn ban(
+        &mut self,
+        repo: &str,
+        duration: Duration,
+    ) -> Result<(), GsrPollError> {
         let _lock = self.lock()?;
         self.reload_from_disk()?;
         let until = now_secs().saturating_add(duration.as_secs());

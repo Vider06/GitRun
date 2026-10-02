@@ -4,7 +4,8 @@ on:
   push:
     branches: ["audit/docker-manager-hardening"]
   pull_request:
-    branches: ["main"]
+    branches: ["BigRework"]
+  workflow_dispatch:
 
 permissions:
   contents: write

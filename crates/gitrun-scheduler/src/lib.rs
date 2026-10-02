@@ -392,8 +392,8 @@ fn reconcile_repo(
     // desired_count()'s formula (busy + queued, clamped) is unchanged.
     let queued_job_labels = client.queued_self_hosted_jobs_with_labels(repo)?;
     let queued_jobs = queued_job_labels.len() as u32;
-    let logic_rules =
-        logic_containers::load_rules(&state_dir.join("logic-containers.json")).map_err(|error| {
+    let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
+        .map_err(|error| {
             std::io::Error::other(format!(
                 "invalid Logic Containers configuration for {repo}: {error}"
             ))

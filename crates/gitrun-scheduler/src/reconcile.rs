@@ -133,8 +133,7 @@ fn job_requires_specialized_runner(
 /// original (`min(max, max(min, busy + queued))`).
 pub fn desired_count(input: &ReconcileInput) -> u32 {
     let busy = input.runners.iter().filter(|r| r.online && r.busy).count() as u32;
-    busy
-        .saturating_add(input.queued_jobs)
+    busy.saturating_add(input.queued_jobs)
         .clamp(input.min_runners, input.max_runners)
 }
 
@@ -401,10 +400,7 @@ mod tests {
     fn specialized_job_gets_dynamic_capacity_without_consuming_minimum_pool() {
         let mut input = base_input();
         input.queued_jobs = 1;
-        input.queued_job_labels = vec![vec![
-            "self-hosted".into(),
-            "windows".into(),
-        ]];
+        input.queued_job_labels = vec![vec!["self-hosted".into(), "windows".into()]];
         input.logic_rules = vec![crate::logic_containers::LogicRule {
             name: "windows".into(),
             match_labels: vec!["windows".into()],
@@ -416,7 +412,13 @@ mod tests {
             actions
                 .iter()
                 .filter(|action| {
-                    matches!(action, Action::CreateRunner { permanent: true, .. })
+                    matches!(
+                        action,
+                        Action::CreateRunner {
+                            permanent: true,
+                            ..
+                        }
+                    )
                 })
                 .count(),
             3

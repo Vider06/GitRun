@@ -325,9 +325,7 @@ mod tests {
         let rules = vec![rule(
             "",
             &["windows"],
-            Backend::Vm {
-                vm_name: "".into(),
-            },
+            Backend::Vm { vm_name: "".into() },
             "",
         )];
         assert!(matches!(
@@ -350,10 +348,8 @@ mod tests {
 
     #[test]
     fn invalid_rules_cannot_be_saved() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-logic-rules-invalid-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-logic-rules-invalid-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("logic-containers.json");
         let rules = vec![rule("", &["windows"], Backend::LocalLinux, "image:latest")];

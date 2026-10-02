@@ -250,19 +250,15 @@ mod tests {
 
     #[test]
     fn future_timestamps_are_rejected() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-sched-state-future-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-future-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("scheduler-state.json");
         let future = SchedulerState::now().saturating_add(3600);
         fs::write(
             &path,
-            format!(
-                r#"{{"idle_since":{{"runner-a":{future}}},"recovery_since":{{}}}}"#
-            ),
+            format!(r#"{{"idle_since":{{"runner-a":{future}}},"recovery_since":{{}}}}"#),
         )
         .unwrap();
 
@@ -275,18 +271,12 @@ mod tests {
 
     #[test]
     fn invalid_container_names_are_rejected() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-sched-state-name-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-name-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("scheduler-state.json");
-        fs::write(
-            &path,
-            r#"{"idle_since":{"":"1"},"recovery_since":{}}"#,
-        )
-        .unwrap();
+        fs::write(&path, r#"{"idle_since":{"":"1"},"recovery_since":{}}"#).unwrap();
 
         assert!(matches!(
             SchedulerState::load(&dir),
@@ -297,10 +287,8 @@ mod tests {
 
     #[test]
     fn save_uses_atomic_replacement() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-sched-state-atomic-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-atomic-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let mut state = SchedulerState::load(&dir).unwrap();
         state.mark_idle("runner-a");

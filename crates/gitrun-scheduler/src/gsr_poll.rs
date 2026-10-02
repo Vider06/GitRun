@@ -199,16 +199,15 @@ pub fn poll_once(
 ) -> docker::Result<Vec<PolledViolation>> {
     let mut violations = Vec::new();
     for container_name in docker::all_managed_container_names_on(host)? {
-        let command_lines =
-            match docker::container_command_lines_on(host, &container_name) {
-                Ok(command_lines) => command_lines,
-                Err(error) => {
-                    eprintln!(
+        let command_lines = match docker::container_command_lines_on(host, &container_name) {
+            Ok(command_lines) => command_lines,
+            Err(error) => {
+                eprintln!(
                         "gitrun-scheduler: gsr_poll could not inspect {container_name} on {host:?}: {error}"
                     );
-                    continue;
-                }
-            };
+                continue;
+            }
+        };
         let mut container_already_handled = false;
         for command_line in command_lines {
             let Decision::Denied { reason } = policy.evaluate(&command_line) else {
@@ -486,7 +485,9 @@ mod tests {
     fn ban_duration_saturates_instead_of_overflowing() {
         let dir = temp_state_dir("overflow");
         let mut store = BanStore::load(&dir).unwrap();
-        store.ban("owner/repo", Duration::from_secs(u64::MAX)).unwrap();
+        store
+            .ban("owner/repo", Duration::from_secs(u64::MAX))
+            .unwrap();
         assert!(store.is_banned("owner/repo"));
         fs::remove_dir_all(&dir).ok();
     }

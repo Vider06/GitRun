@@ -229,7 +229,6 @@ enum UpdateCurrentImage {
     Missing,
 }
 
-
 fn update_one(
     client: &GitHubClient,
     config: &GtuuConfig,
@@ -257,11 +256,7 @@ fn update_one(
     // This preserves the existing runner while the new container is being
     // pulled up and authenticated with GitHub.
     let registration_token = client.registration_token(repo)?;
-    let replacement_name = format!(
-        "{}-gtuu-{}",
-        sanitize(name, '-'),
-        replacement_suffix()
-    );
+    let replacement_name = format!("{}-gtuu-{}", sanitize(name, '-'), replacement_suffix());
     let secret_env = (config.secret_env_for_repo)(repo);
 
     docker::create_runner(&crate::docker::RunnerSpec {
@@ -323,7 +318,6 @@ fn replacement_suffix() -> String {
     format!("{nanos:x}-{:x}", std::process::id())
 }
 
-
 fn wait_for_online(
     client: &GitHubClient,
     repo: &str,
@@ -365,7 +359,6 @@ fn wait_for_online(
         );
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -437,5 +430,4 @@ mod tests {
         assert!(suffix.contains(&format!("{:x}", std::process::id())));
         assert!(suffix.len() > 8);
     }
-
 }

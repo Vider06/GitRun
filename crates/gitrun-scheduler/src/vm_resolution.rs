@@ -43,7 +43,9 @@ const VM_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub enum VmResolution {
-    Resolving { config_fingerprint: u64 },
+    Resolving {
+        config_fingerprint: u64,
+    },
     Resolved {
         host: DockerHost,
         hypervisor: HypervisorKind,
@@ -94,18 +96,24 @@ fn config_fingerprint(config: &VmConfig) -> u64 {
     };
 
     feed(&mut hash, config.name.as_bytes());
-    feed(&mut hash, &[match config.hypervisor {
-        HypervisorKind::Kvm => 1,
-        HypervisorKind::VirtualBox => 2,
-    }]);
+    feed(
+        &mut hash,
+        &[match config.hypervisor {
+            HypervisorKind::Kvm => 1,
+            HypervisorKind::VirtualBox => 2,
+        }],
+    );
     feed(&mut hash, config.base_disk_image.as_bytes());
     feed(&mut hash, &config.memory_mb.to_le_bytes());
     feed(&mut hash, &config.cpus.to_le_bytes());
     feed(&mut hash, &config.docker_port.to_le_bytes());
-    feed(&mut hash, &[match config.activation {
-        vm::ActivationMode::Standard => 1,
-        vm::ActivationMode::AlwaysOnExperimental => 2,
-    }]);
+    feed(
+        &mut hash,
+        &[match config.activation {
+            vm::ActivationMode::Standard => 1,
+            vm::ActivationMode::AlwaysOnExperimental => 2,
+        }],
+    );
     feed(&mut hash, &[u8::from(config.is_windows)]);
     hash
 }
@@ -284,13 +292,14 @@ fn resolve_blocking(
                 vm_config.name,
                 DECISION_TIMEOUT.as_secs()
             );
-            hypervisor_decision::request(state_dir, &vm_config.name, &error.to_string())
-                .map_err(|write_error| {
+            hypervisor_decision::request(state_dir, &vm_config.name, &error.to_string()).map_err(
+                |write_error| {
                     format!(
                         "could not write hypervisor decision request for '{}': {write_error}",
                         vm_config.name
                     )
-                })?;
+                },
+            )?;
         }
     }
 
@@ -336,10 +345,12 @@ fn resolve_blocking(
                 }
             }
             Ok(None) => {}
-            Err(error) => return Err(format!(
-                "error polling hypervisor decision for VM '{}': {error}",
-                vm_config.name
-            )),
+            Err(error) => {
+                return Err(format!(
+                    "error polling hypervisor decision for VM '{}': {error}",
+                    vm_config.name
+                ))
+            }
         }
 
         let remaining = deadline.saturating_duration_since(Instant::now());

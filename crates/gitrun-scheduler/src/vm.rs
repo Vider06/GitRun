@@ -369,11 +369,7 @@ fn run_tool(program: &str, args: &[&str]) -> Result<Output> {
     run_tool_with_timeout(program, args, HYPERVISOR_COMMAND_TIMEOUT)
 }
 
-fn run_tool_with_timeout(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-) -> Result<Output> {
+fn run_tool_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Result<Output> {
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -463,11 +459,7 @@ fn run_tool_checked(program: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn run_tool_checked_with_timeout(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-) -> Result<()> {
+fn run_tool_checked_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Result<()> {
     let output = run_tool_with_timeout(program, args, timeout)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -505,9 +497,7 @@ fn managed_disk_path(config: &VmConfig, extension: &str) -> PathBuf {
         })
         .collect::<String>();
     let hash = stable_hash(&config.base_disk_image);
-    parent.join(format!(
-        "{stem}-gitrun-{safe_name}-{hash:016x}.{extension}"
-    ))
+    parent.join(format!("{stem}-gitrun-{safe_name}-{hash:016x}.{extension}"))
 }
 
 fn xml_escape_attr(value: &str) -> String {
@@ -691,10 +681,7 @@ fn ensure_vm_kvm(config: &VmConfig) -> Result<()> {
         }
     };
     use std::io::Write;
-    if let Err(error) = file
-        .write_all(xml.as_bytes())
-        .and_then(|_| file.sync_all())
-    {
+    if let Err(error) = file.write_all(xml.as_bytes()).and_then(|_| file.sync_all()) {
         let _ = fs::remove_file(&tmp_path);
         cleanup_created_disk(&disk, created_disk);
         return Err(error.into());
@@ -879,8 +866,9 @@ pub fn wait_for_ip(kind: HypervisorKind, name: &str, timeout: Duration) -> Resul
         }
 
         let probe = match kind {
-            HypervisorKind::Kvm => run_checked(kind, &["domifaddr", name])
-                .map(|output| extract_kvm_ip(&output)),
+            HypervisorKind::Kvm => {
+                run_checked(kind, &["domifaddr", name]).map(|output| extract_kvm_ip(&output))
+            }
             HypervisorKind::VirtualBox => run_checked(
                 kind,
                 &[

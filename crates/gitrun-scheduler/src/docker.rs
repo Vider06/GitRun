@@ -48,7 +48,6 @@ pub enum DockerHost {
     Remote(String),
 }
 
-
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
     let mut command = Command::new("docker");
 
@@ -143,7 +142,6 @@ fn run_checked_on(host: &DockerHost, args: &[&str]) -> Result<String> {
 fn run_checked(args: &[&str]) -> Result<String> {
     run_checked_on(&DockerHost::Local, args)
 }
-
 
 /// Sanitizes a string for use as part of a Docker container/volume name or
 /// label value: keeps alphanumerics, `_`, `.`, `-`, replaces everything else
@@ -337,10 +335,11 @@ fn container_status_string(host: &DockerHost, name: &str) -> Result<Option<Strin
 
     let raw = String::from_utf8_lossy(&output.stdout);
     let value: Value = serde_json::from_str(raw.trim())?;
-    let status = value
-        .get("Status")
-        .and_then(Value::as_str)
-        .ok_or_else(|| DockerError::Command(format!("docker inspect {name} returned no container status")))?;
+    let status = value.get("Status").and_then(Value::as_str).ok_or_else(|| {
+        DockerError::Command(format!(
+            "docker inspect {name} returned no container status"
+        ))
+    })?;
     Ok(Some(status.to_owned()))
 }
 
@@ -410,12 +409,7 @@ pub fn pull_image(image: &str) -> Result<()> {
 }
 
 pub fn image_id(image_or_container: &str) -> Result<String> {
-    let output = run_checked(&[
-        "inspect",
-        "-f",
-        "{{.Id}}",
-        image_or_container,
-    ])?;
+    let output = run_checked(&["inspect", "-f", "{{.Id}}", image_or_container])?;
     let id = output.trim();
     if id.is_empty() {
         return Err(DockerError::Command(format!(
@@ -429,10 +423,7 @@ pub fn image_id(image_or_container: &str) -> Result<String> {
 /// disappeared during reconciliation is reported as `None`; real Docker
 /// failures still propagate.
 pub fn container_image_id(name: &str) -> Result<Option<String>> {
-    let output = run_on(
-        &DockerHost::Local,
-        &["inspect", "-f", "{{.Image}}", name],
-    )?;
+    let output = run_on(&DockerHost::Local, &["inspect", "-f", "{{.Image}}", name])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if is_missing_container_error(&stderr) {
@@ -457,7 +448,6 @@ pub fn rename_container(from: &str, to: &str) -> Result<()> {
     run_checked(&["rename", from, to])?;
     Ok(())
 }
-
 
 pub fn remove_container_on(host: &DockerHost, name: &str) -> Result<()> {
     let output = run_on(host, &["rm", "-f", name])?;

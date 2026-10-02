@@ -502,7 +502,10 @@ fn parse_next_link(headers: &reqwest::header::HeaderMap) -> Option<String> {
             let mut pair = s.splitn(2, '=');
             let key = pair.next().map(str::trim);
             let value = pair.next().map(str::trim);
-            matches!((key, value), (Some("rel"), Some("\"next\"")) | (Some("rel"), Some("next")))
+            matches!(
+                (key, value),
+                (Some("rel"), Some("\"next\"")) | (Some("rel"), Some("next"))
+            )
         });
         if !is_next {
             return None;
@@ -653,10 +656,7 @@ mod tests {
         // newlines for readability; "cargo build" base64-encoded, split
         // across two lines the way a real API response would.
         let wrapped = "Y2FyZ28g\nYnVpbGQ=";
-        assert_eq!(
-            decode_contents_base64(wrapped).unwrap(),
-            "cargo build"
-        );
+        assert_eq!(decode_contents_base64(wrapped).unwrap(), "cargo build");
     }
 
     #[test]

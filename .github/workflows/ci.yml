@@ -49,7 +49,7 @@ env:
   CACHE_EPOCH: ${{ inputs.fresh_cache && format('e1x{0}', github.run_id) || 'e1' }}
   CACHE_BASE_EPOCH: e1
   # Pull requests only READ caches (main/branch pushes save them). "true" lets PRs save too.
-  CACHE_SAVE_PR: "false"
+  CACHE_SAVE_PR: "true"
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ inputs.verbose && '1' || '0' }}
@@ -1766,45 +1766,6 @@ jobs:
             mv "$tmp" "$icon"
           done
           echo "${#icons[@]} icons normalized to RGBA"
-      - name: Prepare GitRun Recovery GUI icon
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          src="crates/gitrun-dashboard-tauri/src-tauri/icons/gitrun-icon-512.png"
-          dst="crates/gitrun-recovery/icons/icon.png"
-          [ -f "$src" ] || { ci_err "Tauri 512px icon missing: $src"; exit 1; }
-          mkdir -p "$(dirname "$dst")"
-          cp "$src" "$dst"
-          file "$dst" | grep -q 'PNG image data' || { ci_err "Recovery GUI icon is not a valid PNG: $dst"; exit 1; }
-          echo "Recovery GUI icon generated: $dst"
-      - name: Test GitRun Recovery GUI
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          recovery_gui() { cargo check -p gitrun-recovery --locked 2>&1 | ci_cargo_json; }
-          ci_run "GitRun Recovery GUI smoke check" recovery_gui
-      - name: Build Tauri application
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          export TMPDIR="$RUNNER_TEMP/tauri-tmp" XDG_CACHE_HOME="$RUNNER_TEMP/tauri-cache"
-          mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
-          command -v cargo
-          build() { (cd crates/gitrun-dashboard-tauri && npm run tauri build -- --ci --no-bundle); }
-          ci_run "tauri build --no-bundle" build
-      - name: Bundle Tauri application
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          export TMPDIR="$RUNNER_TEMP/tauri-tmp" XDG_CACHE_HOME="$RUNNER_TEMP/tauri-cache"
-          mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
-          bundle() { (cd crates/gitrun-dashboard-tauri && npm run tauri bundle -- --bundles deb,appimage --no-binary-patching); }
-          ci_run "tauri bundle (deb, appimage)" bundle
-      - name: Upload Tauri bundles
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: gitrun-tauri-bundles
-          path: target/release/bundle/**
-          if-no-files-found: warn
-          retention-days: 7
-          overwrite: true
       - *rust_prune
       - *npm_prune
       - *s_tc

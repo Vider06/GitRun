@@ -27,6 +27,8 @@ RUN --mount=type=cache,id=gitrun-runner-cargo-registry,target=/usr/local/cargo/r
 
 FROM node:22.23.3-bookworm@sha256:17b7fd60fd812617654c64b95f9b2dde94f103313073b672bc40fdad6dccbaa2
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 ARG RUNNER_VERSION
 ARG RUNNER_SHA256
 ARG DOCKER_CLI_VERSION
@@ -42,6 +44,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CARGO_HOME=/opt/cargo \
     PATH=/opt/cargo/bin:/usr/local/bin:$PATH
 
+# hadolint ignore=DL3008 -- Debian packages intentionally follow the pinned bookworm base image security stream.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl git jq tar gzip sudo python3 python3-pip \
@@ -74,7 +77,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
     && tar -xzf /tmp/powershell.tar.gz -C "/opt/microsoft/powershell/${POWERSHELL_VERSION}" \
     && ln -s "/opt/microsoft/powershell/${POWERSHELL_VERSION}/pwsh" /usr/local/bin/pwsh \
     && rm /tmp/powershell.tar.gz \
-    && pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+    && pwsh -NoLogo -NoProfile -Command "Write-Output \\$PSVersionTable.PSVersion.ToString()"
 
 # Reuse the verified Rust toolchain from the pinned official Rust image
 # instead of executing a floating remote rustup installer at build time.
@@ -120,7 +123,7 @@ RUN install -d -o root -g root -m 0755 /run/gitrun \
     && chown root:root /run/gitrun/gsr-policy.env \
     && chmod 0444 /run/gitrun/gsr-policy.env
 
-USER root
+USER 0
 
 # Install the GSR agent as both shell entry points. The original binaries are
 # retained under explicit names so allowed commands preserve normal shell

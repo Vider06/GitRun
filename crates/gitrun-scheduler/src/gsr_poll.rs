@@ -112,6 +112,7 @@ impl BanStore {
         let lock_path = self.path.with_extension("json.lock");
         let lock = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(lock_path)?;
@@ -141,9 +142,7 @@ impl BanStore {
     pub fn ban(&mut self, repo: &str, duration: Duration) -> Result<(), GsrPollError> {
         let _lock = self.lock()?;
         self.reload_from_disk()?;
-        let until = now_secs()
-            .checked_add(duration.as_secs())
-            .unwrap_or(u64::MAX);
+        let until = now_secs().saturating_add(duration.as_secs());
         self.data.banned_until.insert(repo.to_owned(), until);
         self.save()
     }

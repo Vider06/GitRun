@@ -464,6 +464,13 @@ fn reconcile_repo(
             .collect(),
         queued_jobs,
         queued_job_labels,
+        configured_runner_labels: config
+            .runner_labels
+            .split(',')
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+            .collect(),
         logic_rules,
         idle,
         recovery_enabled: config.auto_container_recovery,
@@ -1073,7 +1080,7 @@ fn spawn_gsr_poll_thread(
                         let mut hosts = vec![docker::DockerHost::Local];
                         let guard = vm_registry.lock().unwrap_or_else(|p| p.into_inner());
                         for resolution in guard.values() {
-                            if let vm_resolution::VmResolution::Resolved(host) = resolution {
+                            if let vm_resolution::VmResolution::Resolved { host, .. } = resolution {
                                 if !hosts.contains(host) {
                                     hosts.push(host.clone());
                                 }

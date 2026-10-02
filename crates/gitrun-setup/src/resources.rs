@@ -161,7 +161,7 @@ mod tests {
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
         assert!(!dockerfile.contains("COPY crates ./crates"));
-        assert!(dockerfile.contains("cargo build --release -p gitrun-gsr"));
+        assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
     }
 
     #[test]

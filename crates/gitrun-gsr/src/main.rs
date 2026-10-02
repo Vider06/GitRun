@@ -1,8 +1,7 @@
-//! GSR entry point: a standalone binary, deliberately separate from
-//! `gitrun-autoscaler`, so it keeps running (and can observe) even if the
-//! process it watches crashes hard. Intended to run as its own systemd unit
-//! (not written in this pass — see `systemd/gitrun.service` for the
-//! existing pattern to follow), independent of the manager container.
+//! GSR entry point: a standalone binary, deliberately separate from the
+//! process it watches, so it keeps running and can observe a hard crash.
+//! Intended to run as its own systemd unit, independent of the manager
+//! container.
 
 use gitrun_core::Config;
 use gitrun_gsr::WatchConfig;

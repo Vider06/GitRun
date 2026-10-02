@@ -33,6 +33,7 @@ FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2
 
 ARG DOCKER_CLI_VERSION
 
+# hadolint ignore=DL3008 -- base image is pinned by digest; Debian packages follow its security stream.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg passwd util-linux \
     && install -m 0755 -d /etc/apt/keyrings \

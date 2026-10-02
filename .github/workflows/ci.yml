@@ -1130,7 +1130,7 @@ jobs:
           ci_ensure_actionlint
           ci_ensure_shellcheck
           # Helper functions are passed by name to ci_run, quotes in node/awk/jq snippets are intentional.
-          export SHELLCHECK_OPTS="-e SC2329 -e SC2016"
+          export SHELLCHECK_OPTS="-e SC2317 -e SC2329 -e SC2016"
           NL=$'\n'
           fmt='{{range $e := .}}{{$e.Filepath}}:{{$e.Line}}:{{$e.Column}}: {{$e.Message}} [{{$e.Kind}}]'"$NL"'::error file={{$e.Filepath}},line={{$e.Line}},col={{$e.Column}},title=actionlint ({{$e.Kind}})::{{$e.Message}}'"$NL"'{{end}}'
           run_actionlint() { actionlint -format "$fmt" 2>&1 | ci_tap; }

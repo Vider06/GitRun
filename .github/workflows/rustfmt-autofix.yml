@@ -18,10 +18,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/.gitrun-ci"
+          export CARGO_HOME="$root/cargo"
+          export RUSTUP_HOME="$root/rustup"
+          export TMPDIR="$root/tmp"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$TMPDIR"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail               https://sh.rustup.rs -o "$TMPDIR/rustup-init.sh"
+            sh "$TMPDIR/rustup-init.sh" -y --profile minimal --default-toolchain none --no-modify-path
+          fi
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          rustup default 1.98.1
+
       - name: Apply rustfmt
         shell: bash
         run: |
           set -euo pipefail
+          export CARGO_HOME="$GITHUB_WORKSPACE/.gitrun-ci/cargo"
+          export RUSTUP_HOME="$GITHUB_WORKSPACE/.gitrun-ci/rustup"
+          export PATH="$CARGO_HOME/bin:$PATH"
           rustfmt --version
           cargo fmt --all
           if git diff --quiet --exit-code; then

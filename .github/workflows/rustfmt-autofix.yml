@@ -25,7 +25,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work rust:1.98.1 cargo fmt --all
+          rustup component add rustfmt --toolchain 1.98.1
+          cargo +1.98.1 fmt --all
           if git diff --quiet --exit-code; then
             echo "rustfmt: already clean"
             exit 0

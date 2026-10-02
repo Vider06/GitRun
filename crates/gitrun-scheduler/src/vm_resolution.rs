@@ -139,13 +139,14 @@ pub fn resolve_or_spawn(
                 hypervisor,
                 ..
             }) if *current == fingerprint => {
+                let hypervisor = *hypervisor;
                 guard.insert(
                     vm_config.name.clone(),
                     VmResolution::Resolving {
                         config_fingerprint: fingerprint,
                     },
                 );
-                ResolutionWork::Verify(*hypervisor)
+                ResolutionWork::Verify(hypervisor)
             }
             Some(VmResolution::Resolving { .. }) => {
                 return VmResolutionResult::Resolving;

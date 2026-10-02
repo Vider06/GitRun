@@ -92,7 +92,14 @@ pub fn run(config: &WatchConfig, should_stop: impl Fn() -> bool) {
                         }
                         pidfd = open_pidfd(pid);
                     }
-                    let alive = pidfd.map(pidfd_is_alive).unwrap_or(false);
+                    let alive = match pidfd {
+                        Some(fd) => pidfd_is_alive(fd),
+                        // If pidfd_open is unavailable or temporarily fails,
+                        // retain the portable Unix liveness check rather than
+                        // silently disabling crash detection. PID reuse is
+                        // still possible only on this fallback path.
+                        None => process_is_alive(pid),
+                    };
                     if alive {
                         last_known_pid = Some(pid);
                     } else if last_known_pid == Some(pid) {

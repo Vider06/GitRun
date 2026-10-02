@@ -18,6 +18,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Restore Rust toolchain cache
+        id: rust-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/rustup
+            .gitrun-ci/cargo/bin
+          key: gitrun-e1-Linux-X64-rustup-1.98.1-rustfmt+clippy
+
       - name: Install Rust toolchain
         shell: bash
         run: |
@@ -28,6 +37,9 @@ jobs:
           export TMPDIR="$root/tmp"
           export PATH="$CARGO_HOME/bin:$PATH"
           mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$TMPDIR"
+          if [ -x "$CARGO_HOME/bin/rustup" ]; then
+            export PATH="$CARGO_HOME/bin:$PATH"
+          fi
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail               https://sh.rustup.rs -o "$TMPDIR/rustup-init.sh"
             sh "$TMPDIR/rustup-init.sh" -y --profile minimal --default-toolchain none --no-modify-path

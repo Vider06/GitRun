@@ -13,9 +13,6 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     let source = include_str!("../../../docker/runner/Dockerfile");
     let source = source
         .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
-        // The setup bootstrap intentionally uses the checked-in dependency
-        // lock as its starting point but may prune unrelated workspace
-        // packages because only gitrun-core + gitrun-gsr are present.
         .replace(
             "cargo build --locked --release -p gitrun-gsr",
             "cargo build --release -p gitrun-gsr",
@@ -54,10 +51,6 @@ EnvironmentFile=/etc/gitrun/gitrun.env
 WantedBy=multi-user.target
 "#;
 
-/// The bootstrap needs a small self-contained Cargo workspace for building the
-/// GSR agent after the GitRun package has been installed. This intentionally
-/// contains only the crates required by gitrun-gsr-agent; it is not the
-/// application's main workspace manifest.
 pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
 resolver = "2"
 members = ["crates/gitrun-core", "crates/gitrun-gsr"]
@@ -66,91 +59,24 @@ members = ["crates/gitrun-core", "crates/gitrun-gsr"]
 pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
     ("Cargo.toml", RUNNER_BUILD_CARGO_MANIFEST, 0o644),
     ("Cargo.lock", include_str!("../../../Cargo.lock"), 0o644),
-    (
-        "crates/gitrun-core/Cargo.toml",
-        include_str!("../../../crates/gitrun-core/Cargo.toml"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/lib.rs",
-        include_str!("../../../crates/gitrun-core/src/lib.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/app_auth.rs",
-        include_str!("../../../crates/gitrun-core/src/app_auth.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/command_policy.rs",
-        include_str!("../../../crates/gitrun-core/src/command_policy.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/config.rs",
-        include_str!("../../../crates/gitrun-core/src/config.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/github_auth.rs",
-        include_str!("../../../crates/gitrun-core/src/github_auth.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/hypervisor_decision.rs",
-        include_str!("../../../crates/gitrun-core/src/hypervisor_decision.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/runner.rs",
-        include_str!("../../../crates/gitrun-core/src/runner.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/state.rs",
-        include_str!("../../../crates/gitrun-core/src/state.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-core/src/workflow_validation.rs",
-        include_str!("../../../crates/gitrun-core/src/workflow_validation.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-gsr/Cargo.toml",
-        include_str!("../../../crates/gitrun-gsr/Cargo.toml"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-gsr/src/lib.rs",
-        include_str!("../../../crates/gitrun-gsr/src/lib.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-gsr/src/agent.rs",
-        include_str!("../../../crates/gitrun-gsr/src/agent.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-gsr/src/events.rs",
-        include_str!("../../../crates/gitrun-gsr/src/events.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-gsr/src/main.rs",
-        include_str!("../../../crates/gitrun-gsr/src/main.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-gsr/src/watchdog.rs",
-        include_str!("../../../crates/gitrun-gsr/src/watchdog.rs"),
-        0o644,
-    ),
-    (
-        "crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs",
-        include_str!("../../../crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"),
-        0o644,
-    ),
+    ("crates/gitrun-core/Cargo.toml", include_str!("../../../crates/gitrun-core/Cargo.toml"), 0o644),
+    ("crates/gitrun-core/src/lib.rs", include_str!("../../../crates/gitrun-core/src/lib.rs"), 0o644),
+    ("crates/gitrun-core/src/app_auth.rs", include_str!("../../../crates/gitrun-core/src/app_auth.rs"), 0o644),
+    ("crates/gitrun-core/src/command_policy.rs", include_str!("../../../crates/gitrun-core/src/command_policy.rs"), 0o644),
+    ("crates/gitrun-core/src/config.rs", include_str!("../../../crates/gitrun-core/src/config.rs"), 0o644),
+    ("crates/gitrun-core/src/github_auth.rs", include_str!("../../../crates/gitrun-core/src/github_auth.rs"), 0o644),
+    ("crates/gitrun-core/src/hypervisor_decision.rs", include_str!("../../../crates/gitrun-core/src/hypervisor_decision.rs"), 0o644),
+    ("crates/gitrun-core/src/runner.rs", include_str!("../../../crates/gitrun-core/src/runner.rs"), 0o644),
+    ("crates/gitrun-core/src/state.rs", include_str!("../../../crates/gitrun-core/src/state.rs"), 0o644),
+    ("crates/gitrun-core/src/workflow_validation.rs", include_str!("../../../crates/gitrun-core/src/workflow_validation.rs"), 0o644),
+    ("crates/gitrun-gsr/Cargo.toml", include_str!("../../../crates/gitrun-gsr/Cargo.toml"), 0o644),
+    ("crates/gitrun-gsr/src/lib.rs", include_str!("../../../crates/gitrun-gsr/src/lib.rs"), 0o644),
+    ("crates/gitrun-gsr/src/agent.rs", include_str!("../../../crates/gitrun-gsr/src/agent.rs"), 0o644),
+    ("crates/gitrun-gsr/src/events.rs", include_str!("../../../crates/gitrun-gsr/src/events.rs"), 0o644),
+    ("crates/gitrun-gsr/src/exec_supervisor.rs", include_str!("../../../crates/gitrun-gsr/src/exec_supervisor.rs"), 0o644),
+    ("crates/gitrun-gsr/src/main.rs", include_str!("../../../crates/gitrun-gsr/src/main.rs"), 0o644),
+    ("crates/gitrun-gsr/src/watchdog.rs", include_str!("../../../crates/gitrun-gsr/src/watchdog.rs"), 0o644),
+    ("crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs", include_str!("../../../crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"), 0o644),
 ];
 
 #[cfg(test)]
@@ -168,27 +94,17 @@ mod tests {
 
     #[test]
     fn bootstrap_resources_include_every_required_source() {
-        let paths: Vec<_> = RUNNER_BUILD_FILES
-            .iter()
-            .map(|(path, _, _)| *path)
-            .collect();
+        let paths: Vec<_> = RUNNER_BUILD_FILES.iter().map(|(path, _, _)| *path).collect();
         assert!(paths.contains(&"Cargo.toml"));
         assert!(paths.contains(&"Cargo.lock"));
         assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
+        assert!(paths.contains(&"crates/gitrun-gsr/src/exec_supervisor.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
-        assert_eq!(
-            RUNNER_ENTRYPOINT,
-            include_str!("../../../docker/runner/entrypoint.sh")
-        );
+        assert_eq!(RUNNER_ENTRYPOINT, include_str!("../../../docker/runner/entrypoint.sh"));
         assert!(RUNNER_ENTRYPOINT.contains("docker_socket_group"));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
-        assert_eq!(
-            SYSTEMD_SERVICE,
-            include_str!("../../../systemd/gitrun.service")
-        );
-        assert!(
-            SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun-recovery start scheduler")
-        );
+        assert_eq!(SYSTEMD_SERVICE, include_str!("../../../systemd/gitrun.service"));
+        assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun-recovery start scheduler"));
         assert!(!SYSTEMD_SERVICE.contains("docker compose"));
     }
 }

@@ -227,8 +227,11 @@ def reconcile(cfg:RepoConfig)->None:
         runner=by_name.get(name)
         if runner and runner.get("busy"):idle.pop(name,None)
         elif runner and runner.get("status")=="online":idle.setdefault(name,now.isoformat())
+    safe_repo=re.sub(r"[^a-zA-Z0-9_.-]","-",repo)
+    repo_prefix=f"gitrun-{safe_repo}-"
     for name in list(idle):
-        if name not in containers:idle.pop(name,None)
+        if name.startswith(repo_prefix) and name not in containers:
+            idle.pop(name,None)
     for name in list(recovery):
         if name not in containers:recovery.pop(name,None)
     if os.getenv("GITRUN_EPHEMERAL","false").lower()!="true" and current>cfg.minimum:

@@ -1,4 +1,5 @@
 name: Rustfmt autofix
+# Scheduler source is formatted automatically with the pinned toolchain.
 
 on:
   push:

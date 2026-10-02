@@ -16,7 +16,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     timeout-minutes: 60
     env:
-      RUST_COMPONENTS: rustfmt
+      RUST_COMPONENTS: rustfmt,clippy
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -59,9 +59,9 @@ jobs:
           if ! command -v rustup >/dev/null 2>&1; then
             curl --fail --silent --show-error --location --retry 3               https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init.sh"
             chmod +x "$RUNNER_TEMP/rustup-init.sh"
-            RUSTUP_INIT_SKIP_PATH_CHECK=yes               "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none --no-modify-path
+            RUSTUP_INIT_SKIP_PATH_CHECK=yes               "$RUNNER_TEMP/rustup-init.sh"               -y --profile minimal --default-toolchain none --no-modify-path
           fi
-          rustup toolchain install 1.98.1 --profile minimal --component rustfmt --no-self-update
+          rustup toolchain install 1.98.1             --profile minimal             --component rustfmt             --no-self-update
           rustup default 1.98.1
           rustfmt --version
 

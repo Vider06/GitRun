@@ -63,6 +63,9 @@ pub struct ReconcileInput {
     /// missing entry the same as an empty label set, which
     /// `logic_containers::resolve` always falls through to the default for.
     pub queued_job_labels: Vec<Vec<String>>,
+    /// Labels configured on every default GitRun runner. Used to distinguish
+    /// jobs that can use the warm pool from jobs requiring specialized capacity.
+    pub configured_runner_labels: Vec<String>,
     /// Logic Containers rules loaded for this reconciliation cycle. A queued
     /// job matching one of these rules requires dedicated dynamic capacity
     /// so it can be created with the selected backend and image.
@@ -220,7 +223,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         .queued_job_labels
         .iter()
         .filter(|labels| {
-            job_requires_specialized_runner(labels, &input.logic_rules)
+            job_requires_specialized_runner(labels, &input.configured_runner_labels)
         })
         .cloned()
         .collect();

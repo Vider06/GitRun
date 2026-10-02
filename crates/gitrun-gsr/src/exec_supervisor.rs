@@ -81,7 +81,6 @@ mod linux {
     const PTRACE_EVENT_FORK: libc::c_ulong = 1;
     const PTRACE_EVENT_VFORK: libc::c_ulong = 2;
     const PTRACE_EVENT_CLONE: libc::c_ulong = 3;
-    const PTRACE_EVENT_EXEC: libc::c_ulong = 4;
     const PTRACE_EVENT_SECCOMP: libc::c_ulong = 7;
 
     const SECCOMP_MODE_FILTER: libc::c_ulong = 2;
@@ -94,17 +93,12 @@ mod linux {
     const BPF_ABS: u16 = 0x20;
     const BPF_JMP: u16 = 0x05;
     const BPF_JEQ: u16 = 0x10;
-    const BPF_JGE: u16 = 0x30;
     const BPF_K: u16 = 0x00;
     const BPF_RET: u16 = 0x06;
 
     const SECCOMP_DATA_NR_OFFSET: u32 = 0;
     const SECCOMP_DATA_ARCH_OFFSET: u32 = 4;
     const AUDIT_ARCH_X86_64: u32 = 0xc000_003e;
-    // x86-64 and x32 share AUDIT_ARCH_X86_64. The x32 ABI marks every
-    // syscall number with bit 30, so reject that ABI explicitly rather than
-    // letting an unrecognized syscall fall through to ALLOW.
-    const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
     const MAX_ARGC: usize = 256;
     const MAX_STRING: usize = 4096;
@@ -239,30 +233,16 @@ mod linux {
                 k: SECCOMP_DATA_NR_OFFSET,
             },
             libc::sock_filter {
-                // x32 is a distinct ABI but uses AUDIT_ARCH_X86_64. Reject
-                // every x32 syscall before the native syscall comparisons.
-                code: BPF_JMP | BPF_JGE | BPF_K,
-                jt: 2,
-                jf: 0,
-                k: X32_SYSCALL_BIT,
-            },
-            libc::sock_filter {
                 code: BPF_JMP | BPF_JEQ | BPF_K,
-                jt: 3,
+                jt: 2,
                 jf: 0,
                 k: libc::SYS_execve as u32,
             },
             libc::sock_filter {
                 code: BPF_JMP | BPF_JEQ | BPF_K,
-                jt: 2,
+                jt: 1,
                 jf: 0,
                 k: libc::SYS_execveat as u32,
-            },
-            libc::sock_filter {
-                code: BPF_RET | BPF_K,
-                jt: 0,
-                jf: 0,
-                k: SECCOMP_RET_KILL_PROCESS,
             },
             libc::sock_filter {
                 code: BPF_RET | BPF_K,
@@ -380,19 +360,6 @@ mod linux {
                     ExecDecision::Allow => continue_tracee(pid)?,
                     ExecDecision::Deny => deny_and_continue(pid)?,
                 }
-                continue;
-            }
-
-            if event == PTRACE_EVENT_EXEC as i32 {
-                // An exec from a non-leader thread resets that thread's TID to
-                // the thread-group leader's PID and destroys the other threads.
-                // The kernel explicitly requires tracers to discard their old
-                // per-thread bookkeeping at this point. Keeping the pre-exec
-                // TIDs would leave stale entries that can prevent clean exit
-                // or target a later PID reuse during teardown.
-                tracees.clear();
-                tracees.insert(pid);
-                continue_tracee(pid)?;
                 continue;
             }
 

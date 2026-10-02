@@ -248,8 +248,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             .queued_job_labels
             .iter()
             .filter(|labels| {
-                crate::logic_containers::resolve(&input.logic_rules, labels).is_none()
-                    || !job_requires_specialized_runner(labels, &input.configured_runner_labels)
+                !job_requires_specialized_runner(labels, &input.configured_runner_labels)
             })
             .nth(dynamic_index)
             .cloned()

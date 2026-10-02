@@ -212,17 +212,9 @@ pub fn bootstrap_linux_with_auth(
     run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
 
-    let desktop_exec = if recovery_source.is_some() {
-        "/usr/local/bin/gitrun-recovery start dashboard"
-    } else {
-        "/usr/local/bin/gitrun dashboard"
-    };
-    let desktop_entry = format!(
-        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec={desktop_exec}\nTerminal=false\nCategories=Development;System;\n"
-    );
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),
-        &desktop_entry,
+        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun-recovery start dashboard\nTerminal=false\nCategories=Development;System;\n",
         0o644,
     )?;
 
@@ -412,10 +404,10 @@ fn running_as_root() -> bool {
 }
 
 fn command_exists(name: &str) -> bool {
-    Command::new(name)
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
+    Command::new("sh")
+        .args(["-c", &format!("command -v {name} >/dev/null 2>&1")])
+        .status()
+        .map(|status| status.success())
         .unwrap_or(false)
 }
 

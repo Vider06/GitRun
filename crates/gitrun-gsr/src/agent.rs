@@ -117,7 +117,7 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
         }
         AgentDecision::Refuse { reason } => {
             eprintln!("{reason}");
-            let event = SecurityEvent::new("gsr-agent", Severity::Warning, reason);
+            let event = SecurityEvent::new("gsr-agent", severity_for(config), reason);
             if let Err(write_error) = events::emit(events_path, &event) {
                 eprintln!(
                     "gitrun-gsr-agent: additionally failed to write security event: {write_error}"
@@ -149,6 +149,10 @@ pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Con
             125
         }
     }
+}
+
+fn severity_for(_config: &gitrun_core::Config) -> Severity {
+    Severity::Warning
 }
 
 #[cfg(test)]

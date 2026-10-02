@@ -446,6 +446,19 @@ fn run_checked(kind: HypervisorKind, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+fn run_tool_checked(program: &str, args: &[&str]) -> Result<()> {
+    let output = run_tool(program, args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(VmError::Command(if stderr.is_empty() {
+            format!("{program} command '{}' failed", args.join(" "))
+        } else {
+            stderr
+        }));
+    }
+    Ok(())
+}
+
 fn run_tool_checked_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Result<()> {
     let output = run_tool_with_timeout(program, args, timeout)?;
     if !output.status.success() {

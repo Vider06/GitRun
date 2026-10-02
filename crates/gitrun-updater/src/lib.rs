@@ -91,8 +91,6 @@ pub struct BackupRecord {
     pub service_config_backup: Option<PathBuf>,
 }
 
-const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
-
 #[derive(Debug, Error)]
 pub enum UpdateError {
     #[error("I/O error: {0}")]
@@ -174,22 +172,7 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateEr
 
 pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
     let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
-    let response = client.get(url).send()?.error_for_status()?;
-    if response
-        .content_length()
-        .is_some_and(|size| size > MAX_MANIFEST_BYTES)
-    {
-        return Err(UpdateError::InvalidManifest(
-            "manifest response is too large".into(),
-        ));
-    }
-    let body = response.bytes()?;
-    if body.len() as u64 > MAX_MANIFEST_BYTES {
-        return Err(UpdateError::InvalidManifest(
-            "manifest response is too large".into(),
-        ));
-    }
-    let manifest: ReleaseManifest = serde_json::from_slice(&body)?;
+    let manifest: ReleaseManifest = client.get(url).send()?.error_for_status()?.json()?;
     manifest.validate()?;
     Ok(manifest)
 }
@@ -198,8 +181,8 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
     let repo = repository.trim_end_matches('/');
     let api = format!("https://api.github.com/repos/{repo}/releases/latest");
     let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
-    match client.get(&api).send() {
-        Ok(response) if response.status().is_success() => {
+    match client.get(&api).send().and_then(|r| r.error_for_status()) {
+        Ok(response) => {
             let release: serde_json::Value = response.json()?;
             let tag = release
                 .get("tag_name")
@@ -211,7 +194,7 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
                 "https://github.com/{repo}/releases/download/{tag}/release-manifest.json"
             ))
         }
-        Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
+        Err(_) => {
             let version = client
                 .get(format!(
                     "https://raw.githubusercontent.com/{repo}/main/version.txt"
@@ -225,11 +208,6 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
                 "https://github.com/{repo}/releases/download/{version}/release-manifest.json"
             ))
         }
-        Ok(response) => Err(UpdateError::Command(format!(
-            "GitHub release lookup failed: HTTP {}",
-            response.status()
-        ))),
-        Err(error) => Err(UpdateError::Http(error)),
     }
 }
 
@@ -367,6 +345,9 @@ pub fn apply_update(
         .as_ref()
         .map(|_| backup_dir.join("service-config"));
 
+    if paths.install_dir.exists() {
+        fs::rename(&paths.install_dir, &install_backup)?;
+    }
     if paths.state_dir.exists() {
         copy_dir(&paths.state_dir, &state_backup)?;
     }
@@ -378,10 +359,6 @@ pub fn apply_update(
             )?;
         }
     }
-    if paths.install_dir.exists() {
-        fs::rename(&paths.install_dir, &install_backup)?;
-    }
-
     if let Some(service_config) = &paths.service_config {
         if service_config.is_file() {
             if let Some(parent) = service_config_backup
@@ -653,15 +630,7 @@ fn atomic_replace_installed_file(
         std::process::id(),
         nonce
     ));
-    {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        let mut source_file = fs::File::open(source)?;
-        io::copy(&mut source_file, &mut file)?;
-        file.sync_all()?;
-    }
+    fs::copy(source, &temp)?;
     set_file_mode(&temp, mode)?;
     fs::OpenOptions::new().read(true).open(&temp)?.sync_all()?;
     #[cfg(windows)]
@@ -1021,25 +990,9 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
             if path
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
-                || entry.header().entry_type().is_symlink()
-                || entry.header().entry_type().is_hard_link()
             {
                 return Err(UpdateError::InvalidManifest(
-                    "archive contains an unsafe path or link".into(),
-                ));
-            }
-            let entry_type = entry.header().entry_type();
-            if entry_type.is_symlink() || entry_type.is_hard_link() {
-                return Err(UpdateError::InvalidManifest(
-                    "archive contains link entry".into(),
-                ));
-            }
-            if entry_type.is_character_special()
-                || entry_type.is_block_special()
-                || entry_type.is_fifo()
-            {
-                return Err(UpdateError::InvalidManifest(
-                    "archive contains special file entry".into(),
+                    "archive contains path traversal".into(),
                 ));
             }
             entry.unpack(destination)?;
@@ -1057,11 +1010,6 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                     "archive contains unsafe path".into(),
                 ));
             };
-            if entry.is_symlink() {
-                return Err(UpdateError::InvalidManifest(
-                    "archive contains symlink entry".into(),
-                ));
-            }
             let out = destination.join(enclosed);
             if entry.is_dir() {
                 fs::create_dir_all(&out)?;

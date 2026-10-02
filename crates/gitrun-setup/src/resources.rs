@@ -11,7 +11,15 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     );
 
     let source = include_str!("../../../docker/runner/Dockerfile");
-    let source = source.replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY);
+    let source = source
+        .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
+        // The setup bootstrap intentionally uses the checked-in dependency
+        // lock as its starting point but may prune unrelated workspace
+        // packages because only gitrun-core + gitrun-gsr are present.
+        .replace(
+            "cargo build --locked --release -p gitrun-gsr",
+            "cargo build --release -p gitrun-gsr",
+        );
 
     if source.contains(FULL_WORKSPACE_COPY) {
         panic!("runner Dockerfile bootstrap adaptation marker was not replaced");
@@ -46,6 +54,10 @@ EnvironmentFile=/etc/gitrun/gitrun.env
 WantedBy=multi-user.target
 "#;
 
+/// The bootstrap needs a small self-contained Cargo workspace for building the
+/// GSR agent after the GitRun package has been installed. This intentionally
+/// contains only the crates required by gitrun-gsr-agent; it is not the
+/// application's main workspace manifest.
 pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
 resolver = "2"
 members = ["crates/gitrun-core", "crates/gitrun-gsr"]
@@ -125,11 +137,6 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         0o644,
     ),
     (
-        "crates/gitrun-gsr/src/exec_supervisor.rs",
-        include_str!("../../../crates/gitrun-gsr/src/exec_supervisor.rs"),
-        0o644,
-    ),
-    (
         "crates/gitrun-gsr/src/main.rs",
         include_str!("../../../crates/gitrun-gsr/src/main.rs"),
         0o644,
@@ -156,7 +163,7 @@ mod tests {
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
         assert!(!dockerfile.contains("COPY crates ./crates"));
-        assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
+        assert!(dockerfile.contains("cargo build --release -p gitrun-gsr"));
     }
 
     #[test]
@@ -168,7 +175,6 @@ mod tests {
         assert!(paths.contains(&"Cargo.toml"));
         assert!(paths.contains(&"Cargo.lock"));
         assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
-        assert!(paths.contains(&"crates/gitrun-gsr/src/exec_supervisor.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
         assert_eq!(
             RUNNER_ENTRYPOINT,

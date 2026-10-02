@@ -91,6 +91,8 @@ pub struct BackupRecord {
     pub service_config_backup: Option<PathBuf>,
 }
 
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+
 #[derive(Debug, Error)]
 pub enum UpdateError {
     #[error("I/O error: {0}")]
@@ -172,7 +174,15 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateEr
 
 pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
     let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
-    let manifest: ReleaseManifest = client.get(url).send()?.error_for_status()?.json()?;
+    let response = client.get(url).send()?.error_for_status()?;
+    if response.content_length().is_some_and(|size| size > MAX_MANIFEST_BYTES) {
+        return Err(UpdateError::InvalidManifest("manifest response is too large".into()));
+    }
+    let body = response.bytes()?;
+    if body.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(UpdateError::InvalidManifest("manifest response is too large".into()));
+    }
+    let manifest: ReleaseManifest = serde_json::from_slice(&body)?;
     manifest.validate()?;
     Ok(manifest)
 }
@@ -352,9 +362,6 @@ pub fn apply_update(
         .as_ref()
         .map(|_| backup_dir.join("service-config"));
 
-    if paths.install_dir.exists() {
-        fs::rename(&paths.install_dir, &install_backup)?;
-    }
     if paths.state_dir.exists() {
         copy_dir(&paths.state_dir, &state_backup)?;
     }
@@ -366,6 +373,10 @@ pub fn apply_update(
             )?;
         }
     }
+    if paths.install_dir.exists() {
+        fs::rename(&paths.install_dir, &install_backup)?;
+    }
+
     if let Some(service_config) = &paths.service_config {
         if service_config.is_file() {
             if let Some(parent) = service_config_backup
@@ -1012,6 +1023,13 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                     "archive contains an unsafe path or link".into(),
                 ));
             }
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                return Err(UpdateError::InvalidManifest("archive contains link entry".into()));
+            }
+            if entry_type.is_character_special() || entry_type.is_block_special() || entry_type.is_fifo() {
+                return Err(UpdateError::InvalidManifest("archive contains special file entry".into()));
+            }
             entry.unpack(destination)?;
         }
     } else if name.ends_with(".zip") {
@@ -1027,6 +1045,9 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                     "archive contains unsafe path".into(),
                 ));
             };
+            if entry.is_symlink() {
+                return Err(UpdateError::InvalidManifest("archive contains symlink entry".into()));
+            }
             let out = destination.join(enclosed);
             if entry.is_dir() {
                 fs::create_dir_all(&out)?;

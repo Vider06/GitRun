@@ -1524,8 +1524,8 @@ jobs:
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           fmt_run() { cargo fmt --all -- --check 2>&1 | ci_awk_fmt; }
-          clippy_run() { cargo clippy --workspace --exclude gitrun-dashboard-tauri --all-targets --all-features --locked --message-format=json-diagnostic-rendered-ansi -- -D warnings | ci_cargo_json; }
-          doc_run() { cargo doc --workspace --exclude gitrun-dashboard-tauri --all-features --no-deps --locked --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
+          clippy_run() { cargo clippy --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-targets --all-features --locked --message-format=json-diagnostic-rendered-ansi -- -D warnings | ci_cargo_json; }
+          doc_run() { cargo doc --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --no-deps --locked --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
           rc=0
           ci_run "cargo fmt --check" fmt_run || rc=1
           ci_run "cargo clippy (-D warnings)" clippy_run || rc=1

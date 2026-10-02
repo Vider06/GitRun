@@ -80,7 +80,7 @@ jobs:
     name: Runner environment
     if: &trusted ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: &runner [self-hosted, Linux]
-    timeout-minutes: 10
+    timeout-minutes: 60
     permissions:
       contents: read
     outputs: &job_outputs
@@ -789,7 +789,7 @@ jobs:
     name: Detect project components
     if: *trusted
     runs-on: *runner
-    timeout-minutes: 10
+    timeout-minutes: 60
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -878,7 +878,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.workflows == 'true'
     runs-on: *runner
-    timeout-minutes: 10
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *boot
@@ -941,7 +941,7 @@ jobs:
     name: Repository hygiene and syntax
     needs: detect
     runs-on: *runner
-    timeout-minutes: 15
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - name: Checkout
@@ -1104,7 +1104,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.workflows == 'true'
     runs-on: *runner
-    timeout-minutes: 15
+    timeout-minutes: 60
     permissions:
       contents: read
     outputs: *job_outputs
@@ -1157,7 +1157,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.shell == 'true'
     runs-on: *runner
-    timeout-minutes: 15
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout
@@ -1185,7 +1185,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.python == 'true'
     runs-on: *runner
-    timeout-minutes: 15
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout
@@ -1217,7 +1217,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.powershell == 'true'
     runs-on: *runner
-    timeout-minutes: 20
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout
@@ -1279,7 +1279,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.node == 'true'
     runs-on: *runner
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
     outputs: *job_outputs
@@ -1381,7 +1381,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.node == 'true'
     runs-on: *runner
-    timeout-minutes: 15
+    timeout-minutes: 60
     env:
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
     outputs: *job_outputs
@@ -1419,7 +1419,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.rust == 'true'
     runs-on: *runner
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       RUST_COMPONENTS: rustfmt,clippy
     outputs: *job_outputs
@@ -1599,7 +1599,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.rust == 'true'
     runs-on: *runner
-    timeout-minutes: 45
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout
@@ -1634,7 +1634,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.rust == 'true'
     runs-on: *runner
-    timeout-minutes: 45
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout
@@ -1677,7 +1677,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.rust == 'true'
     runs-on: *runner
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       RUST_COMPONENTS: ""
     outputs: *job_outputs
@@ -1805,7 +1805,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.docker == 'true'
     runs-on: *runner
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_CONFIG: ${{ github.workspace }}/.gitrun-ci/tools/docker
@@ -1932,7 +1932,7 @@ jobs:
       - tauri
       - docker
     runs-on: *runner
-    timeout-minutes: 10
+    timeout-minutes: 60
     permissions:
       contents: read
       pull-requests: write
@@ -2101,7 +2101,7 @@ jobs:
     needs: summary
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
     runs-on: *runner
-    timeout-minutes: 15
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read

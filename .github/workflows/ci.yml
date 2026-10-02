@@ -1814,6 +1814,87 @@ jobs:
       - *report
       - *logs
 
+  # ─────────────────────────────────────────────────────── tauri-recovery ──
+  tauri-recovery:
+    name: Tauri GitRun Recovery GUI build and test
+    needs: [detect, rust-lint, frontend]
+    if: needs.detect.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
+    runs-on: *runner
+    timeout-minutes: 60
+    env:
+      RUST_COMPONENTS: ""
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Verify Tauri system dependencies
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_need_pkg libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+          if ! command -v magick >/dev/null 2>&1; then ci_need convert imagemagick; fi
+          ci_need_report
+      - *rust_keys
+      - *c_tc
+      - *c_reg
+      - *c_tgt
+      - *rust_install
+      - *rust_tnote
+      - *setup_node
+      - *c_npm
+      - name: Normalize Tauri icons to RGBA
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          if command -v magick >/dev/null 2>&1; then IM=(magick); else IM=(convert); fi
+          shopt -s nullglob
+          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+          if [ "${#icons[@]}" -eq 0 ]; then ci_err "No Tauri PNG icons found in crates/gitrun-dashboard-tauri/src-tauri/icons"; exit 1; fi
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            "${IM[@]}" "$icon" -alpha on "PNG32:$tmp"
+            mv "$tmp" "$icon"
+          done
+          echo "${#icons[@]} icons normalized to RGBA"
+      - name: Prepare GitRun Recovery GUI icon
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          src="crates/gitrun-dashboard-tauri/src-tauri/icons/gitrun-icon-512.png"
+          dst="crates/gitrun-recovery/icons/icon.png"
+          [ -f "$src" ] || { ci_err "Tauri 512px icon missing: $src"; exit 1; }
+          mkdir -p "$(dirname "$dst")"
+          tmp="$(mktemp --suffix=.png)"
+          if command -v magick >/dev/null 2>&1; then
+            magick "$src" -alpha on "PNG32:$tmp"
+          else
+            convert "$src" -alpha on "PNG32:$tmp"
+          fi
+          mv "$tmp" "$dst"
+          file "$dst" | grep -q 'PNG image data' || { ci_err "Recovery GUI icon is not a valid PNG: $dst"; exit 1; }
+          echo "Recovery GUI icon generated as RGBA PNG: $dst"
+      - name: Test GitRun Recovery GUI
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          recovery_gui() { cargo check -p gitrun-recovery --locked 2>&1 | ci_cargo_json; }
+          ci_run "GitRun Recovery GUI smoke check" recovery_gui
+      - name: Build GitRun Recovery Tauri application
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          export TMPDIR="$RUNNER_TEMP/tauri-recovery-tmp" XDG_CACHE_HOME="$RUNNER_TEMP/tauri-recovery-cache"
+          mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
+          build() {
+            cd crates/gitrun-recovery
+            npm exec --yes --package "@tauri-apps/cli@2.12.1" -- tauri build --ci --no-bundle
+          }
+          ci_run "tauri recovery build --no-bundle" build
+      - *rust_prune
+      - *npm_prune
+      - *s_tc
+      - *s_reg
+      - *s_tgt
+      - *s_npm
+      - *report
+      - *logs
+
   # ────────────────────────────────────────────────────────────── docker ──
   docker:
     name: Docker and Compose validation
@@ -1945,6 +2026,7 @@ jobs:
       - rust-build
       - audit-rust
       - tauri
+      - tauri-recovery
       - docker
     runs-on: *runner
     timeout-minutes: 60
@@ -1987,6 +2069,7 @@ jobs:
           rust-build|Rust release build|rust|
           audit-rust|Cargo audit and deny|rust|
           tauri|Tauri GUI|tauri|rust-lint frontend
+          tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
           JOBS
 
@@ -2041,6 +2124,7 @@ jobs:
               n="${id//-/_}"
               if [ "$id" != environment ] && [ "$id" != detect ]; then echo "  detect --> $n"; fi
               [ "$id" = tauri ] && { echo "  rust_lint --> tauri"; echo "  frontend --> tauri"; }
+              [ "$id" = tauri-recovery ] && { echo "  rust_lint --> tauri_recovery"; echo "  frontend --> tauri_recovery"; }
               echo "  $n --> verdict"
             done
             echo '  classDef ok fill:#dafbe1,stroke:#1a7f37,color:#0a3622'

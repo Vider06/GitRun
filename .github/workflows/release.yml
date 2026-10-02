@@ -67,18 +67,22 @@ jobs:
             echo "Tag $version is missing from the checkout." >&2
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "version_number=$expected_version" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "version_number=$expected_version"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Prepare release caches
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .gitrun-ci/cargo .gitrun-ci/rustup .gitrun-ci/npm-cache target
-          echo "CARGO_HOME=$GITHUB_WORKSPACE/.gitrun-ci/cargo" >> "$GITHUB_ENV"
-          echo "RUSTUP_HOME=$GITHUB_WORKSPACE/.gitrun-ci/rustup" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
-          echo "NPM_CONFIG_CACHE=$GITHUB_WORKSPACE/.gitrun-ci/npm-cache" >> "$GITHUB_ENV"
+          {
+            echo "CARGO_HOME=$GITHUB_WORKSPACE/.gitrun-ci/cargo"
+            echo "RUSTUP_HOME=$GITHUB_WORKSPACE/.gitrun-ci/rustup"
+            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
+            echo "NPM_CONFIG_CACHE=$GITHUB_WORKSPACE/.gitrun-ci/npm-cache"
+          } >> "$GITHUB_ENV"
           echo "$GITHUB_WORKSPACE/.gitrun-ci/cargo/bin" >> "$GITHUB_PATH"
 
       - name: Restore Rust common cache
@@ -251,9 +255,11 @@ jobs:
           }
           JSON
 
-          echo "root=$root" >> "$GITHUB_OUTPUT"
-          echo "deb=$deb" >> "$GITHUB_OUTPUT"
-          echo "server_archive=$server_archive" >> "$GITHUB_OUTPUT"
+          {
+            echo "root=$root"
+            echo "deb=$deb"
+            echo "server_archive=$server_archive"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify release artifacts
         shell: bash

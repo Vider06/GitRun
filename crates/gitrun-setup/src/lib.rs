@@ -321,9 +321,117 @@ fn build_image(tag: &str, context: &Path, dockerfile: &Path) -> Result<(), Setup
     )
 }
 
+fn ensure_directory(path: &Path, mode: u32) -> Result<(), SetupError> {
+    if path.exists() && !path.is_dir() {
+        return Err(SetupError::InvalidRuntimeDir);
+    }
+    fs::create_dir_all(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
+fn validate_install_binary(path: &Path, owner_uid: Option<u32>) -> Result<PathBuf, SetupError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        SetupError::InvalidInstallBinary(format!("{}: {error}", path.display()))
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} must not be a symbolic link",
+            path.display()
+        )));
+    }
+    if !metadata.is_file() {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o022 != 0 {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} is group/world-writable (mode {mode:o})",
+            path.display()
+        )));
+    }
+    if mode & 0o111 == 0 {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} is not executable (mode {mode:o})",
+            path.display()
+        )));
+    }
+
+    let uid = metadata.uid();
+    if uid != 0 && owner_uid != Some(uid) {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} is owned by uid {uid}; expected root or the invoking user's uid",
+            path.display()
+        )));
+    }
+
+    path.canonicalize().map_err(|error| {
+        SetupError::InvalidInstallBinary(format!(
+            "unable to resolve {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn install_binary(
+    source: &Path,
+    destination: &Path,
+    owner_uid: Option<u32>,
+) -> Result<(), SetupError> {
+    let source = validate_install_binary(source, owner_uid)?;
+
+    if let Ok(metadata) = fs::symlink_metadata(destination) {
+        if metadata.file_type().is_symlink() {
+            return Err(SetupError::InvalidInstallBinary(format!(
+                "installation destination {} must not be a symbolic link",
+                destination.display()
+            )));
+        }
+        if !metadata.is_file() {
+            return Err(SetupError::InvalidInstallBinary(format!(
+                "installation destination {} is not a regular file",
+                destination.display()
+            )));
+        }
+    }
+
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let file_name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("gitrun");
+    let tmp_path = destination.with_file_name(format!(
+        "{file_name}.tmp.{}.{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+
+    let result = (|| {
+        fs::copy(&source, &tmp_path)?;
+        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o755))?;
+        fs::File::open(&tmp_path)?.sync_all()?;
+        fs::rename(&tmp_path, destination)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
+}
+
 fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupError> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -346,7 +454,8 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
             .unwrap_or_default()
             .as_nanos()
     ));
-    {
+
+    let result = (|| {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -354,12 +463,18 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
             .open(&tmp_path)?;
         file.write_all(content.as_bytes())?;
         file.sync_all()?;
+
+        // Belt-and-suspenders: force the exact mode regardless of umask, then
+        // atomically move into place so readers never see a partially written file.
+        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(mode))?;
+        fs::rename(&tmp_path, path)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
     }
-    // Belt-and-suspenders: force the exact mode regardless of umask, then
-    // atomically move into place so readers never see a partially written file.
-    fs::set_permissions(&tmp_path, fs::Permissions::from_mode(mode))?;
-    fs::rename(&tmp_path, path)?;
-    Ok(())
+    result
 }
 
 fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {

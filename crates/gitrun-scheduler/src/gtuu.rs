@@ -112,6 +112,7 @@ impl GtuuLock {
                 Err(error) => return Err(GtuuError::Io(error)),
             }
         }
+    }
 }
 
 /// A lock is stale when its recorded PID is no longer running. If the PID

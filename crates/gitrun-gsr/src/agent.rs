@@ -151,7 +151,6 @@ pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Con
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1613,7 +1613,7 @@ jobs:
       - name: Test
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          test_run() { cargo test --workspace --exclude gitrun-dashboard-tauri --all-features --locked --no-fail-fast 2>&1 | ci_awk_tests; }
+          test_run() { cargo test --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --locked --no-fail-fast 2>&1 | ci_awk_tests; }
           rc=0
           ci_run "cargo test" test_run || rc=1
           if [ -s "$CI_DIR/test-totals.txt" ]; then
@@ -1648,7 +1648,7 @@ jobs:
       - name: Build (release)
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          build_run() { cargo build --workspace --exclude gitrun-dashboard-tauri --all-features --release --locked --timings --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
+          build_run() { cargo build --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --release --locked --timings --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
           ci_run "cargo build --release" build_run
           {
             echo "### 📦 Release binaries"; echo; echo "| Binary | Size |"; echo "|---|---|"

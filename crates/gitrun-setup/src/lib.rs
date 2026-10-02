@@ -1,7 +1,7 @@
 use gitrun_core::Config;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -78,12 +78,9 @@ pub fn prepare_directories(
 
     let state_dir = PathBuf::from(&config.state_dir);
     let log_dir = PathBuf::from(&config.log_dir);
-    for path in [&config_dir, &state_dir, &log_dir] {
-        if path.exists() && !path.is_dir() {
-            return Err(SetupError::InvalidRuntimeDir);
-        }
-        fs::create_dir_all(path)?;
-    }
+    ensure_directory(&config_dir, 0o700)?;
+    ensure_directory(&state_dir, 0o750)?;
+    ensure_directory(&log_dir, 0o750)?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),
@@ -135,9 +132,10 @@ pub fn bootstrap_linux_with_auth(
     let log_dir = PathBuf::from("/var/log/gitrun");
     let root = PathBuf::from("/opt/gitrun");
 
-    for path in [&config_dir, &state_dir, &log_dir, &root] {
-        fs::create_dir_all(path)?;
-    }
+    ensure_directory(&config_dir, 0o755)?;
+    ensure_directory(&state_dir, 0o750)?;
+    ensure_directory(&log_dir, 0o750)?;
+    ensure_directory(&root, 0o755)?;
 
     let runner_dockerfile = resources::runner_dockerfile_for_bootstrap();
     write_resource(
@@ -156,8 +154,7 @@ pub fn bootstrap_linux_with_auth(
     let recovery_source = find_recovery_binary(app_binary);
     if let Some(source) = &recovery_source {
         let installed_recovery = Path::new("/usr/local/bin/gitrun-recovery");
-        fs::copy(source, installed_recovery)?;
-        fs::set_permissions(installed_recovery, fs::Permissions::from_mode(0o755))?;
+        install_binary(source, installed_recovery, owner_uid)?;
     }
 
     let service = if recovery_source.is_some() {
@@ -205,12 +202,12 @@ pub fn bootstrap_linux_with_auth(
     )?;
 
     let installed = PathBuf::from("/usr/local/bin/gitrun");
-    fs::copy(app_binary, &installed)?;
-    fs::set_permissions(&installed, fs::Permissions::from_mode(0o755))?;
+    install_binary(app_binary, &installed, owner_uid)?;
 
     run_command(Command::new("systemctl").args(["daemon-reload"]))?;
     run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
+    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
 
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),
@@ -488,17 +485,13 @@ fn command_status(name: &'static str, args: &[&str]) -> DependencyStatus {
 
 fn run_command(command: &mut Command) -> Result<(), SetupError> {
     let display = format!("{command:?}");
-    let output = command.output()?;
-    if output.status.success() {
+    let status = command.status()?;
+    if status.success() {
         Ok(())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        Err(SetupError::Command(if stderr.is_empty() {
-            format!("{display}: {stdout}")
-        } else {
-            format!("{display}: {stderr}")
-        }))
+        Err(SetupError::Command(format!(
+            "{display}: process exited with status {status}"
+        )))
     }
 }
 

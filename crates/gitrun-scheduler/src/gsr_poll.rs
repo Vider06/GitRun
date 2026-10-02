@@ -142,8 +142,7 @@ impl BanStore {
     pub fn ban(&mut self, repo: &str, duration: Duration) -> Result<(), GsrPollError> {
         let _lock = self.lock()?;
         self.reload_from_disk()?;
-        let until = now_secs()
-             .saturating_add(duration.as_secs());
+        let until = now_secs().saturating_add(duration.as_secs());
         self.data.banned_until.insert(repo.to_owned(), until);
         self.save()
     }

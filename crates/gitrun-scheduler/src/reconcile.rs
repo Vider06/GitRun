@@ -303,6 +303,7 @@ mod tests {
             runners: Vec::new(),
             queued_jobs: 0,
             queued_job_labels: Vec::new(),
+            configured_runner_labels: vec!["self-hosted".into(), "Linux".into()],
             logic_rules: Vec::new(),
             idle: Vec::new(),
             recovery_enabled: true,

@@ -40,13 +40,29 @@ def token() -> str:
 def api_request(method: str, path: str, body: dict|None=None) -> dict:
     data=None if body is None else json.dumps(body).encode()
     req=urllib.request.Request(API+path,data=data,method=method,headers={"Accept":"application/vnd.github+json","Authorization":f"Bearer {token()}","X-GitHub-Api-Version":API_VERSION,"User-Agent":"GitRun/0.2.0","Content-Type":"application/json"})
-    try:
-        with urllib.request.urlopen(req,timeout=20) as response:
-            raw=response.read().decode("utf-8")
-            return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as exc:
-        detail=exc.read().decode("utf-8",errors="replace")[:500]
-        raise RuntimeError(f"GitHub API {exc.code}: {detail}") from exc
+    attempts=max(1,env_int("GITRUN_API_RETRIES",3))
+    timeout=max(5,env_int("GITRUN_API_TIMEOUT",20))
+    for attempt in range(1,attempts+1):
+        try:
+            with urllib.request.urlopen(req,timeout=timeout) as response:
+                raw=response.read().decode("utf-8")
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as exc:
+            detail=exc.read().decode("utf-8",errors="replace")[:500]
+            if attempt < attempts and exc.code in {408,429,500,502,503,504}:
+                delay=min(8,2**(attempt-1))
+                log.warning("GitHub API %s %s failed with HTTP %s; retrying in %ss",method,path,exc.code,delay)
+                time.sleep(delay)
+                continue
+            raise RuntimeError(f"GitHub API {exc.code}: {detail}") from exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            if attempt < attempts:
+                delay=min(8,2**(attempt-1))
+                log.warning("GitHub API %s %s failed on attempt %s/%s; retrying in %ss: %s",
+                            method,path,attempt,attempts,delay,exc)
+                time.sleep(delay)
+                continue
+            raise
 
 def split_repo(repo:str)->tuple[str,str]: return repo.split("/",1)
 def registration_token(repo:str)->str:

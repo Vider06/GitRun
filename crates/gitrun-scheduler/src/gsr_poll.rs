@@ -114,6 +114,7 @@ impl BanStore {
             .create(true)
             .read(true)
             .write(true)
+            .truncate(false)
             .open(lock_path)?;
         lock.lock()?;
         Ok(lock)
@@ -142,8 +143,7 @@ impl BanStore {
         let _lock = self.lock()?;
         self.reload_from_disk()?;
         let until = now_secs()
-            .checked_add(duration.as_secs())
-            .unwrap_or(u64::MAX);
+             .saturating_add(duration.as_secs());
         self.data.banned_until.insert(repo.to_owned(), until);
         self.save()
     }

@@ -11,15 +11,7 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     );
 
     let source = include_str!("../../../docker/runner/Dockerfile");
-    let source = source
-        .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
-        // The setup bootstrap intentionally uses the checked-in dependency
-        // lock as its starting point but may prune unrelated workspace
-        // packages because only gitrun-core + gitrun-gsr are present.
-        .replace(
-            "cargo build --locked --release -p gitrun-gsr",
-            "cargo build --release -p gitrun-gsr",
-        );
+    let source = source.replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY);
 
     if source.contains(FULL_WORKSPACE_COPY) {
         panic!("runner Dockerfile bootstrap adaptation marker was not replaced");
@@ -168,7 +160,7 @@ mod tests {
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
         assert!(!dockerfile.contains("COPY crates ./crates"));
-        assert!(dockerfile.contains("cargo build --release -p gitrun-gsr"));
+        assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
     }
 
     #[test]

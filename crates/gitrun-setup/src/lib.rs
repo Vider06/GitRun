@@ -211,7 +211,7 @@ pub fn bootstrap_linux_with_auth(
 
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),
-        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun-recovery start dashboard\nTerminal=false\nCategories=Development;System;\n",
+        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun dashboard\nTerminal=false\nCategories=Development;System;\n",
         0o644,
     )?;
 

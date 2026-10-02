@@ -1512,22 +1512,6 @@ jobs:
           if ls rust-toolchain rust-toolchain.toml >/dev/null 2>&1; then ci_note "rust-toolchain file found: RUSTUP_TOOLCHAIN=$RUST_VERSION overrides it in CI"; fi
           rustc -vV
           cargo --version
-      - &prepare_recovery_gui
-        name: Prepare GitRun Recovery GUI assets
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          if command -v magick >/dev/null 2>&1; then IM=(magick); else IM=(convert); fi
-          ci_need convert imagemagick
-          src="assets/gitrun-icon-512.png"
-          dst="crates/gitrun-recovery/icons/icon.png"
-          [ -f "$src" ] || { ci_err "Recovery GUI source icon missing: $src"; exit 1; }
-          mkdir -p "$(dirname "$dst")"
-          tmp="$(mktemp --suffix=.png)"
-          "${IM[@]}" "$src" -alpha on -colorspace sRGB -resize 512x512! "PNG32:$tmp"
-          mv "$tmp" "$dst"
-          file "$dst" | grep -q 'PNG image data' || { ci_err "Recovery GUI icon is not a valid PNG: $dst"; exit 1; }
-          echo "Recovery GUI icon generated as RGBA PNG: $dst"
-
       - &rust_tnote
         name: Report target cache
         env:
@@ -1625,7 +1609,6 @@ jobs:
       - *c_reg
       - *c_tgt
       - *rust_install
-      - *prepare_recovery_gui
       - *rust_tnote
       - name: Test
         run: |
@@ -1661,7 +1644,6 @@ jobs:
       - *c_reg
       - *c_tgt
       - *rust_install
-      - *prepare_recovery_gui
       - *rust_tnote
       - name: Build (release)
         run: |
@@ -1784,6 +1766,21 @@ jobs:
             mv "$tmp" "$icon"
           done
           echo "${#icons[@]} icons normalized to RGBA"
+      - name: Prepare GitRun Recovery GUI icon
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          src="crates/gitrun-dashboard-tauri/src-tauri/icons/gitrun-icon-512.png"
+          dst="crates/gitrun-recovery/icons/icon.png"
+          [ -f "$src" ] || { ci_err "Tauri 512px icon missing: $src"; exit 1; }
+          mkdir -p "$(dirname "$dst")"
+          cp "$src" "$dst"
+          file "$dst" | grep -q 'PNG image data' || { ci_err "Recovery GUI icon is not a valid PNG: $dst"; exit 1; }
+          echo "Recovery GUI icon generated: $dst"
+      - name: Test GitRun Recovery GUI
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          recovery_gui() { cargo check -p gitrun-recovery --locked 2>&1 | ci_cargo_json; }
+          ci_run "GitRun Recovery GUI smoke check" recovery_gui
       - name: Build Tauri application
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

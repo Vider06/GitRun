@@ -3,21 +3,18 @@
 //! the watched process can't observe that process's own hard crash — only a
 //! genuinely separate process can).
 //!
-//! What this does today: polls whether a PID is alive, and when it
-//! disappears unexpectedly (no clean shutdown marker written), logs the
-//! event and attempts to show an error to the operator — graphically if
-//! possible, falling back to a terminal message, always to the log. This is
-//! the "crash/error handler" half of GSR's scope; the "hardening" half
-//! (container escape prevention, command whitelisting) is a separate,
-//! larger piece of work not started in this pass — see the crate-level docs
-//! for the full scope split.
+//! What this does today: watches the scheduler PID file and, once the
+//! scheduler has been observed alive, keeps a stable Linux pidfd for that
+//! process so PID reuse cannot make an unrelated process look healthy. If
+//! the scheduler disappears unexpectedly (the PID file survives because the
+//! process did not perform its clean-shutdown cleanup), GSR records a
+//! critical event and attempts to show an error to the operator — graphically
+//! if possible, falling back to a terminal message.
 //!
-//! PID liveness check: same `kill(pid, 0)` technique already used in
-//! `gitrun-scheduler`'s GTUU stale-lock detection (signal 0 delivers
-//! nothing, only checks existence/permission — see that module for the
-//! detailed rationale), duplicated here rather than shared because pulling
-//! in `gitrun-scheduler` as a dependency of `gitrun-gsr` would be backwards:
-//! GSR is meant to supervise the scheduler, not depend on it.
+//! On Unix targets without Linux pidfds, the watchdog falls back to
+//! `kill(pid, 0)` liveness checks. GitRun's production deployment is Linux,
+//! where the pidfd path avoids the PID-reuse race. GSR deliberately does not
+//! depend on `gitrun-scheduler`: it is meant to supervise it, not depend on it.
 
 use crate::events::{self, Severity};
 use std::path::Path;
@@ -33,27 +30,46 @@ extern "C" {
 #[cfg(unix)]
 fn process_is_alive(pid: u32) -> bool {
     let result = unsafe { libc_kill(pid as i32, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1) // EPERM: alive, just not ours
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[cfg(not(unix))]
 fn process_is_alive(_pid: u32) -> bool {
-    true
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn open_pidfd(pid: u32) -> Option<i32> {
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
+    (fd >= 0).then_some(fd as i32)
+}
+
+#[cfg(target_os = "linux")]
+fn pidfd_is_alive(pidfd: i32) -> bool {
+    let mut pollfd = libc::pollfd {
+        fd: pidfd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let result = unsafe { libc::poll(&mut pollfd, 1, 0) };
+    result == 0 || (result > 0 && pollfd.revents & libc::POLLIN == 0)
+}
+
+#[cfg(target_os = "linux")]
+fn close_pidfd(pidfd: i32) {
+    unsafe { libc::close(pidfd) };
 }
 
 pub struct WatchConfig {
-    /// Path to a file containing the watched process's PID as plain text —
-    /// the watched process (e.g. `gitrun-autoscaler`) is responsible for
-    /// writing this on startup and removing it on clean shutdown. A PID
-    /// file that exists but names a dead process means an unclean exit
-    /// (crash), which is exactly the condition this watchdog exists to
-    /// catch — a missing PID file means a clean shutdown or the process
-    /// simply hasn't started yet, neither of which is an incident.
+    /// Path to the scheduler PID file. The Rust scheduler writes its PID on
+    /// startup and removes the file on clean shutdown. A surviving PID file
+    /// after the process disappears is the watchdog's crash signal.
     pub pid_file: std::path::PathBuf,
     pub events_path: std::path::PathBuf,
     pub poll_interval: Duration,
     /// Human-readable name for the watched process, used in log/error
-    /// messages (e.g. "gitrun-autoscaler").
+    /// messages (currently `gitrun-autoscaler`, the scheduler's legacy
+    /// process name).
     pub watched_name: String,
 }
 
@@ -62,28 +78,54 @@ pub struct WatchConfig {
 /// process's main loop.
 pub fn run(config: &WatchConfig, should_stop: impl Fn() -> bool) {
     let mut last_known_pid: Option<u32> = None;
+    #[cfg(target_os = "linux")]
+    let mut pidfd: Option<i32> = None;
 
     while !should_stop() {
         match read_pid(&config.pid_file) {
             Some(pid) => {
+                #[cfg(target_os = "linux")]
+                {
+                    if last_known_pid != Some(pid) {
+                        if let Some(fd) = pidfd.take() {
+                            close_pidfd(fd);
+                        }
+                        pidfd = open_pidfd(pid);
+                    }
+                    let alive = pidfd.map(pidfd_is_alive).unwrap_or(false);
+                    if alive {
+                        last_known_pid = Some(pid);
+                    } else if last_known_pid == Some(pid) {
+                        handle_crash(config, pid);
+                        last_known_pid = None;
+                        if let Some(fd) = pidfd.take() {
+                            close_pidfd(fd);
+                        }
+                    }
+                }
+
+                #[cfg(not(target_os = "linux"))]
                 if process_is_alive(pid) {
                     last_known_pid = Some(pid);
                 } else if last_known_pid == Some(pid) {
-                    // The PID file still names a process we previously saw
-                    // alive, and now it's gone without the file having been
-                    // cleaned up — that's an unclean exit (crash), not a
-                    // deliberate shutdown (which removes the file).
                     handle_crash(config, pid);
                     last_known_pid = None;
                 }
             }
             None => {
-                // No PID file: either not started yet, or shut down cleanly.
-                // Neither is a crash; just wait for the next poll.
                 last_known_pid = None;
+                #[cfg(target_os = "linux")]
+                if let Some(fd) = pidfd.take() {
+                    close_pidfd(fd);
+                }
             }
         }
         std::thread::sleep(config.poll_interval);
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(fd) = pidfd {
+        close_pidfd(fd);
     }
 }
 
@@ -127,12 +169,37 @@ fn show_error(message: &str) {
 /// headless server, which is a completely normal GitRun deployment target,
 /// not an error condition in itself).
 fn try_graphical_notification(message: &str) -> bool {
-    Command::new("notify-send")
+    let mut child = match Command::new("notify-send")
         .arg("GitRun — process crashed")
         .arg(message)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+
+    const TIMEOUT: Duration = Duration::from_secs(2);
+    const POLL_INTERVAL: Duration = Duration::from_millis(50);
+    let deadline = std::time::Instant::now() + TIMEOUT;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
         .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
         .replace(
             "cargo build --locked --release -p gitrun-gsr",
-            "cargo build --release -p gitrun-gsr",
+            "cargo build --locked --release -p gitrun-gsr",
         );
 
     if source.contains(FULL_WORKSPACE_COPY) {

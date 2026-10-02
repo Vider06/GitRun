@@ -752,7 +752,7 @@ jobs:
           ci_check error "required commands" chk_cmds bash git curl python3 tar gzip xz sha256sum awk sed grep find
           ci_check error "python3 >= 3.8" chk_python
           ci_check warn "build tools (Rust/Tauri jobs)" chk_cmds cc pkg-config make
-          ci_check warn "optional tools" chk_cmds docker node npm pwsh
+          ci_check warn "optional tools" chk_cmds docker
           ci_check error "GitHub Actions environment" chk_ghenv
           ci_check error "network: github.com" chk_host github.com
           ci_check error "network: api.github.com" chk_host api.github.com

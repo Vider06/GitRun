@@ -11,12 +11,7 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     );
 
     let source = include_str!("../../../docker/runner/Dockerfile");
-    let source = source
-        .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
-        .replace(
-            "cargo build --locked --release -p gitrun-gsr",
-            "cargo build --locked --release -p gitrun-gsr",
-        );
+    let source = source.replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY);
 
     if source.contains(FULL_WORKSPACE_COPY) {
         panic!("runner Dockerfile bootstrap adaptation marker was not replaced");

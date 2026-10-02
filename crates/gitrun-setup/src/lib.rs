@@ -370,10 +370,7 @@ fn validate_install_binary(path: &Path, owner_uid: Option<u32>) -> Result<PathBu
     }
 
     path.canonicalize().map_err(|error| {
-        SetupError::InvalidInstallBinary(format!(
-            "unable to resolve {}: {error}",
-            path.display()
-        ))
+        SetupError::InvalidInstallBinary(format!("unable to resolve {}: {error}", path.display()))
     })
 }
 

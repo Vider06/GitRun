@@ -164,6 +164,31 @@ pub struct GitHubClient {
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
+const DEFAULT_API_ATTEMPTS: usize = 3;
+
+fn api_attempts() -> usize {
+    std::env::var("GITRUN_API_RETRIES")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(DEFAULT_API_ATTEMPTS)
+        .max(1)
+}
+
+fn retryable_status(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::REQUEST_TIMEOUT
+            | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+            | reqwest::StatusCode::BAD_GATEWAY
+            | reqwest::StatusCode::SERVICE_UNAVAILABLE
+            | reqwest::StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+fn retry_delay(attempt: usize) -> Duration {
+    Duration::from_secs(2_u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8))
+}
+
 impl GitHubClient {
     pub fn new(token: impl Into<String>) -> Result<Self> {
         Self::with_timeouts(token, DEFAULT_CONNECT_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)
@@ -212,69 +237,85 @@ impl GitHubClient {
     }
 
     fn request(&self, method: reqwest::Method, url: &str) -> Result<reqwest::blocking::Response> {
-        let token = self.token.current_token()?;
-        let response = self
-            .http
-            .request(method, url)
-            .header("Accept", "application/vnd.github+json")
-            .header("Authorization", format!("Bearer {token}"))
-            .header("X-GitHub-Api-Version", API_VERSION)
-            .header("User-Agent", USER_AGENT)
-            .send()?;
+        let attempts = api_attempts();
+        for attempt in 1..=attempts {
+            let token = self.token.current_token()?;
+            let response = match self
+                .http
+                .request(method.clone(), url)
+                .header("Accept", "application/vnd.github+json")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("X-GitHub-Api-Version", API_VERSION)
+                .header("User-Agent", USER_AGENT)
+                .send()
+            {
+                Ok(response) => response,
+                Err(error) if attempt < attempts => {
+                    std::thread::sleep(retry_delay(attempt));
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
 
-        let status = response.status();
-        let retry_after = response
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_secs);
-        let rate_limit_remaining_zero = response
-            .headers()
-            .get("x-ratelimit-remaining")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v == "0")
-            .unwrap_or(false);
+            let status = response.status();
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(Duration::from_secs);
+            let rate_limit_remaining_zero = response
+                .headers()
+                .get("x-ratelimit-remaining")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v == "0")
+                .unwrap_or(false);
 
-        // GitHub can return 403 for a secondary rate limit as well as for
-        // ordinary permission failures. A Retry-After header on a 403 is the
-        // decisive signal for the former; a primary rate limit is also
-        // identified by X-RateLimit-Remaining: 0. All 429 responses are
-        // rate limits by definition.
-        let is_rate_limit = status == reqwest::StatusCode::TOO_MANY_REQUESTS
-            || (status == reqwest::StatusCode::FORBIDDEN
-                && (retry_after.is_some() || rate_limit_remaining_zero));
+            // GitHub can return 403 for a secondary rate limit as well as for
+            // ordinary permission failures. A Retry-After header on a 403 is the
+            // decisive signal for the former; a primary rate limit is also
+            // identified by X-RateLimit-Remaining: 0. All 429 responses are
+            // rate limits by definition.
+            let is_rate_limit = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || (status == reqwest::StatusCode::FORBIDDEN
+                    && (retry_after.is_some() || rate_limit_remaining_zero));
 
-        if is_rate_limit {
-            let retry_after = retry_after.or_else(|| {
-                response
-                    .headers()
-                    .get("x-ratelimit-reset")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse::<i64>().ok())
-                    .map(|reset_epoch| {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs() as i64)
-                            .unwrap_or(0);
-                        Duration::from_secs((reset_epoch - now).max(1) as u64)
-                    })
-            });
-            return Err(GitHubError::RateLimited { retry_after });
+            if is_rate_limit {
+                let retry_after = retry_after.or_else(|| {
+                    response
+                        .headers()
+                        .get("x-ratelimit-reset")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .map(|reset_epoch| {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs() as i64)
+                                .unwrap_or(0);
+                            Duration::from_secs((reset_epoch - now).max(1) as u64)
+                        })
+                });
+                return Err(GitHubError::RateLimited { retry_after });
+            }
+
+            if !status.is_success() {
+                if retryable_status(status) && attempt < attempts {
+                    std::thread::sleep(retry_delay(attempt));
+                    continue;
+                }
+                let detail = response.text().unwrap_or_default();
+                let detail = detail.chars().take(500).collect();
+                return Err(GitHubError::Api {
+                    status: status.as_u16(),
+                    detail,
+                });
+            }
+
+            return Ok(response);
         }
 
-        if !status.is_success() {
-            let detail = response.text().unwrap_or_default();
-            let detail = detail.chars().take(500).collect();
-            return Err(GitHubError::Api {
-                status: status.as_u16(),
-                detail,
-            });
-        }
-
-        Ok(response)
+        unreachable!("api_attempts() is always at least one")
     }
-
     /// Follows `Link: rel="next"` pagination and parses each runners page
     /// immediately, so a repository with many registered runners does not
     /// require materializing every page as an intermediate JSON value.
@@ -645,6 +686,24 @@ mod tests {
     /// pinned version, update both this assertion and the constant together
     /// in the same change, ideally after checking GitHub's API version
     /// changelog for behavioral differences.
+    #[test]
+    fn retryable_status_recognizes_transient_http_failures() {
+        assert!(retryable_status(reqwest::StatusCode::REQUEST_TIMEOUT));
+        assert!(retryable_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(retryable_status(reqwest::StatusCode::BAD_GATEWAY));
+        assert!(retryable_status(reqwest::StatusCode::SERVICE_UNAVAILABLE));
+        assert!(retryable_status(reqwest::StatusCode::GATEWAY_TIMEOUT));
+        assert!(!retryable_status(reqwest::StatusCode::FORBIDDEN));
+        assert!(!retryable_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
+    }
+
+    #[test]
+    fn retry_delay_is_bounded_exponential_backoff() {
+        assert_eq!(retry_delay(1), Duration::from_secs(1));
+        assert_eq!(retry_delay(2), Duration::from_secs(2));
+        assert_eq!(retry_delay(3), Duration::from_secs(4));
+        assert_eq!(retry_delay(10), Duration::from_secs(8));
+    }
     #[test]
     fn api_version_is_pinned_deliberately() {
         assert_eq!(API_VERSION, "2026-03-10");

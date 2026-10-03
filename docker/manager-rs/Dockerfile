@@ -1,15 +1,9 @@
 # syntax=docker/dockerfile:1
 
 ARG DOCKER_CLI_VERSION=5:29.8.1-1~debian.12~bookworm
-# Keep the persistent Cargo target cache isolated per source revision. BuildKit
-# cache mounts outlive Dockerfile COPY layers, so sharing target artifacts
-# across commits can make Cargo reuse a stale fingerprint after branch changes.
-ARG GITRUN_SOURCE_REV=local
-ARG GITRUN_CACHE_SCHEMA=v10
-
+# BuildKit cache mounts are persisted explicitly by the CI cache-dance step.
+# Cargo fingerprints invalidate stale artifacts as source files change.
 FROM rust:1.98.1-slim-bookworm@sha256:ebd900bae66fd508b466cef82d64a83a5fb34682e4c8b2797a42908bddc95a57 AS build
-ARG GITRUN_SOURCE_REV
-ARG GITRUN_CACHE_SCHEMA
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
@@ -18,13 +12,9 @@ RUN grep -Fq 'pub mod app_auth;' crates/gitrun-core/src/lib.rs \
     && test -f crates/gitrun-core/src/app_auth.rs
 
 
-RUN --mount=type=cache,id=gitrun-manager-target-${GITRUN_CACHE_SCHEMA}-${GITRUN_SOURCE_REV},target=/build/target,sharing=locked \
-    cargo clean -p gitrun-core \
-    && rm -rf /build/target/release/incremental
-
-RUN --mount=type=cache,id=gitrun-manager-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=gitrun-manager-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=gitrun-manager-target-${GITRUN_CACHE_SCHEMA}-${GITRUN_SOURCE_REV},target=/build/target,sharing=locked \
+RUN --mount=type=cache,id=gitrun-manager-cargo-registry-v11,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=gitrun-manager-cargo-git-v11,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=gitrun-manager-target-v11,target=/build/target,sharing=locked \
     cargo build --locked --release -p gitrun-scheduler --bin gitrun-autoscaler \
     && cp /build/target/release/gitrun-autoscaler /build/gitrun-autoscaler \
     && strip --strip-unneeded /build/gitrun-autoscaler

@@ -185,9 +185,10 @@ impl Vault {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key_bytes));
 
         let secrets_path = dir.join(SECRETS_FILE);
-        let data = match fs::read_to_string(&secrets_path) {
-            Ok(raw) => {
+        let data = match fs::metadata(&secrets_path) {
+            Ok(_) => {
                 set_secret_file_permissions(&secrets_path)?;
+                let raw = fs::read_to_string(&secrets_path)?;
                 serde_json::from_str(&raw)?
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => VaultFile::default(),
@@ -585,6 +586,61 @@ mod tests {
         vault.set("deploy-key", "super-secret-value").unwrap();
         assert_eq!(vault.get("deploy-key").unwrap(), "super-secret-value");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_nonce_is_rejected_without_panic() {
+        let dir = temp_dir("malformed-nonce");
+        let mut vault = Vault::open(&dir).unwrap();
+        vault.set("key", "value").unwrap();
+
+        let secrets_path = dir.join(SECRETS_FILE);
+        let raw = fs::read_to_string(&secrets_path).unwrap();
+        let mut file: VaultFile = serde_json::from_str(&raw).unwrap();
+        let secret = file.secrets.get_mut("global\u{1}key").unwrap();
+        secret.nonce = base64_encode(&[1, 2, 3]);
+        fs::write(&secrets_path, serde_json::to_string_pretty(&file).unwrap()).unwrap();
+
+        let reloaded = Vault::open(&dir).unwrap();
+        assert!(matches!(
+            reloaded.get("key"),
+            Err(VaultError::DecryptionFailed(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reserved_separator_is_rejected_from_names_and_scopes() {
+        let dir = temp_dir("identifier-validation");
+        let mut vault = Vault::open(&dir).unwrap();
+
+        assert!(matches!(
+            vault.set("bad\u{1}name", "value"),
+            Err(VaultError::InvalidIdentifier)
+        ));
+        assert!(matches!(
+            vault.set_scoped("key", "value", Scope::Group("bad\u{1}group".into())),
+            Err(VaultError::InvalidIdentifier)
+        ));
+        assert!(matches!(
+            vault.set_scoped("key", "value", Scope::Repo("bad\u{1}repo".into())),
+            Err(VaultError::InvalidIdentifier)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn secret_file_has_owner_only_permissions() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = temp_dir("secret-perms");
+            let mut vault = Vault::open(&dir).unwrap();
+            vault.set("key", "value").unwrap();
+            let meta = fs::metadata(dir.join(SECRETS_FILE)).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]

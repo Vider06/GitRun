@@ -1647,9 +1647,9 @@ fn existing_file_mode(path: &Path, default_mode: u32) -> u32 {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        return fs::metadata(path)
+        fs::metadata(path)
             .map(|meta| meta.permissions().mode())
-            .unwrap_or(default_mode);
+            .unwrap_or(default_mode)
     }
     #[cfg(not(unix))]
     {

@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.gitrun.dashboard",
   "build": {
-    "frontendDist": "../dist"
+    "frontendDist": "../dist",
+    "withGlobalTauri": true
   },
   "app": {
     "windows": [
@@ -25,7 +26,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
-    "icon": ["icons/gitrun-icon-32.png", "icons/gitrun-icon-128.png", "icons/gitrun-icon-256.png", "icons/gitrun-icon-512.png"]
+    "targets": [
+      "deb",
+      "appimage"
+    ],
+    "icon": [
+      "icons/gitrun-icon-32.png",
+      "icons/gitrun-icon-128.png",
+      "icons/gitrun-icon-256.png",
+      "icons/gitrun-icon-512.png"
+    ]
   }
 }

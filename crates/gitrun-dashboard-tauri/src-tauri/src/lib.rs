@@ -10,8 +10,8 @@
 //! infrastructure tool.
 
 use gitrun_core::Config;
-use gitrun_vault::{Scope, Vault};
 use gitrun_setup::BootstrapAuth;
+use gitrun_vault::{Scope, Vault};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,7 +109,9 @@ fn validate_private_key_path(value: &str) -> Result<String, String> {
         return Err("GitHub App private key path must not be a symbolic link".into());
     }
     if !metadata.is_file() {
-        return Err(format!("GitHub App private key path is not a regular file: {path}"));
+        return Err(format!(
+            "GitHub App private key path is not a regular file: {path}"
+        ));
     }
 
     #[cfg(unix)]
@@ -164,7 +166,8 @@ fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), Stri
                 .mode(0o600)
                 .open(path)
                 .map_err(|e| e.to_string())?;
-            file.write_all(payload.as_bytes()).map_err(|e| e.to_string())?;
+            file.write_all(payload.as_bytes())
+                .map_err(|e| e.to_string())?;
             file.sync_all().map_err(|e| e.to_string())?;
         }
 

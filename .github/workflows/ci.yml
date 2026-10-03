@@ -38,6 +38,13 @@ on:
         description: Skip all artifact uploads for this run
         type: boolean
         default: true
+      runner_mode:
+        description: Choose the runner pool for this run
+        type: choice
+        options:
+          - self-hosted
+          - github-hosted
+        default: self-hosted
       gc_dry_run:
         description: Cache GC only reports what it would delete
         type: boolean
@@ -58,6 +65,7 @@ env:
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ inputs.verbose && '1' || '0' }}
   CI_UPLOAD_ARTIFACTS: ${{ inputs.no_artifacts && 'false' || 'true' }}
+  CI_RUNNER_MODE: ${{ inputs.runner_mode || 'self-hosted' }}
   CI_MAX_ANNOT: "40"
   CARGO_TERM_COLOR: always
   CARGO_TERM_PROGRESS_WHEN: never
@@ -84,7 +92,7 @@ jobs:
   environment:
     name: Runner environment
     if: &trusted ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
-    runs-on: &runner [self-hosted, Linux]
+    runs-on: &runner ${{ fromJSON(inputs.runner_mode == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
     permissions:
       contents: read

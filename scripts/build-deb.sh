@@ -36,7 +36,6 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 root="$workdir/root"
-install_root="$root/usr"
 mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/share/gitrun" "$root/usr/share/doc/gitrun" "$root/usr/share/applications"
 
 install -m 0755 "$BINARY" "$root/usr/bin/gitrun"

@@ -373,30 +373,10 @@ pub fn current_version() -> String {
         .unwrap_or_else(|| "0.0.0".into())
 }
 
-pub fn dashboard_binary() -> Option<PathBuf> {
-    let candidates = [
-        std::env::var("GITRUN_DASHBOARD_BINARY")
-            .ok()
-            .map(PathBuf::from),
-        Some(PathBuf::from("/usr/bin/gitrun-dashboard-tauri")),
-        Some(PathBuf::from("/usr/local/bin/gitrun-dashboard-tauri")),
-        std::env::current_exe().ok().and_then(|path| {
-            path.parent().map(|dir| {
-                dir.join(if cfg!(windows) {
-                    "gitrun-dashboard-tauri.exe"
-                } else {
-                    "gitrun-dashboard-tauri"
-                })
-            })
-        }),
-    ];
-    candidates.into_iter().flatten().find(|path| path.is_file())
-}
-
 pub fn service_unit_is_valid() -> bool {
     let path = Path::new("/etc/systemd/system/gitrun.service");
     fs::read_to_string(path)
-        .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun-recovery start scheduler"))
+        .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun scheduler"))
         .unwrap_or(false)
 }
 
@@ -436,12 +416,11 @@ pub fn restart_service() -> Result<(), String> {
         return repair_service_unit();
     }
 
-    let recovery = std::env::var("GITRUN_RECOVERY_BINARY")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/usr/local/bin/gitrun-recovery"));
+    let gitrun = find_gitrun_binary()
+        .ok_or("GitRun executable was not found for privileged service repair")?;
     let status = Command::new("pkexec")
-        .arg(recovery)
-        .arg("repair-service")
+        .arg(gitrun)
+        .arg("--repair-service")
         .status()
         .map_err(|error| format!("unable to request privileged service repair: {error}"))?;
     if status.success() {
@@ -476,8 +455,9 @@ fn is_root() -> bool {
 }
 
 pub fn launch_dashboard() -> Result<std::process::ExitStatus, String> {
-    let binary = dashboard_binary().ok_or("GitRun Tauri dashboard executable was not found")?;
+    let binary = find_gitrun_binary().ok_or("GitRun executable was not found")?;
     Command::new(binary)
+        .arg("dashboard")
         .status()
         .map_err(|error| format!("unable to launch GitRun dashboard: {error}"))
 }

@@ -1,5 +1,5 @@
 [Unit]
-Description=GitRun Rust scheduler (via recovery)
+Description=GitRun Rust scheduler
 Requires=docker.service
 After=docker.service
 Wants=network-online.target
@@ -7,7 +7,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/gitrun-recovery start scheduler
+ExecStart=/usr/local/bin/gitrun scheduler
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60

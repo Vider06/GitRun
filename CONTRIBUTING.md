@@ -8,7 +8,7 @@ Before opening a pull request:
 
 1. Keep changes focused.
 2. Run the relevant Rust checks and tests for the components you changed.
-3. Run `python3 scripts/test-gitrun.py` when changing the Python control-plane or its related tooling.
+3. Run `python3 scripts/test-gitrun.py` when changing the repository's static validation or Python/Docker-related tooling.
 4. Run shell syntax checks for changed shell scripts.
 5. Validate relevant Docker, packaging, or configuration changes when applicable.
 6. Do not commit tokens, credentials, local configuration, logs, or generated state.
@@ -19,3 +19,11 @@ Before opening a pull request:
 Explain what changed and why. Include any relevant compatibility or migration notes.
 
 The main branch is kept stable; larger changes should be developed in a branch and reviewed before merging.
+
+Do not merge known-broken CI into main.
+
+## Public repository hygiene
+
+Before adding a new file, check that it contains no credentials, personal addresses, private hostnames, access tokens, or generated state.
+
+Runtime configuration should use environment variables or secret-management systems rather than hardcoded values.

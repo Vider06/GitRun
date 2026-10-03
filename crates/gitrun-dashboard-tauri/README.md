@@ -49,7 +49,7 @@ you configure the repository list, and asks PolicyKit to run the existing privil
 GitRun setup path. When a PAT is used, it is passed through a mode-0600 temporary
 request file and removed after setup completes. For GitHub App authentication, the
 wizard stores only the App ID, installation ID, and PEM file path; on Linux the PEM
-file must be a regular, non-symlink file with owner-only permissions (0600). The
+file must be a regular, non-symlink file with owner-only permissions (for example 0600). The
 private key itself is never copied into the dashboard setup request. GitHub App
 authentication is also available through `gitrun setup --terminal`.
 

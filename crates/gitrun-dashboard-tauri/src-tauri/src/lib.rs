@@ -11,6 +11,7 @@
 
 use gitrun_core::Config;
 use gitrun_vault::{Scope, Vault};
+use gitrun_setup::BootstrapAuth;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -80,25 +81,135 @@ fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
+fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("{key} is required"));
+    }
+    if value.chars().any(|c| c == '\n' || c == '\r') {
+        return Err(format!("{key} must not contain newlines"));
+    }
+    Ok(value.to_owned())
+}
+
+fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
+    let value = validate_setup_value(value, key)?;
+    if !value.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!("{key} must contain only digits"));
+    }
+    Ok(value)
+}
+
+fn validate_private_key_path(value: &str) -> Result<String, String> {
+    let path = validate_setup_value(value, "private key path")?;
+    let path_buf = PathBuf::from(&path);
+    let metadata = std::fs::symlink_metadata(&path_buf)
+        .map_err(|e| format!("unable to inspect GitHub App private key {path}: {e}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err("GitHub App private key path must not be a symbolic link".into());
+    }
+    if !metadata.is_file() {
+        return Err(format!("GitHub App private key path is not a regular file: {path}"));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "GitHub App private key must not be group/world accessible (mode {mode:o}); chmod it to 0600"
+            ));
+        }
+    }
+
+    Ok(path)
+}
+
+fn build_first_setup_auth(
+    auth_mode: &str,
+    token: &str,
+    app_id: &str,
+    installation_id: &str,
+    private_key_path: &str,
+) -> Result<BootstrapAuth, String> {
+    match auth_mode.trim().to_ascii_lowercase().as_str() {
+        "pat" => Ok(BootstrapAuth::Pat(validate_setup_value(
+            token,
+            "GitHub token",
+        )?)),
+        "app" => Ok(BootstrapAuth::GitHubApp {
+            app_id: validate_numeric_setup_id(app_id, "GitHub App ID")?,
+            installation_id: validate_numeric_setup_id(
+                installation_id,
+                "GitHub App installation ID",
+            )?,
+            private_key_path: validate_private_key_path(private_key_path)?,
+        }),
+        other => Err(format!("unsupported GitHub authentication mode: {other}")),
+    }
+}
+
+fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), String> {
+    let result = (|| {
+        #[cfg(unix)]
+        {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)
+                .map_err(|e| e.to_string())?;
+            file.write_all(payload.as_bytes()).map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            std::fs::write(path, payload.as_bytes()).map_err(|e| e.to_string())?;
+        }
+
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
 #[tauri::command]
-fn run_first_setup(app: AppHandle, token: String, repositories: String) -> Result<(), String> {
+fn run_first_setup(
+    app: AppHandle,
+    auth_mode: String,
+    token: String,
+    repositories: String,
+    app_id: String,
+    installation_id: String,
+    private_key_path: String,
+) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical first-run setup currently targets Linux x86_64".into());
     }
 
-    let token = token.trim();
+    let auth = build_first_setup_auth(
+        &auth_mode,
+        &token,
+        &app_id,
+        &installation_id,
+        &private_key_path,
+    )?;
+
     let repositories = repositories
         .split(',')
         .map(str::trim)
         .filter(|repo| !repo.is_empty())
         .collect::<Vec<_>>();
 
-    if token.is_empty() {
-        return Err("GitHub token is required".into());
-    }
-    if token.chars().any(|c| c == '\n' || c == '\r') {
-        return Err("GitHub token must not contain newlines".into());
-    }
     if repositories.is_empty()
         || repositories.iter().any(|repo| {
             let mut parts = repo.split('/');
@@ -138,33 +249,22 @@ fn run_first_setup(app: AppHandle, token: String, repositories: String) -> Resul
         std::process::id()
     ));
 
+    let auth_lines = match &auth {
+        BootstrapAuth::Pat(token) => format!("AUTH_MODE=pat\nGITHUB_TOKEN={}\n", token),
+        BootstrapAuth::GitHubApp {
+            app_id,
+            installation_id,
+            private_key_path,
+        } => format!(
+            "AUTH_MODE=app\nGITRUN_GITHUB_APP_ID={}\nGITRUN_GITHUB_APP_INSTALLATION_ID={}\nGITRUN_GITHUB_APP_PRIVATE_KEY_PATH={}\n",
+            app_id, installation_id, private_key_path
+        ),
+    };
     let payload = format!(
-        "AUTH_MODE=pat\nGITHUB_TOKEN={}\nGITRUN_REPOSITORIES={}\n",
-        token,
+        "{auth_lines}GITRUN_REPOSITORIES={}\n",
         repositories.join(",")
     );
-    {
-        #[cfg(unix)]
-        {
-            use std::fs::OpenOptions;
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&path)
-                .map_err(|e| e.to_string())?;
-            file.write_all(payload.as_bytes())
-                .map_err(|e| e.to_string())?;
-            file.sync_all().map_err(|e| e.to_string())?;
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::write(&path, payload.as_bytes()).map_err(|e| e.to_string())?;
-        }
-    }
+    write_setup_request(&path, &payload)?;
 
     let result = std::process::Command::new("pkexec")
         .arg(&cli)

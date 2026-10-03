@@ -323,10 +323,7 @@ mod tests {
         state.recovery_age("gitrun-owner-repo-recovery-gone");
         state.recovery_age("gitrun-other-repo-recovery");
 
-        state.prune(
-            "owner/repo",
-            &["gitrun-owner-repo-runner-a".to_owned()],
-        );
+        state.prune("owner/repo", &["gitrun-owner-repo-runner-a".to_owned()]);
 
         let idle_names: Vec<_> = state
             .idle_entries()

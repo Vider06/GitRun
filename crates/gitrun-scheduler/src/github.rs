@@ -186,7 +186,11 @@ fn retryable_status(status: reqwest::StatusCode) -> bool {
 }
 
 fn retry_delay(attempt: usize) -> Duration {
-    Duration::from_secs(2_u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8))
+    Duration::from_secs(
+        2_u64
+            .saturating_pow(attempt.saturating_sub(1) as u32)
+            .min(8),
+    )
 }
 
 impl GitHubClient {

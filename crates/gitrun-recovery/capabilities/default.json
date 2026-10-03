@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the GitRun Recovery window.",
+  "windows": ["recovery"],
+  "permissions": ["core:default"]
+}

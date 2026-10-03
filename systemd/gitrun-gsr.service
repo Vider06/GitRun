@@ -1,0 +1,34 @@
+[Unit]
+Description=GitRun GSR (GitSecureRun) watchdog
+After=gitrun.service
+Wants=gitrun.service
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/gitrun/gitrun.env
+ExecStart=/usr/bin/gitrun-gsr
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+# GSR must remain a separate service so it survives a scheduler crash.
+# The watchdog only needs to read GitRun state and write security events;
+# it does not need Docker or ptrace privileges.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

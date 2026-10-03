@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum RunnerState { Offline, Idle, Busy, Failed }
+pub enum RunnerState {
+    Offline,
+    Idle,
+    Busy,
+    Failed,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Runner {
@@ -12,7 +17,9 @@ pub struct Runner {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RunnerPool { runners: Vec<Runner> }
+pub struct RunnerPool {
+    runners: Vec<Runner>,
+}
 
 impl Runner {
     pub fn desired_count(minimum: u32, maximum: u32, busy: u32, queued: u32) -> u32 {
@@ -21,24 +28,49 @@ impl Runner {
 }
 
 impl RunnerPool {
-    pub fn new(runners: Vec<Runner>) -> Self { Self { runners } }
-    pub fn runners(&self) -> &[Runner] { &self.runners }
-    pub fn online_count(&self) -> u32 {
-        self.runners.iter().filter(|r| !matches!(r.state, RunnerState::Offline | RunnerState::Failed)).count() as u32
+    pub fn new(runners: Vec<Runner>) -> Self {
+        Self { runners }
     }
-    pub fn busy_count(&self) -> u32 { self.runners.iter().filter(|r| r.state == RunnerState::Busy).count() as u32 }
-    pub fn failed_count(&self) -> u32 { self.runners.iter().filter(|r| r.state == RunnerState::Failed).count() as u32 }
+    pub fn runners(&self) -> &[Runner] {
+        &self.runners
+    }
+    pub fn online_count(&self) -> u32 {
+        self.runners
+            .iter()
+            .filter(|r| !matches!(r.state, RunnerState::Offline | RunnerState::Failed))
+            .count() as u32
+    }
+    pub fn busy_count(&self) -> u32 {
+        self.runners
+            .iter()
+            .filter(|r| r.state == RunnerState::Busy)
+            .count() as u32
+    }
+    pub fn failed_count(&self) -> u32 {
+        self.runners
+            .iter()
+            .filter(|r| r.state == RunnerState::Failed)
+            .count() as u32
+    }
     pub fn reconcile_target(&self, minimum: u32, maximum: u32, queued: u32) -> u32 {
         Runner::desired_count(minimum, maximum, self.busy_count(), queued)
     }
     pub fn add(&mut self, runner: Runner) {
-        if !self.runners.iter().any(|existing| existing.name == runner.name) { self.runners.push(runner); }
+        if !self
+            .runners
+            .iter()
+            .any(|existing| existing.name == runner.name)
+        {
+            self.runners.push(runner);
+        }
     }
     pub fn mark_state(&mut self, name: &str, state: RunnerState) -> bool {
         if let Some(runner) = self.runners.iter_mut().find(|runner| runner.name == name) {
             runner.state = state;
             true
-        } else { false }
+        } else {
+            false
+        }
     }
     pub fn remove(&mut self, name: &str) -> Option<Runner> {
         let index = self.runners.iter().position(|runner| runner.name == name)?;
@@ -50,7 +82,12 @@ impl RunnerPool {
 mod tests {
     use super::*;
     fn runner(name: &str, state: RunnerState) -> Runner {
-        Runner { name: name.into(), repository: "owner/repo".into(), state, labels: vec!["self-hosted".into()] }
+        Runner {
+            name: name.into(),
+            repository: "owner/repo".into(),
+            state,
+            labels: vec!["self-hosted".into()],
+        }
     }
     #[test]
     fn desired_count_respects_bounds() {
@@ -60,7 +97,10 @@ mod tests {
     }
     #[test]
     fn pool_tracks_runner_states() {
-        let mut pool = RunnerPool::new(vec![runner("a", RunnerState::Idle), runner("b", RunnerState::Busy)]);
+        let mut pool = RunnerPool::new(vec![
+            runner("a", RunnerState::Idle),
+            runner("b", RunnerState::Busy),
+        ]);
         pool.add(runner("b", RunnerState::Failed));
         pool.add(runner("c", RunnerState::Failed));
         assert_eq!(pool.online_count(), 2);

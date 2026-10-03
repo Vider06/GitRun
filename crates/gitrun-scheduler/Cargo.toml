@@ -1,0 +1,29 @@
+[package]
+name = "gitrun-scheduler"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "GitRun autoscaler: reconciles desired vs actual runner containers against GitHub Actions and Docker"
+
+[dependencies]
+gitrun-core = { path = "../gitrun-core" }
+gitrun-gsr = { path = "../gitrun-gsr" }
+gitrun-vault = { path = "../gitrun-vault" }
+gitrun-updater = { path = "../gitrun-updater" }
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+signal-hook = "0.3"
+thiserror = "1"
+
+[[bin]]
+name = "gitrun-autoscaler"
+path = "src/main.rs"
+
+[dev-dependencies]
+# Used only by reconcile.rs unit tests to build fixtures without hitting real
+# GitHub/Docker — the reconcile module itself has zero I/O dependencies.
+# filetime: only to backdate a lock directory's mtime in gtuu.rs's stale-lock
+# test; not used by any non-test code.
+filetime = "0.2"

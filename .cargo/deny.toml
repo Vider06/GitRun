@@ -1,0 +1,7 @@
+# Restrict unmaintained-advisory failures to crates that are direct
+# dependencies of this workspace. Transitive dependencies remain visible to
+# dependency auditing, but do not fail the cargo-deny gate solely because they
+# are unmaintained.
+[advisories]
+unmaintained = "workspace"
+yanked = "deny"

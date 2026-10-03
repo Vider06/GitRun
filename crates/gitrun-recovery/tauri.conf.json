@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GitRun Recovery",
+  "version": "0.4.0",
+  "identifier": "dev.gitrun.recovery",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "recovery",
+        "title": "GitRun Recovery",
+        "width": 640,
+        "height": 560,
+        "minWidth": 560,
+        "minHeight": 480,
+        "resizable": false,
+        "center": true,
+        "fullscreen": false,
+        "backgroundColor": "#0f1115"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../gitrun-dashboard-tauri/src-tauri/icons/gitrun-icon-512.png"
+    ]
+  }
+}

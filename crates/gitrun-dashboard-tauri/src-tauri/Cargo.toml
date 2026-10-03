@@ -1,0 +1,23 @@
+[package]
+name = "gitrun-dashboard-tauri"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98.1"
+description = "GitRun dashboard: Tauri-based operator UI"
+
+[lib]
+name = "gitrun_dashboard_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+gitrun-core = { path = "../../gitrun-core" }
+gitrun-scheduler = { path = "../../gitrun-scheduler" }
+gitrun-vault = { path = "../../gitrun-vault" }
+gitrun-gsr = { path = "../../gitrun-gsr" }
+gitrun-setup = { path = "../../gitrun-setup" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

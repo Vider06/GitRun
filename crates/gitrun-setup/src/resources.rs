@@ -1,7 +1,193 @@
-pub(crate) const MANAGER_PY: &str = "#!/usr/bin/env python3\nfrom __future__ import annotations\nimport json, logging, os, re, signal, subprocess, sys, threading, time, urllib.error, urllib.request\nfrom dataclasses import dataclass\nfrom datetime import datetime, timezone\nfrom pathlib import Path\nfrom uuid import uuid4\n\nAPI = \"https://api.github.com\"\nAPI_VERSION = \"2026-03-10\"\nlogging.basicConfig(level=os.getenv(\"GITRUN_LOG_LEVEL\",\"INFO\"), format=\"%(asctime)s %(levelname)s %(message)s\")\nlog = logging.getLogger(\"gitrun\")\n\n@dataclass(frozen=True)\nclass RepoConfig:\n    full_name: str\n    minimum: int\n    maximum: int\n\ndef env_bool(name: str, default: bool = False) -> bool:\n    value = os.getenv(name)\n    if value is None:\n        return default\n    return value.strip().lower() in {\"1\", \"true\", \"yes\", \"on\"}\n\ndef env_int(name: str, default: int) -> int:\n    try: return int(os.getenv(name, str(default)))\n    except ValueError: return default\n\ndef repositories() -> list[RepoConfig]:\n    raw = os.getenv(\"GITRUN_REPOSITORIES\",\"\").strip() or os.getenv(\"GITRUN_DEFAULT_REPOSITORY\",\"\").strip()\n    minimum, maximum = env_int(\"GITRUN_MIN_RUNNERS\",3), env_int(\"GITRUN_MAX_RUNNERS\",8)\n    return [RepoConfig(r.strip(),minimum,maximum) for r in raw.split(\",\") if re.fullmatch(r\"[^/]+/[^/]+\",r.strip())]\n\ndef token() -> str:\n    value=os.getenv(\"GITHUB_TOKEN\",\"\").strip()\n    if not value: raise RuntimeError(\"GITHUB_TOKEN is not configured\")\n    return value\n\ndef api_request(method: str, path: str, body: dict|None=None) -> dict:\n    data=None if body is None else json.dumps(body).encode()\n    req=urllib.request.Request(API+path,data=data,method=method,headers={\"Accept\":\"application/vnd.github+json\",\"Authorization\":f\"Bearer {token()}\",\"X-GitHub-Api-Version\":API_VERSION,\"User-Agent\":\"GitRun/0.2.0\",\"Content-Type\":\"application/json\"})\n    try:\n        with urllib.request.urlopen(req,timeout=20) as response:\n            raw=response.read().decode(\"utf-8\")\n            return json.loads(raw) if raw else {}\n    except urllib.error.HTTPError as exc:\n        detail=exc.read().decode(\"utf-8\",errors=\"replace\")[:500]\n        raise RuntimeError(f\"GitHub API {exc.code}: {detail}\") from exc\n\ndef split_repo(repo:str)->tuple[str,str]: return repo.split(\"/\",1)\ndef registration_token(repo:str)->str:\n    o,n=split_repo(repo); return api_request(\"POST\",f\"/repos/{o}/{n}/actions/runners/registration-token\")[\"token\"]\ndef list_runners(repo:str)->list[dict]:\n    o,n=split_repo(repo); return api_request(\"GET\",f\"/repos/{o}/{n}/actions/runners?per_page=100\").get(\"runners\",[])\ndef queued_jobs(repo:str)->int:\n    o,n=split_repo(repo); runs=api_request(\"GET\",f\"/repos/{o}/{n}/actions/runs?status=queued&per_page=100\").get(\"workflow_runs\",[])\n    count=0\n    for run in runs:\n        try:\n            jobs=api_request(\"GET\",f\"/repos/{o}/{n}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100\").get(\"jobs\",[])\n            count += sum(1 for j in jobs if j.get(\"status\")==\"queued\" and \"self-hosted\" in {str(x).lower() for x in j.get(\"labels\",[])})\n        except Exception: log.exception(\"Unable to inspect queued jobs for %s run %s\",repo,run.get(\"id\"))\n    return count\ndef docker(*args:str,check=True):\n    return subprocess.run([\"docker\",*args],text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=check)\nSHARED_CACHE_VOLUME_DEFAULT = \"gitrun-runner-shared\"\n\ndef shared_cache_volume() -> str:\n    return os.getenv(\"GITRUN_SHARED_CACHE_VOLUME\", SHARED_CACHE_VOLUME_DEFAULT).strip() or SHARED_CACHE_VOLUME_DEFAULT\n\ndef shared_cache_slug(repo: str) -> str:\n    return re.sub(r\"[^a-zA-Z0-9_.-]\", \"_\", repo)\n\ndef ensure_shared_cache_volume() -> str:\n    name = shared_cache_volume()\n    inspected = docker(\"volume\", \"inspect\", name, check=False)\n    if inspected.returncode == 0:\n        return name\n    created = docker(\"volume\", \"create\", \"--label\", \"gitrun.shared=true\", name, check=False)\n    if created.returncode:\n        raise RuntimeError(created.stderr.strip() or f\"unable to create shared runner volume {name}\")\n    log.info(\"Created shared runner cache volume %s\", name)\n    return name\n\ndef shared_runner_args(repo: str) -> list[str]:\n    volume = ensure_shared_cache_volume()\n    slug = shared_cache_slug(repo)\n    return [\n        \"--mount\", f\"type=volume,source={volume},target=/var/lib/gitrun/shared\",\n        \"-e\", \"GITRUN_SHARED_CACHE_DIR=/var/lib/gitrun/shared\",\n        \"-e\", \"CARGO_HOME=/var/lib/gitrun/shared/cargo\",\n        \"-e\", f\"CARGO_TARGET_DIR=/var/lib/gitrun/shared/cargo-target/{slug}\",\n        \"-e\", \"PIP_CACHE_DIR=/var/lib/gitrun/shared/pip\",\n        \"-e\", \"NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm\",\n        \"-e\", \"DOCKER_CONFIG=/tmp/docker-config\",\n    ]\n\ndef managed_containers(repo:str)->list[str]:\n    r=docker(\"ps\",\"-a\",\"--filter\",\"label=gitrun.runner=true\",\"--filter\",f\"label=gitrun.repo={repo}\",\"--format\",\"{{.Names}}\")\n    return [x for x in r.stdout.splitlines() if x.strip()]\ndef container_status(name:str)->dict:\n    r=docker(\"inspect\",\"-f\",\"{{json .State}}\",name,check=False)\n    try:return json.loads(r.stdout) if r.returncode==0 else {}\n    except json.JSONDecodeError:return {}\ndef create_runner(repo:str, permanent: bool=False)->None:\n    registration=registration_token(repo); safe=re.sub(r\"[^a-zA-Z0-9_.-]\",\"-\",repo); name=f\"gitrun-{safe}-{uuid4().hex[:8]}\"\n    image=os.getenv(\"GITRUN_RUNNER_IMAGE\",\"gitrun-runner:latest\")\n    labels=os.getenv(\"GITRUN_RUNNER_LABELS\",\"self-hosted,Linux,X64\")\n    if \"gitrun-ci\" not in {part.strip() for part in labels.split(\",\") if part.strip()}:\n        labels=f\"{labels},gitrun-ci\"\n    shared_args=shared_runner_args(repo)\n    runner_data_volume=f\"{name}-data\"\n    docker_socket_gid=str(os.stat(\"/var/run/docker.sock\").st_gid)\n    cmd=[\"run\",\"-d\",\"--name\",name,\"--label\",\"gitrun.runner=true\",\"--label\",f\"gitrun.repo={repo}\",\"--label\",\"gitrun.managed=true\",\n         \"--label\",f\"gitrun.permanent={str(permanent).lower()}\",\"--label\",f\"gitrun.dynamic={str(not permanent).lower()}\",\n         \"--cpus\",os.getenv(\"GITRUN_CONTAINER_CPUS\",\"1\"),\"--memory\",os.getenv(\"GITRUN_CONTAINER_MEMORY\",\"1g\"),\"--pids-limit\",os.getenv(\"GITRUN_CONTAINER_PIDS\",\"1024\"),\n         \"--restart\",\"unless-stopped\",\"--read-only\",\"--tmpfs\",\"/tmp:rw,nosuid,nodev,size=256m\",\n         \"--mount\",f\"type=volume,source={runner_data_volume},target=/home/runner/actions-runner\",\n         \"--volume\",\"/var/run/docker.sock:/var/run/docker.sock\",\n         \"--group-add\",docker_socket_gid,\n         *shared_args,\n         \"-e\",f\"RUNNER_URL=https://github.com/{repo}\",\"-e\",f\"RUNNER_TOKEN={registration}\",\"-e\",f\"RUNNER_NAME={name}\",\n         \"-e\",f\"RUNNER_LABELS={labels}\",\"-e\",f\"RUNNER_EPHEMERAL={os.getenv('GITRUN_EPHEMERAL','false')}\",\"-e\",f\"RUNNER_DISABLE_UPDATE={os.getenv('GITRUN_DISABLE_UPDATE','false')}\",image]\n    result=docker(*cmd,check=False)\n    if result.returncode: raise RuntimeError(result.stderr.strip() or \"docker run failed\")\n    log.info(\"Created %s runner %s for %s\", \"permanent\" if permanent else \"dynamic\", name, repo)\ndef container_is_permanent(name: str) -> bool:\n    result = docker(\"inspect\", \"-f\", '{{index .Config.Labels \"gitrun.dynamic\"}}', name, check=False)\n    return result.returncode == 0 and result.stdout.strip().lower() != \"true\"\n\ndef restart_container(name: str) -> bool:\n    result = docker(\"restart\", name, check=False)\n    if result.returncode:\n        log.warning(\"Could not restart runner container %s: %s\", name, result.stderr.strip())\n        return False\n    log.warning(\"Restarted runner container %s for automatic recovery\", name)\n    return True\n\ndef state_path()->Path:return Path(os.getenv(\"GITRUN_STATE_DIR\",\"/var/lib/gitrun\"))/\"state.json\"\ndef load_state()->dict:\n    try:return json.loads(state_path().read_text(encoding=\"utf-8\"))\n    except (FileNotFoundError,json.JSONDecodeError):return {\"idle_since\":{}}\ndef save_state(state:dict)->None:\n    p=state_path();p.parent.mkdir(parents=True,exist_ok=True);tmp=p.with_suffix(\".tmp\");tmp.write_text(json.dumps(state,indent=2),encoding=\"utf-8\");os.replace(tmp,p)\ndef remove_runner(repo:str,name:str)->None:\n    o,n=split_repo(repo)\n    try:\n        runner=next((x for x in list_runners(repo) if x.get(\"name\")==name),None)\n        if runner and runner.get(\"id\"):\n            try:api_request(\"DELETE\",f\"/repos/{o}/{n}/actions/runners/{runner['id']}\")\n            except RuntimeError as exc:\n                if \"GitHub API 404\" not in str(exc):raise\n    finally:\n        r=docker(\"rm\",\"-f\",name,check=False)\n        if r.returncode:log.warning(\"Could not remove runner %s: %s\",name,r.stderr.strip())\n        volume=docker(\"volume\",\"rm\",f\"{name}-data\",check=False)\n        if volume.returncode:log.debug(\"Runner data volume %s was not removed: %s\",f\"{name}-data\",volume.stderr.strip())\ndef reconcile(cfg:RepoConfig)->None:\n    repo=cfg.full_name;containers=managed_containers(repo);runners=list_runners(repo)\n    online=[r for r in runners if r.get(\"status\")==\"online\"];busy=[r for r in online if r.get(\"busy\")];queued=queued_jobs(repo)\n    desired=min(cfg.maximum,max(cfg.minimum,len(busy)+queued))\n    for name in list(containers):\n        if container_status(name).get(\"Status\")==\"exited\":remove_runner(repo,name);containers.remove(name)\n    current=len(containers)\n    permanent_count=sum(1 for name in containers if container_is_permanent(name))\n    while current < desired and permanent_count < cfg.minimum:\n        create_runner(repo, permanent=True)\n        current += 1\n        permanent_count += 1\n    while current < desired:\n        create_runner(repo, permanent=False)\n        current += 1\n    state=load_state();idle=state.setdefault(\"idle_since\",{});recovery=state.setdefault(\"container_recovery\",{});by_name={r.get(\"name\"):r for r in runners};now=datetime.now(timezone.utc)\n    recovery_cooldown=max(15,env_int(\"GITRUN_CONTAINER_RECOVERY_COOLDOWN\",60))\n    current=len(containers)\n    if env_bool(\"GITRUN_AUTO_CONTAINER_RECOVERY\",True) and queued > 0:\n        for name in list(containers):\n            container_state=container_status(name)\n            runner=by_name.get(name)\n            if container_state.get(\"Status\") != \"running\":\n                continue\n            if runner and runner.get(\"busy\"):\n                continue\n            if runner and runner.get(\"status\") != \"online\":\n                stamp=recovery.get(name)\n                try:age=(now-datetime.fromisoformat(stamp)).total_seconds() if stamp else recovery_cooldown\n                except ValueError:age=recovery_cooldown\n                if age >= recovery_cooldown and restart_container(name):\n                    recovery[name]=now.isoformat()\n            elif runner is None:\n                permanent=container_is_permanent(name)\n                log.warning(\"Runner %s is missing from GitHub; recreating managed container\", name)\n                remove_runner(repo,name)\n                containers.remove(name)\n                current -= 1\n                create_runner(repo,permanent=permanent)\n                current += 1\n                recovery.pop(name,None)\n    current=len(containers)\n    permanent_count=sum(1 for name in containers if container_is_permanent(name))\n    while current < desired and permanent_count < cfg.minimum:\n        create_runner(repo, permanent=True)\n        current += 1\n        permanent_count += 1\n    while current < desired:\n        create_runner(repo, permanent=False)\n        current += 1\n    by_name={r.get(\"name\"):r for r in runners}\n    for name in containers:\n        runner=by_name.get(name)\n        if runner and runner.get(\"busy\"):idle.pop(name,None)\n        elif runner and runner.get(\"status\")==\"online\":idle.setdefault(name,now.isoformat())\n    for name in list(idle):\n        if name not in containers:idle.pop(name,None)\n    for name in list(recovery):\n        if name not in containers:recovery.pop(name,None)\n    if os.getenv(\"GITRUN_EPHEMERAL\",\"false\").lower()!=\"true\" and current>cfg.minimum:\n        removable=current-cfg.minimum;timeout=env_int(\"GITRUN_IDLE_TIMEOUT\",120);candidates=[]\n        for name,stamp in idle.items():\n            if name not in containers:continue\n            try:age=(now-datetime.fromisoformat(stamp)).total_seconds()\n            except ValueError:continue\n            if age>=timeout:candidates.append((name,age))\n        ordered=sorted(candidates,key=lambda x:(container_is_permanent(x[0]),-x[1]))\n        for name,_ in ordered[:removable]:\n            remove_runner(repo,name)\n            idle.pop(name,None)\n    save_state(state)\ndef write_crash(exc:BaseException)->None:\n    p=Path(os.getenv(\"GITRUN_STATE_DIR\",\"/var/lib/gitrun\"))/\"last-crash\";p.parent.mkdir(parents=True,exist_ok=True);p.write_text(f\"{datetime.now(timezone.utc).isoformat()}\\n{type(exc).__name__}: {exc}\\n\",encoding=\"utf-8\")\n\ndef gtuu_schedule_loop()->None:\n    last_run_date=None\n    while not stopping:\n        enabled=env_bool(\"GITRUN_AUTO_CONTAINER_UPDATE\",False)\n        schedule=os.getenv(\"GITRUN_CONTAINER_UPDATE_TIME\",\"03:00\").strip()\n        now=datetime.now()\n        if enabled and len(schedule)==5 and schedule[2]==\":\" and schedule == now.strftime(\"%H:%M\") and now.date()!=last_run_date:\n            utility=Path(__file__).with_name(\"gitrun_updater_utility.py\")\n            log.info(\"Starting GTUU scheduled permanent-runner update\")\n            result=subprocess.run([sys.executable,str(utility),\"--only-containers\"],check=False)\n            if result.returncode==0:\n                log.info(\"GTUU scheduled update completed\")\n            else:\n                log.error(\"GTUU scheduled update failed with exit code %s\",result.returncode)\n            last_run_date=now.date()\n        time.sleep(15)\n\nstopping=False\ndef stop_handler(_signum,_frame):global stopping;stopping=True\ndef main()->int:\n    global stopping\n    signal.signal(signal.SIGTERM,stop_handler);signal.signal(signal.SIGINT,stop_handler)\n    interval=max(1,env_int(\"GITRUN_POLL_INTERVAL\",5));repos=repositories()\n    if not repos:log.error(\"No repositories configured.\");return 2\n    log.info(\"GitRun autoscaler starting\")\n    threading.Thread(target=gtuu_schedule_loop,name=\"gitrun-gtuu\",daemon=True).start()\n    while not stopping:\n        for cfg in repos:\n            try:reconcile(cfg)\n            except Exception as exc:log.exception(\"Reconciliation failed for %s\",cfg.full_name);write_crash(exc)\n        for _ in range(interval):\n            if stopping:break\n            time.sleep(1)\n    log.info(\"GitRun autoscaler stopped\");return 0\nif __name__==\"__main__\":sys.exit(main())\n";
-pub(crate) const GTUU_PY: &str = "#!/usr/bin/env python3\n\"\"\"GTUU — GitRun Updater Utility.\n\nUpdates GitRun-managed permanent runner containers one at a time.\nDynamic runners are intentionally left alone because they are refreshed\nwhen they are recreated by the autoscaler.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport os\nimport re\nimport subprocess\nimport sys\nimport time\nimport urllib.error\nimport urllib.request\nfrom datetime import datetime\nfrom pathlib import Path\n\n\nAPI = \"https://api.github.com\"\nAPI_VERSION = \"2026-03-10\"\nUSER_AGENT = \"GitRun-GTUU/1.0\"\n\n\ndef env_bool(name: str, default: bool = False) -> bool:\n    value = os.getenv(name)\n    if value is None:\n        return default\n    return value.strip().lower() in {\"1\", \"true\", \"yes\", \"on\"}\n\n\ndef env_int(name: str, default: int) -> int:\n    try:\n        return int(os.getenv(name, str(default)))\n    except ValueError:\n        return default\n\n\ndef docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:\n    return subprocess.run(\n        [\"docker\", *args],\n        text=True,\n        stdout=subprocess.PIPE,\n        stderr=subprocess.PIPE,\n        check=check,\n    )\n\n\ndef token() -> str:\n    value = os.getenv(\"GITHUB_TOKEN\", \"\").strip()\n    if not value:\n        raise RuntimeError(\"GITHUB_TOKEN is not configured\")\n\n\ndef split_repo(repo: str) -> tuple[str, str]:\n    if not re.fullmatch(r\"[^/]+/[^/]+\", repo):\n        raise ValueError(f\"invalid repository: {repo}\")\n    return repo.split(\"/\", 1)\n\n\ndef api_request(method: str, path: str, body: dict | None = None) -> dict:\n    payload = None if body is None else json.dumps(body).encode(\"utf-8\")\n    request = urllib.request.Request(\n        API + path,\n        data=payload,\n        method=method,\n        headers={\n            \"Accept\": \"application/vnd.github+json\",\n            \"Authorization\": f\"Bearer {token()}\",\n            \"X-GitHub-Api-Version\": API_VERSION,\n            \"User-Agent\": USER_AGENT,\n            \"Content-Type\": \"application/json\",\n        },\n    )\n    try:\n        with urllib.request.urlopen(request, timeout=20) as response:\n            raw = response.read().decode(\"utf-8\")\n            return json.loads(raw) if raw else {}\n    except urllib.error.HTTPError as exc:\n        detail = exc.read().decode(\"utf-8\", errors=\"replace\")[:500]\n        raise RuntimeError(f\"GitHub API {exc.code}: {detail}\") from exc\n\n\ndef repositories() -> list[str]:\n    raw = os.getenv(\"GITRUN_REPOSITORIES\", \"\").strip()\n    if not raw:\n        raw = os.getenv(\"GITRUN_DEFAULT_REPOSITORY\", \"\").strip()\n    return [item.strip() for item in raw.split(\",\") if item.strip()]\n\n\ndef container_names() -> list[str]:\n    result = docker(\n        \"ps\",\n        \"-a\",\n        \"--filter\",\n        \"label=gitrun.runner=true\",\n        \"--filter\",\n        \"label=gitrun.managed=true\",\n        \"--format\",\n        \"{{.Names}}\",\n    )\n    return [name.strip() for name in result.stdout.splitlines() if name.strip()]\n\n\ndef inspect_container(name: str) -> dict:\n    result = docker(\"inspect\", name, check=False)\n    if result.returncode:\n        return {}\n    try:\n        return json.loads(result.stdout)[0]\n    except (IndexError, json.JSONDecodeError):\n        return {}\n\n\ndef container_labels(container: dict) -> dict[str, str]:\n    return dict(container.get(\"Config\", {}).get(\"Labels\") or {})\n\n\ndef permanent_container(container: dict) -> bool:\n    labels = container_labels(container)\n    if labels.get(\"gitrun.permanent\", \"\").lower() == \"true\":\n        return True\n    # Containers created before GTUU did not have role labels. Treat them as\n    # permanent so an upgrade does not silently abandon the warm pool.\n    return labels.get(\"gitrun.dynamic\", \"\").lower() != \"true\"\n\n\ndef container_image_id(container: dict) -> str:\n    return str(container.get(\"Image\") or \"\")\n\n\ndef local_image_id(image: str) -> str:\n    result = docker(\"image\", \"inspect\", \"--format\", \"{{.Id}}\", image, check=False)\n    return result.stdout.strip() if result.returncode == 0 else \"\"\n\n\ndef pull_runner_image(image: str) -> str:\n    print(f\"GTUU: pulling runner image {image}\")\n    result = docker(\"pull\", image, check=False)\n    if result.returncode:\n        raise RuntimeError(result.stderr.strip() or f\"docker pull failed for {image}\")\n    image_id = local_image_id(image)\n    if not image_id:\n        raise RuntimeError(f\"unable to inspect runner image {image} after pull\")\n    print(f\"GTUU: current image id {image_id}\")\n    return image_id\n\n\ndef runner_info(repo: str, name: str) -> dict | None:\n    owner, project = split_repo(repo)\n    runners = api_request(\"GET\", f\"/repos/{owner}/{project}/actions/runners?per_page=100\").get(\"runners\", [])\n    return next((runner for runner in runners if runner.get(\"name\") == name), None)\n\n\ndef remove_github_runner(repo: str, runner_id: int) -> None:\n    owner, project = split_repo(repo)\n    api_request(\"DELETE\", f\"/repos/{owner}/{project}/actions/runners/{runner_id}\")\n\n\ndef registration_token(repo: str) -> str:\n    owner, project = split_repo(repo)\n    return api_request(\n        \"POST\",\n        f\"/repos/{owner}/{project}/actions/runners/registration-token\",\n    )[\"token\"]\n\n\ndef create_replacement(repo: str, old_name: str, image: str, permanent: bool) -> str:\n    safe = re.sub(r\"[^a-zA-Z0-9_.-]\", \"-\", old_name)\n    replacement = f\"{safe}-gtuu-{os.getpid()}-{int(time.time()) % 100000}\"\n    token_value = registration_token(repo)\n    labels = os.getenv(\"GITRUN_RUNNER_LABELS\", \"self-hosted,Linux,X64\")\n    ephemeral = os.getenv(\"GITRUN_EPHEMERAL\", \"false\")\n    disable_update = os.getenv(\"GITRUN_DISABLE_UPDATE\", \"false\")\n\n    docker_labels = [\n        \"--label\",\n        \"gitrun.runner=true\",\n        \"--label\",\n        f\"gitrun.repo={repo}\",\n        \"--label\",\n        \"gitrun.managed=true\",\n        \"--label\",\n        f\"gitrun.permanent={'true' if permanent else 'false'}\",\n        \"--label\",\n        f\"gitrun.dynamic={'false' if permanent else 'true'}\",\n    ]\n\n    command = [\n        \"run\",\n        \"-d\",\n        \"--name\",\n        replacement,\n        *docker_labels,\n        \"--cpus\",\n        os.getenv(\"GITRUN_CONTAINER_CPUS\", \"1\"),\n        \"--memory\",\n        os.getenv(\"GITRUN_CONTAINER_MEMORY\", \"1g\"),\n        \"--pids-limit\",\n        os.getenv(\"GITRUN_CONTAINER_PIDS\", \"1024\"),\n        \"--restart\",\n        \"unless-stopped\",\n        \"--read-only\",\n        \"--tmpfs\",\n        \"/tmp:rw,nosuid,nodev,size=256m\",\n        \"-e\",\n        f\"RUNNER_URL=https://github.com/{repo}\",\n        \"-e\",\n        f\"RUNNER_TOKEN={token_value}\",\n        \"-e\",\n        f\"RUNNER_NAME={old_name}\",\n        \"-e\",\n        f\"RUNNER_LABELS={labels}\",\n        \"-e\",\n        f\"RUNNER_EPHEMERAL={ephemeral}\",\n        \"-e\",\n        f\"RUNNER_DISABLE_UPDATE={disable_update}\",\n        image,\n    ]\n    result = docker(*command, check=False)\n    if result.returncode:\n        raise RuntimeError(result.stderr.strip() or \"docker replacement creation failed\")\n    return replacement\n\n\ndef wait_for_online(repo: str, runner_name: str, timeout: int = 120) -> bool:\n    deadline = time.time() + timeout\n    while time.time() < deadline:\n        runner = runner_info(repo, runner_name)\n        if runner and runner.get(\"status\") == \"online\":\n            return True\n        time.sleep(3)\n    return False\n\n\ndef remove_container(name: str) -> None:\n    result = docker(\"rm\", \"-f\", name, check=False)\n    if result.returncode:\n        raise RuntimeError(result.stderr.strip() or f\"unable to remove container {name}\")\n\n\ndef update_container(repo: str, name: str, image: str, new_image_id: str) -> str:\n    old = inspect_container(name)\n    if not old:\n        return \"missing\"\n\n    old_image_id = container_image_id(old)\n    if old_image_id == new_image_id:\n        return \"current\"\n\n    runner = runner_info(repo, name)\n    if runner and runner.get(\"busy\"):\n        return \"busy\"\n\n    if runner and runner.get(\"id\"):\n        remove_github_runner(repo, int(runner[\"id\"]))\n\n    remove_container(name)\n    replacement = create_replacement(repo, name, image, permanent_container(old))\n\n    if not wait_for_online(repo, name):\n        # The new Docker container has the old GitHub runner name by design.\n        # Leave it running for diagnosis rather than silently restoring the\n        # obsolete container image.\n        print(f\"GTUU: replacement {replacement} did not become online\", file=sys.stderr)\n        return \"offline\"\n\n    # The replacement is now serving the same GitHub runner registration.\n    # Give it the stable container name expected by operators.\n    rename = docker(\"rename\", replacement, name, check=False)\n    if rename.returncode:\n        raise RuntimeError(rename.stderr.strip() or f\"unable to rename replacement {replacement}\")\n    print(f\"GTUU: updated {name} ({repo})\")\n    return \"updated\"\n\n\ndef acquire_lock() -> Path:\n    state_dir = Path(os.getenv(\"GITRUN_STATE_DIR\", \"/var/lib/gitrun\"))\n    state_dir.mkdir(parents=True, exist_ok=True)\n    lock = state_dir / \"gtuu.lock\"\n    try:\n        lock.mkdir()\n    except FileExistsError as exc:\n        raise RuntimeError(\"another GTUU run is already active\") from exc\n    (lock / \"pid\").write_text(str(os.getpid()), encoding=\"utf-8\")\n    return lock\n\n\ndef release_lock(lock: Path) -> None:\n    try:\n        (lock / \"pid\").unlink(missing_ok=True)\n        lock.rmdir()\n    except OSError:\n        pass\n\n\ndef update_permanent_containers() -> int:\n    image = os.getenv(\"GITRUN_RUNNER_IMAGE\", \"gitrun-runner:latest\")\n    repos = repositories()\n    if not repos:\n        print(\"GTUU: no repositories configured\")\n        return 0\n\n    docker(\"info\")\n    new_image_id = pull_runner_image(image)\n\n    updated = 0\n    for name in container_names():\n        container = inspect_container(name)\n        labels = container_labels(container)\n        if not permanent_container(container):\n            continue\n\n        repo = labels.get(\"gitrun.repo\", \"\").strip()\n        if repo not in repos:\n            continue\n\n        result = update_container(repo, name, image, new_image_id)\n        if result == \"updated\":\n            updated += 1\n        elif result == \"busy\":\n            print(f\"GTUU: skip busy runner {name} ({repo})\")\n    print(f\"GTUU: complete — {updated} permanent runner(s) updated\")\n    return updated\n\n\ndef main(argv: list[str]) -> int:\n    if argv not in ([], [\"--only-containers\"]):\n        print(\"Usage: gitrun-updater-utility [--only-containers]\", file=sys.stderr)\n        return 2\n\n    lock = acquire_lock()\n    try:\n        update_permanent_containers()\n    except Exception as exc:\n        print(f\"GTUU: FAIL — {exc}\", file=sys.stderr)\n        return 1\n    finally:\n        release_lock(lock)\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main(sys.argv[1:]))\n";
-pub(crate) const MANAGER_DOCKERFILE: &str = "FROM python:3.12-slim-bookworm\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends docker.io ca-certificates \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /opt/gitrun\nCOPY autoscaler/gitrun_manager.py /opt/gitrun/gitrun_manager.py\nCOPY autoscaler/gitrun_updater_utility.py /opt/gitrun/gitrun_updater_utility.py\n\nCMD [\"python3\", \"/opt/gitrun/gitrun_manager.py\"]\n";
-pub(crate) const RUNNER_DOCKERFILE: &str = "FROM node:22-bookworm\n\nARG RUNNER_VERSION=2.337.0\n\nENV DEBIAN_FRONTEND=noninteractive \\\n    RUNNER_ALLOW_RUNASROOT=1 \\\n    RUNNER_VERSION=${RUNNER_VERSION}\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n       ca-certificates curl git jq tar gzip sudo python3 python3-pip \\\n       libicu72 libssl3 zlib1g libkrb5-3 libunwind8 \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN useradd --create-home --shell /bin/bash runner \\\n    && mkdir -p /home/runner/actions-runner \\\n    && chown -R runner:runner /home/runner\n\nWORKDIR /home/runner/actions-runner\n\nRUN curl -fsSL -o runner.tar.gz \\\n      \"https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz\" \\\n    && tar xzf runner.tar.gz \\\n    && rm runner.tar.gz \\\n    && ./bin/installdependencies.sh \\\n    && chown -R runner:runner /home/runner/actions-runner\n\nCOPY --chown=runner:runner docker/runner/entrypoint.sh /entrypoint.sh\nRUN chmod 0755 /entrypoint.sh\n\nUSER runner\n\nENTRYPOINT [\"/entrypoint.sh\"]\n";
-pub(crate) const RUNNER_ENTRYPOINT: &str = "#!/usr/bin/env bash\nset -Eeuo pipefail\ncd /home/runner/actions-runner\n: \"${RUNNER_URL:?RUNNER_URL is required}\"\n: \"${RUNNER_TOKEN:?RUNNER_TOKEN is required}\"\n: \"${RUNNER_NAME:?RUNNER_NAME is required}\"\nRUNNER_LABELS=\"${RUNNER_LABELS:-self-hosted,Linux,X64,gitrun}\"\nRUNNER_EPHEMERAL=\"${RUNNER_EPHEMERAL:-false}\"\nRUNNER_DISABLE_UPDATE=\"${RUNNER_DISABLE_UPDATE:-false}\"\nif [[ ! -f .runner ]]; then\n  args=(--url \"$RUNNER_URL\" --token \"$RUNNER_TOKEN\" --name \"$RUNNER_NAME\" --labels \"$RUNNER_LABELS\" --unattended --replace)\n  [[ \"$RUNNER_EPHEMERAL\" == \"true\" ]] && args+=(--ephemeral)\n  [[ \"$RUNNER_DISABLE_UPDATE\" == \"true\" ]] && args+=(--disableupdate)\n  ./config.sh \"${args[@]}\"\nfi\nunset RUNNER_TOKEN\nexec ./run.sh\n";
-pub(crate) const COMPOSE_YML: &str = "services:\n  gitrun-manager:\n    build:\n      context: .\n      dockerfile: docker/manager/Dockerfile\n    container_name: gitrun-manager\n    restart: unless-stopped\n    env_file:\n      - ${GITRUN_CONFIG_FILE:-/etc/gitrun/gitrun.env}\n    volumes:\n      - ${GITRUN_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock\n      - ${GITRUN_STATE_DIR:-/var/lib/gitrun}:/var/lib/gitrun\n      - ${GITRUN_LOG_DIR:-/var/log/gitrun}:/var/log/gitrun\n    security_opt:\n      - no-new-privileges:true\n    healthcheck:\n      test: [\"CMD\", \"python3\", \"-c\", \"import os; raise SystemExit(0 if os.path.exists('/var/run/docker.sock') else 1)\"]\n      interval: 30s\n      timeout: 5s\n      retries: 3\n";
-pub(crate) const SYSTEMD_SERVICE: &str = "[Unit]\nDescription=GitRun Docker runner autoscaler\nRequires=docker.service\nAfter=docker.service\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nWorkingDirectory=/opt/gitrun\nExecStart=/usr/bin/docker compose -f /opt/gitrun/docker-compose.yml up -d --build\nExecStop=/usr/bin/docker compose -f /opt/gitrun/docker-compose.yml down\nRemainAfterExit=yes\nTimeoutStartSec=0\nTimeoutStopSec=60\n\n[Install]\nWantedBy=multi-user.target\n";
+/// The runner Dockerfile remains the repository source of truth. The bootstrap
+/// uses the exact same image definition, with one deliberate adjustment: a
+/// packaged GitRun installation does not ship the entire workspace, so the
+/// build context is reduced to the two crates needed by the GSR shell agent.
+pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
+    const FULL_WORKSPACE_COPY: &str = "COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates";
+    const MINIMAL_WORKSPACE_COPY: &str = concat!(
+        "COPY Cargo.toml Cargo.lock ./\n",
+        "COPY crates/gitrun-core ./crates/gitrun-core\n",
+        "COPY crates/gitrun-gsr ./crates/gitrun-gsr"
+    );
+
+    let source = include_str!("../../../docker/runner/Dockerfile");
+    if !source.contains(FULL_WORKSPACE_COPY) {
+        panic!("runner Dockerfile bootstrap adaptation marker is missing");
+    }
+    let source = source.replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY);
+
+    if source.contains(FULL_WORKSPACE_COPY) {
+        panic!("runner Dockerfile bootstrap adaptation marker was not replaced");
+    }
+    if source.contains("COPY crates ./crates") {
+        panic!("bootstrap Dockerfile must not require the full workspace");
+    }
+    source
+}
+
+pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/entrypoint.sh");
+
+pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
+
+pub(crate) const SYSTEMD_SERVICE_DIRECT: &str = r#"[Unit]
+Description=GitRun Rust scheduler
+Requires=docker.service
+After=docker.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gitrun scheduler
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillMode=control-group
+EnvironmentFile=/etc/gitrun/gitrun.env
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+/// The bootstrap needs a small self-contained Cargo workspace for building the
+/// GSR agent after the GitRun package has been installed. This intentionally
+/// contains only the crates required by gitrun-gsr-agent; it is not the
+/// application's main workspace manifest.
+pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
+resolver = "2"
+members = ["crates/gitrun-core", "crates/gitrun-gsr"]
+"#;
+
+pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
+    ("Cargo.toml", RUNNER_BUILD_CARGO_MANIFEST, 0o644),
+    ("Cargo.lock", include_str!("../../../Cargo.lock"), 0o644),
+    (
+        "crates/gitrun-core/Cargo.toml",
+        include_str!("../../../crates/gitrun-core/Cargo.toml"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/lib.rs",
+        include_str!("../../../crates/gitrun-core/src/lib.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/app_auth.rs",
+        include_str!("../../../crates/gitrun-core/src/app_auth.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/command_policy.rs",
+        include_str!("../../../crates/gitrun-core/src/command_policy.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/config.rs",
+        include_str!("../../../crates/gitrun-core/src/config.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/github_auth.rs",
+        include_str!("../../../crates/gitrun-core/src/github_auth.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/hypervisor_decision.rs",
+        include_str!("../../../crates/gitrun-core/src/hypervisor_decision.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/runner.rs",
+        include_str!("../../../crates/gitrun-core/src/runner.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/state.rs",
+        include_str!("../../../crates/gitrun-core/src/state.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/workflow_validation.rs",
+        include_str!("../../../crates/gitrun-core/src/workflow_validation.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/Cargo.toml",
+        include_str!("../../../crates/gitrun-gsr/Cargo.toml"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/lib.rs",
+        include_str!("../../../crates/gitrun-gsr/src/lib.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/agent.rs",
+        include_str!("../../../crates/gitrun-gsr/src/agent.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/events.rs",
+        include_str!("../../../crates/gitrun-gsr/src/events.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/main.rs",
+        include_str!("../../../crates/gitrun-gsr/src/main.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/watchdog.rs",
+        include_str!("../../../crates/gitrun-gsr/src/watchdog.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/exec_supervisor.rs",
+        include_str!("../../../crates/gitrun-gsr/src/exec_supervisor.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs",
+        include_str!("../../../crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"),
+        0o644,
+    ),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
+        let dockerfile = runner_dockerfile_for_bootstrap();
+        assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
+        assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
+        assert!(!dockerfile.contains("COPY crates ./crates"));
+        assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
+    }
+
+    #[test]
+    fn bootstrap_resources_include_every_required_source() {
+        let paths: Vec<_> = RUNNER_BUILD_FILES
+            .iter()
+            .map(|(path, _, _)| *path)
+            .collect();
+        assert!(paths.contains(&"Cargo.toml"));
+        assert!(paths.contains(&"Cargo.lock"));
+        assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
+        assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
+        assert!(paths.contains(&"crates/gitrun-gsr/src/exec_supervisor.rs"));
+        assert_eq!(
+            RUNNER_ENTRYPOINT,
+            include_str!("../../../docker/runner/entrypoint.sh")
+        );
+        assert!(RUNNER_ENTRYPOINT.contains("docker_socket_group"));
+        assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
+        assert_eq!(
+            SYSTEMD_SERVICE,
+            include_str!("../../../systemd/gitrun.service")
+        );
+        assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
+        assert!(!SYSTEMD_SERVICE.contains("docker compose"));
+    }
+}

@@ -4,49 +4,51 @@ GitRun controls Docker containers and GitHub Actions self-hosted runners. A GitR
 
 ## Threat model
 
-A GitHub Actions workflow executes repository-controlled code inside its assigned runner. GitRun-managed runners intentionally mount the host Docker Engine socket because CI jobs may need Docker builds and container operations.
+A GitHub Actions runner executes repository-controlled workflow code. A compromised or malicious workflow can therefore access everything available inside its runner container and potentially exploit the Docker daemon if that socket is exposed to the runner. GitRun must not mount the host Docker socket into runner containers unless Docker-backed CI compatibility has been explicitly enabled for the repository/customer.
 
-That socket is a major security boundary. Code running in a managed runner can potentially use Docker to control the host, access host-mounted data, or affect other containers. GitRun should therefore be used only with repositories and workflow code that the operator trusts.
+The manager requires Docker socket access because it creates and removes runner containers. Keep the manager isolated, do not expose Docker's API publicly, and restrict host access.
 
-GitRun is not intended to be an anonymous public runner service.
+Linux runner containers may also receive the host Docker socket when Docker-backed CI compatibility is explicitly enabled for the repository/customer. This is a high-risk compatibility mode: code running inside such a runner can use the Docker API available through the mounted socket. GSR container hardening reduces other container and kernel attack surfaces, but it does not remove the privileges exposed by the Docker socket.
 
 ## Credential handling
 
-- Never commit GITHUB_TOKEN, runner registration tokens, passwords, private keys, or runtime environment files.
-- Keep runtime environment files private and protect them with restrictive filesystem permissions.
-- Use a dedicated GitHub credential with only the repository and Actions permissions required by the deployment.
-- Registration tokens are generated on demand and should not be stored.
-- Rotate a credential immediately if it appears in source control, logs, CI output, backups, or process inspection.
+- Never commit `GITHUB_TOKEN` or runtime environment files.
+- Keep `/etc/gitrun/gitrun.env` mode 0600.
+- Use a dedicated GitHub credential with only the repository/Actions permissions required by the installation. GitHub App authentication is supported as an alternative to PAT authentication; protect the App private key as a high-value credential.
+- Registration tokens are short-lived and should never be persisted.
+- Prefer ephemeral runners for untrusted or isolation-sensitive workloads.
+- Runner tokens are unset in the runner process environment after configuration.
+- Rotate credentials if they are exposed in logs, process inspection, backups, or source control.
 
 ## Container hardening
 
-Managed runner containers use:
+Linux runner containers use CPU, memory and PID limits. The default Linux runner configuration also uses a read-only root filesystem and private temporary filesystems.
 
-- a read-only container root filesystem;
-- a private writable /tmp;
-- a dedicated writable Actions runner work directory;
-- CPU, memory, and PID limits;
-- a shared Docker volume for selected build caches.
+The Docker socket is not equivalent to an ordinary container mount. When Docker-backed CI compatibility is enabled, the Linux runner receives /var/run/docker.sock intentionally so workflows can control the Docker daemon. Treat this as a dangerous, privileged compatibility mode and enable it only for repositories/customers whose workflow code is trusted to use Docker with host-level consequences.
 
-The runner work directory must remain writable because the GitHub Actions runner stores configuration, diagnostics, and job state there.
+Runner containers should not otherwise receive privileged mode, host networking, host PID/IPC namespaces, or arbitrary host filesystem mounts. When Docker socket compatibility is disabled, the runner should not receive the Docker socket.
 
-These controls reduce accidental writes and resource abuse but do not make a runner containing the host Docker socket a strong security sandbox.
+The manager itself necessarily has access to the Docker socket and must therefore be treated as a host-administrator component.
 
-## Host security
+## Network and GitHub
 
-- Do not expose the Docker API directly to the Internet.
-- Keep the GitRun host patched.
-- Restrict local administrative access.
-- Connect only repositories appropriate for the host's trust boundary.
-- Prefer ephemeral runners when the workload benefits from short-lived runner state.
-- Review changes to Docker mounts, privileges, namespaces, and systemd controls as security-sensitive changes.
+- Runners need outbound HTTPS access to GitHub.
+- Do not expose the Docker daemon or GitRun control interfaces to the public Internet.
+- Pin or regularly review runner image versions and base images.
+- Review every repository before connecting it to a runner pool.
 
-## Reporting a vulnerability
+## Reporting
 
-Please report security vulnerabilities privately through GitHub's security advisory mechanism:
+Report security issues privately through GitHub's security reporting mechanism rather than publishing exploit details in a public issue.
 
-https://github.com/Vider06/GitRun/security/advisories/new
+## Operational checklist
 
-Do not publish active exploit details in a public issue. Include enough information to reproduce and assess the problem safely.
+Before production:
+1. Create a dedicated least-privilege GitHub credential.
+2. Restrict access to the GitRun host.
+3. Enable ephemeral runners for untrusted workloads.
+4. Verify Docker socket compatibility is disabled unless the repository/customer explicitly requires Docker-backed CI; when enabled, verify that the runner has no additional privileged flags, host namespaces, or arbitrary host mounts.
+5. Keep Docker, the runner image, GitRun and the host OS patched.
+6. Test recovery and credential rotation.
 
-Security fixes may require coordinated disclosure when public release timing could materially increase risk.
+GitRun is intended for administrators managing repositories they trust. It is not an open public runner service.

@@ -4,32 +4,20 @@
 config/*.env
 !config/config.example.env
 
-# Local GitRun state, builds, logs and update artifacts.
-.gitrun/
-.gitrun-update/
-backups/
-data/
-logs/
-run/
-state/
-dist/
+# Git build and development artifacts.
 target/
-
-# Crash dumps and generated diagnostics.
-*.core
-*.dump
-*.dmp
-*.log
-
-# Local editor and OS files.
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-
-# Python cache.
+.gitrun-ci/
+node_modules/
 __pycache__/
-*.py[cod]
+.pytest_cache/
+.venv/
+/dist/
 
-# Generated release manifest.
-release/release-manifest.json
+# Local runtime data.
+/data/
+/logs/
+/run/
+/state/
+
+*.log
+.DS_Store

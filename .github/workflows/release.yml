@@ -119,7 +119,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sed -i -E '0,/"version"[[:space:]]*:[[:space:]]*"[^"]+"/s//"version": "'"$VERSION"'"/' src-tauri/tauri.conf.json
+          sed -i -E "0,/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/s//\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
 
       - name: Build unified GitRun executable
         env:
@@ -244,25 +244,9 @@ jobs:
           test "$(cat "$RUNNER_TEMP/server-check/version.txt")" = "${VERSION#v}"
           test "$(target/release/gitrun --version)" = "gitrun ${VERSION#v}"
 
-          python3 - "$ROOT/release-manifest.json" "$VERSION" "$GITHUB_SHA" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          path, version, commit = sys.argv[1:]
-          data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-          assert data["name"] == "GitRun"
-          assert data["version"] == version
-          assert data["git_commit"] == commit
-          targets = {a["target"] for a in data["artifacts"]}
-          assert {"x86_64-unknown-linux-gnu", "linux-x86_64-deb"} <= targets
-          assert len(data["artifacts"]) == 2
-          for artifact in data["artifacts"]:
-              assert len(artifact["sha256"]) == 64
-              assert all(c in "0123456789abcdef" for c in artifact["sha256"])
-              assert "/" not in artifact["file"] and "\\" not in artifact["file"]
-          print("Release manifest: PASS")
-          PY
+          command -v jq >/dev/null 2>&1
+          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["linux-x86_64-deb", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 2) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
+          echo "Release manifest: PASS"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

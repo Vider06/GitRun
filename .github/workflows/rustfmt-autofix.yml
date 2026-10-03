@@ -64,6 +64,8 @@ jobs:
 
       - name: Apply rustfmt
         shell: bash
+        env:
+          PUSH_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
           cargo fmt --all

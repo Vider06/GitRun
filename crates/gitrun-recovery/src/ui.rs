@@ -12,7 +12,7 @@ fn run_gtuu() -> Result<super::RecoveryReport, String> {
             .ok_or("GitRun executable was not found for privileged GTUU")?;
         let status = std::process::Command::new("pkexec")
             .arg(gitrun)
-            .arg("--recovery-gtuu")
+            .arg("recovery-gtuu")
             .status()
             .map_err(|error| format!("unable to request privileged GTUU: {error}"))?;
         if !status.success() {

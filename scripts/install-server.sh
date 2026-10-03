@@ -4,7 +4,6 @@ umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_BINARY="$ROOT/target/release/gitrun"
-RECOVERY_BINARY="$ROOT/target/release/gitrun-recovery"
 
 if [[ "$(id -u)" -ne 0 ]]; then
     echo "Run as root: sudo $0" >&2
@@ -35,13 +34,11 @@ command -v rustc >/dev/null 2>&1 || {
 cd "$ROOT"
 echo "Using $(rustc --version)"
 cargo build --locked --release -p gitrun-cli --bin gitrun
-cargo build --locked --release -p gitrun-recovery --bin gitrun-recovery
 
-if [[ ! -x "$BUILD_BINARY" || ! -x "$RECOVERY_BINARY" ]]; then
-    echo "GitRun build completed but required binaries are missing or not executable." >&2
+if [[ ! -x "$BUILD_BINARY" ]]; then
+    echo "GitRun build completed but the required binary is missing or not executable." >&2
     exit 1
 fi
 
 install -m 0755 "$BUILD_BINARY" /usr/local/bin/gitrun
-install -m 0755 "$RECOVERY_BINARY" /usr/local/bin/gitrun-recovery
 exec /usr/local/bin/gitrun setup --terminal

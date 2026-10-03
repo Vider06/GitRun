@@ -288,6 +288,7 @@ pub fn build_plan(
         .ok_or_else(|| {
             UpdateError::InvalidManifest("artifact download_url or repository is required".into())
         })?;
+    validate_https_url(&artifact_url)?;
 
     let dependencies = manifest
         .dependencies

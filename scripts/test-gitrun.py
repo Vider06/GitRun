@@ -195,12 +195,12 @@ for required in [
     "gh release upload",
     "cargo build --locked --release -p gitrun-cli --bin gitrun",
     "test -x target/release/gitrun",
-    "npm run tauri build -- --ci --no-bundle",
-    "npm run tauri bundle -- --bundles deb --no-binary-patching",
-    "package-manager-cache: false",
+    "Set Tauri release version",
+    "Build unified GitRun executable",
     "x86_64-unknown-linux-gnu",
     "release-manifest.json",
     "dpkg-deb -f",
+    "dpkg-deb --build --root-owner-group",
 ]:
     if required not in release_workflow:
         errors.append(f"release workflow requirement missing: {required}")
@@ -217,11 +217,17 @@ if "ubuntu-latest" in release_workflow or "windows-latest" in release_workflow o
 if "DOCKER_CONFIG: /tmp/gitrun-docker-config" in release_workflow:
     errors.append("release workflow retains obsolete Docker credential isolation")
 
-if "target/release/bundle/deb" not in release_workflow:
-    errors.append("release workflow Tauri Debian output path missing")
+if "dpkg-deb --build --root-owner-group" not in release_workflow:
+    errors.append("release workflow Debian package build missing")
 
 if "linux-x86_64-deb" not in release_workflow:
     errors.append("release workflow Debian manifest target missing")
+
+if "gitrun-recovery" in release_workflow or "target/release/gitrun-recovery" in release_workflow:
+    errors.append("release workflow must publish only the unified gitrun executable")
+
+if "target/release/gitrun-dashboard-tauri" in release_workflow:
+    errors.append("release workflow must not publish the standalone Tauri dashboard executable")
 
 
 for retired in ["autoscaler/gitrun_manager.py", "autoscaler/gitrun_updater_utility.py", "docker/manager/Dockerfile", "bin/gitrun"]:
@@ -235,12 +241,18 @@ if "legacy-python" in compose or "docker/manager/Dockerfile" in compose:
 systemd = read_text("systemd/gitrun.service")
 if "docker compose" in systemd or "--profile python" in systemd:
     errors.append("systemd still launches the legacy manager")
+if "ExecStart=/usr/local/bin/gitrun scheduler" not in systemd:
+    errors.append("systemd must launch the unified gitrun scheduler")
 
 cli_manifest = read_text("crates/gitrun-cli/Cargo.toml")
 if 'name = "gitrun"' not in cli_manifest:
     errors.append("Rust CLI binary target gitrun missing")
 if 'gitrun-dashboard' in cli_manifest or 'gitrun_dashboard' in cli_manifest:
     errors.append("Rust CLI still depends on the retired egui dashboard")
+if 'gitrun-recovery = { path = "../gitrun-recovery" }' not in cli_manifest:
+    errors.append("Rust CLI must embed the recovery library")
+if 'gitrun-dashboard-tauri = { path = "../gitrun-dashboard-tauri/src-tauri" }' not in cli_manifest:
+    errors.append("Rust CLI must embed the Tauri dashboard library")
 
 tauri_backend = read_text("crates/gitrun-dashboard-tauri/src-tauri/src/lib.rs")
 tauri_frontend = read_text("crates/gitrun-dashboard-tauri/dist/js/app.js")

@@ -420,7 +420,7 @@ pub fn restart_service() -> Result<(), String> {
         .ok_or("GitRun executable was not found for privileged service repair")?;
     let status = Command::new("pkexec")
         .arg(gitrun)
-        .arg("--repair-service")
+        .arg("repair-service")
         .status()
         .map_err(|error| format!("unable to request privileged service repair: {error}"))?;
     if status.success() {

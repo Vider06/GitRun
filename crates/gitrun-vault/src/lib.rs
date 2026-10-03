@@ -82,6 +82,8 @@ pub enum VaultError {
     Decode(#[from] serde_json::Error),
     #[error("secret '{0}' not found")]
     NotFound(String),
+    #[error("encryption failed for secret '{0}'")]
+    EncryptionFailed(String),
     #[error(
         "decryption failed for secret '{0}' — wrong master key or corrupted/tampered ciphertext"
     )]
@@ -90,6 +92,8 @@ pub enum VaultError {
     InvalidMasterKey(usize),
     #[error("secret name must not be empty")]
     EmptyName,
+    #[error("secret identifier contains a reserved control character")]
+    InvalidIdentifier,
 }
 
 pub type Result<T> = std::result::Result<T, VaultError>;
@@ -182,7 +186,10 @@ impl Vault {
 
         let secrets_path = dir.join(SECRETS_FILE);
         let data = match fs::read_to_string(&secrets_path) {
-            Ok(raw) => serde_json::from_str(&raw)?,
+            Ok(raw) => {
+                set_secret_file_permissions(&secrets_path)?;
+                serde_json::from_str(&raw)?
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => VaultFile::default(),
             Err(error) => return Err(error.into()),
         };
@@ -426,6 +433,7 @@ fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
 
     let serialized = serde_json::to_string_pretty(data)?;
+    let _ = fs::remove_file(path);
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -439,6 +447,20 @@ fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
 #[cfg(not(unix))]
 fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     fs::write(path, serde_json::to_string_pretty(data)?)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_secret_file_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_secret_file_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 

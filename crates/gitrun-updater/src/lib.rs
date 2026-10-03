@@ -142,8 +142,7 @@ impl ReleaseManifest {
         }
         for artifact in &self.artifacts {
             if artifact.target.is_empty()
-                || artifact.file.contains('/')
-                || artifact.file.contains('\\')
+                || !is_safe_filename(&artifact.file)
                 || !is_sha256(&artifact.sha256)
             {
                 return Err(UpdateError::InvalidManifest(format!(
@@ -243,10 +242,24 @@ pub fn stage_update(
     }
     let root = staging_root.as_ref();
     fs::create_dir_all(root)?;
+    let _lock = UpdateLock::acquire(root)?;
     let marker = root.join("pending-update.json");
-    let temp = root.join("pending-update.json.tmp");
-    fs::write(&temp, serde_json::to_vec_pretty(manifest)?)?;
-    fs::rename(temp, &marker)?;
+    let temp = temporary_sibling(&marker, ".gitrun-stage");
+    let result = (|| -> Result<(), UpdateError> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        file.write_all(&serde_json::to_vec_pretty(manifest)?)?;
+        file.sync_all()?;
+        drop(file);
+        replace_temp_file(&temp, &marker)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result?;
     Ok(marker)
 }
 
@@ -493,10 +506,32 @@ pub fn apply_update(
         config_backup,
         service_config_backup,
     };
-    fs::write(
-        backup_dir.join("backup.json"),
-        serde_json::to_vec_pretty(&record)?,
-    )?;
+    let backup_json = (|| -> Result<(), UpdateError> {
+        let bytes = serde_json::to_vec_pretty(&record)?;
+        fs::write(backup_dir.join("backup.json"), bytes)?;
+        Ok(())
+    })();
+
+    if let Err(error) = backup_json {
+        let rollback_result = rollback_install(
+            paths,
+            &record.install_backup,
+            record.state_backup.as_deref(),
+            record.config_backup.as_deref(),
+            paths.service_config.as_deref(),
+            record.service_config_backup.as_deref(),
+            true,
+        );
+        if let Err(rollback_error) = rollback_result {
+            return Err(UpdateError::RolledBack(format!(
+                "backup record write failed: {error}; rollback also failed: {rollback_error}"
+            )));
+        }
+        return Err(UpdateError::RolledBack(format!(
+            "backup record write failed; GitRun was rolled back: {error}"
+        )));
+    }
+
     Ok(record)
 }
 
@@ -636,20 +671,36 @@ pub fn apply_installed_update(
     }
 
     fs::remove_dir_all(&staging)?;
-    fs::write(
-        backup_dir.join("backup.json"),
-        serde_json::to_vec_pretty(&record)?,
-    )?;
+    let backup_json = (|| -> Result<(), UpdateError> {
+        let bytes = serde_json::to_vec_pretty(&record)?;
+        fs::write(backup_dir.join("backup.json"), bytes)?;
+        Ok(())
+    })();
+
+    if let Err(error) = backup_json {
+        let rollback_result = rollback_installed_update(&record);
+        if let Err(rollback_error) = rollback_result {
+            return Err(UpdateError::RolledBack(format!(
+                "backup record write failed: {error}; rollback also failed: {rollback_error}"
+            )));
+        }
+        return Err(UpdateError::RolledBack(format!(
+            "backup record write failed; installed update was rolled back: {error}"
+        )));
+    }
+
     Ok(record)
 }
 
 pub fn rollback_installed_update(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
     for artifact in &record.artifacts {
-        if artifact.destination.is_dir() {
-            return Err(UpdateError::Command(format!(
-                "installed artifact destination is a directory: {}",
-                artifact.destination.display()
-            )));
+        if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
+            if meta.file_type().is_symlink() || meta.is_dir() {
+                return Err(UpdateError::Command(format!(
+                    "installed artifact destination is not a regular file: {}",
+                    artifact.destination.display()
+                )));
+            }
         }
         if artifact.destination.exists() {
             fs::remove_file(&artifact.destination)?;
@@ -663,10 +714,10 @@ pub fn rollback_installed_update(record: &InstalledBackupRecord) -> Result<(), U
             atomic_replace_installed_file(backup, &artifact.destination, 0o755)?;
         }
     }
-    if record.version_file.exists() {
-        if record.version_file.is_dir() {
+    if let Ok(meta) = fs::symlink_metadata(&record.version_file) {
+        if meta.file_type().is_symlink() || meta.is_dir() {
             return Err(UpdateError::Command(format!(
-                "version file path is a directory: {}",
+                "version file path is not a regular file: {}",
                 record.version_file.display()
             )));
         }
@@ -805,10 +856,8 @@ pub fn pin_runner_image(
     if !found {
         lines.push(format!("GITRUN_RUNNER_IMAGE={}", image.reference));
     }
-    let mut output = lines.join("
-");
-    output.push('
-');
+    let mut output = lines.join("\n");
+    output.push('\n');
 
     let mode = existing_file_mode(path, 0o644);
     atomic_write_installed_file(path, output.as_bytes(), mode)?;
@@ -1155,7 +1204,7 @@ fn parse_version(value: &str) -> Result<ParsedVersion, UpdateError> {
                             },
                         )?))
                     } else {
-                        Ok(VersionIdentifier::AlphaNumeric(part.to_ascii_lowercase()))
+                        Ok(VersionIdentifier::AlphaNumeric(part.to_owned()))
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -1420,6 +1469,15 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
         ("state", paths.state_dir.as_path()),
         ("backup", paths.backup_root.as_path()),
     ];
+    for (name, path) in managed {
+        if let Ok(metadata) = fs::symlink_metadata(path) {
+            if metadata.file_type().is_symlink() {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "{name} update path must not be a symlink"
+                )));
+            }
+        }
+    }
     for i in 0..managed.len() {
         for j in (i + 1)..managed.len() {
             if paths_overlap(managed[i].1, managed[j].1) {
@@ -1452,6 +1510,18 @@ fn paths_overlap(a: &Path, b: &Path) -> bool {
     a == b || a.starts_with(b) || b.starts_with(a)
 }
 
+fn is_safe_filename(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains(['/', '\\', ':'])
+        && !value.chars().any(char::is_control)
+        && Path::new(value)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == value)
+}
+
 fn validate_installed_artifacts(
     artifacts: &[InstalledArtifact],
     version_file: &Path,
@@ -1472,32 +1542,34 @@ fn validate_installed_artifacts(
                 artifact.archive_name
             )));
         }
-        if artifact.destination.is_dir() {
-            return Err(UpdateError::Command(format!(
-                "installed artifact destination is a directory: {}",
-                artifact.destination.display()
-            )));
-        }
-        if artifact.destination.exists()
-            && fs::symlink_metadata(&artifact.destination)
-                .map(|meta| meta.file_type().is_symlink())
-                .unwrap_or(false)
-        {
-            return Err(UpdateError::Command(format!(
-                "installed artifact destination is a symlink: {}",
-                artifact.destination.display()
-            )));
+        if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
+            if meta.file_type().is_symlink() {
+                return Err(UpdateError::Command(format!(
+                    "installed artifact destination is a symlink: {}",
+                    artifact.destination.display()
+                )));
+            }
+            if meta.is_dir() {
+                return Err(UpdateError::Command(format!(
+                    "installed artifact destination is a directory: {}",
+                    artifact.destination.display()
+                )));
+            }
         }
     }
-    if version_file.exists()
-        && fs::symlink_metadata(version_file)
-            .map(|meta| meta.file_type().is_symlink())
-            .unwrap_or(false)
-    {
-        return Err(UpdateError::Command(format!(
-            "version file is a symlink: {}",
-            version_file.display()
-        )));
+    if let Ok(meta) = fs::symlink_metadata(version_file) {
+        if meta.file_type().is_symlink() {
+            return Err(UpdateError::Command(format!(
+                "version file is a symlink: {}",
+                version_file.display()
+            )));
+        }
+        if meta.is_dir() {
+            return Err(UpdateError::Command(format!(
+                "version file path is a directory: {}",
+                version_file.display()
+            )));
+        }
     }
     Ok(())
 }
@@ -1550,12 +1622,15 @@ fn existing_file_mode(path: &Path, default_mode: u32) -> u32 {
 }
 
 fn remove_path(path: &Path) -> Result<(), io::Error> {
-    if path.is_dir() && !path.is_symlink() {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.is_dir() {
         fs::remove_dir_all(path)
-    } else if path.exists() {
-        fs::remove_file(path)
     } else {
-        Ok(())
+        fs::remove_file(path)
     }
 }
 

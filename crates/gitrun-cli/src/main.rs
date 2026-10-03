@@ -824,10 +824,10 @@ enum Command {
     /// Launch the GitRun dashboard (default when no command is given).
     Dashboard,
     /// Internal recovery command used by the protected recovery UI.
-    #[command(name = "--recovery-gtuu", hide = true)]
+    #[command(name = "recovery-gtuu", hide = true)]
     RecoveryGtuu,
     /// Internal recovery command used for privileged systemd repair.
-    #[command(name = "--repair-service", hide = true)]
+    #[command(name = "repair-service", hide = true)]
     RepairService,
     /// Internal: run the elevated installation step (invoked by the setup wizard).
     #[command(name = "--install-root", hide = true)]

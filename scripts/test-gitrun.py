@@ -230,6 +230,22 @@ if "target/release/gitrun-dashboard-tauri" in release_workflow or "target/releas
     errors.append("release workflow must not publish the standalone Tauri dashboard executable")
 
 
+build_deb = read_text("scripts/build-deb.sh")
+if "gitrun-recovery" in build_deb or "gitrun-dashboard-tauri" in build_deb:
+    errors.append("build-deb.sh must package only the unified gitrun executable")
+if "RECOVERY_BINARY" in build_deb or "DASHBOARD_BINARY" in build_deb:
+    errors.append("build-deb.sh retains a retired secondary executable variable")
+
+build_release_sh = read_text("scripts/build-release.sh")
+build_release_ps1 = read_text("scripts/build-release.ps1")
+for release_script in [build_release_sh, build_release_ps1]:
+    if "gitrun-recovery" in release_script or "gitrun-dashboard-tauri" in release_script:
+        errors.append("local release scripts must package only the unified gitrun executable")
+
+desktop = read_text("packaging/gitrun.desktop")
+if "Exec=gitrun" not in desktop:
+    errors.append("desktop launcher must invoke the unified gitrun executable")
+
 for retired in ["autoscaler/gitrun_manager.py", "autoscaler/gitrun_updater_utility.py", "docker/manager/Dockerfile", "bin/gitrun"]:
     if (ROOT / retired).exists():
         errors.append(f"retired file still present: {retired}")

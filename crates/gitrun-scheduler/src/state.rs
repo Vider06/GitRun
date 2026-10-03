@@ -146,17 +146,29 @@ impl SchedulerState {
 
     /// Removes tracking for any container name no longer present, so the
     /// state file doesn't grow forever with names of long-gone containers.
-    pub fn prune(&mut self, live_names: &[String]) {
+    /// Removes tracking only for containers belonging to `repo` that no longer exist.
+    /// Entries belonging to other repositories remain untouched in the shared state file.
+    pub fn prune(&mut self, repo: &str, live_names: &[String]) {
+        let safe_repo: String = repo
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let repo_prefix = format!("gitrun-{safe_repo}-");
         let live_names: std::collections::HashSet<&str> =
             live_names.iter().map(String::as_str).collect();
-        self.data
-            .idle_since
-            .retain(|name, _| live_names.contains(name.as_str()));
-        self.data
-            .recovery_since
-            .retain(|name, _| live_names.contains(name.as_str()));
+        self.data.idle_since.retain(|name, _| {
+            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
+        });
+        self.data.recovery_since.retain(|name, _| {
+            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
+        });
     }
-
     /// Returns how long a container has been marked as needing recovery,
     /// starting the clock now if this is the first time we've seen it.
     pub fn recovery_age(&mut self, name: &str) -> Duration {
@@ -300,16 +312,39 @@ mod tests {
     }
 
     #[test]
-    fn prune_drops_entries_for_gone_containers() {
+    fn prune_drops_gone_entries_without_cross_repo_deletion() {
         let dir =
             std::env::temp_dir().join(format!("gitrun-sched-state-prune-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let mut state = SchedulerState::load(&dir).unwrap();
-        state.mark_idle("runner-a");
-        state.mark_idle("runner-b");
-        state.prune(&["runner-a".to_owned()]);
-        let names: Vec<_> = state.idle_entries().into_iter().map(|(n, _)| n).collect();
-        assert_eq!(names, vec!["runner-a".to_owned()]);
+        state.mark_idle("gitrun-owner-repo-runner-a");
+        state.mark_idle("gitrun-owner-repo-gone");
+        state.mark_idle("gitrun-other-repo-runner-b");
+        state.recovery_age("gitrun-owner-repo-recovery-gone");
+        state.recovery_age("gitrun-other-repo-recovery");
+
+        state.prune(
+            "owner/repo",
+            &["gitrun-owner-repo-runner-a".to_owned()],
+        );
+
+        let idle_names: Vec<_> = state
+            .idle_entries()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(idle_names.contains(&"gitrun-owner-repo-runner-a".to_owned()));
+        assert!(!idle_names.contains(&"gitrun-owner-repo-gone".to_owned()));
+        assert!(idle_names.contains(&"gitrun-other-repo-runner-b".to_owned()));
+
+        let recovery_names: Vec<_> = state
+            .recovery_ages()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(!recovery_names.contains(&"gitrun-owner-repo-recovery-gone".to_owned()));
+        assert!(recovery_names.contains(&"gitrun-other-repo-recovery".to_owned()));
+
         let _ = fs::remove_dir_all(&dir);
     }
 }

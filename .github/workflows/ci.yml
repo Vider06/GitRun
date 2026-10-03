@@ -1431,6 +1431,16 @@ jobs:
             # gitrun-cli now embeds the Tauri dashboard library, so every compile/test
             # job that builds the CLI needs the same Linux GUI system dependencies.
             ci_need_pkg libglib2.0-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+            ci_need convert imagemagick
+            shopt -s nullglob
+            icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+            [ "${#icons[@]}" -gt 0 ] || { ci_err "No Tauri PNG icons found"; exit 1; }
+            for icon in "${icons[@]}"; do
+              tmp="$(mktemp --suffix=.png)"
+              convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+              mv "$tmp" "$icon"
+            done
+            echo "${#icons[@]} Tauri PNG icons normalized in the CI checkout with ImageMagick"
           fi
           ci_need_report
           if [ "$GITHUB_JOB" != audit-rust ] && ! command -v pkg-config >/dev/null 2>&1; then

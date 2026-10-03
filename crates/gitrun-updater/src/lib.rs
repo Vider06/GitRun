@@ -644,7 +644,7 @@ pub fn apply_installed_update(
     };
 
     let record = InstalledBackupRecord {
-        created_at: timestamp,
+        created_at: timestamp as u64,
         version: version.to_owned(),
         artifacts: backups,
         version_file: version_file.to_path_buf(),

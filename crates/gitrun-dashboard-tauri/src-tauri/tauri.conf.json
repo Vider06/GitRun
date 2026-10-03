@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "dev.gitrun.dashboard",
   "build": {
-    "frontendDist": "../dist"
+    "frontendDist": "../dist",
+    "withGlobalTauri": true
   },
   "app": {
-    "withGlobalTauri": true,
     "windows": [
       {
         "title": "GitRun",

@@ -1257,6 +1257,17 @@ fn compare_versions(a: &str, b: &str) -> Result<std::cmp::Ordering, UpdateError>
 fn is_version(value: &str) -> bool {
     parse_version(value).is_ok()
 }
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.starts_with("sha256:")
+        && value.len() == 71
+        && value[7..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
 fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<(), UpdateError> {
     fs::create_dir_all(destination)?;
     let name = archive

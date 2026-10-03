@@ -1423,6 +1423,7 @@ jobs:
         env:
           LOCK_HASH: ${{ hashFiles('Cargo.lock') }}
           CFG_HASH: ${{ hashFiles('rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
+          MANIFEST_HASH: ${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           if [ "$GITHUB_JOB" != audit-rust ]; then ci_need cc build-essential; fi
@@ -1447,10 +1448,10 @@ jobs:
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
             echo "registry=$ns-cargo-registry-${lock}"
-            echo "target=$ns-target-${GITHUB_JOB}-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-${lock}"
-            echo "target_prefix=$ns-target-${GITHUB_JOB}-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-"
+            echo "target=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-${GITHUB_JOB}"
+            echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-"
           } >> "$GITHUB_OUTPUT"
-          echo "image fingerprint $fp: a different image never reuses this job's target cache"
+          echo "image fingerprint $fp: target caches are exact per job, with cross-job restore fallback"
       - &c_tc
         name: Restore toolchain cache
         id: c_tc
@@ -1962,6 +1963,30 @@ jobs:
           source "$RUNNER_TEMP/ci-lib.sh"
           ci_run "create docker-container builder" docker buildx create --name gitrun-ci --driver docker-container --use --bootstrap
           docker buildx inspect --bootstrap
+      - name: Cache Docker BuildKit cache mounts
+        id: c_dmounts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/docker-cache/manager
+            .gitrun-ci/docker-cache/runner
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-mounts-v11-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml', 'docker/manager-rs/Dockerfile', 'docker/runner/Dockerfile') }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-mounts-v11-
+      - name: Inject manager BuildKit cache mounts
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: gitrun-ci
+          cache-dir: .gitrun-ci/docker-cache/manager
+          dockerfile: docker/manager-rs/Dockerfile
+          skip-extraction: ${{ steps.c_dmounts.outputs.cache-hit == 'true' }}
+      - name: Inject runner BuildKit cache mounts
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: gitrun-ci
+          cache-dir: .gitrun-ci/docker-cache/runner
+          dockerfile: docker/runner/Dockerfile
+          skip-extraction: ${{ steps.c_dmounts.outputs.cache-hit == 'true' }}
       - name: Validate Compose and lint Dockerfiles
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -1979,8 +2004,8 @@ jobs:
           exit "$rc"
       - name: Build images
         env:
-          MANAGER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-manager-rs-v10-${{ hashFiles('docker/manager-rs/Dockerfile', 'docker/manager-rs/entrypoint.sh', 'Cargo.toml', 'Cargo.lock') }}
-          RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v1-${{ hashFiles('docker/runner/Dockerfile', 'docker/runner/entrypoint.sh', 'Cargo.toml', 'Cargo.lock') }}
+          MANAGER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-manager-rs-v11-${{ hashFiles('docker/manager-rs/Dockerfile', 'docker/manager-rs/entrypoint.sh', 'Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
+          RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v11-${{ hashFiles('docker/runner/Dockerfile', 'docker/runner/entrypoint.sh', 'Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           test -S /var/run/docker.sock
@@ -1990,10 +2015,8 @@ jobs:
             docker buildx build \
               --progress=plain \
               --network=host \
-              --cache-from "type=gha,scope=${MANAGER_CACHE_SCOPE}" \
-              --cache-to "type=gha,scope=${MANAGER_CACHE_SCOPE},mode=max,ignore-error=true" \
-              --build-arg "GITRUN_SOURCE_REV=${GITHUB_SHA}" \
-              --build-arg "GITRUN_CACHE_SCHEMA=v10" \
+              --cache-from "type=gha,scope=${MANAGER_CACHE_SCOPE},version=2,timeout=20m" \
+              --cache-to "type=gha,scope=${MANAGER_CACHE_SCOPE},mode=max,version=2,timeout=20m,ignore-error=true" \
               -f docker/manager-rs/Dockerfile \
               -t gitrun-manager-rs:ci .
           }
@@ -2001,8 +2024,8 @@ jobs:
             docker buildx build \
               --progress=plain \
               --network=host \
-              --cache-from "type=gha,scope=${RUNNER_CACHE_SCOPE}" \
-              --cache-to "type=gha,scope=${RUNNER_CACHE_SCOPE},mode=max,ignore-error=true" \
+              --cache-from "type=gha,scope=${RUNNER_CACHE_SCOPE},version=2,timeout=20m" \
+              --cache-to "type=gha,scope=${RUNNER_CACHE_SCOPE},mode=max,version=2,timeout=20m,ignore-error=true" \
               -f docker/runner/Dockerfile \
               -t gitrun-runner:ci .
           }

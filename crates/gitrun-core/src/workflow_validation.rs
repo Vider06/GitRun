@@ -305,7 +305,12 @@ pub fn zizmor_info() -> ZizmorInfo {
 /// Already-installed is treated as success with no reinstall — this is an
 /// idempotent "make sure it's available" call, not a forced upgrade.
 pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
-    if Command::new("zizmor").arg("--version").output().is_ok() {
+    if Command::new("zizmor")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+    {
         return Ok(InstallOutcome::AlreadyInstalled);
     }
     let output = Command::new("cargo")

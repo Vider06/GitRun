@@ -404,9 +404,7 @@ pub fn apply_update(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let backup_dir = paths
-        .backup_root
-        .join(format!("{version}-{timestamp}"));
+    let backup_dir = paths.backup_root.join(format!("{version}-{timestamp}"));
     fs::create_dir_all(&backup_dir)?;
 
     let install_backup = backup_dir.join("install");
@@ -500,9 +498,7 @@ pub fn apply_update(
         created_at: timestamp as u64,
         version: version.into(),
         install_backup,
-        state_backup: state_backup
-            .exists()
-            .then_some(state_backup),
+        state_backup: state_backup.exists().then_some(state_backup),
         config_backup,
         service_config_backup,
     };
@@ -1050,8 +1046,7 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
 }
 
 pub fn dependency_status(name: &str, minimum_version: &str) -> DependencyStatus {
-    let installed = dependency_command(name)
-        .and_then(command_version);
+    let installed = dependency_command(name).and_then(command_version);
     let compatible = installed
         .as_deref()
         .map(|v| {
@@ -1139,7 +1134,9 @@ fn parse_version(value: &str) -> Result<ParsedVersion, UpdateError> {
     let value = value.trim();
     let value = value.strip_prefix('v').unwrap_or(value);
     if value.is_empty() {
-        return Err(UpdateError::InvalidManifest("invalid version: empty".into()));
+        return Err(UpdateError::InvalidManifest(
+            "invalid version: empty".into(),
+        ));
     }
 
     let (without_build, _) = value
@@ -1148,10 +1145,9 @@ fn parse_version(value: &str) -> Result<ParsedVersion, UpdateError> {
 
     if let Some((_, build)) = value.split_once('+') {
         if build.is_empty()
-            || build
-                .split('.')
-                .any(|part| part.is_empty()
-                    || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+            || build.split('.').any(|part| {
+                part.is_empty() || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            })
         {
             return Err(UpdateError::InvalidManifest(format!(
                 "invalid version: {value}"
@@ -1183,9 +1179,9 @@ fn parse_version(value: &str) -> Result<ParsedVersion, UpdateError> {
                 "invalid version: {value}"
             )));
         }
-        core[index] = part.parse::<u64>().map_err(|_| {
-            UpdateError::InvalidManifest(format!("invalid version: {value}"))
-        })?;
+        core[index] = part
+            .parse::<u64>()
+            .map_err(|_| UpdateError::InvalidManifest(format!("invalid version: {value}")))?;
     }
 
     let prerelease = prerelease_text
@@ -1211,11 +1207,7 @@ fn parse_version(value: &str) -> Result<ParsedVersion, UpdateError> {
                             )));
                         }
                         Ok(VersionIdentifier::Numeric(part.parse::<u64>().map_err(
-                            |_| {
-                                UpdateError::InvalidManifest(format!(
-                                    "invalid version: {value}"
-                                ))
-                            },
+                            |_| UpdateError::InvalidManifest(format!("invalid version: {value}")),
                         )?))
                     } else {
                         Ok(VersionIdentifier::AlphaNumeric(part.to_owned()))
@@ -1525,7 +1517,9 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
             }
         }
     }
-    if let (Some(config), Some(service)) = (paths.config_dir.as_deref(), paths.service_config.as_deref()) {
+    if let (Some(config), Some(service)) =
+        (paths.config_dir.as_deref(), paths.service_config.as_deref())
+    {
         if paths_overlap(config, service) {
             return Err(UpdateError::InvalidManifest(
                 "config and service-config update paths overlap".into(),
@@ -1613,7 +1607,10 @@ fn temporary_sibling(path: &Path, prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    parent.join(format!("{prefix}-{name}-{}-{nonce}.tmp", std::process::id()))
+    parent.join(format!(
+        "{prefix}-{name}-{}-{nonce}.tmp",
+        std::process::id()
+    ))
 }
 
 fn replace_temp_file(temp: &Path, destination: &Path) -> Result<(), UpdateError> {
@@ -1827,10 +1824,7 @@ mod tests {
 
     #[test]
     fn rejects_overlapping_update_paths() {
-        let root = std::env::temp_dir().join(format!(
-            "gitrun-updater-test-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("gitrun-updater-test-{}", std::process::id()));
         let paths = UpdatePaths {
             install_dir: root.join("install"),
             state_dir: root.join("state"),

@@ -21,27 +21,6 @@ on:
     branches: [main, BigRework]
   pull_request:
   workflow_dispatch:
-    inputs:
-      verbose:
-        description: Verbose logging (environment dump, RUST_BACKTRACE=full)
-        type: boolean
-        default: true
-      full_run:
-        description: Ignore the docs-only shortcut and run every job
-        type: boolean
-        default: false
-      fresh_cache:
-        description: Ignore every existing cache for this run (private cache namespace)
-        type: boolean
-        default: false
-      no_artifacts:
-        description: Skip all artifact uploads for this run
-        type: boolean
-        default: true
-      gc_dry_run:
-        description: Cache GC only reports what it would delete
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -50,22 +29,26 @@ env:
   RUST_VERSION: "1.98.1"
   NODE_VERSION: "22"
   # Bump the number to invalidate EVERY cache. A fresh_cache run gets its own namespace.
-  CACHE_EPOCH: ${{ inputs.fresh_cache && format('e1x{0}', github.run_id) || 'e1' }}
+  # Persistent CI configuration comes from Repository Variables.
+  CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e1x{0}', github.run_id) || 'e1' }}
   CACHE_BASE_EPOCH: e1
   # Pull requests only READ caches (main/branch pushes save them). "true" lets PRs save too.
   CACHE_SAVE_PR: "false"
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
-  CI_VERBOSE: ${{ inputs.verbose && '1' || '0' }}
-  CI_UPLOAD_ARTIFACTS: ${{ inputs.no_artifacts && 'false' || 'true' }}
+  CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && '1' || '0' }}
+  CI_UPLOAD_ARTIFACTS: ${{ vars.GITRUN_CI_UPLOAD_ARTIFACTS == 'true' && 'true' || 'false' }}
   CI_RUNNER_MODE: ${{ vars.GITRUN_RUNNER_MODE || 'self-hosted' }}
+  CI_FULL_RUN: ${{ vars.GITRUN_CI_FULL_RUN == 'true' && 'true' || 'false' }}
+  CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && 'true' || 'false' }}
+  CI_GC_DRY_RUN: ${{ vars.GITRUN_CI_GC_DRY_RUN == 'true' && 'true' || 'false' }}
   CI_MAX_ANNOT: "40"
   CARGO_TERM_COLOR: always
   CARGO_TERM_PROGRESS_WHEN: never
   CARGO_INCREMENTAL: "0"
   CARGO_NET_RETRY: "10"
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  RUST_BACKTRACE: ${{ inputs.verbose && 'full' || '1' }}
+  RUST_BACKTRACE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && 'full' || '1' }}
   FORCE_COLOR: "1"
   NPM_CONFIG_FUND: "false"
   NPM_CONFIG_AUDIT: "false"
@@ -821,7 +804,7 @@ jobs:
         id: detect
         env:
           EVENT: ${{ github.event_name }}
-          FULL_RUN: ${{ inputs.full_run }}
+          FULL_RUN: ${{ env.CI_FULL_RUN }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           files="$(git ls-files)"
@@ -2215,7 +2198,7 @@ jobs:
       - name: Remove superseded caches (never the newest ones)
         env:
           GH_TOKEN: ${{ github.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.gc_dry_run || 'false' }}
+          DRY_RUN: ${{ env.CI_GC_DRY_RUN }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           api() { curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$@"; }

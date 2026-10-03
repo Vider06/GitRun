@@ -7,17 +7,31 @@ config/*.env
 # Git build and development artifacts.
 target/
 .gitrun-ci/
+.gitrun/
+.gitrun-update/
 node_modules/
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .venv/
 /dist/
 
 # Local runtime data.
-/data/
-/logs/
-/run/
-/state/
+backups/
+data/
+logs/
+run/
+state/
 
+# Generated release artifacts and diagnostics.
+release/release-manifest.json
+*.core
+*.dump
+*.dmp
 *.log
+
+# Editor and OS metadata
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/

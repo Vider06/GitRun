@@ -1,13 +1,19 @@
-# Rust migration contract
+# Rust runtime architecture
 
-The Rust workspace is additive. The existing Python autoscaler remains authoritative until each responsibility has a tested replacement.
+GitRun's runtime and autoscaling control plane is Rust-native. The `gitrun-scheduler`
+crate owns reconciliation, GitHub API access, runner lifecycle, recovery and GTUU.
+The installed Linux service runs the same scheduler runtime through the main
+`gitrun` executable, so there is no Python manager or second runtime to keep in sync.
 
-Migration order:
-1. configuration and state;
-2. runner lifecycle;
-3. updater and recovery (release artifacts, checksum verification, dependency compatibility, version-pinned runner images, rollback);
-4. CLI delegation;
-5. manager API;
-6. dashboard integration.
+The old Python autoscaler and external GTUU are retired. The current Rust runtime
+provides GitHub pagination, rate-limit handling, persistent scheduler state, runner
+recovery and the Rust GTUU implementation.
 
-The repository can still be deployed through the existing Python/Docker path while the Rust core is introduced incrementally.
+The operator dashboard is now the Tauri 2 application in
+`crates/gitrun-dashboard-tauri`. The CLI launches that application for `gitrun dashboard`
+and when no command is supplied; the retired egui dashboard is no longer a workspace
+member or release artifact.
+
+A Rust-only Docker Compose manager profile remains available for source-based
+development/compatibility workflows; it is not required by the installed Linux service.
+`systemd/gitrun.service` launches `/usr/local/bin/gitrun scheduler` directly.

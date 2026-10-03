@@ -1,0 +1,82 @@
+name: Rustfmt autofix
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt:
+    name: Apply rustfmt
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 60
+    env:
+      RUST_COMPONENTS: rustfmt,clippy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Rust paths and cache keys
+        id: keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/.gitrun-ci"
+          mkdir -p "$root/cargo" "$root/rustup" "$RUNNER_TEMP/tmp"
+          {
+            echo "CARGO_HOME=$root/cargo"
+            echo "RUSTUP_HOME=$root/rustup"
+            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
+            echo "TMPDIR=$RUNNER_TEMP/tmp"
+            echo "RUSTUP_TOOLCHAIN=1.98.1"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$GITHUB_WORKSPACE/target"
+          echo "$root/cargo/bin" >> "$GITHUB_PATH"
+          ns="gitrun-e1-$RUNNER_OS-$RUNNER_ARCH"
+          comps="$(printf '%s' "$RUST_COMPONENTS" | tr ',' '+')"
+          echo "toolchain=$ns-rustup-1.98.1-$comps" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Rust toolchain cache
+        id: c_tc
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/rustup
+            .gitrun-ci/cargo/bin
+          key: ${{ steps.keys.outputs.toolchain }}
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$CARGO_HOME/bin:$PATH"
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --fail --silent --show-error --location --retry 3               https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init.sh"
+            chmod +x "$RUNNER_TEMP/rustup-init.sh"
+            RUSTUP_INIT_SKIP_PATH_CHECK=yes               "$RUNNER_TEMP/rustup-init.sh"               -y --profile minimal --default-toolchain none --no-modify-path
+          fi
+          rustup toolchain install 1.98.1             --profile minimal             --component rustfmt             --no-self-update
+          rustup default 1.98.1
+          rustfmt --version
+
+      - name: Apply rustfmt
+        shell: bash
+        env:
+          PUSH_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          if git diff --quiet --exit-code; then
+            echo "rustfmt: already clean"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit -m "style: apply rustfmt"
+          git push origin "HEAD:$PUSH_BRANCH"

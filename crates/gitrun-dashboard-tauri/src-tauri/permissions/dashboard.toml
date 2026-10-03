@@ -1,0 +1,22 @@
+[[permission]]
+identifier = "dashboard-commands"
+description = "Allows the GitRun dashboard frontend to invoke its application commands."
+commands.allow = [
+  "is_first_run",
+  "run_first_setup",
+  "get_overview",
+  "get_repo_detail",
+  "list_vault_secrets",
+  "set_vault_secret",
+  "delete_vault_secret",
+  "get_gsr_status",
+  "list_gsr_events",
+  "get_zizmor_info",
+  "accept_zizmor_license_and_install",
+  "disable_zizmor",
+  "save_logic_rules",
+  "list_pending_hypervisor_decisions",
+  "respond_hypervisor_decision",
+  "get_config",
+  "save_config",
+]

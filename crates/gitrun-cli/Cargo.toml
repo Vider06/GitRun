@@ -2,14 +2,20 @@
 name = "gitrun-cli"
 version = "0.4.0"
 edition = "2021"
+license = "MIT"
+description = "Command-line interface for GitRun"
 
 [[bin]]
 name = "gitrun"
 path = "src/main.rs"
 
 [dependencies]
+gitrun-scheduler = { path = "../gitrun-scheduler" }
 gitrun-core = { path = "../gitrun-core" }
 gitrun-setup = { path = "../gitrun-setup" }
 gitrun-updater = { path = "../gitrun-updater" }
-gitrun-dashboard = { path = "../gitrun-dashboard" }
+gitrun-recovery = { path = "../gitrun-recovery" }
+gitrun-dashboard-tauri = { path = "../gitrun-dashboard-tauri/src-tauri" }
+clap = { version = "4", features = ["derive"] }
 serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }

@@ -13,13 +13,13 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: docker
-    directory: /docker/runner
+    directory: /docker/manager-rs
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
 
   - package-ecosystem: docker
-    directory: /docker/manager
+    directory: /docker/runner
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

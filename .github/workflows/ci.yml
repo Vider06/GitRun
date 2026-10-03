@@ -2008,7 +2008,16 @@ jobs:
               -f docker/runner/Dockerfile \
               -t gitrun-runner:ci .
           }
-          rc=0,          ci_run "build gitrun-manager-rs:ci" manager || rc=1,          # The GitHub-hosted runner is ephemeral but disk-limited. The remote,          # GHA cache already contains exported BuildKit layers, so discard,          # unused local builder state before loading the larger runner image.,          docker image rm -f gitrun-manager-rs:ci >/dev/null 2>&1 || true,          docker buildx prune --all --force >/dev/null 2>&1 || true,          ci_run "build gitrun-runner:ci" runner_img || rc=1
+          rc=0
+          ci_run "build gitrun-manager-rs:ci" manager || rc=1
+
+          # The GitHub-hosted runner is ephemeral but disk-limited. The remote
+          # GHA cache already contains exported BuildKit layers, so discard
+          # unused local builder state before loading the larger runner image.
+          docker image rm -f gitrun-manager-rs:ci >/dev/null 2>&1 || true
+          docker buildx prune --all --force >/dev/null 2>&1 || true
+
+          ci_run "build gitrun-runner:ci" runner_img || rc=1
           {
             echo "### 🐳 Images"; echo; echo "| Image | Size |"; echo "|---|---|"
             for img in gitrun-manager-rs:ci gitrun-runner:ci; do

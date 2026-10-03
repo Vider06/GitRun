@@ -1426,7 +1426,12 @@ jobs:
           MANIFEST_HASH: ${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          if [ "$GITHUB_JOB" != audit-rust ]; then ci_need cc build-essential; fi
+          if [ "$GITHUB_JOB" != audit-rust ]; then
+            ci_need cc build-essential
+            # gitrun-cli now embeds the Tauri dashboard library, so every compile/test
+            # job that builds the CLI needs the same Linux GUI system dependencies.
+            ci_need_pkg libglib2.0-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+          fi
           ci_need_report
           if [ "$GITHUB_JOB" != audit-rust ] && ! command -v pkg-config >/dev/null 2>&1; then
             ci_warn "pkg-config not found: crates linking system libraries (openssl-sys, glib, ...) will fail to build"

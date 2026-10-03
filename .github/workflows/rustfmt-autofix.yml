@@ -31,9 +31,11 @@ jobs:
           {
             echo "CARGO_HOME=$root/cargo"
             echo "RUSTUP_HOME=$root/rustup"
+            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
             echo "TMPDIR=$RUNNER_TEMP/tmp"
             echo "RUSTUP_TOOLCHAIN=1.98.1"
           } >> "$GITHUB_ENV"
+          mkdir -p "$GITHUB_WORKSPACE/target"
           echo "$root/cargo/bin" >> "$GITHUB_PATH"
           ns="gitrun-e1-$RUNNER_OS-$RUNNER_ARCH"
           comps="$(printf '%s' "$RUST_COMPONENTS" | tr ',' '+')"

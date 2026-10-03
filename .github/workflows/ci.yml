@@ -2055,7 +2055,7 @@ jobs:
         run: |
           docker image rm -f gitrun-manager-rs:ci gitrun-runner:ci >/dev/null 2>&1 || true
           docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
-          docker buildx rm gitrun-ci >/dev/null 2>&1 || true
+          # Keep gitrun-ci alive until buildkit-cache-dance post steps finish.
           echo "removed CI images and build cache older than 72h"
       - *report
       - *logs

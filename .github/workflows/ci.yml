@@ -34,6 +34,10 @@ on:
         description: Ignore every existing cache for this run (private cache namespace)
         type: boolean
         default: false
+      no_artifacts:
+        description: Skip all artifact uploads for this run
+        type: boolean
+        default: false
       gc_dry_run:
         description: Cache GC only reports what it would delete
         type: boolean
@@ -53,6 +57,7 @@ env:
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ inputs.verbose && '1' || '0' }}
+  CI_UPLOAD_ARTIFACTS: ${{ inputs.no_artifacts && 'false' || 'true' }}
   CI_MAX_ANNOT: "40"
   CARGO_TERM_COLOR: always
   CARGO_TERM_PROGRESS_WHEN: never
@@ -775,7 +780,7 @@ jobs:
 
       - &logs
         name: Upload CI logs
-        if: failure()
+        if: failure() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ci-logs-${{ github.job }}
@@ -1656,7 +1661,7 @@ jobs:
             echo
           } | ci_sum
       - name: Upload cargo build timings
-        if: always()
+        if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cargo-timings
@@ -1797,7 +1802,7 @@ jobs:
           bundle() { (cd crates/gitrun-dashboard-tauri && npm run tauri bundle -- --bundles deb,appimage --no-binary-patching); }
           ci_run "tauri bundle (deb, appimage)" bundle
       - name: Upload Tauri bundles
-        if: always()
+        if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: gitrun-tauri-bundles

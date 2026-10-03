@@ -12,6 +12,8 @@ name: GitRun CI
 #    everything ─► summary (PR comment + Mermaid map) ─► cache-gc (push only)
 #
 #  Cache namespace:  gitrun-<epoch>-<os>-<arch>-<kind>-<details>-<hash>
+#  Docker BuildKit cache scopes follow the same namespace shape and live in
+#  GitHub Actions Cache instead of the ephemeral runner filesystem.
 #  Bump CACHE_EPOCH to invalidate every cache at once.
 #  Fork PRs never run on the self-hosted runners (security).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1894,10 +1896,14 @@ jobs:
     env:
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_CONFIG: ${{ github.workspace }}/.gitrun-ci/tools/docker
+      DOCKER_MANAGER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-manager-rs-v10-${{ hashFiles('docker/manager-rs/Dockerfile', 'docker/manager-rs/entrypoint.sh', 'Cargo.toml', 'Cargo.lock') }}
+      DOCKER_RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v1-${{ hashFiles('docker/runner/Dockerfile', 'docker/runner/entrypoint.sh', 'Cargo.toml', 'Cargo.lock') }}
     outputs: *job_outputs
     steps:
       - *checkout
       - *boot
+      - name: Expose GitHub Actions runtime
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: Restore Docker tools cache
         id: c_dtools
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -1969,12 +1975,35 @@ jobs:
           if [ "${#dfs[@]}" -gt 0 ]; then ci_adv "hadolint (${#dfs[@]} Dockerfiles, advisory)" lint_run; fi
           exit "$rc"
       - name: Build images
+        env:
+          MANAGER_CACHE_SCOPE: ${{ env.DOCKER_MANAGER_CACHE_SCOPE }}
+          RUNNER_CACHE_SCOPE: ${{ env.DOCKER_RUNNER_CACHE_SCOPE }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           test -S /var/run/docker.sock
           docker info > /dev/null
-          manager() { docker buildx build --progress=plain --load --network=host --build-arg "GITRUN_SOURCE_REV=${GITHUB_SHA}" --build-arg "GITRUN_CACHE_SCHEMA=v10" -f docker/manager-rs/Dockerfile -t gitrun-manager-rs:ci .; }
-          runner_img() { docker buildx build --progress=plain --load --network=host -f docker/runner/Dockerfile -t gitrun-runner:ci .; }
+          manager() {
+            docker buildx build \
+              --progress=plain \
+              --load \
+              --network=host \
+              --cache-from "type=gha,scope=${MANAGER_CACHE_SCOPE}" \
+              --cache-to "type=gha,scope=${MANAGER_CACHE_SCOPE},mode=max,ignore-error=true" \
+              --build-arg "GITRUN_SOURCE_REV=${GITHUB_SHA}" \
+              --build-arg "GITRUN_CACHE_SCHEMA=v10" \
+              -f docker/manager-rs/Dockerfile \
+              -t gitrun-manager-rs:ci .
+          }
+          runner_img() {
+            docker buildx build \
+              --progress=plain \
+              --load \
+              --network=host \
+              --cache-from "type=gha,scope=${RUNNER_CACHE_SCOPE}" \
+              --cache-to "type=gha,scope=${RUNNER_CACHE_SCOPE},mode=max,ignore-error=true" \
+              -f docker/runner/Dockerfile \
+              -t gitrun-runner:ci .
+          }
           rc=0
           ci_run "build gitrun-manager-rs:ci" manager || rc=1
           ci_run "build gitrun-runner:ci" runner_img || rc=1

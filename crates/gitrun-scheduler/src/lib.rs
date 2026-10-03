@@ -405,7 +405,7 @@ fn reconcile_repo(
         .filter(|c| c.status == "running")
         .map(|c| c.name.clone())
         .collect();
-    state.prune(&live_names);
+    state.prune(repo, &live_names);
 
     let idle: Vec<IdleInfo> = live_names
         .iter()

@@ -254,7 +254,7 @@ impl GitHubClient {
                 .send()
             {
                 Ok(response) => response,
-                Err(error) if attempt < attempts => {
+                Err(_error) if attempt < attempts => {
                     std::thread::sleep(retry_delay(attempt));
                     continue;
                 }

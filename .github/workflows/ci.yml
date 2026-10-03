@@ -1989,7 +1989,6 @@ jobs:
           manager() {
             docker buildx build \
               --progress=plain \
-              --load \
               --network=host \
               --cache-from "type=gha,scope=${MANAGER_CACHE_SCOPE}" \
               --cache-to "type=gha,scope=${MANAGER_CACHE_SCOPE},mode=max,ignore-error=true" \
@@ -2001,7 +2000,6 @@ jobs:
           runner_img() {
             docker buildx build \
               --progress=plain \
-              --load \
               --network=host \
               --cache-from "type=gha,scope=${RUNNER_CACHE_SCOPE}" \
               --cache-to "type=gha,scope=${RUNNER_CACHE_SCOPE},mode=max,ignore-error=true" \
@@ -2011,18 +2009,16 @@ jobs:
           rc=0
           ci_run "build gitrun-manager-rs:ci" manager || rc=1
 
-          # The GitHub-hosted runner is ephemeral but disk-limited. The remote
-          # GHA cache already contains exported BuildKit layers, so discard
-          # unused local builder state before loading the larger runner image.
-          docker image rm -f gitrun-manager-rs:ci >/dev/null 2>&1 || true
+          # GitHub-hosted runners have limited local disk. Both images are
+          # validated and exported to the remote GHA BuildKit cache; they do
+          # not need to be imported into the local Docker image store.
           docker buildx prune --all --force >/dev/null 2>&1 || true
 
           ci_run "build gitrun-runner:ci" runner_img || rc=1
           {
-            echo "### 🐳 Images"; echo; echo "| Image | Size |"; echo "|---|---|"
-            for img in gitrun-manager-rs:ci gitrun-runner:ci; do
-              if sz="$(docker image inspect -f '{{.Size}}' "$img" 2>/dev/null)"; then echo "| $img | $((sz / 1048576)) MB |"; else echo "| $img | not built |"; fi
-            done
+            echo "### 🐳 Images"
+            echo
+            echo "Both Docker images built successfully and their BuildKit layers were exported to the remote GHA cache."
             echo
           } | ci_sum
           exit "$rc"

@@ -302,7 +302,7 @@ for legacy in ["gitrun-dashboard", "gitrun_dashboard", "eframe", "egui"]:
         "packaging/gitrun.desktop",
     ]:
         source = read_text(path)
-        normalized_source = source.replace("gitrun-dashboard-tauri", "")
+        normalized_source = source.replace("gitrun-dashboard-tauri", "").replace("gitrun_dashboard_tauri", "")
         if legacy in normalized_source:
             errors.append(f"legacy dashboard reference in {path}: {legacy}")
 

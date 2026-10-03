@@ -123,9 +123,12 @@ fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
 fn pkexec_path() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
-        [PathBuf::from("/usr/bin/pkexec"), PathBuf::from("/bin/pkexec")]
-            .into_iter()
-            .find_map(|path| trusted_privileged_binary(&path))
+        [
+            PathBuf::from("/usr/bin/pkexec"),
+            PathBuf::from("/bin/pkexec"),
+        ]
+        .into_iter()
+        .find_map(|path| trusted_privileged_binary(&path))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -327,7 +330,11 @@ fn run_first_setup(
         .filter(|repo| !repo.is_empty())
         .collect::<Vec<_>>();
 
-    if repositories.is_empty() || repositories.iter().any(|repo| !valid_setup_repository(repo)) {
+    if repositories.is_empty()
+        || repositories
+            .iter()
+            .any(|repo| !valid_setup_repository(repo))
+    {
         return Err("Enter at least one repository as owner/repository".into());
     }
 
@@ -418,9 +425,7 @@ fn get_overview() -> Result<OverviewData, String> {
         .map(|events| {
             events
                 .iter()
-                .filter(|e| {
-                    e.severity == gitrun_gsr::Severity::Critical && e.timestamp >= cutoff
-                })
+                .filter(|e| e.severity == gitrun_gsr::Severity::Critical && e.timestamp >= cutoff)
                 .count() as u32
         })
         .unwrap_or(0);
@@ -452,7 +457,11 @@ pub struct RepoDetail {
 #[tauri::command]
 fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     let config = load_config()?;
-    if !config.repositories.iter().any(|configured| configured == &repo) {
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repo)
+    {
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
     let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
@@ -730,8 +739,7 @@ fn list_vm_configs() -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
 fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), String> {
     let config = load_config()?;
     let state_dir = std::path::Path::new(&config.state_dir);
-    let mut all =
-        gitrun_scheduler::vm::load_vm_configs(state_dir).map_err(|e| e.to_string())?;
+    let mut all = gitrun_scheduler::vm::load_vm_configs(state_dir).map_err(|e| e.to_string())?;
     all.retain(|vm| !vm.name.eq_ignore_ascii_case(&config_entry.name));
     all.push(config_entry);
     gitrun_scheduler::vm::save_vm_configs(state_dir, &all).map_err(|e| e.to_string())

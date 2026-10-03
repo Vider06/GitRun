@@ -44,7 +44,7 @@ on:
         options:
           - self-hosted
           - github-hosted
-        default: self-hosted
+        default: github-hosted
       gc_dry_run:
         description: Cache GC only reports what it would delete
         type: boolean

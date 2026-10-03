@@ -2,7 +2,7 @@
 Type=Application
 Name=GitRun
 Comment=Self-hosted GitHub Actions runner manager
-Exec=/usr/local/bin/gitrun-recovery start dashboard
+Exec=/usr/local/bin/gitrun
 Icon=gitrun
 Terminal=false
 Categories=Development;Utility;

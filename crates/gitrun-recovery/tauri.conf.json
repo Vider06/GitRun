@@ -27,6 +27,9 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": false,
+    "icon": [
+      "../gitrun-dashboard-tauri/src-tauri/icons/gitrun-icon-512.png"
+    ]
   }
 }

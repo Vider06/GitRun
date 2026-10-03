@@ -28,39 +28,13 @@ try {
     }
 
     cargo build --locked --release --target $Target -p gitrun-cli --bin gitrun
-    cargo build --locked --release --target $Target -p gitrun-recovery
 
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        throw "npm is required to build the Tauri dashboard"
+    $gitrunBinary = if ($Target -like '*windows*') { 'gitrun.exe' } else { 'gitrun' }
+    $binaryRoot = Join-Path $Root "target\$Target\release"
+    $gitrunPath = Join-Path $binaryRoot $gitrunBinary
+    if (-not (Test-Path $gitrunPath -PathType Leaf)) {
+        throw "Unified GitRun executable was not produced: $gitrunPath"
     }
-
-    $TauriConfigPath = Join-Path $Root 'crates\gitrun-dashboard-tauri\src-tauri\tauri.conf.json'
-    $OriginalTauriConfig = [IO.File]::ReadAllBytes($TauriConfigPath)
-
-    try {
-        $TauriConfig = Get-Content $TauriConfigPath -Raw | ConvertFrom-Json
-        $TauriConfig.version = $Version
-        $RenderedTauriConfig = ($TauriConfig | ConvertTo-Json -Depth 10) + [Environment]::NewLine
-        [IO.File]::WriteAllText(
-            $TauriConfigPath,
-            $RenderedTauriConfig,
-            [Text.UTF8Encoding]::new($false)
-        )
-
-        Push-Location "crates\gitrun-dashboard-tauri"
-        try {
-            npm install --ignore-scripts --no-audit --no-fund --package-lock=false
-            npm run tauri build -- --ci --no-bundle
-        } finally {
-            Pop-Location
-        }
-    } finally {
-        [IO.File]::WriteAllBytes($TauriConfigPath, $OriginalTauriConfig)
-    }
-
-    $cliBinary = if ($Target -like '*windows*') { 'gitrun.exe' } else { 'gitrun' }
-    $dashboardBinary = if ($Target -like '*windows*') { 'gitrun-dashboard-tauri.exe' } else { 'gitrun-dashboard-tauri' }
-    $recoveryBinary = if ($Target -like '*windows*') { 'gitrun-recovery.exe' } else { 'gitrun-recovery' }
 
     $release = Join-Path $Root 'dist\release'
     $package = Join-Path $release 'package'
@@ -69,10 +43,8 @@ try {
     Get-ChildItem $release -Filter 'GitRun-*' -File -ErrorAction SilentlyContinue | Remove-Item -Force
     Get-ChildItem $package -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 
-    Copy-Item (Join-Path $Root "target\release\$cliBinary") $package
-    Copy-Item (Join-Path $Root "target\release\$dashboardBinary") $package
-    Copy-Item (Join-Path $Root "target\release\$recoveryBinary") $package
-    Copy-Item (Join-Path $Root 'LICENSE'), (Join-Path $Root 'README.md'), (Join-Path $Root 'config\config.example.env') $package
+    Copy-Item $gitrunPath $package
+    Copy-Item (Join-Path $Root 'LICENSE'), (Join-Path $Root 'README.md'), (Join-Path $Root 'config\config.example.env'), (Join-Path $Root 'version.txt') $package
 
     $archive = Join-Path $release "GitRun-$Version-$Target.zip"
     Compress-Archive -Path (Join-Path $package '*') -DestinationPath $archive -Force
@@ -83,8 +55,20 @@ try {
         [Text.UTF8Encoding]::new($false)
     )
 
+    $manifest = @{
+        name = 'GitRun'
+        version = $Version
+        git_commit = (git rev-parse HEAD)
+        artifacts = @(@{ target = $Target; file = (Split-Path $archive -Leaf); sha256 = $hash })
+    } | ConvertTo-Json -Depth 4
+    [IO.File]::WriteAllText(
+        (Join-Path $release 'release-manifest.json'),
+        $manifest + [Environment]::NewLine,
+        [Text.UTF8Encoding]::new($false)
+    )
+
     Write-Host "GitRun release build complete: $Target -> $archive"
-    Write-Host "Included: $cliBinary, $dashboardBinary, $recoveryBinary"
-} finally {
+    Write-Host "Included: $gitrunBinary"
+    } finally {
     Pop-Location
 }

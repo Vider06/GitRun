@@ -76,16 +76,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .gitrun-ci/cargo .gitrun-ci/rustup .gitrun-ci/npm-cache target
+          mkdir -p .gitrun-ci/cargo .gitrun-ci/rustup target
           {
             echo "CARGO_HOME=$GITHUB_WORKSPACE/.gitrun-ci/cargo"
             echo "RUSTUP_HOME=$GITHUB_WORKSPACE/.gitrun-ci/rustup"
             echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
-            echo "NPM_CONFIG_CACHE=$GITHUB_WORKSPACE/.gitrun-ci/npm-cache"
-          {
-            echo "$GITHUB_WORKSPACE/.gitrun-ci/cargo/bin"
-          } >> "$GITHUB_PATH"
-
+          } >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/.gitrun-ci/cargo/bin" >> "$GITHUB_PATH"
       - name: Restore Rust common cache
         id: rust-common-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -214,9 +211,11 @@ jobs:
           }
           JSON
 
-          echo "root=$root" >> "$GITHUB_OUTPUT"
-          echo "deb=$deb" >> "$GITHUB_OUTPUT"
-          echo "server_archive=$server_archive" >> "$GITHUB_OUTPUT"
+          {
+            echo "root=$root"
+            echo "deb=$deb"
+            echo "server_archive=$server_archive"
+          } >> "$GITHUB_OUTPUT"
       - name: Verify release artifacts
         shell: bash
         env:
@@ -230,7 +229,11 @@ jobs:
           server="$ROOT/$SERVER_ARCHIVE"
           test -f "$deb" && test -f "$server" && test -f "$ROOT/release-manifest.json"
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
-          test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun
+          test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun$')" -eq 1
+          if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
+            echo "release package contains a retired secondary executable" >&2
+            exit 1
+          fi
           dpkg-deb --contents "$deb" | grep -E '/usr/share/applications/gitrun\.desktop$'
           dpkg-deb --contents "$deb" | grep -E '/usr/share/gitrun/version\.txt$'
 

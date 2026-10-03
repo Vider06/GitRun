@@ -1836,10 +1836,8 @@ mod tests {
 
     #[test]
     fn extracts_zip_archive() {
-        let root = std::env::temp_dir().join(format!(
-            "gitrun-updater-zip-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("gitrun-updater-zip-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
 
@@ -1854,14 +1852,12 @@ mod tests {
         writer.write_all(b"gitrun-test").unwrap();
         writer.finish().unwrap();
 
-        extract_archive(
-            &archive_path,
-            "x86_64-unknown-linux-gnu",
-            &destination,
-        )
-        .unwrap();
+        extract_archive(&archive_path, "x86_64-unknown-linux-gnu", &destination).unwrap();
 
-        assert_eq!(fs::read(destination.join("bin/gitrun")).unwrap(), b"gitrun-test");
+        assert_eq!(
+            fs::read(destination.join("bin/gitrun")).unwrap(),
+            b"gitrun-test"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

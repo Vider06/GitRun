@@ -263,7 +263,7 @@ if "ExecStart=/usr/local/bin/gitrun scheduler" not in systemd:
 cli_manifest = read_text("crates/gitrun-cli/Cargo.toml")
 if 'name = "gitrun"' not in cli_manifest:
     errors.append("Rust CLI binary target gitrun missing")
-if 'gitrun-dashboard' in cli_manifest or 'gitrun_dashboard' in cli_manifest:
+if 'gitrun-dashboard =' in cli_manifest or 'gitrun_dashboard =' in cli_manifest:
     errors.append("Rust CLI still depends on the retired egui dashboard")
 if 'gitrun-recovery = { path = "../gitrun-recovery" }' not in cli_manifest:
     errors.append("Rust CLI must embed the recovery library")

@@ -3,7 +3,7 @@
 ARG DOCKER_CLI_VERSION=5:29.8.1-1~debian.12~bookworm
 # BuildKit cache mounts are persisted explicitly by the CI cache-dance step.
 # Cargo fingerprints invalidate stale artifacts as source files change.
-FROM rust:1.98.1-slim-bookworm@sha256:ebd900bae66fd508b466cef82d64a83a5fb34682e4c8b2797a42908bddc95a57 AS build
+FROM rust:1.98.1-slim-bookworm@sha256:ff521445a372125ed4f76e1453a1f8098f2d05332d1601d30db1c1f62757e730 AS build
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates

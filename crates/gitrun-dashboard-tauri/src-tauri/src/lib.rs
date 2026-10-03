@@ -154,9 +154,9 @@ fn valid_setup_repository(value: &str) -> bool {
 fn process_has_name(pid: u32, expected_name: &str) -> bool {
     #[cfg(target_os = "linux")]
     {
-        return std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        std::fs::read_to_string(format!("/proc/{pid}/comm"))
             .map(|name| name.trim() == expected_name)
-            .unwrap_or(false);
+            .unwrap_or(false)
     }
 
     #[cfg(not(target_os = "linux"))]

@@ -1957,6 +1957,11 @@ jobs:
             ${{ runner.tool_cache }}/gitrun-tools/docker-buildx
             ${{ runner.tool_cache }}/gitrun-tools/hadolint
           key: ${{ steps.c_dtools.outputs.cache-primary-key }}
+      - name: Create BuildKit builder
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_run "create docker-container builder" docker buildx create --name gitrun-ci --driver docker-container --use --bootstrap
+          docker buildx inspect --bootstrap
       - name: Validate Compose and lint Dockerfiles
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -1980,6 +1985,7 @@ jobs:
           source "$RUNNER_TEMP/ci-lib.sh"
           test -S /var/run/docker.sock
           docker info > /dev/null
+          docker buildx inspect gitrun-ci >/dev/null
           manager() {
             docker buildx build \
               --progress=plain \
@@ -2018,6 +2024,7 @@ jobs:
         run: |
           docker image rm -f gitrun-manager-rs:ci gitrun-runner:ci >/dev/null 2>&1 || true
           docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
+          docker buildx rm gitrun-ci >/dev/null 2>&1 || true
           echo "removed CI images and build cache older than 72h"
       - *report
       - *logs

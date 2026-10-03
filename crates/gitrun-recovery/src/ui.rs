@@ -8,12 +8,11 @@ fn run_gtuu() -> Result<super::RecoveryReport, String> {
     if super::is_root_for_ui() {
         super::run_gtuu()?;
     } else {
-        let recovery = std::env::var("GITRUN_RECOVERY_BINARY")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("/usr/local/bin/gitrun-recovery"));
+        let gitrun = super::find_gitrun_binary()
+            .ok_or("GitRun executable was not found for privileged GTUU")?;
         let status = std::process::Command::new("pkexec")
-            .arg(recovery)
-            .arg("gtuu")
+            .arg(gitrun)
+            .arg("--recovery-gtuu")
             .status()
             .map_err(|error| format!("unable to request privileged GTUU: {error}"))?;
         if !status.success() {

@@ -223,10 +223,10 @@ if "dpkg-deb --build --root-owner-group" not in release_workflow:
 if "linux-x86_64-deb" not in release_workflow:
     errors.append("release workflow Debian manifest target missing")
 
-if "gitrun-recovery" in release_workflow or "target/release/gitrun-recovery" in release_workflow:
+if "target/release/gitrun-recovery" in release_workflow or "gitrun-recovery start" in release_workflow:
     errors.append("release workflow must publish only the unified gitrun executable")
 
-if "target/release/gitrun-dashboard-tauri" in release_workflow:
+if "target/release/gitrun-dashboard-tauri" in release_workflow or "target/release/bundle/deb" in release_workflow:
     errors.append("release workflow must not publish the standalone Tauri dashboard executable")
 
 

@@ -92,9 +92,8 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json') }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
-            gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-
             gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-
 
       - name: Restore release target cache
@@ -102,9 +101,8 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json') }}-${{ github.sha }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ steps.version.outputs.version_number }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
-            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-
             gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-
 
       - name: Setup Rust
@@ -138,7 +136,7 @@ jobs:
           path: |
             .gitrun-ci/cargo
             .gitrun-ci/rustup
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json') }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
 
       - name: Save release target cache
         if: success() && steps.release-target-cache.outputs.cache-hit != 'true'
@@ -146,7 +144,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json') }}-${{ github.sha }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
 
       - name: Assemble release artifacts
         id: artifacts

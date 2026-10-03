@@ -1760,29 +1760,6 @@ jobs:
           ci_cache_note npm "$PRIMARY" "$MATCHED" "$NPM_CONFIG_CACHE"
           deps() { (cd crates/gitrun-dashboard-tauri && npm install --ignore-scripts --no-audit --no-fund); }
           ci_run "npm install (tauri frontend)" deps
-      - name: Normalize Tauri icons to RGBA
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          if command -v magick >/dev/null 2>&1; then IM=(magick); else IM=(convert); fi
-          shopt -s nullglob
-          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
-          if [ "${#icons[@]}" -eq 0 ]; then ci_err "No Tauri PNG icons found in crates/gitrun-dashboard-tauri/src-tauri/icons"; exit 1; fi
-          for icon in "${icons[@]}"; do
-            tmp="$(mktemp --suffix=.png)"
-            "${IM[@]}" "$icon" -alpha on "PNG32:$tmp"
-            mv "$tmp" "$icon"
-          done
-          echo "${#icons[@]} icons normalized to RGBA"
-      - name: Prepare GitRun Recovery GUI icon
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          src="crates/gitrun-dashboard-tauri/src-tauri/icons/gitrun-icon-512.png"
-          dst="crates/gitrun-recovery/icons/icon.png"
-          [ -f "$src" ] || { ci_err "Tauri 512px icon missing: $src"; exit 1; }
-          mkdir -p "$(dirname "$dst")"
-          cp "$src" "$dst"
-          file "$dst" | grep -q 'PNG image data' || { ci_err "Recovery GUI icon is not a valid PNG: $dst"; exit 1; }
-          echo "Recovery GUI icon generated: $dst"
       - name: Test GitRun Recovery GUI
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -1849,35 +1826,6 @@ jobs:
       - *rust_tnote
       - *setup_node
       - *c_npm
-      - name: Normalize Tauri icons to RGBA
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          if command -v magick >/dev/null 2>&1; then IM=(magick); else IM=(convert); fi
-          shopt -s nullglob
-          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
-          if [ "${#icons[@]}" -eq 0 ]; then ci_err "No Tauri PNG icons found in crates/gitrun-dashboard-tauri/src-tauri/icons"; exit 1; fi
-          for icon in "${icons[@]}"; do
-            tmp="$(mktemp --suffix=.png)"
-            "${IM[@]}" "$icon" -alpha on "PNG32:$tmp"
-            mv "$tmp" "$icon"
-          done
-          echo "${#icons[@]} icons normalized to RGBA"
-      - name: Prepare GitRun Recovery GUI icon
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          src="crates/gitrun-dashboard-tauri/src-tauri/icons/gitrun-icon-512.png"
-          dst="crates/gitrun-recovery/icons/icon.png"
-          [ -f "$src" ] || { ci_err "Tauri 512px icon missing: $src"; exit 1; }
-          mkdir -p "$(dirname "$dst")"
-          tmp="$(mktemp --suffix=.png)"
-          if command -v magick >/dev/null 2>&1; then
-            magick "$src" -alpha on "PNG32:$tmp"
-          else
-            convert "$src" -alpha on "PNG32:$tmp"
-          fi
-          mv "$tmp" "$dst"
-          file "$dst" | grep -q 'PNG image data' || { ci_err "Recovery GUI icon is not a valid PNG: $dst"; exit 1; }
-          echo "Recovery GUI icon generated as RGBA PNG: $dst"
       - name: Test GitRun Recovery GUI
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

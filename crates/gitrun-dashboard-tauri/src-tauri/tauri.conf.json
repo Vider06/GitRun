@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "dev.gitrun.dashboard",
   "build": {
-    "frontendDist": "../dist",
-    "withGlobalTauri": true
+    "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "GitRun",
@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     }
   },
   "bundle": {

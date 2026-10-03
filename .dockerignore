@@ -11,6 +11,7 @@ docs
 *.log
 
 # Local build artifacts and dependency caches.
+.gitrun-ci
 target
 dist
 node_modules

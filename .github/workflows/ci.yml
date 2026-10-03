@@ -1896,8 +1896,6 @@ jobs:
     env:
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_CONFIG: ${{ github.workspace }}/.gitrun-ci/tools/docker
-      DOCKER_MANAGER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-manager-rs-v10-${{ hashFiles('docker/manager-rs/Dockerfile', 'docker/manager-rs/entrypoint.sh', 'Cargo.toml', 'Cargo.lock') }}
-      DOCKER_RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v1-${{ hashFiles('docker/runner/Dockerfile', 'docker/runner/entrypoint.sh', 'Cargo.toml', 'Cargo.lock') }}
     outputs: *job_outputs
     steps:
       - *checkout
@@ -1976,8 +1974,8 @@ jobs:
           exit "$rc"
       - name: Build images
         env:
-          MANAGER_CACHE_SCOPE: ${{ env.DOCKER_MANAGER_CACHE_SCOPE }}
-          RUNNER_CACHE_SCOPE: ${{ env.DOCKER_RUNNER_CACHE_SCOPE }}
+          MANAGER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-manager-rs-v10-${{ hashFiles('docker/manager-rs/Dockerfile', 'docker/manager-rs/entrypoint.sh', 'Cargo.toml', 'Cargo.lock') }}
+          RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v1-${{ hashFiles('docker/runner/Dockerfile', 'docker/runner/entrypoint.sh', 'Cargo.toml', 'Cargo.lock') }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           test -S /var/run/docker.sock

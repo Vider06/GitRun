@@ -18,8 +18,7 @@ use crate::docker::{self, sanitize};
 use crate::github::GitHubClient;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -53,75 +52,83 @@ pub enum UpdateOutcome {
 /// that alone is not a complete guarantee: a `SIGKILL`, an OOM-kill, or a
 /// host power loss skips `Drop` entirely and can leave the lock directory
 /// behind forever, wedging every future GTUU run. To recover from that,
-/// `acquire` also checks whether an *existing* lock is stale — either its
-/// recorded PID is no longer a running process, or it's simply older than
-/// any real GTUU run should take — and reclaims it in that case instead of
+/// `acquire` checks whether an *existing* lock is stale — a recorded PID
+/// must be dead, while a lock with no usable PID may be reclaimed after the
+/// conservative age cutoff — and reclaims it atomically instead of
 /// refusing forever.
 pub struct GtuuLock {
     path: PathBuf,
 }
 
-/// A lock older than this is assumed stale regardless of PID liveness: GTUU
-/// updates one container at a time with a bounded `online_wait_timeout`
-/// (typically ~2 minutes) per container, so even a large fleet finishing
-/// updates back-to-back should not plausibly run past this.
+/// Fallback age for a lock that has no usable PID. A valid live PID is
+/// never reclaimed solely because the run is old, so a slow but legitimate
+/// update cannot accidentally overlap with another GTUU instance.
 const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 
 impl GtuuLock {
     pub fn acquire(state_dir: &Path) -> Result<Self> {
         fs::create_dir_all(state_dir)?;
         let path = state_dir.join("gtuu.lock");
-        match fs::create_dir(&path) {
-            Ok(()) => {
-                let _ = fs::write(path.join("pid"), std::process::id().to_string());
-                Ok(Self { path })
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                if is_stale(&path) {
-                    // Reclaim: remove the abandoned lock and retry once. Not
-                    // recursive/looping further than one retry so a genuinely
-                    // stuck (non-stale) concurrent run still gets a clean
-                    // `AlreadyRunning` instead of a fight over reclaiming.
-                    let _ = fs::remove_dir_all(&path);
-                    fs::create_dir(&path)?;
-                    let _ = fs::write(path.join("pid"), std::process::id().to_string());
-                    Ok(Self { path })
-                } else {
-                    Err(GtuuError::AlreadyRunning)
+
+        loop {
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    if let Err(error) = fs::write(path.join("pid"), std::process::id().to_string())
+                    {
+                        let _ = fs::remove_dir_all(&path);
+                        return Err(error.into());
+                    }
+                    return Ok(Self { path });
                 }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !is_stale(&path) {
+                        return Err(GtuuError::AlreadyRunning);
+                    }
+
+                    // Reclaim atomically: rename the stale lock out of the
+                    // canonical path first. If another GTUU process wins the
+                    // race, its successful rename removes our stale source
+                    // and we simply retry against the canonical path.
+                    let quarantine = state_dir.join(format!(
+                        "gtuu.lock.reclaim-{}-{}",
+                        std::process::id(),
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_nanos())
+                            .unwrap_or(0)
+                    ));
+                    match fs::rename(&path, &quarantine) {
+                        Ok(()) => {
+                            let _ = fs::remove_dir_all(&quarantine);
+                        }
+                        Err(rename_error)
+                            if rename_error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            continue;
+                        }
+                        Err(rename_error) => return Err(rename_error.into()),
+                    }
+                }
+                Err(error) => return Err(GtuuError::Io(error)),
             }
-            Err(error) => Err(GtuuError::Io(error)),
         }
     }
 }
 
-/// A lock is stale if its age exceeds `STALE_LOCK_AGE`, or if it recorded a
-/// PID that is no longer running. Either check alone has a failure mode (age
-/// alone can't tell a slow-but-legitimate run from a stuck one; PID alone
-/// can't tell a dead lock from one whose PID got reused by an unrelated
-/// process) — combined, both must indicate "abandoned" is at least plausible
-/// before we hold that a genuinely-alive lock never gets falsely reclaimed
-/// unless it's also old enough that reclaiming is the safer bet regardless.
+/// A lock is stale when its recorded PID is no longer running. If the PID
+/// file is absent or unreadable, the age cutoff provides a conservative
+/// fallback for abandoned locks whose owner cannot be identified.
 fn is_stale(lock_path: &Path) -> bool {
-    let age_exceeded = fs::metadata(lock_path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-        .map(|age| age > STALE_LOCK_AGE)
-        .unwrap_or(false);
-    if age_exceeded {
-        return true;
-    }
-
     let recorded_pid: Option<u32> = fs::read_to_string(lock_path.join("pid"))
         .ok()
         .and_then(|raw| raw.trim().parse().ok());
     match recorded_pid {
         Some(pid) => !process_is_alive(pid),
-        // No PID file at all (e.g. write failed originally) — fall back to
-        // age alone, which we already know hasn't been exceeded here, so
-        // treat as not-yet-stale rather than guessing.
-        None => false,
+        None => fs::metadata(lock_path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .is_some_and(|age| age > STALE_LOCK_AGE),
     }
 }
 
@@ -178,6 +185,8 @@ pub struct GtuuConfig<'a> {
     pub online_wait_timeout: Duration,
     /// See `Config::gsr_docker_socket_hardening` / `RunnerSpec::docker_socket_hardening`.
     pub docker_socket_hardening: bool,
+    /// GSR policy values snapshotted by the runner entrypoint before startup.
+    pub gsr_policy_env: &'a [(String, String)],
 }
 
 /// Updates every permanent container for the configured repositories whose
@@ -204,30 +213,20 @@ pub fn update_permanent_containers(client: &GitHubClient, config: &GtuuConfig) -
 }
 
 fn pull_image(image: &str) -> Result<String> {
-    let output = Command::new("docker").args(["pull", image]).output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(crate::docker::DockerError::Command(if stderr.is_empty() {
-            format!("docker pull failed for {image}")
-        } else {
-            stderr
-        })
-        .into());
-    }
-    let id_output = Command::new("docker")
-        .args(["image", "inspect", "--format", "{{.Id}}", image])
-        .output()?;
-    Ok(String::from_utf8_lossy(&id_output.stdout).trim().to_owned())
+    docker::pull_image(image)?;
+    docker::image_id(image).map_err(Into::into)
 }
 
-fn current_image_id(container_name: &str) -> Result<String> {
-    let output = Command::new("docker")
-        .args(["inspect", "-f", "{{.Image}}", container_name])
-        .output()?;
-    if !output.status.success() {
-        return Ok(String::new());
+fn current_image_id(container_name: &str) -> Result<UpdateCurrentImage> {
+    match docker::container_image_id(container_name)? {
+        Some(id) => Ok(UpdateCurrentImage::Present(id)),
+        None => Ok(UpdateCurrentImage::Missing),
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+enum UpdateCurrentImage {
+    Present(String),
+    Missing,
 }
 
 fn update_one(
@@ -237,10 +236,10 @@ fn update_one(
     name: &str,
     new_image_id: &str,
 ) -> Result<UpdateOutcome> {
-    let old_image_id = current_image_id(name)?;
-    if old_image_id.is_empty() {
-        return Ok(UpdateOutcome::Missing);
-    }
+    let old_image_id = match current_image_id(name)? {
+        UpdateCurrentImage::Present(id) => id,
+        UpdateCurrentImage::Missing => return Ok(UpdateOutcome::Missing),
+    };
     if old_image_id == new_image_id {
         return Ok(UpdateOutcome::Current);
     }
@@ -251,21 +250,14 @@ fn update_one(
         if runner.busy {
             return Ok(UpdateOutcome::Busy);
         }
-        client.delete_runner(repo, runner.id)?;
     }
 
-    docker::remove_container(name)?;
-
+    // Register and start the replacement before touching the old runner.
+    // This preserves the existing runner while the new container is being
+    // pulled up and authenticated with GitHub.
     let registration_token = client.registration_token(repo)?;
-    let replacement_name = format!(
-        "{}-gtuu-{}-{}",
-        sanitize(name, '-'),
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs() % 100_000)
-            .unwrap_or(0)
-    );
+    let replacement_name = format!("{}-gtuu-{}", sanitize(name, '-'), replacement_suffix());
+    let secret_env = (config.secret_env_for_repo)(repo);
 
     docker::create_runner(&crate::docker::RunnerSpec {
         name: &replacement_name,
@@ -283,26 +275,47 @@ fn update_one(
         docker_socket_gid: config.docker_socket_gid,
         runner_home_size: config.runner_home_size,
         home_backend: config.runner_home_backend,
-        secret_env: &(config.secret_env_for_repo)(repo),
+        secret_env: &secret_env,
+        gsr_policy_env: config.gsr_policy_env,
         is_windows: false,
         docker_socket_hardening: config.docker_socket_hardening,
     })?;
 
-    // Bug fix: this previously waited on `name` (the OLD runner being
-    // replaced) instead of `replacement_name` (the container we just
-    // created). If the old runner briefly still reported "online" to GitHub
-    // right after deletion, this could return true while watching the wrong
-    // runner entirely, then proceed to rename a replacement that may never
-    // have come online for real.
     if !wait_for_online(client, repo, &replacement_name, config.online_wait_timeout)? {
-        // Leave the differently-named replacement running for diagnosis
-        // rather than silently discarding it — same call as the Python
-        // version made deliberately.
+        // Leave the differently-named replacement running for diagnosis and
+        // keep the old runner untouched.
         return Ok(UpdateOutcome::Offline);
     }
 
-    rename_container(&replacement_name, name)?;
+    if let Some(runner) = runner {
+        client.delete_runner(repo, runner.id)?;
+    }
+
+    if let Err(error) = docker::remove_container(name) {
+        // The old GitHub registration has already been removed, so don't
+        // risk leaving an unregistered replacement around under a temporary
+        // name if Docker cannot remove the old container. Best effort cleanup
+        // of the replacement is safe because it is not serving any job yet.
+        let _ = docker::remove_container(&replacement_name);
+        return Err(error.into());
+    }
+
+    if let Err(error) = docker::rename_container(&replacement_name, name) {
+        // The replacement is online, but couldn't take the canonical name.
+        // Preserve the live replacement rather than destroying a healthy
+        // runner; surface the rename failure to the operator.
+        return Err(error.into());
+    }
+
     Ok(UpdateOutcome::Updated)
+}
+
+fn replacement_suffix() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{nanos:x}-{:x}", std::process::id())
 }
 
 fn wait_for_online(
@@ -311,32 +324,40 @@ fn wait_for_online(
     runner_name: &str,
     timeout: Duration,
 ) -> Result<bool> {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        let runners = client.list_runners(repo)?;
-        if runners
-            .iter()
-            .any(|r| r.name == runner_name && r.is_online())
-        {
-            return Ok(true);
-        }
-        std::thread::sleep(Duration::from_secs(3));
-    }
-    Ok(false)
-}
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .unwrap_or_else(Instant::now);
 
-fn rename_container(from: &str, to: &str) -> Result<()> {
-    let output = Command::new("docker").args(["rename", from, to]).output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(crate::docker::DockerError::Command(if stderr.is_empty() {
-            format!("unable to rename replacement {from}")
-        } else {
-            stderr
-        })
-        .into());
+    loop {
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+
+        match client.list_runners(repo) {
+            Ok(runners) => {
+                if runners
+                    .iter()
+                    .any(|r| r.name == runner_name && r.is_online())
+                {
+                    return Ok(true);
+                }
+            }
+            Err(crate::github::GitHubError::RateLimited { retry_after }) => {
+                let delay = retry_after.unwrap_or(Duration::from_secs(60));
+                std::thread::sleep(delay.min(deadline.saturating_duration_since(Instant::now())));
+                continue;
+            }
+            Err(crate::github::GitHubError::Network(_)) => {
+                // A transient network failure should not tear down the old
+                // runner while the replacement is still booting.
+            }
+            Err(error) => return Err(error.into()),
+        }
+
+        std::thread::sleep(
+            Duration::from_secs(3).min(deadline.saturating_duration_since(Instant::now())),
+        );
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -383,17 +404,13 @@ mod tests {
     }
 
     #[test]
-    fn stale_lock_from_old_age_is_reclaimed_even_with_live_pid() {
+    fn stale_lock_without_pid_is_reclaimed_after_old_age() {
         let dir =
             std::env::temp_dir().join(format!("gitrun-gtuu-stale-age-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let lock_path = dir.join("gtuu.lock");
         fs::create_dir(&lock_path).unwrap();
-        // Record our own PID (definitely alive) but backdate the directory's
-        // mtime past STALE_LOCK_AGE to simulate a run that's been "stuck"
-        // implausibly long.
-        fs::write(lock_path.join("pid"), std::process::id().to_string()).unwrap();
         let old_time = filetime::FileTime::from_system_time(
             SystemTime::now() - Duration::from_secs(60 * 60 * 2),
         );
@@ -402,8 +419,15 @@ mod tests {
         let reclaimed = GtuuLock::acquire(&dir);
         assert!(
             reclaimed.is_ok(),
-            "expected an implausibly old lock to be reclaimed regardless of PID"
+            "expected an old lock without a usable PID to be reclaimed"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replacement_suffix_contains_pid_and_timestamp() {
+        let suffix = replacement_suffix();
+        assert!(suffix.contains(&format!("{:x}", std::process::id())));
+        assert!(suffix.len() > 8);
     }
 }

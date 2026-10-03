@@ -1,24 +1,33 @@
 .git
 .gitignore
+.github
 README.md
 scripts
 systemd
 config
 bin
+docs
 *.md
 *.log
 
 # Local build artifacts and dependency caches.
+.gitrun-ci
 target
 dist
 node_modules
 .venv
 __pycache__
 .pytest_cache
+coverage
+.cache
+tmp
+temp
 
 # Local environment/configuration files.
 .env
 .env.*
+**/.env
+**/.env.*
 *.pem
 *.key
 *.p12
@@ -26,3 +35,24 @@ __pycache__
 *.jks
 id_rsa*
 id_ed25519*
+
+# Common local credential stores that have no role in image builds.
+**/.aws
+**/.ssh
+**/.npmrc
+**/.pypirc
+**/.netrc
+**/credentials.json
+**/credentials.*
+**/*credentials*.json
+**/*secret*.json
+**/*.tfstate
+**/*.tfstate.backup
+**/*.kubeconfig
+
+# Editor/OS metadata.
+**/.DS_Store
+**/.idea
+**/.vscode
+*.swp
+*.swo

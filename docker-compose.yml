@@ -1,25 +1,32 @@
 services:
   gitrun-manager:
-    profiles: ["rust"]
     build:
       context: .
       dockerfile: docker/manager-rs/Dockerfile
-    container_name: gitrun-manager-rs
+    container_name: gitrun-manager
     restart: unless-stopped
+    read_only: true
     env_file:
       - ${GITRUN_CONFIG_FILE:-/etc/gitrun/gitrun.env}
     volumes:
       - ${GITRUN_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       - ${GITRUN_STATE_DIR:-/var/lib/gitrun}:/var/lib/gitrun
       - ${GITRUN_LOG_DIR:-/var/log/gitrun}:/var/log/gitrun
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "test", "-S", "/var/run/docker.sock"]
+      test:
+        - CMD-SHELL
+        - 'test -S /var/run/docker.sock && test "$(cat /proc/1/comm 2>/dev/null)" = gitrun-autoscaler'
       interval: 30s
       timeout: 5s
       retries: 3
-
-volumes:
-  gitrun-runner-shared:
-    name: ${GITRUN_SHARED_CACHE_VOLUME:-gitrun-runner-shared}

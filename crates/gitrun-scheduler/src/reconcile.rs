@@ -23,6 +23,7 @@ use std::time::Duration;
 pub enum ContainerHealth {
     Running,
     Exited,
+    Starting,
 }
 
 /// A managed Docker container as far as reconciliation cares.
@@ -62,6 +63,13 @@ pub struct ReconcileInput {
     /// missing entry the same as an empty label set, which
     /// `logic_containers::resolve` always falls through to the default for.
     pub queued_job_labels: Vec<Vec<String>>,
+    /// Labels configured on every default GitRun runner. Used to distinguish
+    /// jobs that can use the warm pool from jobs requiring specialized capacity.
+    pub configured_runner_labels: Vec<String>,
+    /// Logic Containers rules loaded for this reconciliation cycle. A queued
+    /// job matching one of these rules requires dedicated dynamic capacity
+    /// so it can be created with the selected backend and image.
+    pub logic_rules: Vec<crate::logic_containers::LogicRule>,
     pub idle: Vec<IdleInfo>,
     pub recovery_enabled: bool,
     pub recovery_cooldown: Duration,
@@ -101,12 +109,32 @@ pub enum Action {
     RemoveIdle { name: String },
 }
 
+/// Determines whether a queued job carries at least one label that is not
+/// already present on every default GitRun runner. Such a job needs a
+/// dedicated dynamic runner when Logic Containers routes it to specialized
+/// capacity.
+fn job_requires_specialized_runner(
+    job_labels: &[String],
+    configured_runner_labels: &[String],
+) -> bool {
+    job_labels.iter().any(|job_label| {
+        let job_label = job_label.trim();
+        !job_label.is_empty()
+            && !configured_runner_labels
+                .iter()
+                .map(|label| label.trim())
+                .filter(|label| !label.is_empty())
+                .any(|label| label.eq_ignore_ascii_case(job_label))
+    })
+}
+
 /// Computes the desired runner count: enough to cover currently busy runners
 /// plus what's queued, clamped to [min, max]. Same formula as the Python
 /// original (`min(max, max(min, busy + queued))`).
 pub fn desired_count(input: &ReconcileInput) -> u32 {
     let busy = input.runners.iter().filter(|r| r.online && r.busy).count() as u32;
-    (busy + input.queued_jobs).clamp(input.min_runners, input.max_runners)
+    busy.saturating_add(input.queued_jobs)
+        .clamp(input.min_runners, input.max_runners)
 }
 
 /// Produces the ordered list of actions to converge toward the desired state.
@@ -184,20 +212,46 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         current += 1;
         permanent_count += 1;
     }
-    // Dynamic overflow runners are the ones actually opened "for" queued
-    // jobs (permanents are baseline pool, not tied to any one job), so
-    // attach each one the labels of the next not-yet-covered queued job,
-    // in order. There's no per-job identity tracked elsewhere in the
-    // system (see `resolve_backend_and_image`'s doc comment in main.rs),
-    // so this is positional: the Nth dynamic runner created this pass gets
-    // `queued_job_labels[N]` if present, else an empty label set that
-    // falls through to the configured default (same as before this field
-    // existed).
+
+    // Specialized queued jobs need capacity in addition to the guaranteed
+    // warm pool when the warm pool's default labels don't cover them. This
+    // intentionally may raise the total above desired_count, but never
+    // above max_runners: the count-based formula assumes runners are
+    // interchangeable, which is not true once Logic Containers exist.
+    let specialized_jobs: Vec<Vec<String>> = input
+        .queued_job_labels
+        .iter()
+        .filter(|labels| {
+            crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
+                && job_requires_specialized_runner(labels, &input.configured_runner_labels)
+        })
+        .cloned()
+        .collect();
+
+    let mut specialized_index = 0usize;
+    while current < input.max_runners && specialized_index < specialized_jobs.len() {
+        actions.push(Action::CreateRunner {
+            permanent: false,
+            job_labels: specialized_jobs[specialized_index].clone(),
+        });
+        specialized_index += 1;
+        current += 1;
+    }
+    // Generic dynamic overflow is used only for queued jobs whose labels are
+    // already covered by the global runner label set. Specialized jobs were
+    // reserved above, so they aren't duplicated here. There is no per-job
+    // identity tracked elsewhere in the system, so this remains positional
+    // for the generic overflow path.
     let mut dynamic_index = 0usize;
     while current < desired {
         let job_labels = input
             .queued_job_labels
-            .get(dynamic_index)
+            .iter()
+            .filter(|labels| {
+                !(crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
+                    && job_requires_specialized_runner(labels, &input.configured_runner_labels))
+            })
+            .nth(dynamic_index)
             .cloned()
             .unwrap_or_default();
         actions.push(Action::CreateRunner {
@@ -250,6 +304,8 @@ mod tests {
             runners: Vec::new(),
             queued_jobs: 0,
             queued_job_labels: Vec::new(),
+            configured_runner_labels: vec!["self-hosted".into(), "Linux".into()],
+            logic_rules: Vec::new(),
             idle: Vec::new(),
             recovery_enabled: true,
             recovery_cooldown: Duration::from_secs(60),
@@ -263,6 +319,20 @@ mod tests {
     fn desired_count_respects_minimum_when_idle() {
         let input = base_input();
         assert_eq!(desired_count(&input), 3);
+    }
+
+    #[test]
+    fn desired_count_saturates_before_clamping() {
+        let mut input = base_input();
+        input.min_runners = 1;
+        input.max_runners = u32::MAX;
+        input.queued_jobs = u32::MAX;
+        input.runners = vec![RunnerView {
+            name: "busy".into(),
+            online: true,
+            busy: true,
+        }];
+        assert_eq!(desired_count(&input), u32::MAX);
     }
 
     #[test]
@@ -307,6 +377,78 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn unmatched_special_label_does_not_force_specialized_capacity() {
+        let mut input = base_input();
+        input.queued_jobs = 1;
+        input.queued_job_labels = vec![vec!["self-hosted".into(), "windows".into()]];
+        input.logic_rules = Vec::new();
+        let actions = plan(&input);
+        assert!(!actions.iter().any(|action| {
+            matches!(
+                action,
+                Action::CreateRunner {
+                    permanent: false,
+                    job_labels
+                } if job_labels.iter().any(|label| label.eq_ignore_ascii_case("windows"))
+            )
+        }));
+    }
+
+    #[test]
+    fn specialized_job_gets_dynamic_capacity_without_consuming_minimum_pool() {
+        let mut input = base_input();
+        input.queued_jobs = 1;
+        input.queued_job_labels = vec![vec!["self-hosted".into(), "windows".into()]];
+        input.logic_rules = vec![crate::logic_containers::LogicRule {
+            name: "windows".into(),
+            match_labels: vec!["windows".into()],
+            backend: crate::logic_containers::Backend::LocalLinux,
+            image: "gitrun-runner:windows".into(),
+        }];
+        let actions = plan(&input);
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        action,
+                        Action::CreateRunner {
+                            permanent: true,
+                            ..
+                        }
+                    )
+                })
+                .count(),
+            3
+        );
+        assert!(actions.contains(&Action::CreateRunner {
+            permanent: false,
+            job_labels: vec!["self-hosted".into(), "windows".into()],
+        }));
+    }
+
+    #[test]
+    fn specialized_capacity_respects_maximum() {
+        let mut input = base_input();
+        input.queued_jobs = 20;
+        input.queued_job_labels = (0..20).map(|_| vec!["windows".into()]).collect();
+        input.logic_rules = vec![crate::logic_containers::LogicRule {
+            name: "windows".into(),
+            match_labels: vec!["windows".into()],
+            backend: crate::logic_containers::Backend::LocalLinux,
+            image: "gitrun-runner:windows".into(),
+        }];
+        let actions = plan(&input);
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(action, Action::CreateRunner { .. }))
+                .count(),
+            8
+        );
     }
 
     #[test]
@@ -387,6 +529,20 @@ mod tests {
         assert!(actions
             .iter()
             .all(|a| !matches!(a, Action::CreateRunner { .. })));
+    }
+
+    #[test]
+    fn transitional_container_is_not_treated_as_exited() {
+        let mut input = base_input();
+        input.containers = vec![ContainerView {
+            name: "restarting".into(),
+            health: ContainerHealth::Starting,
+            permanent: true,
+        }];
+        let actions = plan(&input);
+        assert!(!actions.contains(&Action::RemoveExited {
+            name: "restarting".into()
+        }));
     }
 
     #[test]

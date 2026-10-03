@@ -12,24 +12,18 @@
 //! loop keeps polling everything else normally.
 //!
 //! Flow, per VM name, the first time it's needed:
-//! 1. Try KVM. If it comes up, done — the thread records the result and
-//!    exits. This is the common case and doesn't involve the operator at
-//!    all.
+//! 1. Try KVM. If it comes up, record the endpoint and selected hypervisor.
 //! 2. If KVM fails, write a pending decision (`gitrun_core::hypervisor_decision`)
 //!    and block *this thread only*, polling for up to 5 minutes for the
 //!    dashboard to answer.
 //! 3. Answered → act on the choice (retry KVM, or set up VirtualBox
 //!    instead) and record the result.
-//! 4. Not answered within 5 minutes → give up *for this attempt*: clear the
-//!    pending decision and record nothing, so the next time reconcile asks
-//!    for this VM (next poll cycle), resolution starts fresh from step 1 —
-//!    self-healing, no separate cooldown timer needed.
+//! 4. Not answered within 5 minutes → clear the pending decision and record
+//!    a failed attempt. The next reconcile cycle retries the VM resolution.
 //!
-//! While a thread is in flight (or hasn't been spawned yet), reconcile's
-//! caller (`main.rs::resolve_backend_and_image`) gets `None` back
-//! immediately and falls back to the local Linux host for that cycle only,
-//! exactly like the pre-existing "VM lookup not wired up" fallback — the
-//! only difference is this one resolves itself once the VM is ready.
+//! While a thread is in flight, reconcile's caller receives a non-ready
+//! result immediately and defers creation of the VM-targeted runner for
+//! that cycle. It never redirects the job to the local Docker host.
 
 use crate::docker::DockerHost;
 use crate::vm::{self, HypervisorKind, VmConfig};
@@ -45,18 +39,30 @@ const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// separate from `DECISION_TIMEOUT` (that's for the *operator*, this is
 /// for the *VM's boot process* once a hypervisor has been chosen).
 const VM_BOOT_TIMEOUT: Duration = Duration::from_secs(120);
+const VM_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub enum VmResolution {
-    /// A background thread is already working on this VM; don't spawn a
-    /// second one.
+    Resolving {
+        config_fingerprint: u64,
+    },
+    Resolved {
+        host: DockerHost,
+        hypervisor: HypervisorKind,
+        config_fingerprint: u64,
+        checked_at: Instant,
+    },
+    Failed {
+        config_fingerprint: u64,
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmResolutionResult {
+    Ready(DockerHost),
     Resolving,
-    /// Resolved for the lifetime of this `gitrun-autoscaler` process —
-    /// re-checked from scratch on every restart, not just once ever, since
-    /// a VM that was up when this was cached could have been stopped
-    /// externally in the meantime. See `resolve_or_spawn`'s doc comment on
-    /// why that's an accepted trade-off rather than a health-check loop.
-    Resolved(DockerHost),
+    Failed(String),
 }
 
 /// Shared across every reconcile cycle (and the background threads it
@@ -67,142 +73,307 @@ pub enum VmResolution {
 /// hot path that needs lock-free structures.
 pub type VmResolutionRegistry = Arc<Mutex<HashMap<String, VmResolution>>>;
 
+fn lock_registry(
+    registry: &VmResolutionRegistry,
+) -> std::sync::MutexGuard<'_, HashMap<String, VmResolution>> {
+    registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub fn new_registry() -> VmResolutionRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-/// Called from `resolve_backend_and_image` on every reconcile cycle that
-/// needs a VM-backed runner. Never blocks:
-/// - Already resolved this run → returns the cached `DockerHost`
-///   immediately, no thread involved.
-/// - A resolution thread is already in flight → returns `None` (caller
-///   falls back to local host for this cycle) without spawning another.
-/// - Neither → spawns the background thread described in this module's
-///   doc comment and returns `None` for *this* cycle; a later cycle will
-///   see `Resolved` once the thread finishes.
+fn config_fingerprint(config: &VmConfig) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    let feed = |hash: &mut u64, bytes: &[u8]| {
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x100000001b3);
+        }
+        *hash = hash.wrapping_mul(0x100000001b3);
+    };
+
+    feed(&mut hash, config.name.as_bytes());
+    feed(
+        &mut hash,
+        &[match config.hypervisor {
+            HypervisorKind::Kvm => 1,
+            HypervisorKind::VirtualBox => 2,
+        }],
+    );
+    feed(&mut hash, config.base_disk_image.as_bytes());
+    feed(&mut hash, &config.memory_mb.to_le_bytes());
+    feed(&mut hash, &config.cpus.to_le_bytes());
+    feed(&mut hash, &config.docker_port.to_le_bytes());
+    feed(
+        &mut hash,
+        &[match config.activation {
+            vm::ActivationMode::Standard => 1,
+            vm::ActivationMode::AlwaysOnExperimental => 2,
+        }],
+    );
+    feed(&mut hash, &[u8::from(config.is_windows)]);
+    hash
+}
+
+/// Called from resolve_backend_and_image on every reconcile cycle that
+/// needs a VM-backed runner. Never blocks the caller.
 pub fn resolve_or_spawn(
     registry: &VmResolutionRegistry,
     state_dir: &Path,
     vm_config: &VmConfig,
-) -> Option<DockerHost> {
-    let mut guard = registry
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    match guard.get(&vm_config.name) {
-        Some(VmResolution::Resolved(host)) => return Some(host.clone()),
-        Some(VmResolution::Resolving) => return None,
-        None => {
-            guard.insert(vm_config.name.clone(), VmResolution::Resolving);
-        }
+) -> VmResolutionResult {
+    if let Err(error) = vm::validate_vm_config(vm_config) {
+        return VmResolutionResult::Failed(error.to_string());
     }
-    drop(guard); // release before spawning; the thread takes its own lock when it finishes
 
+    let fingerprint = config_fingerprint(vm_config);
+    let work = {
+        let mut guard = lock_registry(registry);
+
+        match guard.get(&vm_config.name) {
+            Some(VmResolution::Resolved {
+                host,
+                config_fingerprint: current,
+                checked_at,
+                ..
+            }) if *current == fingerprint && checked_at.elapsed() < VM_HEALTH_CHECK_INTERVAL => {
+                return VmResolutionResult::Ready(host.clone());
+            }
+            Some(VmResolution::Resolved {
+                config_fingerprint: current,
+                hypervisor,
+                ..
+            }) if *current == fingerprint => {
+                let hypervisor = *hypervisor;
+                guard.insert(
+                    vm_config.name.clone(),
+                    VmResolution::Resolving {
+                        config_fingerprint: fingerprint,
+                    },
+                );
+                ResolutionWork::Verify(hypervisor)
+            }
+            Some(VmResolution::Resolving { .. }) => {
+                return VmResolutionResult::Resolving;
+            }
+            Some(VmResolution::Failed {
+                config_fingerprint: current,
+                ..
+            }) if *current == fingerprint => {
+                guard.insert(
+                    vm_config.name.clone(),
+                    VmResolution::Resolving {
+                        config_fingerprint: fingerprint,
+                    },
+                );
+                ResolutionWork::Full
+            }
+            _ => {
+                guard.insert(
+                    vm_config.name.clone(),
+                    VmResolution::Resolving {
+                        config_fingerprint: fingerprint,
+                    },
+                );
+                ResolutionWork::Full
+            }
+        }
+    };
+
+    spawn_resolution_worker(registry, state_dir, vm_config, fingerprint, work)
+}
+
+enum ResolutionWork {
+    Full,
+    Verify(HypervisorKind),
+}
+
+fn spawn_resolution_worker(
+    registry: &VmResolutionRegistry,
+    state_dir: &Path,
+    vm_config: &VmConfig,
+    fingerprint: u64,
+    work: ResolutionWork,
+) -> VmResolutionResult {
     let registry_for_thread = Arc::clone(registry);
     let state_dir = state_dir.to_path_buf();
     let vm_config = vm_config.clone();
-    let name_for_thread = vm_config.name.clone();
+    let name = vm_config.name.clone();
+
     let spawned = std::thread::Builder::new()
-        .name(format!("gitrun-vm-resolve-{}", vm_config.name))
+        .name(format!("gitrun-vm-resolve-{name}"))
         .spawn(move || {
-            let outcome = resolve_blocking(&state_dir, &vm_config);
-            let mut guard = registry_for_thread
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            match outcome {
-                Some(host) => {
-                    guard.insert(vm_config.name.clone(), VmResolution::Resolved(host));
-                }
-                // Gave up (operator didn't answer in time, or the chosen
-                // hypervisor itself failed) — remove rather than leave
-                // `Resolving` stuck forever, so the next reconcile cycle
-                // that needs this VM spawns a fresh attempt instead of
-                // waiting on a thread that no longer exists.
-                None => {
-                    guard.remove(&vm_config.name);
-                }
-            }
+            let outcome = match work {
+                ResolutionWork::Full => resolve_blocking(&state_dir, &vm_config),
+                ResolutionWork::Verify(kind) => refresh_resolved(&vm_config, kind),
+            };
+            finish_resolution(&registry_for_thread, &vm_config.name, fingerprint, outcome);
         });
-    if let Err(error) = spawned {
-        eprintln!("gitrun-autoscaler: failed to spawn VM resolution thread for '{name_for_thread}': {error}");
-        // Roll back the `Resolving` marker we just inserted — otherwise a
-        // failed spawn would wedge this VM as "in progress" forever with
-        // no thread actually working on it.
-        if let Ok(mut guard) = registry.lock() {
-            guard.remove(&name_for_thread);
+
+    match spawned {
+        Ok(_) => VmResolutionResult::Resolving,
+        Err(error) => {
+            let message = error.to_string();
+            eprintln!(
+                "gitrun-autoscaler: failed to spawn VM resolution thread for '{name}': {message}"
+            );
+            let mut guard = lock_registry(registry);
+            if matches!(
+                guard.get(&name),
+                Some(VmResolution::Resolving { config_fingerprint })
+                    if *config_fingerprint == fingerprint
+            ) {
+                guard.insert(
+                    name,
+                    VmResolution::Failed {
+                        config_fingerprint: fingerprint,
+                        error: message.clone(),
+                    },
+                );
+            }
+            VmResolutionResult::Failed(message)
         }
     }
-    None
 }
 
-/// The actual blocking sequence, run only inside the background thread —
-/// `resolve_or_spawn` never calls this on the reconcile loop's own thread.
-fn resolve_blocking(state_dir: &Path, vm_config: &VmConfig) -> Option<DockerHost> {
+fn finish_resolution(
+    registry: &VmResolutionRegistry,
+    name: &str,
+    fingerprint: u64,
+    outcome: Result<(DockerHost, HypervisorKind), String>,
+) {
+    let mut guard = lock_registry(registry);
+    let owns_slot = matches!(
+        guard.get(name),
+        Some(VmResolution::Resolving { config_fingerprint })
+            if *config_fingerprint == fingerprint
+    );
+    if !owns_slot {
+        return;
+    }
+
+    match outcome {
+        Ok((host, hypervisor)) => {
+            guard.insert(
+                name.to_owned(),
+                VmResolution::Resolved {
+                    host,
+                    hypervisor,
+                    config_fingerprint: fingerprint,
+                    checked_at: Instant::now(),
+                },
+            );
+        }
+        Err(error) => {
+            eprintln!("gitrun-autoscaler: VM resolution for '{name}' failed: {error}");
+            guard.insert(
+                name.to_owned(),
+                VmResolution::Failed {
+                    config_fingerprint: fingerprint,
+                    error,
+                },
+            );
+        }
+    }
+}
+/// The actual blocking sequence, run only inside a background thread.
+fn resolve_blocking(
+    state_dir: &Path,
+    vm_config: &VmConfig,
+) -> Result<(DockerHost, HypervisorKind), String> {
     match provision_and_wait(HypervisorKind::Kvm, vm_config) {
-        Ok(host) => return Some(host),
+        Ok(host) => return Ok((host, HypervisorKind::Kvm)),
         Err(error) => {
             println!(
                 "gitrun-autoscaler: KVM setup failed for VM '{}' ({error}); asking the operator via the dashboard (retry KVM, or use VirtualBox instead), waiting up to {}s",
                 vm_config.name,
                 DECISION_TIMEOUT.as_secs()
             );
-            if let Err(write_error) =
-                hypervisor_decision::request(state_dir, &vm_config.name, &error.to_string())
-            {
-                eprintln!(
-                    "gitrun-autoscaler: could not write hypervisor decision request for '{}': {write_error} — giving up for this attempt",
-                    vm_config.name
-                );
-                return None;
-            }
+            hypervisor_decision::request(state_dir, &vm_config.name, &error.to_string()).map_err(
+                |write_error| {
+                    format!(
+                        "could not write hypervisor decision request for '{}': {write_error}",
+                        vm_config.name
+                    )
+                },
+            )?;
         }
     }
 
-    let deadline = Instant::now() + DECISION_TIMEOUT;
+    let deadline = Instant::now()
+        .checked_add(DECISION_TIMEOUT)
+        .unwrap_or_else(Instant::now);
+
     loop {
         if Instant::now() >= deadline {
-            println!(
-                "gitrun-autoscaler: no operator decision for VM '{}' within {}s, giving up for this cycle — will try KVM again next time this VM is needed",
+            hypervisor_decision::clear(state_dir, &vm_config.name).map_err(|error| {
+                format!(
+                    "operator decision timed out for VM '{}' and clearing the pending decision failed: {error}",
+                    vm_config.name
+                )
+            })?;
+            return Err(format!(
+                "no operator decision for VM '{}' within {}s",
                 vm_config.name,
                 DECISION_TIMEOUT.as_secs()
-            );
-            let _ = hypervisor_decision::clear(state_dir, &vm_config.name);
-            return None;
+            ));
         }
+
         match hypervisor_decision::poll(state_dir, &vm_config.name) {
-            Ok(Some(record)) if record.choice.is_some() => {
-                let choice = record.choice.expect("just checked is_some");
-                let _ = hypervisor_decision::clear(state_dir, &vm_config.name);
-                let chosen_kind = match choice {
-                    DecisionChoice::RetryKvm => HypervisorKind::Kvm,
-                    DecisionChoice::UseVirtualBox => HypervisorKind::VirtualBox,
-                };
-                return match provision_and_wait(chosen_kind, vm_config) {
-                    Ok(host) => Some(host),
-                    Err(error) => {
-                        eprintln!(
-                            "gitrun-autoscaler: {chosen_kind:?} setup for VM '{}' failed after operator decision: {error} — giving up for this cycle",
+            Ok(Some(record)) => {
+                if let Some(choice) = record.choice {
+                    hypervisor_decision::clear(state_dir, &vm_config.name).map_err(|error| {
+                        format!(
+                            "VM '{}' decision was received but could not be cleared: {error}",
                             vm_config.name
-                        );
-                        None
-                    }
-                };
+                        )
+                    })?;
+                    let chosen_kind = match choice {
+                        DecisionChoice::RetryKvm => HypervisorKind::Kvm,
+                        DecisionChoice::UseVirtualBox => HypervisorKind::VirtualBox,
+                    };
+                    let host = provision_and_wait(chosen_kind, vm_config).map_err(|error| {
+                        format!(
+                            "{chosen_kind:?} setup for VM '{}' failed after operator decision: {error}",
+                            vm_config.name
+                        )
+                    })?;
+                    return Ok((host, chosen_kind));
+                }
             }
-            Ok(_) => {
-                // Either no record (shouldn't normally happen right after
-                // we just wrote one, but tolerate it — e.g. something else
-                // cleared it) or still pending. Either way, keep waiting.
-            }
+            Ok(None) => {}
             Err(error) => {
-                eprintln!(
-                    "gitrun-autoscaler: error polling hypervisor decision for VM '{}': {error}",
+                return Err(format!(
+                    "error polling hypervisor decision for VM '{}': {error}",
                     vm_config.name
-                );
+                ))
             }
         }
-        std::thread::sleep(DECISION_POLL_INTERVAL);
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            continue;
+        }
+        std::thread::sleep(remaining.min(DECISION_POLL_INTERVAL));
     }
 }
 
+/// Refreshes a previously resolved VM using the hypervisor already
+/// selected for it. This can recover a VM that was stopped or removed
+/// externally, while keeping the refresh asynchronous.
+fn refresh_resolved(
+    vm_config: &VmConfig,
+    kind: HypervisorKind,
+) -> Result<(DockerHost, HypervisorKind), String> {
+    let mut config = vm_config.clone();
+    config.hypervisor = kind;
+    provision_and_wait(kind, &config)
+        .map(|host| (host, kind))
+        .map_err(|error| error.to_string())
+}
 /// Ensures the VM exists and is running under `kind`, waits for it to
 /// report an IP, and returns the `DockerHost::Remote` pointed at its
 /// Docker daemon.
@@ -215,6 +386,7 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
     Ok(DockerHost::Remote(vm::docker_host_address(
+        kind,
         &ip,
         config.docker_port,
     )))
@@ -249,22 +421,40 @@ mod tests {
     }
 
     #[test]
-    fn resolve_or_spawn_returns_none_immediately_and_does_not_block() {
-        // This is the core guarantee: even though the spawned thread will
-        // fail fast (virsh/VBoxManage aren't installed in a test
-        // environment) and go on to wait on a decision file that will
-        // never be answered, the *caller* must get control back right
-        // away rather than waiting on any of that. The thread itself keeps
-        // running in the background until its own 5-minute give-up (or
-        // process exit, whichever comes first, and `cargo test` doesn't
-        // wait on non-test threads to exit) — harmless for the test, not
-        // cleaned up here beyond best-effort temp dir removal.
+    fn config_fingerprint_changes_when_vm_config_changes() {
+        let mut vm = sample_vm("fingerprint");
+        let first = config_fingerprint(&vm);
+        vm.docker_port += 1;
+        assert_ne!(first, config_fingerprint(&vm));
+    }
+
+    #[test]
+    fn invalid_vm_config_fails_before_spawning() {
+        let registry = new_registry();
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-vm-resolution-invalid-{}",
+            std::process::id()
+        ));
+        let mut vm = sample_vm("invalid");
+        vm.name = "bad/name".into();
+
+        assert!(matches!(
+            resolve_or_spawn(&registry, &dir, &vm),
+            VmResolutionResult::Failed(_)
+        ));
+        assert!(registry.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn resolve_or_spawn_returns_resolving_immediately_and_does_not_block() {
+        // Hypervisor setup and operator interaction never block the
+        // reconcile caller; the worker owns the long-running wait.
         let registry = new_registry();
         let dir =
             std::env::temp_dir().join(format!("gitrun-vm-resolution-test-{}", std::process::id()));
         let started = Instant::now();
         let result = resolve_or_spawn(&registry, &dir, &sample_vm("never-answered"));
-        assert!(result.is_none());
+        assert!(matches!(result, VmResolutionResult::Resolving));
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "resolve_or_spawn must not block the caller"
@@ -279,11 +469,11 @@ mod tests {
             std::env::temp_dir().join(format!("gitrun-vm-resolution-test-{}", std::process::id()));
         let vm = sample_vm("dup-check");
         let _ = resolve_or_spawn(&registry, &dir, &vm);
-        // Immediately call again: the entry should already be `Resolving`
-        // (inserted synchronously before the thread was spawned), so this
-        // call must also return None without inserting a duplicate state.
+        // Immediately call again: the entry is already Resolving (inserted
+        // synchronously before the worker was spawned), so this call must
+        // not create a second worker.
         let second = resolve_or_spawn(&registry, &dir, &vm);
-        assert!(second.is_none());
+        assert!(matches!(second, VmResolutionResult::Resolving));
         let guard = registry.lock().unwrap();
         assert_eq!(
             guard.len(),

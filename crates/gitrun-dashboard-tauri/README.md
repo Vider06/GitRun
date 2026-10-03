@@ -44,10 +44,14 @@ GITRUN_CONFIG_FILE=/etc/gitrun/gitrun.env ./gitrun-dashboard-tauri
 ## First-run setup
 
 When no GitRun configuration exists, the dashboard opens its graphical first-run
-wizard. The wizard collects a GitHub PAT and repository list and asks PolicyKit to
-run the existing privileged GitRun setup path. The PAT is passed through a mode-0600
-temporary request file and is removed after setup completes. GitHub App authentication
-remains available through `gitrun setup --terminal`.
+wizard. The wizard supports both GitHub PAT and GitHub App authentication, lets
+you configure the repository list, and asks PolicyKit to run the existing privileged
+GitRun setup path. When a PAT is used, it is passed through a mode-0600 temporary
+request file and removed after setup completes. For GitHub App authentication, the
+wizard stores only the App ID, installation ID, and PEM file path; on Linux the PEM
+file must be a regular, non-symlink file with owner-only permissions (for example 0600). The
+private key itself is never copied into the dashboard setup request. GitHub App
+authentication is also available through `gitrun setup --terminal`.
 
 ## Runtime
 

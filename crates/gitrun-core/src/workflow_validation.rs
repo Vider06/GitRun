@@ -280,6 +280,7 @@ pub struct ZizmorInfo {
     pub terms_summary: &'static str,
 }
 
+// Keep the optional analyzer metadata centralized so enabling it remains auditable.
 pub fn zizmor_info() -> ZizmorInfo {
     ZizmorInfo {
         name: "zizmor",
@@ -304,7 +305,12 @@ pub fn zizmor_info() -> ZizmorInfo {
 /// Already-installed is treated as success with no reinstall — this is an
 /// idempotent "make sure it's available" call, not a forced upgrade.
 pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
-    if Command::new("zizmor").arg("--version").output().is_ok() {
+    if Command::new("zizmor")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+    {
         return Ok(InstallOutcome::AlreadyInstalled);
     }
     let output = Command::new("cargo")
@@ -430,11 +436,8 @@ mod tests {
         // to accept Some(_) too; documented here rather than silently
         // becoming a flaky test.
         let dir = std::env::temp_dir();
-        let result = run_zizmor_command(
-            "__gitrun_zizmor_binary_that_should_not_exist__",
-            &dir,
-        )
-        .unwrap();
+        let result =
+            run_zizmor_command("__gitrun_zizmor_binary_that_should_not_exist__", &dir).unwrap();
         assert!(result.is_none());
     }
 

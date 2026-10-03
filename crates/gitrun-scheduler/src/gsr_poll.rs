@@ -33,9 +33,9 @@ use crate::docker::{self, DockerHost};
 use gitrun_core::command_policy::{CommandPolicy, Decision, ViolationAction};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -56,11 +56,15 @@ pub enum GsrPollError {
 pub struct PolledViolation {
     pub container_name: String,
     pub repo: Option<String>,
+    /// Redacted before being exposed to the event/logging layer.
+    /// The full command line is still evaluated by the policy.
     pub command_line: String,
     pub reason: String,
     pub action_taken: ViolationAction,
+    /// Present when the configured enforcement action was only partially
+    /// applied or could not be applied.
+    pub action_error: Option<String>,
 }
-
 /// Persisted "banned repos" state: a repo whose runner was killed under
 /// `ViolationAction::KillAndBan` is refused new runners until this expires
 /// or an operator clears it. Same load/save-atomically pattern as
@@ -101,6 +105,30 @@ impl BanStore {
         Ok(Self { path, data })
     }
 
+    fn lock(&self) -> Result<File, GsrPollError> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let lock_path = self.path.with_extension("json.lock");
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(lock_path)?;
+        lock.lock()?;
+        Ok(lock)
+    }
+
+    fn reload_from_disk(&mut self) -> Result<(), GsrPollError> {
+        self.data = match fs::read_to_string(&self.path) {
+            Ok(raw) => serde_json::from_str(&raw)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BanFile::default(),
+            Err(error) => return Err(error.into()),
+        };
+        Ok(())
+    }
+
     fn save(&self) -> Result<(), GsrPollError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
@@ -112,14 +140,20 @@ impl BanStore {
     }
 
     pub fn ban(&mut self, repo: &str, duration: Duration) -> Result<(), GsrPollError> {
-        let until = now_secs() + duration.as_secs();
+        let _lock = self.lock()?;
+        self.reload_from_disk()?;
+        let until = now_secs().saturating_add(duration.as_secs());
         self.data.banned_until.insert(repo.to_owned(), until);
         self.save()
     }
 
     /// Clears a ban early — the operator-facing "unban" action.
     pub fn clear(&mut self, repo: &str) -> Result<(), GsrPollError> {
-        self.data.banned_until.remove(repo);
+        let _lock = self.lock()?;
+        self.reload_from_disk()?;
+        if self.data.banned_until.remove(repo).is_none() {
+            return Ok(());
+        }
         self.save()
     }
 
@@ -164,7 +198,15 @@ pub fn poll_once(
 ) -> docker::Result<Vec<PolledViolation>> {
     let mut violations = Vec::new();
     for container_name in docker::all_managed_container_names_on(host)? {
-        let command_lines = docker::container_command_lines_on(host, &container_name)?;
+        let command_lines = match docker::container_command_lines_on(host, &container_name) {
+            Ok(command_lines) => command_lines,
+            Err(error) => {
+                eprintln!(
+                        "gitrun-scheduler: gsr_poll could not inspect {container_name} on {host:?}: {error}"
+                    );
+                continue;
+            }
+        };
         let mut container_already_handled = false;
         for command_line in command_lines {
             let Decision::Denied { reason } = policy.evaluate(&command_line) else {
@@ -172,14 +214,38 @@ pub fn poll_once(
             };
             if !container_already_handled {
                 container_already_handled = true;
-                let repo = docker::container_repo_label_on(host, &container_name).unwrap_or(None);
-                apply_violation_action(host, &container_name, repo.as_deref(), action, ban_store);
+                let (repo, repo_error) =
+                    match docker::container_repo_label_on(host, &container_name) {
+                        Ok(repo) => (repo, None),
+                        Err(error) => {
+                            let detail = format!(
+                                "unable to inspect repo label for {container_name}: {error}"
+                            );
+                            eprintln!("gitrun-scheduler: gsr_poll: {detail}");
+                            (None, Some(detail))
+                        }
+                    };
+                let action_error = apply_violation_action(
+                    host,
+                    &container_name,
+                    repo.as_deref(),
+                    action,
+                    ban_store,
+                );
+                let action_error = match (repo_error, action_error) {
+                    (Some(repo_error), Some(action_error)) => {
+                        Some(format!("{repo_error}; {action_error}"))
+                    }
+                    (Some(error), None) | (None, Some(error)) => Some(error),
+                    (None, None) => None,
+                };
                 violations.push(PolledViolation {
                     container_name: container_name.clone(),
                     repo,
-                    command_line,
+                    command_line: redact_command_line(&command_line),
                     reason,
                     action_taken: action,
+                    action_error,
                 });
             }
         }
@@ -193,29 +259,43 @@ fn apply_violation_action(
     repo: Option<&str>,
     action: ViolationAction,
     ban_store: &mut BanStore,
-) {
+) -> Option<String> {
     match action {
-        ViolationAction::LogOnly => {
-            // Deliberately no Docker action here - see the type's own doc
-            // comment on `ViolationAction::LogOnly`: this mode exists so
-            // an operator can dry-run a new policy before enforcing it.
-        }
-        ViolationAction::Kill => {
-            let _ = docker::remove_container_on(host, container_name);
-        }
+        ViolationAction::LogOnly => None,
+        ViolationAction::Kill => docker::remove_container_on(host, container_name)
+            .err()
+            .map(|error| format!("container kill failed: {error}")),
         ViolationAction::KillAndBan => {
-            let _ = docker::remove_container_on(host, container_name);
-            if let Some(repo) = repo {
-                if let Err(error) = ban_store.ban(repo, DEFAULT_BAN_DURATION) {
-                    eprintln!(
-                        "gitrun-scheduler: gsr_poll failed to persist ban for {repo}: {error}"
-                    );
-                }
+            if let Err(error) = docker::remove_container_on(host, container_name) {
+                return Some(format!(
+                    "container kill failed; ban was not applied: {error}"
+                ));
+            }
+            match repo {
+                Some(repo) => ban_store
+                    .ban(repo, DEFAULT_BAN_DURATION)
+                    .err()
+                    .map(|error| format!("container killed, but ban persistence failed: {error}")),
+                None => Some(
+                    "container killed, but repository label was unavailable; ban was not applied"
+                        .to_owned(),
+                ),
             }
         }
     }
 }
 
+fn redact_command_line(command_line: &str) -> String {
+    let mut parts = command_line.split_whitespace();
+    let Some(program) = parts.next() else {
+        return "<empty command>".to_owned();
+    };
+    if parts.next().is_some() {
+        format!("{program} [arguments redacted]")
+    } else {
+        program.to_owned()
+    }
+}
 /// Blocking poll loop, mirroring the shape of `gitrun_gsr::watchdog::run`
 /// (poll on an interval until `should_stop` says otherwise) so the two
 /// "keep checking on something in a loop" pieces of GSR read the same way
@@ -258,14 +338,23 @@ pub fn run_with_hosts(
     on_violation: impl Fn(&PolledViolation),
     should_stop: impl Fn() -> bool,
 ) {
+    if poll_interval.is_zero() {
+        eprintln!(
+            "gitrun-scheduler: gsr_poll received a zero poll interval; refusing to busy-loop"
+        );
+        return;
+    }
+
     let mut ban_store = match BanStore::load(state_dir) {
         Ok(store) => store,
         Err(error) => {
-            eprintln!("gitrun-scheduler: gsr_poll could not load ban state, running without ban persistence: {error}");
-            BanStore {
-                path: state_dir.join("gsr-bans.json"),
-                data: BanFile::default(),
-            }
+            // A corrupt/unreadable ban file must fail closed: continuing with
+            // an empty in-memory store would make KillAndBan ineffective
+            // until the process restarts with a repaired state file.
+            eprintln!(
+                "gitrun-scheduler: gsr_poll could not load ban state; refusing to start enforcement: {error}"
+            );
+            return;
         }
     };
 
@@ -282,7 +371,22 @@ pub fn run_with_hosts(
                 }
             }
         }
-        std::thread::sleep(poll_interval);
+        sleep_interruptible(poll_interval, &should_stop);
+    }
+}
+
+fn sleep_interruptible(duration: Duration, should_stop: &impl Fn() -> bool) {
+    let deadline = Instant::now().checked_add(duration);
+    while !should_stop() {
+        let Some(deadline) = deadline else {
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(100)));
     }
 }
 
@@ -352,14 +456,38 @@ mod tests {
         // Docker daemon in this test environment, so if this accidentally
         // tried to shell out it would either hang or error; the absence of
         // a panic/hang here is itself part of what this test checks.
-        apply_violation_action(
-            &DockerHost::Local,
-            "irrelevant",
-            Some("owner/repo"),
-            ViolationAction::LogOnly,
-            &mut store,
+        assert_eq!(
+            apply_violation_action(
+                &DockerHost::Local,
+                "irrelevant",
+                Some("owner/repo"),
+                ViolationAction::LogOnly,
+                &mut store,
+            ),
+            None
         );
         assert!(!store.is_banned("owner/repo"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn redacts_command_arguments_before_logging() {
+        assert_eq!(
+            redact_command_line("git push --token super-secret"),
+            "git [arguments redacted]"
+        );
+        assert_eq!(redact_command_line("bash"), "bash");
+        assert_eq!(redact_command_line("   "), "<empty command>");
+    }
+
+    #[test]
+    fn ban_duration_saturates_instead_of_overflowing() {
+        let dir = temp_state_dir("overflow");
+        let mut store = BanStore::load(&dir).unwrap();
+        store
+            .ban("owner/repo", Duration::from_secs(u64::MAX))
+            .unwrap();
+        assert!(store.is_banned("owner/repo"));
         fs::remove_dir_all(&dir).ok();
     }
 

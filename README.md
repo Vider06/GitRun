@@ -70,13 +70,7 @@ gitrun setup --terminal
 
 The terminal wizard asks for either a GitHub Personal Access Token or GitHub App credentials, verifies repository access, then performs the privileged installation/configuration step.
 
-The repository also contains installer scripts for platform-specific or compatibility workflows:
-
-### Linux
-
-```bash
-./scripts/install-linux.sh
-```
+The repository also contains compatibility/desktop installer scripts for macOS and Windows:
 
 ### macOS
 
@@ -288,3 +282,4 @@ The Rust CLI is the primary operator entry point. The scheduler and dashboard us
 GitRun's runtime control plane is Rust-native. The graphical dashboard is the Tauri application, while the installed Linux service runs the scheduler directly through the `gitrun` executable. The CLI launches the Tauri dashboard for `gitrun dashboard` and when no command is supplied.
 
 See [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).
+<!-- CI trigger: keep PR validation attached to the current merge base. (no-op validation trigger) -->\n<!-- CI trigger: verify repository-variable runner and artifact configuration. -->

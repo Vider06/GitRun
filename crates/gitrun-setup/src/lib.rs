@@ -1,7 +1,7 @@
 use gitrun_core::Config;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -45,6 +45,8 @@ pub enum SetupError {
     InvalidConfigDir(PathBuf),
     #[error("state/log directories must not be files")]
     InvalidRuntimeDir,
+    #[error("invalid installation binary: {0}")]
+    InvalidInstallBinary(String),
     #[error("setup requires root privileges")]
     NotRoot,
     #[error("unsupported platform: GitRun's bundled installer currently targets Linux")]
@@ -78,12 +80,9 @@ pub fn prepare_directories(
 
     let state_dir = PathBuf::from(&config.state_dir);
     let log_dir = PathBuf::from(&config.log_dir);
-    for path in [&config_dir, &state_dir, &log_dir] {
-        if path.exists() && !path.is_dir() {
-            return Err(SetupError::InvalidRuntimeDir);
-        }
-        fs::create_dir_all(path)?;
-    }
+    ensure_directory(&config_dir, 0o700)?;
+    ensure_directory(&state_dir, 0o750)?;
+    ensure_directory(&log_dir, 0o750)?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),
@@ -135,13 +134,15 @@ pub fn bootstrap_linux_with_auth(
     let log_dir = PathBuf::from("/var/log/gitrun");
     let root = PathBuf::from("/opt/gitrun");
 
-    for path in [&config_dir, &state_dir, &log_dir, &root] {
-        fs::create_dir_all(path)?;
-    }
+    ensure_directory(&config_dir, 0o755)?;
+    ensure_directory(&state_dir, 0o750)?;
+    ensure_directory(&log_dir, 0o750)?;
+    ensure_directory(&root, 0o755)?;
 
+    let runner_dockerfile = resources::runner_dockerfile_for_bootstrap();
     write_resource(
         &root.join("docker/runner/Dockerfile"),
-        resources::RUNNER_DOCKERFILE,
+        &runner_dockerfile,
         0o644,
     )?;
     write_resource(
@@ -149,9 +150,23 @@ pub fn bootstrap_linux_with_auth(
         resources::RUNNER_ENTRYPOINT,
         0o755,
     )?;
+    for (relative_path, content, mode) in resources::RUNNER_BUILD_FILES {
+        write_resource(&root.join(relative_path), content, *mode)?;
+    }
+    let recovery_source = find_recovery_binary(app_binary);
+    if let Some(source) = &recovery_source {
+        let installed_recovery = Path::new("/usr/local/bin/gitrun-recovery");
+        install_binary(source, installed_recovery, owner_uid)?;
+    }
+
+    let service = if recovery_source.is_some() {
+        resources::SYSTEMD_SERVICE
+    } else {
+        resources::SYSTEMD_SERVICE_DIRECT
+    };
     write_resource(
         Path::new("/etc/systemd/system/gitrun.service"),
-        resources::SYSTEMD_SERVICE,
+        service,
         0o644,
     )?;
 
@@ -189,16 +204,16 @@ pub fn bootstrap_linux_with_auth(
     )?;
 
     let installed = PathBuf::from("/usr/local/bin/gitrun");
-    fs::copy(app_binary, &installed)?;
-    fs::set_permissions(&installed, fs::Permissions::from_mode(0o755))?;
+    install_binary(app_binary, &installed, owner_uid)?;
 
     run_command(Command::new("systemctl").args(["daemon-reload"]))?;
     run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
+    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
 
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),
-        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun\nTerminal=false\nCategories=Development;System;\n",
+        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun dashboard\nTerminal=false\nCategories=Development;System;\n",
         0o644,
     )?;
 
@@ -208,6 +223,25 @@ pub fn bootstrap_linux_with_auth(
         state_dir,
         log_dir,
     })
+}
+
+fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {
+    [
+        std::env::var("GITRUN_RECOVERY_BINARY")
+            .ok()
+            .map(PathBuf::from),
+        Some(PathBuf::from("/usr/local/bin/gitrun-recovery")),
+        app_binary.parent().map(|parent| {
+            parent.join(if cfg!(windows) {
+                "gitrun-recovery.exe"
+            } else {
+                "gitrun-recovery"
+            })
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|path| path.is_file())
 }
 
 fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
@@ -224,12 +258,42 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
             validate_env_value(installation_id, "GITRUN_GITHUB_APP_INSTALLATION_ID")?;
             validate_env_value(private_key_path, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?;
 
-            let key = fs::read_to_string(private_key_path).map_err(|error| {
+            let key_path = Path::new(private_key_path);
+            let metadata = fs::symlink_metadata(key_path).map_err(|error| {
+                SetupError::Command(format!(
+                    "unable to inspect GitHub App private key at {private_key_path}: {error}"
+                ))
+            })?;
+            if metadata.file_type().is_symlink() {
+                return Err(SetupError::Command(format!(
+                    "GitHub App private key must not be a symbolic link: {private_key_path}"
+                )));
+            }
+            if !metadata.is_file() {
+                return Err(SetupError::Command(format!(
+                    "GitHub App private key is not a regular file: {private_key_path}"
+                )));
+            }
+            let mode = metadata.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(SetupError::Command(format!(
+                    "GitHub App private key must not be group/world accessible (mode {mode:o}); chmod it to 0600"
+                )));
+            }
+
+            let key = fs::read_to_string(key_path).map_err(|error| {
                 SetupError::Command(format!(
                     "unable to read GitHub App private key at {private_key_path}: {error}"
                 ))
             })?;
-            gitrun_core::AppAuth::new(app_id, installation_id, &key).map_err(|error| {
+            gitrun_core::AppAuth::new(
+                app_id,
+                installation_id,
+                &key,
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(20),
+            )
+            .map_err(|error| {
                 SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
             })?;
         }
@@ -282,9 +346,114 @@ fn build_image(tag: &str, context: &Path, dockerfile: &Path) -> Result<(), Setup
     )
 }
 
+fn ensure_directory(path: &Path, mode: u32) -> Result<(), SetupError> {
+    if path.exists() && !path.is_dir() {
+        return Err(SetupError::InvalidRuntimeDir);
+    }
+    fs::create_dir_all(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
+fn validate_install_binary(path: &Path, owner_uid: Option<u32>) -> Result<PathBuf, SetupError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        SetupError::InvalidInstallBinary(format!("{}: {error}", path.display()))
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} must not be a symbolic link",
+            path.display()
+        )));
+    }
+    if !metadata.is_file() {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o022 != 0 {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} is group/world-writable (mode {mode:o})",
+            path.display()
+        )));
+    }
+    if mode & 0o111 == 0 {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} is not executable (mode {mode:o})",
+            path.display()
+        )));
+    }
+
+    let uid = metadata.uid();
+    if uid != 0 && owner_uid != Some(uid) {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "{} is owned by uid {uid}; expected root or the invoking user's uid",
+            path.display()
+        )));
+    }
+
+    path.canonicalize().map_err(|error| {
+        SetupError::InvalidInstallBinary(format!("unable to resolve {}: {error}", path.display()))
+    })
+}
+
+fn install_binary(
+    source: &Path,
+    destination: &Path,
+    owner_uid: Option<u32>,
+) -> Result<(), SetupError> {
+    let source = validate_install_binary(source, owner_uid)?;
+
+    if let Ok(metadata) = fs::symlink_metadata(destination) {
+        if metadata.file_type().is_symlink() {
+            return Err(SetupError::InvalidInstallBinary(format!(
+                "installation destination {} must not be a symbolic link",
+                destination.display()
+            )));
+        }
+        if !metadata.is_file() {
+            return Err(SetupError::InvalidInstallBinary(format!(
+                "installation destination {} is not a regular file",
+                destination.display()
+            )));
+        }
+    }
+
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let file_name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("gitrun");
+    let tmp_path = destination.with_file_name(format!(
+        "{file_name}.tmp.{}.{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+
+    let result = (|| {
+        fs::copy(&source, &tmp_path)?;
+        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o755))?;
+        fs::File::open(&tmp_path)?.sync_all()?;
+        fs::rename(&tmp_path, destination)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
+}
+
 fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupError> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -307,7 +476,8 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
             .unwrap_or_default()
             .as_nanos()
     ));
-    {
+
+    let result = (|| {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -315,12 +485,18 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
             .open(&tmp_path)?;
         file.write_all(content.as_bytes())?;
         file.sync_all()?;
+
+        // Belt-and-suspenders: force the exact mode regardless of umask, then
+        // atomically move into place so readers never see a partially written file.
+        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(mode))?;
+        fs::rename(&tmp_path, path)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
     }
-    // Belt-and-suspenders: force the exact mode regardless of umask, then
-    // atomically move into place so readers never see a partially written file.
-    fs::set_permissions(&tmp_path, fs::Permissions::from_mode(mode))?;
-    fs::rename(&tmp_path, path)?;
-    Ok(())
+    result
 }
 
 fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
@@ -446,17 +622,13 @@ fn command_status(name: &'static str, args: &[&str]) -> DependencyStatus {
 
 fn run_command(command: &mut Command) -> Result<(), SetupError> {
     let display = format!("{command:?}");
-    let output = command.output()?;
-    if output.status.success() {
+    let status = command.status()?;
+    if status.success() {
         Ok(())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        Err(SetupError::Command(if stderr.is_empty() {
-            format!("{display}: {stdout}")
-        } else {
-            format!("{display}: {stderr}")
-        }))
+        Err(SetupError::Command(format!(
+            "{display}: process exited with status {status}"
+        )))
     }
 }
 
@@ -477,6 +649,18 @@ const MANAGED_CONFIG_KEYS: &[&str] = &[
     "GITRUN_CONTAINER_UPDATE_TIME",
     "GITRUN_AUTO_CONTAINER_RECOVERY",
     "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
+    "GITRUN_CONTAINER_CPUS",
+    "GITRUN_CONTAINER_MEMORY",
+    "GITRUN_CONTAINER_PIDS",
+    "GITRUN_DISABLE_UPDATE",
+    "GITRUN_SHARED_CACHE_VOLUME",
+    "GITRUN_RUNNER_HOME_SIZE",
+    "GITRUN_RUNNER_HOME_BACKEND",
+    "GITRUN_GITHUB_CONNECT_TIMEOUT",
+    "GITRUN_GITHUB_REQUEST_TIMEOUT",
+    "GITRUN_VAULT_DIR",
+    "GITRUN_VAULT_GROUPS",
+    "GITRUN_GTUU_SCHEDULE_TIMEZONE",
     "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
     "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
     "GITRUN_GSR_COMMAND_POLICY_ENABLED",
@@ -518,6 +702,36 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
         (
             "GITRUN_CONTAINER_RECOVERY_COOLDOWN",
             config.container_recovery_cooldown.to_string(),
+        ),
+        ("GITRUN_CONTAINER_CPUS", config.container_cpus.clone()),
+        ("GITRUN_CONTAINER_MEMORY", config.container_memory.clone()),
+        ("GITRUN_CONTAINER_PIDS", config.container_pids_limit.clone()),
+        (
+            "GITRUN_DISABLE_UPDATE",
+            config.runner_disable_update.to_string(),
+        ),
+        (
+            "GITRUN_SHARED_CACHE_VOLUME",
+            config.shared_cache_volume.clone(),
+        ),
+        ("GITRUN_RUNNER_HOME_SIZE", config.runner_home_size.clone()),
+        (
+            "GITRUN_RUNNER_HOME_BACKEND",
+            config.runner_home_backend.clone(),
+        ),
+        (
+            "GITRUN_GITHUB_CONNECT_TIMEOUT",
+            config.github_connect_timeout.to_string(),
+        ),
+        (
+            "GITRUN_GITHUB_REQUEST_TIMEOUT",
+            config.github_request_timeout.to_string(),
+        ),
+        ("GITRUN_VAULT_DIR", config.vault_dir.clone()),
+        ("GITRUN_VAULT_GROUPS", config.vault_group_membership.clone()),
+        (
+            "GITRUN_GTUU_SCHEDULE_TIMEZONE",
+            config.gtuu_schedule_timezone.clone(),
         ),
         (
             "GITRUN_GSR_DOCKER_SOCKET_HARDENING",
@@ -571,9 +785,18 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
 }
 
 pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
+    config.validate().map_err(|e| e.to_string())?;
     let original =
         fs::read_to_string(path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
     let values = config_env_values(config);
+
+    // Environment-file values are emitted as one physical line per key.
+    // Reject line breaks before writing so a GUI/config value can never
+    // inject an additional environment variable or comment into gitrun.env.
+    for (key, value) in &values {
+        validate_env_file_value(key, value)?;
+    }
+
     let managed: std::collections::BTreeSet<&str> = MANAGED_CONFIG_KEYS.iter().copied().collect();
     let mut seen = std::collections::BTreeSet::new();
     let mut output = Vec::new();
@@ -598,9 +821,17 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
         }
     }
 
-    let tmp = path.with_extension("env.tmp");
-    fs::write(&tmp, output.join("\n") + "\n").map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    // Reuse the same atomic 0600 writer used by bootstrap. In particular,
+    // never create the temporary env file with the process umask/default
+    // permissions: this file can contain the GitHub PAT.
+    write_resource(path, &(output.join("\n") + "\n"), 0o600).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn validate_env_file_value(key: &str, value: &str) -> Result<(), String> {
+    if value.contains('\n') || value.contains('\r') {
+        return Err(format!("{key} must not contain newlines"));
+    }
     Ok(())
 }
 
@@ -659,5 +890,82 @@ mod tests {
     #[test]
     fn rejects_newline_in_bootstrap_secret() {
         assert!(validate_env_value("token\nINJECTED=value", "GITHUB_TOKEN").is_err());
+    }
+
+    #[test]
+    fn update_env_file_preserves_unmanaged_and_updates_managed_values() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "GITRUN_MIN_RUNNERS=1\nUNMANAGED=value\nGITRUN_GSR_VIOLATION_ACTION=kill\n",
+        )
+        .unwrap();
+
+        let config = Config {
+            min_runners: 4,
+            max_runners: 6,
+            gsr_violation_action: "log_only".into(),
+            ..Default::default()
+        };
+
+        update_env_file(&path, &config).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+
+        assert!(content.contains("GITRUN_MIN_RUNNERS=4"));
+        assert!(content.contains("GITRUN_MAX_RUNNERS=6"));
+        assert!(content.contains("GITRUN_GSR_VIOLATION_ACTION=log_only"));
+        assert!(content.contains("UNMANAGED=value"));
+        assert!(!content.contains("GITRUN_MIN_RUNNERS=1"));
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn update_env_file_rejects_newline_in_managed_value() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-newline-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "GITRUN_REPOSITORIES=owner/repo\n").unwrap();
+
+        let config = Config {
+            runner_labels: "self-hosted\nINJECTED=value".into(),
+            ..Default::default()
+        };
+
+        let error = update_env_file(&path, &config).unwrap_err();
+        assert!(error.contains("GITRUN_RUNNER_LABELS must not contain newlines"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn update_env_file_writes_config_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-mode-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "GITRUN_MIN_RUNNERS=1\n").unwrap();
+
+        let config = Config::default();
+        update_env_file(&path, &config).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        fs::remove_file(path).unwrap();
     }
 }

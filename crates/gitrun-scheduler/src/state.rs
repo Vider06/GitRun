@@ -13,8 +13,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+
+static STATE_TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub enum StateError {
@@ -22,8 +25,9 @@ pub enum StateError {
     Io(#[from] std::io::Error),
     #[error("invalid state file: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("invalid persisted scheduler state: {0}")]
+    Invalid(String),
 }
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct StateFile {
     /// container name -> unix seconds when it was first observed idle.
@@ -39,6 +43,30 @@ pub struct SchedulerState {
     data: StateFile,
 }
 
+fn validate_state(data: &StateFile) -> Result<(), StateError> {
+    let now = SchedulerState::now();
+
+    for (kind, entries) in [
+        ("idle_since", &data.idle_since),
+        ("recovery_since", &data.recovery_since),
+    ] {
+        for (name, since) in entries {
+            if name.trim().is_empty() || name.chars().any(char::is_control) {
+                return Err(StateError::Invalid(format!(
+                    "{kind} contains invalid container name"
+                )));
+            }
+            if *since > now {
+                return Err(StateError::Invalid(format!(
+                    "{kind} entry for '{name}' has a future timestamp"
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 impl SchedulerState {
     pub fn load(state_dir: &Path) -> Result<Self, StateError> {
         let path = state_dir.join("scheduler-state.json");
@@ -47,16 +75,53 @@ impl SchedulerState {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => StateFile::default(),
             Err(error) => return Err(error.into()),
         };
+        validate_state(&data)?;
         Ok(Self { path, data })
     }
 
     pub fn save(&self) -> Result<(), StateError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
+        validate_state(&self.data)?;
+        let parent = self
+            .path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+
+        let sequence = STATE_TMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let file_name = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                StateError::Invalid("scheduler state path has no valid file name".into())
+            })?;
+        let tmp = parent.join(format!(
+            ".{file_name}.tmp-{}-{sequence}",
+            std::process::id()
+        ));
+
+        let serialized = serde_json::to_string_pretty(&self.data)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        use std::io::Write;
+        file.write_all(serialized.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        drop(file);
+
+        if let Err(error) = fs::rename(&tmp, &self.path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
         }
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(&self.data)?)?;
-        fs::rename(&tmp, &self.path)?;
+
+        #[cfg(unix)]
+        {
+            fs::File::open(parent)?.sync_all()?;
+        }
+
         Ok(())
     }
 
@@ -82,12 +147,14 @@ impl SchedulerState {
     /// Removes tracking for any container name no longer present, so the
     /// state file doesn't grow forever with names of long-gone containers.
     pub fn prune(&mut self, live_names: &[String]) {
+        let live_names: std::collections::HashSet<&str> =
+            live_names.iter().map(String::as_str).collect();
         self.data
             .idle_since
-            .retain(|name, _| live_names.contains(name));
+            .retain(|name, _| live_names.contains(name.as_str()));
         self.data
             .recovery_since
-            .retain(|name, _| live_names.contains(name));
+            .retain(|name, _| live_names.contains(name.as_str()));
     }
 
     /// Returns how long a container has been marked as needing recovery,
@@ -178,6 +245,57 @@ mod tests {
 
         let reloaded = SchedulerState::load(&dir).unwrap();
         assert_eq!(reloaded.idle_entries().len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn future_timestamps_are_rejected() {
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-future-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("scheduler-state.json");
+        let future = SchedulerState::now().saturating_add(3600);
+        fs::write(
+            &path,
+            format!(r#"{{"idle_since":{{"runner-a":{future}}},"recovery_since":{{}}}}"#),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            SchedulerState::load(&dir),
+            Err(StateError::Invalid(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_container_names_are_rejected() {
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-name-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("scheduler-state.json");
+        fs::write(&path, r#"{"idle_since":{"":"1"},"recovery_since":{}}"#).unwrap();
+
+        assert!(matches!(
+            SchedulerState::load(&dir),
+            Err(StateError::Decode(_)) | Err(StateError::Invalid(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_uses_atomic_replacement() {
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-atomic-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let mut state = SchedulerState::load(&dir).unwrap();
+        state.mark_idle("runner-a");
+        state.save().unwrap();
+
+        assert!(dir.join("scheduler-state.json").is_file());
+        assert!(!dir.join("scheduler-state.json.tmp").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -4,6 +4,7 @@ pub mod github;
 pub mod gsr_bridge;
 pub mod gsr_poll;
 pub mod gtuu;
+pub mod gtuu_startup;
 pub mod logic_containers;
 pub mod reconcile;
 pub mod state;
@@ -12,6 +13,7 @@ pub mod vm_resolution;
 
 pub use backoff::RateLimitTracker;
 pub use github::{GitHubClient, GitHubError, Runner};
+pub use gtuu_startup::GtuuStartupReport;
 pub use logic_containers::{Backend, LogicRule};
 pub use reconcile::{Action, ReconcileInput};
 
@@ -41,10 +43,13 @@ use crate::vm_resolution::VmResolutionRegistry;
 use gitrun_core::{Config, GitHubAuth, StateStore};
 use gitrun_vault::Vault;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+static CONTAINER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+// The scheduler keeps reconciliation in Rust; the legacy Python path is no longer executed.
 pub fn run() {
     let stopping = Arc::new(AtomicBool::new(false));
     if let Err(error) = install_signal_handlers(&stopping) {
@@ -75,8 +80,7 @@ pub fn run() {
 
     let state_dir = PathBuf::from(&config.state_dir);
     let rate_limits = RateLimitTracker::new();
-    spawn_gtuu_thread(&config, &stopping);
-    spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
+    let vm_registry = vm_resolution::new_registry();
 
     // Logic Containers' VM backend: the registry (non-blocking hypervisor
     // resolution state) is shared across the process lifetime, but the VM
@@ -96,8 +100,6 @@ pub fn run() {
         );
         std::process::exit(2);
     }
-    let vm_registry = vm_resolution::new_registry();
-
     // GSR integration: write our own PID to a well-known file so the
     // separate `gitrun-gsr` watchdog process can supervise us — see
     // `gitrun-gsr/src/watchdog.rs`. Removed on clean shutdown below; if this
@@ -111,6 +113,12 @@ pub fn run() {
         );
         std::process::exit(2);
     }
+
+    // Only start background workers after every fatal startup check has passed
+    // and this process owns the singleton PID file. Otherwise GTUU/GSR could
+    // act briefly and concurrently while startup is about to abort.
+    spawn_gtuu_thread(&config, &stopping);
+    spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
 
     println!(
         "gitrun-autoscaler: starting, polling every {}s",
@@ -176,8 +184,8 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<()> {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::AlreadyExists,
                         format!(
-                "another gitrun-autoscaler instance is already running (pid {pid})"
-            ),
+                            "another gitrun-autoscaler instance is already running (pid {pid})"
+                        ),
                     ));
                 }
             }
@@ -250,11 +258,17 @@ fn install_signal_handlers(stopping: &Arc<AtomicBool>) -> Result<(), std::io::Er
 
 fn sleep_interruptible(total: Duration, stopping: &Arc<AtomicBool>) {
     let deadline = Instant::now() + total;
-    while Instant::now() < deadline {
+    loop {
         if stopping.load(Ordering::Relaxed) {
             return;
         }
-        std::thread::sleep(Duration::from_millis(200).min(deadline - Instant::now()));
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return;
+        };
+        if remaining.is_zero() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200).min(remaining));
     }
 }
 
@@ -273,8 +287,8 @@ fn sleep_interruptible(total: Duration, stopping: &Arc<AtomicBool>) {
 /// A `Backend::Vm` match no longer silently falls back to the local host:
 /// it goes through `vm_resolution::resolve_or_spawn`, which is itself
 /// non-blocking (see that module's doc comment) — if the VM isn't resolved
-/// yet this call, THIS cycle still falls back to local, but a background
-/// thread is working on bringing the VM up (KVM preferred, operator asked
+/// yet this call, no runner is created locally, but a background thread
+/// is working on bringing the VM up (KVM preferred, operator asked
 /// via the dashboard if it fails, VirtualBox as the explicit fallback) and
 /// a *later* cycle will get the real `DockerHost::Remote` once it's ready.
 ///
@@ -288,11 +302,17 @@ fn resolve_backend_and_image(
     vm_registry: &VmResolutionRegistry,
     job_labels: &[String],
 ) -> Option<(docker::DockerHost, String, bool)> {
-    let rules_path = std::path::Path::new(&config.state_dir).join("logic-containers.json");
-    let rules = logic_containers::load_rules(&rules_path).unwrap_or_else(|error| {
-        eprintln!("gitrun-autoscaler: could not load Logic Containers rules: {error}");
-        Vec::new()
-    });
+    let rules_path = state_dir.join("logic-containers.json");
+    let rules = match logic_containers::load_rules(&rules_path) {
+        Ok(rules) => rules,
+        Err(error) => {
+            eprintln!("gitrun-autoscaler: could not load Logic Containers rules: {error}");
+            // Missing is already represented by Ok(Vec::new()) in load_rules;
+            // every other failure is a real configuration error and must not
+            // silently route a VM-targeted job to the local Docker daemon.
+            return None;
+        }
+    };
 
     match logic_containers::resolve(&rules, job_labels) {
         Some((logic_containers::Backend::LocalLinux, image)) => {
@@ -305,26 +325,34 @@ fn resolve_backend_and_image(
             // restart. `vm-configs.json` is small and this runs once per
             // dynamic runner creation, not in a tight loop, so re-reading
             // it here isn't a meaningful cost.
-            let vm_defs = vm::load_vm_configs(state_dir).unwrap_or_else(|error| {
-                eprintln!("gitrun-autoscaler: could not load VM configs: {error}");
-                Vec::new()
-            });
+            let vm_defs = match vm::load_vm_configs(state_dir) {
+                Ok(defs) => defs,
+                Err(error) => {
+                    eprintln!("gitrun-autoscaler: could not load VM configs: {error}");
+                    // A configured VM target must never degrade to the local
+                    // host because its definition file is unreadable/corrupt.
+                    return None;
+                }
+            };
             let Some(vm_config) = vm::find_vm_config(&vm_defs, vm_name) else {
                 eprintln!(
-                    "gitrun-autoscaler: Logic Containers rule targets VM '{vm_name}', but no VM with that name is configured — falling back to local host for this runner"
+                    "gitrun-autoscaler: Logic Containers rule targets VM '{vm_name}', but no VM with that name is configured — runner creation deferred"
                 );
                 return None;
             };
             match vm_resolution::resolve_or_spawn(vm_registry, state_dir, vm_config) {
-                Some(host) => Some((host, image.to_owned(), vm_config.is_windows)),
-                None => {
-                    // Not resolved yet this cycle — a background thread is
-                    // (or is about to be) working on it; see this
-                    // function's doc comment. Not an error, just "not
-                    // ready", so this stays an eprintln rather than a
-                    // recorded crash.
+                vm_resolution::VmResolutionResult::Ready(host) => {
+                    Some((host, image.to_owned(), vm_config.is_windows))
+                }
+                vm_resolution::VmResolutionResult::Resolving => {
                     eprintln!(
-                        "gitrun-autoscaler: VM '{vm_name}' isn't ready yet (hypervisor setup in progress) — using local host for this runner this cycle"
+                        "gitrun-autoscaler: VM '{vm_name}' isn't ready yet; runner creation deferred while hypervisor setup or liveness verification is in progress"
+                    );
+                    None
+                }
+                vm_resolution::VmResolutionResult::Failed(error) => {
+                    eprintln!(
+                        "gitrun-autoscaler: VM '{vm_name}' resolution failed; runner creation deferred: {error}"
                     );
                     None
                 }
@@ -364,11 +392,17 @@ fn reconcile_repo(
     // desired_count()'s formula (busy + queued, clamped) is unchanged.
     let queued_job_labels = client.queued_self_hosted_jobs_with_labels(repo)?;
     let queued_jobs = queued_job_labels.len() as u32;
+    let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
+        .map_err(|error| {
+            std::io::Error::other(format!(
+                "invalid Logic Containers configuration for {repo}: {error}"
+            ))
+        })?;
 
     let mut state = SchedulerState::load(state_dir)?;
     let live_names: Vec<String> = containers
         .iter()
-        .filter(|c| c.status != "exited")
+        .filter(|c| c.status == "running")
         .map(|c| c.name.clone())
         .collect();
     state.prune(&live_names);
@@ -430,6 +464,14 @@ fn reconcile_repo(
             .collect(),
         queued_jobs,
         queued_job_labels,
+        configured_runner_labels: config
+            .runner_labels
+            .split(',')
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        logic_rules,
         idle,
         recovery_enabled: config.auto_container_recovery,
         recovery_cooldown: Duration::from_secs(config.container_recovery_cooldown),
@@ -464,10 +506,13 @@ fn reconcile_repo(
 fn to_container_view(container: &ManagedContainer) -> ContainerView {
     ContainerView {
         name: container.name.clone(),
-        health: if container.status == "exited" {
-            ContainerHealth::Exited
-        } else {
-            ContainerHealth::Running
+        // Docker has several states besides "running"/"exited"
+        // (created, restarting, paused, dead, ...). Only the exact
+        // "running" state is healthy enough to be treated as live.
+        health: match container.status.as_str() {
+            "running" => ContainerHealth::Running,
+            "exited" => ContainerHealth::Exited,
+            _ => ContainerHealth::Starting,
         },
         permanent: container.permanent,
     }
@@ -526,7 +571,7 @@ fn execute(
             docker::restart_container(name)?;
         }
         Action::RemoveIdle { name } => {
-            deregister_and_remove(client, repo, name)?;
+            let _ = remove_if_still_idle(client, repo, name)?;
             state.clear_idle(name);
         }
     }
@@ -538,13 +583,45 @@ fn deregister_and_remove(
     repo: &str,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Ok(runners) = client.list_runners(repo) {
-        if let Some(runner) = runners.iter().find(|r| r.name == name) {
-            client.delete_runner(repo, runner.id)?;
-        }
+    // Do not remove the container if GitHub cannot be queried: otherwise
+    // a transient API failure can leave an orphaned runner registration behind.
+    let runners = client.list_runners(repo)?;
+    if let Some(runner) = runners.iter().find(|r| r.name == name) {
+        client.delete_runner(repo, runner.id)?;
     }
     docker::remove_container(name)?;
     Ok(())
+}
+
+fn remove_if_still_idle(
+    client: &GitHubClient,
+    repo: &str,
+    name: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let runner = client
+        .list_runners(repo)?
+        .into_iter()
+        .find(|runner| runner.name == name);
+
+    let Some(runner) = runner else {
+        // The registration disappeared on its own; there is no GitHub runner
+        // left to protect, so removing the container is still safe.
+        docker::remove_container(name)?;
+        return Ok(true);
+    };
+
+    if runner.busy || !runner.is_online() {
+        eprintln!(
+            "gitrun-autoscaler: preserving idle-scale-down candidate {name} for {repo}: runner is no longer safely removable (online={}, busy={})",
+            runner.is_online(),
+            runner.busy
+        );
+        return Ok(false);
+    }
+
+    client.delete_runner(repo, runner.id)?;
+    docker::remove_container(name)?;
+    Ok(true)
 }
 
 fn create_runner(
@@ -556,11 +633,14 @@ fn create_runner(
     permanent: bool,
     job_labels: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Ok(ban_store) = gsr_poll::BanStore::load(state_dir) {
-        if ban_store.is_banned(repo) {
-            println!("gitrun-autoscaler: skipping runner creation for {repo}: temporarily banned by GSR after a policy violation");
-            return Ok(());
-        }
+    let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
+        std::io::Error::other(format!(
+            "cannot safely create runner for {repo}: GSR ban state is unreadable: {error}"
+        ))
+    })?;
+    if ban_store.is_banned(repo) {
+        println!("gitrun-autoscaler: skipping runner creation for {repo}: temporarily banned by GSR after a policy violation");
+        return Ok(());
     }
 
     let registration_token = client.registration_token(repo)?;
@@ -569,6 +649,7 @@ fn create_runner(
         validate_repo_workflows_best_effort(client, config, repo);
     }
 
+    let gsr_policy_env = gsr_policy_env(config);
     let safe = docker::sanitize(repo, '-');
     let name = format!("gitrun-{safe}-{}", uuid_like_suffix());
     docker::ensure_shared_cache_volume(&config.shared_cache_volume)?;
@@ -583,6 +664,8 @@ fn create_runner(
         return Ok(());
     };
 
+    let runner_labels = runner_labels_for_job(&config.runner_labels, permanent, job_labels);
+
     docker::create_runner_on(
         &backend,
         &docker::RunnerSpec {
@@ -591,7 +674,7 @@ fn create_runner(
             permanent,
             registration_token: &registration_token,
             image: &image,
-            labels: &config.runner_labels,
+            labels: &runner_labels,
             ephemeral: config.ephemeral,
             disable_update: config.runner_disable_update,
             cpus: &config.container_cpus,
@@ -602,11 +685,44 @@ fn create_runner(
             runner_home_size: &config.runner_home_size,
             home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
             secret_env: &secret_env,
+            gsr_policy_env: &gsr_policy_env,
             is_windows,
             docker_socket_hardening: config.gsr_docker_socket_hardening,
         },
     )?;
     Ok(())
+}
+
+/// Combines the globally configured runner labels with the labels of the
+/// queued job that caused a dynamic runner to be created. This prevents a
+/// dynamically routed runner (for example a Windows/VM runner) from becoming
+/// eligible for an unrelated job after registration.
+fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String]) -> String {
+    if permanent || job_labels.is_empty() {
+        return configured.to_owned();
+    }
+
+    let mut labels: Vec<String> = configured
+        .split(',')
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    for job_label in job_labels {
+        let job_label = job_label.trim();
+        if job_label.is_empty() {
+            continue;
+        }
+        if !labels
+            .iter()
+            .any(|label| label.eq_ignore_ascii_case(job_label))
+        {
+            labels.push(job_label.to_owned());
+        }
+    }
+
+    labels.join(",")
 }
 
 /// Best-effort pre-flight workflow validation, run just before a runner is
@@ -684,9 +800,26 @@ fn write_scratch_workflows(
     dir: &std::path::Path,
     files: &[(String, String)],
 ) -> std::io::Result<()> {
+    use std::path::Component;
+
     std::fs::create_dir_all(dir)?;
     for (name, content) in files {
-        std::fs::write(dir.join(name), content)?;
+        let relative = std::path::Path::new(name);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| component == Component::ParentDir)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("workflow path escapes scratch directory: {name}"),
+            ));
+        }
+        let target = dir.join(relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(target, content)?;
     }
     Ok(())
 }
@@ -708,6 +841,39 @@ fn write_scratch_workflows(
 /// Failures are logged, not silently swallowed, so an operator relying on a
 /// secret notices it's missing rather than debugging a mysteriously empty
 /// environment variable inside a job.
+fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
+    vec![
+        (
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED".into(),
+            config.gsr_command_policy_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED".into(),
+            config.gsr_command_baseline_blacklist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BLACKLIST_ENABLED".into(),
+            config.gsr_command_blacklist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_BLACKLIST".into(),
+            config.gsr_command_blacklist.clone(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_WHITELIST_ENABLED".into(),
+            config.gsr_command_whitelist_enabled.to_string(),
+        ),
+        (
+            "GITRUN_GSR_COMMAND_WHITELIST".into(),
+            config.gsr_command_whitelist.clone(),
+        ),
+        (
+            "GITRUN_GSR_VIOLATION_ACTION".into(),
+            config.gsr_violation_action.clone(),
+        ),
+    ]
+}
+
 fn vault_env_for_repo(config: &Config, repo: &str) -> Vec<(String, String)> {
     if config.vault_dir.trim().is_empty() {
         return Vec::new();
@@ -756,15 +922,16 @@ fn is_valid_env_var_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Short random-ish suffix for container names, avoiding a dependency on the
-/// `uuid` crate for eight hex characters.
+/// Unique-enough suffix for container names without adding a dependency:
+/// epoch milliseconds + process ID + an atomic per-process sequence.
 fn uuid_like_suffix() -> String {
-    let nanos = std::time::SystemTime::now()
+    let epoch_millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
     let pid = std::process::id();
-    format!("{:08x}", nanos ^ pid)
+    let sequence = CONTAINER_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{epoch_millis:x}-{pid:x}-{sequence:x}")
 }
 
 #[cfg(unix)]
@@ -811,6 +978,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
     let client = build_github_client(&config)?;
     let docker_socket_gid = resolve_docker_socket_gid()?;
+    let gsr_policy_env = gsr_policy_env(&config);
     let gtuu_config = GtuuConfig {
         image: &config.runner_image,
         repositories: &config.repositories,
@@ -829,6 +997,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
+        gsr_policy_env: &gsr_policy_env,
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }
@@ -851,16 +1020,22 @@ fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
                     && last_run_date.as_deref() != Some(&now.date)
                 {
                     println!("gitrun-autoscaler: GTUU scheduled run starting");
+                    let mut completed = false;
                     match GtuuLock::acquire(&state_dir) {
                         Ok(_lock) => match run_gtuu_once() {
-                            Ok(count) => println!(
-                                "gitrun-autoscaler: GTUU updated {count} permanent runner(s)"
-                            ),
+                            Ok(count) => {
+                                println!(
+                                    "gitrun-autoscaler: GTUU updated {count} permanent runner(s)"
+                                );
+                                completed = true;
+                            }
                             Err(error) => eprintln!("gitrun-autoscaler: GTUU run failed: {error}"),
                         },
                         Err(error) => eprintln!("gitrun-autoscaler: GTUU skipped: {error}"),
                     }
-                    last_run_date = Some(now.date);
+                    if completed {
+                        last_run_date = Some(now.date);
+                    }
                 }
                 std::thread::sleep(Duration::from_secs(15));
             }
@@ -887,6 +1062,7 @@ fn spawn_gsr_poll_thread(
     let state_dir = PathBuf::from(&config.state_dir);
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let stopping = stopping.clone();
+    let vm_registry = Arc::clone(vm_registry);
     let poll_interval = Duration::from_secs(5);
 
     std::thread::Builder::new()
@@ -899,12 +1075,12 @@ fn spawn_gsr_poll_thread(
                 action,
                 poll_interval,
                 {
-                    let vm_registry = Arc::clone(vm_registry);
+                    let vm_registry = Arc::clone(&vm_registry);
                     move || {
                         let mut hosts = vec![docker::DockerHost::Local];
                         let guard = vm_registry.lock().unwrap_or_else(|p| p.into_inner());
                         for resolution in guard.values() {
-                            if let vm_resolution::VmResolution::Resolved(host) = resolution {
+                            if let vm_resolution::VmResolution::Resolved { host, .. } = resolution {
                                 if !hosts.contains(host) {
                                     hosts.push(host.clone());
                                 }
@@ -957,28 +1133,28 @@ fn chrono_like_now(use_local: bool) -> SimpleNow {
     utc_now()
 }
 
-/// Runs `date +%H:%M` and `date +%Y-%m-%d` (no `-u`, so system local time,
-/// DST-aware) and parses the output. Returns `None` on any failure —
+/// Runs one `date +%H:%M %Y-%m-%d` command (no `-u`, so system local time,
+/// DST-aware) and parses the output. A single command keeps the date/time pair
+/// consistent across a midnight boundary. Returns `None` on any failure —
 /// binary missing, non-zero exit, unparseable output — so the caller can
 /// fall back rather than panic.
 fn local_now_via_date_command() -> Option<SimpleNow> {
-    let time_out = std::process::Command::new("date")
-        .arg("+%H:%M")
+    let output = std::process::Command::new("date")
+        .arg("+%H:%M %Y-%m-%d")
         .output()
         .ok()?;
-    let date_out = std::process::Command::new("date")
-        .arg("+%Y-%m-%d")
-        .output()
-        .ok()?;
-    if !time_out.status.success() || !date_out.status.success() {
+    if !output.status.success() {
         return None;
     }
-    let time_hhmm = String::from_utf8(time_out.stdout).ok()?.trim().to_owned();
-    let date = String::from_utf8(date_out.stdout).ok()?.trim().to_owned();
+    let raw = String::from_utf8(output.stdout).ok()?;
+    let (time_hhmm, date) = raw.trim().split_once(' ')?;
     if time_hhmm.len() != 5 || date.len() != 10 {
         return None; // sanity check: "HH:MM" / "YYYY-MM-DD", reject anything malformed
     }
-    Some(SimpleNow { time_hhmm, date })
+    Some(SimpleNow {
+        time_hhmm: time_hhmm.to_owned(),
+        date: date.to_owned(),
+    })
 }
 
 fn utc_now() -> SimpleNow {
@@ -1018,6 +1194,23 @@ fn utc_now() -> SimpleNow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dynamic_runner_labels_include_job_labels() {
+        let labels = runner_labels_for_job(
+            "self-hosted,Linux,gitrun-ci",
+            false,
+            &["windows".into(), "GPU".into(), "linux".into()],
+        );
+        assert_eq!(labels, "self-hosted,Linux,gitrun-ci,windows,GPU");
+    }
+
+    #[test]
+    fn permanent_runner_labels_ignore_job_labels() {
+        let labels =
+            runner_labels_for_job("self-hosted,Linux,gitrun-ci", true, &["windows".into()]);
+        assert_eq!(labels, "self-hosted,Linux,gitrun-ci");
+    }
 
     #[test]
     fn valid_env_var_names_are_accepted() {

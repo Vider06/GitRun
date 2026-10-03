@@ -82,6 +82,8 @@ pub enum VaultError {
     Decode(#[from] serde_json::Error),
     #[error("secret '{0}' not found")]
     NotFound(String),
+    #[error("encryption failed for secret '{0}'")]
+    EncryptionFailed(String),
     #[error(
         "decryption failed for secret '{0}' — wrong master key or corrupted/tampered ciphertext"
     )]
@@ -90,6 +92,8 @@ pub enum VaultError {
     InvalidMasterKey(usize),
     #[error("secret name must not be empty")]
     EmptyName,
+    #[error("secret identifier contains a reserved control character")]
+    InvalidIdentifier,
 }
 
 pub type Result<T> = std::result::Result<T, VaultError>;
@@ -181,8 +185,12 @@ impl Vault {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key_bytes));
 
         let secrets_path = dir.join(SECRETS_FILE);
-        let data = match fs::read_to_string(&secrets_path) {
-            Ok(raw) => serde_json::from_str(&raw)?,
+        let data = match fs::metadata(&secrets_path) {
+            Ok(_) => {
+                set_secret_file_permissions(&secrets_path)?;
+                let raw = fs::read_to_string(&secrets_path)?;
+                serde_json::from_str(&raw)?
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => VaultFile::default(),
             Err(error) => return Err(error.into()),
         };
@@ -212,9 +220,8 @@ impl Vault {
     /// the write — same reasoning as the atomic-write pattern used elsewhere
     /// in GitRun.
     pub fn set_scoped(&mut self, name: &str, value: &str, scope: Scope) -> Result<()> {
-        if name.trim().is_empty() {
-            return Err(VaultError::EmptyName);
-        }
+        validate_name(name)?;
+        validate_scope(&scope)?;
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
@@ -222,10 +229,9 @@ impl Vault {
         let ciphertext = self
             .cipher
             .encrypt(nonce, value.as_bytes())
-            // aes-gcm only fails to encrypt on buffer/length issues, never on
-            // key/data content — if this ever fires it's a bug, not a
-            // reachable runtime condition an operator caused.
-            .map_err(|_| VaultError::DecryptionFailed(name.to_owned()))?;
+            // aes-gcm encryption failures are not caused by operator-provided
+            // secret content; still report them with the correct operation.
+            .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
 
         self.data.secrets.insert(
             storage_key(name, &scope),
@@ -254,10 +260,23 @@ impl Vault {
             .secrets
             .get(&key)
             .ok_or_else(|| VaultError::NotFound(name.to_owned()))?;
-        let nonce_bytes = base64_decode(&entry.nonce)
-            .ok_or_else(|| VaultError::DecryptionFailed(name.to_owned()))?;
-        let ciphertext = base64_decode(&entry.ciphertext)
-            .ok_or_else(|| VaultError::DecryptionFailed(name.to_owned()))?;
+        self.decrypt_entry(name, entry)
+    }
+
+    fn decrypt_entry(&self, name: &str, entry: &StoredSecret) -> Result<String> {
+        let nonce_bytes = base64_decode(&entry.nonce).ok_or_else(|| {
+            self.events.on_decryption_failure(name);
+            VaultError::DecryptionFailed(name.to_owned())
+        })?;
+        if nonce_bytes.len() != NONCE_LEN {
+            self.events.on_decryption_failure(name);
+            return Err(VaultError::DecryptionFailed(name.to_owned()));
+        }
+
+        let ciphertext = base64_decode(&entry.ciphertext).ok_or_else(|| {
+            self.events.on_decryption_failure(name);
+            VaultError::DecryptionFailed(name.to_owned())
+        })?;
         let nonce = Nonce::from_slice(&nonce_bytes);
         let plaintext = self
             .cipher
@@ -266,7 +285,11 @@ impl Vault {
                 self.events.on_decryption_failure(name);
                 VaultError::DecryptionFailed(name.to_owned())
             })?;
-        String::from_utf8(plaintext).map_err(|_| VaultError::DecryptionFailed(name.to_owned()))
+
+        String::from_utf8(plaintext).map_err(|_| {
+            self.events.on_decryption_failure(name);
+            VaultError::DecryptionFailed(name.to_owned())
+        })
     }
 
     pub fn delete(&mut self, name: &str) -> Result<()> {
@@ -284,7 +307,8 @@ impl Vault {
     /// Lists every secret's name, scope, and last-updated time, without
     /// decrypting anything — safe to call for a dashboard listing view.
     pub fn list(&self) -> Vec<(String, Scope, u64)> {
-        self.data
+        let mut entries: Vec<_> = self
+            .data
             .secrets
             .iter()
             .map(|(key, secret)| {
@@ -294,18 +318,23 @@ impl Vault {
                     secret.updated_at,
                 )
             })
-            .collect()
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
     }
 
     /// Lists only secrets within a specific scope — e.g. everything scoped
     /// to one repo, for a per-repo dashboard view.
     pub fn list_in_scope(&self, scope: &Scope) -> Vec<(String, u64)> {
-        self.data
+        let mut entries: Vec<_> = self
+            .data
             .secrets
             .iter()
             .filter(|(_, secret)| &secret.scope == scope)
             .map(|(key, secret)| (name_part_of_key(key), secret.updated_at))
-            .collect()
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
     }
 
     pub fn contains(&self, name: &str, scope: &Scope) -> bool {
@@ -348,31 +377,90 @@ impl Vault {
             }
         }
 
-        best.into_iter()
+        let mut resolved: Vec<_> = best
+            .into_iter()
             .filter_map(|(name, (scope, key))| {
                 let entry = self.data.secrets.get(key)?;
-                let nonce_bytes = base64_decode(&entry.nonce)?;
-                let ciphertext = base64_decode(&entry.ciphertext)?;
-                let nonce = Nonce::from_slice(&nonce_bytes);
-                match self.cipher.decrypt(nonce, ciphertext.as_slice()) {
-                    Ok(plaintext) => String::from_utf8(plaintext).ok().map(|value| (name, value)),
+                match self.decrypt_entry(&name, entry) {
+                    Ok(value) => Some((name, value)),
                     Err(_) => {
-                        self.events.on_decryption_failure(&name);
                         let _ = scope;
                         None
                     }
                 }
             })
-            .collect()
+            .collect();
+        resolved.sort_by(|a, b| a.0.cmp(&b.0));
+        resolved
     }
 
     fn persist(&self) -> Result<()> {
         let path = self.dir.join(SECRETS_FILE);
         let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(&self.data)?)?;
+        write_secret_file(&tmp, &self.data)?;
         fs::rename(&tmp, &path)?;
         Ok(())
     }
+}
+
+fn validate_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() {
+        return Err(VaultError::EmptyName);
+    }
+    if name.chars().any(|c| c == '\u{1}') {
+        return Err(VaultError::InvalidIdentifier);
+    }
+    Ok(())
+}
+
+fn validate_scope(scope: &Scope) -> Result<()> {
+    match scope {
+        Scope::Global => Ok(()),
+        Scope::Group(group) | Scope::Repo(group) => {
+            if group.trim().is_empty() || group.chars().any(|c| c == '\u{1}') {
+                Err(VaultError::InvalidIdentifier)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let serialized = serde_json::to_string_pretty(data)?;
+    let _ = fs::remove_file(path);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(serialized.as_bytes())?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
+    fs::write(path, serde_json::to_string_pretty(data)?)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_secret_file_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_secret_file_permissions(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn load_or_create_master_key(dir: &Path) -> Result<[u8; 32]> {
@@ -496,6 +584,61 @@ mod tests {
         vault.set("deploy-key", "super-secret-value").unwrap();
         assert_eq!(vault.get("deploy-key").unwrap(), "super-secret-value");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_nonce_is_rejected_without_panic() {
+        let dir = temp_dir("malformed-nonce");
+        let mut vault = Vault::open(&dir).unwrap();
+        vault.set("key", "value").unwrap();
+
+        let secrets_path = dir.join(SECRETS_FILE);
+        let raw = fs::read_to_string(&secrets_path).unwrap();
+        let mut file: VaultFile = serde_json::from_str(&raw).unwrap();
+        let secret = file.secrets.get_mut("global\u{1}key").unwrap();
+        secret.nonce = base64_encode(&[1, 2, 3]);
+        fs::write(&secrets_path, serde_json::to_string_pretty(&file).unwrap()).unwrap();
+
+        let reloaded = Vault::open(&dir).unwrap();
+        assert!(matches!(
+            reloaded.get("key"),
+            Err(VaultError::DecryptionFailed(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reserved_separator_is_rejected_from_names_and_scopes() {
+        let dir = temp_dir("identifier-validation");
+        let mut vault = Vault::open(&dir).unwrap();
+
+        assert!(matches!(
+            vault.set("bad\u{1}name", "value"),
+            Err(VaultError::InvalidIdentifier)
+        ));
+        assert!(matches!(
+            vault.set_scoped("key", "value", Scope::Group("bad\u{1}group".into())),
+            Err(VaultError::InvalidIdentifier)
+        ));
+        assert!(matches!(
+            vault.set_scoped("key", "value", Scope::Repo("bad\u{1}repo".into())),
+            Err(VaultError::InvalidIdentifier)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn secret_file_has_owner_only_permissions() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = temp_dir("secret-perms");
+            let mut vault = Vault::open(&dir).unwrap();
+            vault.set("key", "value").unwrap();
+            let meta = fs::metadata(dir.join(SECRETS_FILE)).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]

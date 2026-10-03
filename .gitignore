@@ -6,6 +6,7 @@ config/*.env
 
 # Git build and development artifacts.
 target/
+.gitrun-ci/
 node_modules/
 __pycache__/
 .pytest_cache/

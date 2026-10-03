@@ -18,14 +18,19 @@ let state = {
   selectedRepo: null,
   overview: null,
   firstRun: false,
+  navigationGeneration: 0,
 };
 
-async function refreshOverview() {
+async function refreshOverview(generation = state.navigationGeneration) {
   try {
-    state.overview = await invoke("get_overview");
+    const overview = await invoke("get_overview");
+    if (generation !== state.navigationGeneration) return false;
+    state.overview = overview;
   } catch (error) {
+    if (generation !== state.navigationGeneration) return false;
     state.overview = { error: String(error) };
   }
+  return true;
 }
 
 function renderRepoNav() {
@@ -43,10 +48,39 @@ function setActiveNav() {
   });
 }
 
+let modalTitleCounter = 0;
+
 function escapeHtml(value) {
   const div = document.createElement("div");
   div.textContent = value ?? "";
   return div.innerHTML;
+}
+
+function enhanceModalAccessibility(backdrop, { dismissOnEscape = true } = {}) {
+  const modal = backdrop.querySelector(".modal");
+  if (!modal) return;
+
+  const title = modal.querySelector(".modal-title");
+  if (title) {
+    if (!title.id) title.id = `modal-title-${++modalTitleCounter}`;
+    modal.setAttribute("aria-labelledby", title.id);
+  }
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+
+  const focusTarget = modal.querySelector(
+    "input, select, textarea, button:not([disabled]), a[href]"
+  );
+  queueMicrotask(() => focusTarget?.focus());
+
+  if (dismissOnEscape) {
+    backdrop.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        backdrop.remove();
+      }
+    });
+  }
 }
 
 function statusPill(ok, trueLabel, falseLabel) {
@@ -104,7 +138,7 @@ function renderOverview() {
       ${
         data.repositories.length === 0
           ? `<div class="empty-state">No repositories configured yet. Add one in Settings.</div>`
-          : `<table class="data-table">
+          : `<div class="table-scroll"><table class="data-table">
               <thead><tr><th>Repository</th><th></th></tr></thead>
               <tbody>
                 ${data.repositories
@@ -116,7 +150,7 @@ function renderOverview() {
                   )
                   .join("")}
               </tbody>
-            </table>`
+            </table></div>`
       }
     </div>
   `;
@@ -131,16 +165,19 @@ function renderOverview() {
 // ---------------------------------------------------------------------
 
 async function renderRepoView(repo) {
+  const generation = state.navigationGeneration;
   content.innerHTML = `<div class="empty-state">Loading ${escapeHtml(repo)}…</div>`;
   let detail;
   try {
     detail = await invoke("get_repo_detail", { repo });
   } catch (error) {
+    if (generation !== state.navigationGeneration) return;
     content.innerHTML = errorBanner(String(error));
     return;
   }
+  if (generation !== state.navigationGeneration || state.view !== "repo:" + repo) return;
 
-  const repoRules = detail.logic_rules.filter((r) => ruleAppliesToThisRepoContext(r));
+
 
   content.innerHTML = `
     <div class="view-header">
@@ -163,7 +200,7 @@ async function renderRepoView(repo) {
       ${
         detail.logic_rules.length === 0
           ? `<div class="empty-state">No Logic Containers rules configured. Dynamic runners use the default image.</div>`
-          : `<table class="data-table">
+          : `<div class="table-scroll"><table class="data-table">
               <thead><tr><th>Rule</th><th>Match labels</th><th>Backend</th><th>Image</th><th></th></tr></thead>
               <tbody>
                 ${detail.logic_rules
@@ -178,7 +215,7 @@ async function renderRepoView(repo) {
                   )
                   .join("")}
               </tbody>
-            </table>`
+            </table></div>`
       }
     </div>
   `;
@@ -187,9 +224,16 @@ async function renderRepoView(repo) {
   content.querySelectorAll("[data-delete-rule]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const index = Number(btn.dataset.deleteRule);
-      const updated = detail.logic_rules.filter((_, i) => i !== index);
-      await invoke("save_logic_rules", { rules: updated });
-      renderRepoView(repo);
+      const rule = detail.logic_rules[index];
+      if (!rule) return;
+      if (!confirm(`Remove Logic Containers rule "${rule.name}"? This cannot be undone.`)) return;
+      try {
+        const updated = detail.logic_rules.filter((_, i) => i !== index);
+        await invoke("save_logic_rules", { rules: updated });
+        await navigate("repo:" + repo);
+      } catch (error) {
+        alert("Could not remove rule: " + error);
+      }
     });
   });
 }
@@ -199,10 +243,6 @@ async function renderRepoView(repo) {
 // same way GitVault secrets are scoped. Today it shows every rule under
 // every repo view, which is honest about the current (global) behavior
 // rather than pretending it's already per-repo.
-function ruleAppliesToThisRepoContext(_rule) {
-  return true;
-}
-
 function formatBackend(backend) {
   if (backend === "LocalLinux" || backend?.LocalLinux !== undefined) {
     return `<span class="pill pill-info">Local Linux</span>`;
@@ -247,6 +287,7 @@ function openRuleModal(existingRules) {
     </div>
   `;
   document.body.appendChild(backdrop);
+  enhanceModalAccessibility(backdrop);
 
   const backendSelect = backdrop.querySelector("#rule-backend");
   const vmField = backdrop.querySelector("#vm-name-field");
@@ -289,14 +330,17 @@ function openRuleModal(existingRules) {
 // ---------------------------------------------------------------------
 
 async function renderGitVault() {
+  const generation = state.navigationGeneration;
   content.innerHTML = `<div class="empty-state">Loading…</div>`;
   let secrets;
   try {
     secrets = await invoke("list_vault_secrets");
   } catch (error) {
+    if (generation !== state.navigationGeneration) return;
     content.innerHTML = errorBanner(String(error));
     return;
   }
+  if (generation !== state.navigationGeneration || state.view !== "gitvault") return;
 
   content.innerHTML = `
     <div class="view-header">
@@ -312,32 +356,34 @@ async function renderGitVault() {
     ${
       secrets.length === 0
         ? `<div class="empty-state">No secrets stored yet.</div>`
-        : `<table class="data-table">
+        : `<div class="table-scroll"><table class="data-table">
             <thead><tr><th>Name</th><th>Scope</th><th>Last updated</th><th></th></tr></thead>
             <tbody>
               ${secrets
                 .map(
-                  (s) => `<tr>
+                  (s, i) => `<tr>
                     <td class="mono">${escapeHtml(s.name)}</td>
                     <td>${formatScope(s.scope)}</td>
                     <td class="text-muted">${formatTimestamp(s.updated_at)}</td>
-                    <td><button class="btn btn-sm btn-danger" data-delete-secret='${JSON.stringify(s)}'>Delete</button></td>
+                    <td><button class="btn btn-sm btn-danger" data-delete-secret-index="${i}">Delete</button></td>
                   </tr>`
                 )
                 .join("")}
             </tbody>
-          </table>`
+          </table></div>`
     }
   `;
 
   document.getElementById("add-secret-btn").addEventListener("click", () => openSecretModal());
-  content.querySelectorAll("[data-delete-secret]").forEach((btn) => {
+  content.querySelectorAll("[data-delete-secret-index]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const s = JSON.parse(btn.dataset.deleteSecret);
+      const index = Number(btn.dataset.deleteSecretIndex);
+      const s = secrets[index];
+      if (!s) return;
       if (!confirm(`Delete secret "${s.name}"? This cannot be undone.`)) return;
       try {
         await invoke("delete_vault_secret", { name: s.name, scope: s.scope });
-        renderGitVault();
+        await navigate("gitvault");
       } catch (error) {
         alert("Could not delete secret: " + error);
       }
@@ -389,6 +435,7 @@ function openSecretModal() {
     </div>
   `;
   document.body.appendChild(backdrop);
+  enhanceModalAccessibility(backdrop);
 
   const scopeSelect = backdrop.querySelector("#secret-scope");
   const scopeField = backdrop.querySelector("#scope-value-field");
@@ -430,6 +477,7 @@ function openSecretModal() {
 // ---------------------------------------------------------------------
 
 async function renderGsr() {
+  const generation = state.navigationGeneration;
   content.innerHTML = `<div class="empty-state">Loading…</div>`;
   let status, events, zizmor;
   try {
@@ -439,9 +487,11 @@ async function renderGsr() {
       invoke("get_zizmor_info"),
     ]);
   } catch (error) {
+    if (generation !== state.navigationGeneration) return;
     content.innerHTML = errorBanner(String(error));
     return;
   }
+  if (generation !== state.navigationGeneration || state.view !== "gsr") return;
 
   content.innerHTML = `
     <div class="view-header">
@@ -478,7 +528,7 @@ async function renderGsr() {
       ${
         events.length === 0
           ? `<div class="empty-state">No events recorded.</div>`
-          : `<table class="data-table">
+          : `<div class="table-scroll"><table class="data-table">
               <thead><tr><th>Time</th><th>Severity</th><th>Source</th><th>Message</th></tr></thead>
               <tbody>
                 ${events
@@ -492,7 +542,7 @@ async function renderGsr() {
                   )
                   .join("")}
               </tbody>
-            </table>`
+            </table></div>`
       }
     </div>
   `;
@@ -537,14 +587,15 @@ async function enableZizmorWithInstallFeedback(checkboxEl) {
   checkboxEl.parentElement.appendChild(hint);
   try {
     const outcome = await invoke("accept_zizmor_license_and_install");
-    checkboxEl.checked = true;
     if (outcome.status === "Failed") {
-      hint.textContent = "Enabled, but install failed: " + outcome.detail;
+      checkboxEl.checked = false;
+      hint.textContent = "Could not enable zizmor: " + outcome.detail;
       hint.style.color = "var(--danger)";
     } else {
       hint.remove();
     }
   } catch (error) {
+    checkboxEl.checked = false;
     hint.textContent = "Error: " + error;
     hint.style.color = "var(--danger)";
   }
@@ -573,6 +624,7 @@ Full license text: ${escapeHtml(info.license_url)}</div>
     </div>
   `;
   document.body.appendChild(backdrop);
+  enhanceModalAccessibility(backdrop);
 
   backdrop.querySelector("#zizmor-decline").addEventListener("click", () => backdrop.remove());
   backdrop.querySelector("#zizmor-accept").addEventListener("click", async () => {
@@ -582,14 +634,17 @@ Full license text: ${escapeHtml(info.license_url)}</div>
 }
 
 async function renderZizmorInfo() {
+  const generation = state.navigationGeneration;
   content.innerHTML = `<div class="empty-state">Loading…</div>`;
   let zizmor;
   try {
     zizmor = await invoke("get_zizmor_info");
   } catch (error) {
+    if (generation !== state.navigationGeneration) return;
     content.innerHTML = errorBanner(String(error));
     return;
   }
+  if (generation !== state.navigationGeneration || state.view !== "zizmor-info") return;
   const info = zizmor.info;
   content.innerHTML = `
     <div class="view-header">
@@ -598,7 +653,7 @@ async function renderZizmorInfo() {
     </div>
     <div class="section" style="max-width:640px">
       <p style="margin-bottom:12px">${escapeHtml(info.description)}</p>
-      <table class="data-table" style="margin-bottom:16px">
+      <div class="table-scroll"><table class="data-table" style="margin-bottom:16px">
         <tbody>
           <tr><td class="text-muted">Author</td><td>${escapeHtml(info.author)}</td></tr>
           <tr><td class="text-muted">Homepage</td><td><a href="${escapeHtml(info.homepage)}" target="_blank" rel="noopener">${escapeHtml(info.homepage)}</a></td></tr>
@@ -607,7 +662,7 @@ async function renderZizmorInfo() {
           <tr><td class="text-muted">Installed locally</td><td>${zizmor.already_installed ? "Yes" : "No — installed automatically on first enable"}</td></tr>
           <tr><td class="text-muted">Currently enabled</td><td>${zizmor.enabled ? "Yes" : "No"}</td></tr>
         </tbody>
-      </table>
+      </table></div>
       <p class="field-hint" style="margin-bottom:16px">${escapeHtml(info.terms_summary)}</p>
       <button class="btn" data-view="gsr">Back to GSR</button>
     </div>
@@ -625,14 +680,17 @@ function severityPill(severity) {
 // ---------------------------------------------------------------------
 
 async function renderSettings() {
+  const generation = state.navigationGeneration;
   content.innerHTML = `<div class="empty-state">Loading…</div>`;
   let config;
   try {
     config = await invoke("get_config");
   } catch (error) {
+    if (generation !== state.navigationGeneration) return;
     content.innerHTML = errorBanner(String(error));
     return;
   }
+  if (generation !== state.navigationGeneration || state.view !== "settings") return;
 
   content.innerHTML = `
     <div class="view-header">
@@ -749,6 +807,7 @@ function openHypervisorDecisionModal(decision) {
     </div>
   `;
   document.body.appendChild(backdrop);
+  enhanceModalAccessibility(backdrop, { dismissOnEscape: false });
 
   async function respond(choice) {
     try {
@@ -794,21 +853,44 @@ function renderFirstRun() {
     <div class="section" style="max-width:640px">
       <div class="card">
         <div class="field">
-          <label for="setup-token">GitHub Personal Access Token</label>
-          <input type="password" id="setup-token" autocomplete="off" spellcheck="false"
-                 placeholder="github_pat_…" />
-          <p class="field-hint">
-            The token is sent only to the local privileged setup step and is not persisted by the dashboard itself.
-          </p>
+          <label for="setup-auth-mode">GitHub authentication</label>
+          <select id="setup-auth-mode">
+            <option value="pat">Personal Access Token</option>
+            <option value="app">GitHub App</option>
+          </select>
+          <p class="field-hint">Choose the credential source GitRun will use for GitHub API access.</p>
+        </div>
+
+        <div id="setup-pat-fields">
+          <div class="field">
+            <label for="setup-token">GitHub Personal Access Token</label>
+            <input type="password" id="setup-token" autocomplete="off" spellcheck="false" placeholder="github_pat_…" />
+            <p class="field-hint">The token is sent only to the local privileged setup step and is not persisted by the dashboard itself.</p>
+          </div>
+        </div>
+
+        <div id="setup-app-fields" style="display:none">
+          <div class="field">
+            <label for="setup-app-id">GitHub App ID</label>
+            <input type="text" id="setup-app-id" inputmode="numeric" autocomplete="off" placeholder="123456" />
+          </div>
+          <div class="field">
+            <label for="setup-installation-id">GitHub App Installation ID</label>
+            <input type="text" id="setup-installation-id" inputmode="numeric" autocomplete="off" placeholder="12345678" />
+          </div>
+          <div class="field">
+            <label for="setup-private-key-path">Private key PEM file</label>
+            <input type="text" id="setup-private-key-path" autocomplete="off" spellcheck="false"
+                   placeholder="/home/user/.config/gitrun/github-app.pem" />
+            <p class="field-hint">GitRun stores only this path in its configuration; the private key itself is not copied into the setup request.</p>
+          </div>
         </div>
 
         <div class="field">
           <label for="setup-repositories">Repositories</label>
           <input type="text" id="setup-repositories" autocomplete="off"
                  placeholder="owner/repository, owner/another-repository" />
-          <p class="field-hint">
-            Enter one or more repositories in owner/repository form, separated by commas.
-          </p>
+          <p class="field-hint">Enter one or more repositories in owner/repository form, separated by commas.</p>
         </div>
 
         <div class="toolbar" style="margin-top:20px">
@@ -817,24 +899,53 @@ function renderFirstRun() {
         </div>
 
         <p class="field-hint" style="margin-top:16px">
-          GitHub App authentication is also available through <code>gitrun setup --terminal</code>.
+          GitHub App mode requires the PEM file to already exist on this machine and be readable by the privileged setup process.
         </p>
       </div>
     </div>
   `;
 
+  const authModeEl = document.getElementById("setup-auth-mode");
+  const patFields = document.getElementById("setup-pat-fields");
+  const appFields = document.getElementById("setup-app-fields");
+
+  function updateAuthFields() {
+    const appMode = authModeEl.value === "app";
+    patFields.style.display = appMode ? "none" : "block";
+    appFields.style.display = appMode ? "block" : "none";
+  }
+
+  authModeEl.addEventListener("change", updateAuthFields);
+  updateAuthFields();
+
   document.getElementById("setup-submit").addEventListener("click", async () => {
     const tokenEl = document.getElementById("setup-token");
+    const appIdEl = document.getElementById("setup-app-id");
+    const installationIdEl = document.getElementById("setup-installation-id");
+    const privateKeyPathEl = document.getElementById("setup-private-key-path");
     const reposEl = document.getElementById("setup-repositories");
     const statusEl = document.getElementById("setup-status");
     const button = document.getElementById("setup-submit");
 
+    const authMode = authModeEl.value;
     const token = tokenEl.value.trim();
+    const appId = appIdEl.value.trim();
+    const installationId = installationIdEl.value.trim();
+    const privateKeyPath = privateKeyPathEl.value.trim();
     const repositories = reposEl.value.trim();
-    if (!token) {
+
+    if (authMode === "pat" && !token) {
       statusEl.textContent = "GitHub token is required.";
       statusEl.style.color = "var(--danger)";
       tokenEl.focus();
+      return;
+    }
+    if (authMode === "app" && (!appId || !installationId || !privateKeyPath)) {
+      statusEl.textContent = "App ID, installation ID, and private key path are all required.";
+      statusEl.style.color = "var(--danger)";
+      if (!appId) appIdEl.focus();
+      else if (!installationId) installationIdEl.focus();
+      else privateKeyPathEl.focus();
       return;
     }
     if (!repositories) {
@@ -846,18 +957,27 @@ function renderFirstRun() {
 
     button.disabled = true;
     tokenEl.disabled = true;
+    appIdEl.disabled = true;
+    installationIdEl.disabled = true;
+    privateKeyPathEl.disabled = true;
     reposEl.disabled = true;
+    authModeEl.disabled = true;
     statusEl.textContent = "Authorizing the privileged GitRun setup…";
     statusEl.style.color = "var(--text-secondary)";
 
     try {
-      await invoke("run_first_setup", { token, repositories });
+      await invoke("run_first_setup", {
+        authMode,
+        token,
+        repositories,
+        appId,
+        installationId,
+        privateKeyPath,
+      });
       tokenEl.value = "";
       state.firstRun = false;
       setDashboardShell(true);
-      await refreshOverview();
-      renderRepoNav();
-      renderOverview();
+      await navigate("overview");
       pollHypervisorDecisions();
       setInterval(pollHypervisorDecisions, 5000);
     } catch (error) {
@@ -865,7 +985,11 @@ function renderFirstRun() {
       statusEl.style.color = "var(--danger)";
       button.disabled = false;
       tokenEl.disabled = false;
+      appIdEl.disabled = false;
+      installationIdEl.disabled = false;
+      privateKeyPathEl.disabled = false;
       reposEl.disabled = false;
+      authModeEl.disabled = false;
     }
   });
 }
@@ -879,11 +1003,12 @@ function errorBanner(message) {
 }
 
 async function navigate(view) {
+  const generation = ++state.navigationGeneration;
   state.view = view;
   setActiveNav();
 
   if (view === "overview") {
-    await refreshOverview();
+    if (!(await refreshOverview(generation))) return;
     renderRepoNav();
     renderOverview();
   } else if (view.startsWith("repo:")) {
@@ -920,9 +1045,7 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  await refreshOverview();
-  renderRepoNav();
-  navigate("overview");
+  await navigate("overview");
 
   // Hypervisor decision prompts are global and time-sensitive (see the
   // section above) — poll independently of navigation, starting

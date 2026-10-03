@@ -235,97 +235,6 @@ fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn dashboard_executable() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let mut candidates = Vec::new();
-
-    if let Ok(path) = std::env::var("GITRUN_DASHBOARD_BINARY") {
-        if !path.trim().is_empty() {
-            candidates.push(PathBuf::from(path));
-        }
-    }
-
-    if let Ok(current) = std::env::current_exe() {
-        if let Some(parent) = current.parent() {
-            candidates.push(parent.join(if cfg!(windows) {
-                "gitrun-dashboard-tauri.exe"
-            } else {
-                "gitrun-dashboard-tauri"
-            }));
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        candidates.push(PathBuf::from("/usr/bin/gitrun-dashboard-tauri"));
-        candidates.push(PathBuf::from("/usr/local/bin/gitrun-dashboard-tauri"));
-    }
-
-    #[cfg(windows)]
-    {
-        candidates.push(PathBuf::from(
-            r"C:\Program Files\GitRun\gitrun-dashboard-tauri.exe",
-        ));
-    }
-
-    candidates.push(PathBuf::from(if cfg!(windows) {
-        "gitrun-dashboard-tauri.exe"
-    } else {
-        "gitrun-dashboard-tauri"
-    }));
-
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .ok_or_else(|| {
-            "GitRun Tauri dashboard executable was not found; install the graphical dashboard or set GITRUN_DASHBOARD_BINARY".into()
-        })
-}
-
-fn recovery_executable() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(path) = std::env::var("GITRUN_RECOVERY_BINARY") {
-        if !path.trim().is_empty() {
-            candidates.push(PathBuf::from(path));
-        }
-    }
-    if let Ok(current) = std::env::current_exe() {
-        if let Some(parent) = current.parent() {
-            candidates.push(parent.join(if cfg!(windows) {
-                "gitrun-recovery.exe"
-            } else {
-                "gitrun-recovery"
-            }));
-        }
-    }
-    #[cfg(unix)]
-    candidates.push(PathBuf::from("/usr/local/bin/gitrun-recovery"));
-    #[cfg(windows)]
-    candidates.push(PathBuf::from(
-        r"C:\Program Files\GitRun\gitrun-recovery.exe",
-    ));
-    candidates.into_iter().find(|path| path.is_file())
-}
-
-fn dashboard_command() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(recovery) = recovery_executable() {
-        let status = std::process::Command::new(recovery)
-            .args(["start", "dashboard"])
-            .status()?;
-        if status.success() {
-            return Ok(());
-        }
-        return Err(format!("GitRun Recovery exited with status {status}").into());
-    }
-
-    let executable = dashboard_executable()?;
-    let status = std::process::Command::new(executable).status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("GitRun dashboard exited with status {status}").into())
-    }
-}
-
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")
@@ -849,11 +758,10 @@ fn main() {
             manifest_url,
             only_containers,
         } => run_update(manifest_url.as_deref(), only_containers),
-        Command::Scheduler => {
-            gitrun_scheduler::run();
-            0
-        }
+        Command::Scheduler => run_scheduler(),
         Command::Dashboard => run_dashboard(),
+        Command::RecoveryGtuu => run_recovery_gtuu(),
+        Command::RepairService => run_repair_service(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),
         Command::Rollback { backup_path } => run_rollback(&backup_path),
     };
@@ -915,6 +823,12 @@ enum Command {
     Scheduler,
     /// Launch the GitRun dashboard (default when no command is given).
     Dashboard,
+    /// Internal recovery command used by the protected recovery UI.
+    #[command(name = "--recovery-gtuu", hide = true)]
+    RecoveryGtuu,
+    /// Internal recovery command used for privileged systemd repair.
+    #[command(name = "--repair-service", hide = true)]
+    RepairService,
     /// Internal: run the elevated installation step (invoked by the setup wizard).
     #[command(name = "--install-root", hide = true)]
     InstallRoot {
@@ -1035,11 +949,120 @@ fn run_update(manifest_url: Option<&str>, only_containers: bool) -> i32 {
     }
 }
 
+fn reexec_self(args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let error = std::process::Command::new(executable).args(args).exec();
+        Err(error.into())
+    }
+    #[cfg(not(unix))]
+    {
+        let status = std::process::Command::new(executable).args(args).status()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+fn report_critical_startup(report: &gitrun_recovery::RecoveryReport) {
+    eprintln!("GitRun Recovery: startup blocked by a critical issue.");
+    for issue in &report.issues {
+        if issue.severity == gitrun_recovery::Severity::Critical {
+            eprintln!("  {}: {}", issue.title, issue.detail);
+        }
+    }
+}
+
 fn run_dashboard() -> i32 {
-    match dashboard_command() {
+    match gitrun_recovery::startup(gitrun_recovery::StartupTarget::Dashboard) {
+        Ok(report) if report.update.applied => match reexec_self(&["dashboard"]) {
+            Ok(()) => 1,
+            Err(error) => {
+                eprintln!("GitRun dashboard: unable to restart after update: {error}");
+                1
+            }
+        },
+        Ok(report) if report.has_critical() => {
+            report_critical_startup(&report);
+            if std::env::var_os("DISPLAY").is_some()
+                || std::env::var_os("WAYLAND_DISPLAY").is_some()
+            {
+                gitrun_recovery::ui::run();
+                0
+            } else {
+                eprintln!("GitRun Recovery UI is unavailable without a graphical session.");
+                1
+            }
+        }
+        Ok(_) => {
+            if let Err(error) = gitrun_recovery::mark_startup_healthy() {
+                eprintln!("GitRun: unable to persist startup health: {error}");
+            }
+            gitrun_dashboard_tauri::run();
+            0
+        }
+        Err(error) => {
+            eprintln!("GitRun dashboard: recovery preflight failed: {error}");
+            1
+        }
+    }
+}
+
+fn run_scheduler() -> i32 {
+    match gitrun_recovery::startup(gitrun_recovery::StartupTarget::Scheduler) {
+        Ok(report) if report.update.applied => match reexec_self(&["scheduler"]) {
+            Ok(()) => 1,
+            Err(error) => {
+                eprintln!("GitRun scheduler: unable to restart after update: {error}");
+                1
+            }
+        },
+        Ok(report) if report.has_critical() => {
+            report_critical_startup(&report);
+            1
+        }
+        Ok(_) => {
+            if let Err(error) = gitrun_recovery::mark_startup_healthy() {
+                eprintln!("GitRun: unable to persist startup health: {error}");
+            }
+            gitrun_scheduler::run();
+            0
+        }
+        Err(error) => {
+            eprintln!("GitRun scheduler: recovery preflight failed: {error}");
+            1
+        }
+    }
+}
+
+fn run_recovery_gtuu() -> i32 {
+    match gitrun_recovery::run_gtuu() {
+        Ok(report) => {
+            if let Some(error) = report.gitrun_update_error {
+                eprintln!("GitRun GTUU: FAIL — {error}");
+                1
+            } else if let Some(error) = report.runner_image_error {
+                eprintln!("GitRun GTUU runner image: FAIL — {error}");
+                1
+            } else if let Some(error) = report.containers_error {
+                eprintln!("GitRun GTUU containers: FAIL — {error}");
+                1
+            } else {
+                0
+            }
+        }
+        Err(error) => {
+            eprintln!("GitRun GTUU: FAIL — {error}");
+            1
+        }
+    }
+}
+
+fn run_repair_service() -> i32 {
+    match gitrun_recovery::repair_service_unit() {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("GitRun dashboard: FAIL — {error}");
+            eprintln!("GitRun service repair: FAIL — {error}");
             1
         }
     }

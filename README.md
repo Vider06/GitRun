@@ -1,8 +1,14 @@
 # GitRun
 
+[![CI](https://github.com/Vider06/GitRun/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Vider06/GitRun/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Vider06/GitRun)](https://github.com/Vider06/GitRun/releases)
+[![License](https://img.shields.io/github/license/Vider06/GitRun)](LICENSE)
+
 GitRun is a self-contained Rust control plane for Docker-based GitHub Actions self-hosted runners.
 
 It is designed for administrators running their own repositories on a small private server. GitRun handles runner lifecycle, autoscaling, health checks, GitHub authentication, recovery, updates and host integration without Kubernetes.
+
+> **Security boundary:** GitRun-managed runners should receive the host Docker socket only when Docker-backed CI compatibility has been explicitly enabled for the relevant repository/customer. A workflow running with that socket can potentially control the Docker host. Connect only repositories whose workflow code you trust; see [SECURITY.md](SECURITY.md).
 
 ## Features
 
@@ -283,3 +289,7 @@ GitRun's runtime control plane is Rust-native. The graphical dashboard is the Ta
 
 See [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).
 <!-- CI trigger: keep PR validation attached to the current merge base. (no-op validation trigger) -->\n<!-- CI trigger: verify repository-variable runner and artifact configuration. -->
+
+## License
+
+GitRun is distributed under the MIT License.

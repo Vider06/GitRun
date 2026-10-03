@@ -195,11 +195,18 @@ jobs:
           install -m 0644 README.md "$deb_root/usr/share/doc/gitrun/README.md"
           install -m 0644 config/config.example.env "$deb_root/usr/share/doc/gitrun/config.example.env"
           install -m 0644 packaging/gitrun.desktop "$deb_root/usr/share/applications/gitrun.desktop"
-          install -D -m 0644 assets/gitrun-icon-32.png "$deb_root/usr/share/icons/hicolor/32x32/apps/gitrun.png"
-          install -D -m 0644 assets/gitrun-icon-64.png "$deb_root/usr/share/icons/hicolor/64x64/apps/gitrun.png"
-          install -D -m 0644 assets/gitrun-icon-128.png "$deb_root/usr/share/icons/hicolor/128x128/apps/gitrun.png"
-          install -D -m 0644 assets/gitrun-icon-256.png "$deb_root/usr/share/icons/hicolor/256x256/apps/gitrun.png"
-          install -D -m 0644 assets/gitrun-icon-512.png "$deb_root/usr/share/icons/hicolor/512x512/apps/gitrun.png"
+          for spec in \
+            "32:32" \
+            "64:64" \
+            "128:128" \
+            "256:256" \
+            "512:512"; do
+            size="${spec%%:*}"
+            input="assets/gitrun-icon-${size}.png"
+            output="$deb_root/usr/share/icons/hicolor/${size}x${size}/apps/gitrun.png"
+            mkdir -p "$(dirname "$output")"
+            convert "$input" -alpha on -define png:color-type=6 "PNG32:$output"
+          done
           dpkg-deb --build --root-owner-group "$deb_root" "$root/$deb" >/dev/null
 
           deb_sha="$(sha256sum "$root/$deb" | awk '{print $1}')"

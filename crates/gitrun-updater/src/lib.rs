@@ -670,7 +670,7 @@ pub fn apply_installed_update(
         return Err(UpdateError::RolledBack(error.to_string()));
     }
 
-    fs::remove_dir_all(&staging)?;
+    let _ = fs::remove_dir_all(&staging);
     let backup_json = (|| -> Result<(), UpdateError> {
         let bytes = serde_json::to_vec_pretty(&record)?;
         fs::write(backup_dir.join("backup.json"), bytes)?;
@@ -1488,10 +1488,11 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
             }
         }
     }
-    for (name, path) in [
+    let optional = [
         ("config", paths.config_dir.as_deref()),
         ("service-config", paths.service_config.as_deref()),
-    ] {
+    ];
+    for (name, path) in optional {
         if let Some(path) = path {
             if paths_overlap(path, &paths.backup_root)
                 || paths_overlap(path, &paths.install_dir)
@@ -1501,6 +1502,20 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
                     "{name} update path overlaps a managed update path"
                 )));
             }
+            if let Ok(metadata) = fs::symlink_metadata(path) {
+                if metadata.file_type().is_symlink() {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "{name} update path must not be a symlink"
+                    )));
+                }
+            }
+        }
+    }
+    if let (Some(config), Some(service)) = (paths.config_dir.as_deref(), paths.service_config.as_deref()) {
+        if paths_overlap(config, service) {
+            return Err(UpdateError::InvalidManifest(
+                "config and service-config update paths overlap".into(),
+            ));
         }
     }
     Ok(())

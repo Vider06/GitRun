@@ -264,21 +264,19 @@ impl Vault {
     }
 
     fn decrypt_entry(&self, name: &str, entry: &StoredSecret) -> Result<String> {
-        let nonce_bytes = base64_decode(&entry.nonce)
-            .ok_or_else(|| {
-                self.events.on_decryption_failure(name);
-                VaultError::DecryptionFailed(name.to_owned())
-            })?;
+        let nonce_bytes = base64_decode(&entry.nonce).ok_or_else(|| {
+            self.events.on_decryption_failure(name);
+            VaultError::DecryptionFailed(name.to_owned())
+        })?;
         if nonce_bytes.len() != NONCE_LEN {
             self.events.on_decryption_failure(name);
             return Err(VaultError::DecryptionFailed(name.to_owned()));
         }
 
-        let ciphertext = base64_decode(&entry.ciphertext)
-            .ok_or_else(|| {
-                self.events.on_decryption_failure(name);
-                VaultError::DecryptionFailed(name.to_owned())
-            })?;
+        let ciphertext = base64_decode(&entry.ciphertext).ok_or_else(|| {
+            self.events.on_decryption_failure(name);
+            VaultError::DecryptionFailed(name.to_owned())
+        })?;
         let nonce = Nonce::from_slice(&nonce_bytes);
         let plaintext = self
             .cipher

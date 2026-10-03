@@ -9,7 +9,8 @@ ARG DOCKER_GPG_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
 ARG POWERSHELL_VERSION=7.5.9
 ARG POWERSHELL_SHA256=492FF26BB958336BF61E597CE19E07648B4003BD2A08659E02F0E3E0446EBFE0
 
-# Build the GSR shell agent with a pinned Rust toolchain.
+# Build the GSR shell agent with a pinned Rust toolchain. BuildKit cache mounts
+# are persisted explicitly by the CI cache-dance step.
 FROM rust:1.98.1-bookworm@sha256:9a73a5088750b4c95158ab26629c854c3d6fc4b173cb7bc8079ad252d8ed7bfa AS gsr-builder
 
 WORKDIR /usr/src/gitrun
@@ -17,9 +18,9 @@ WORKDIR /usr/src/gitrun
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN --mount=type=cache,id=gitrun-runner-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=gitrun-runner-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=gitrun-runner-target,target=/usr/src/gitrun/target,sharing=locked \
+RUN --mount=type=cache,id=gitrun-runner-cargo-registry-v11,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=gitrun-runner-cargo-git-v11,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=gitrun-runner-target-v11,target=/usr/src/gitrun/target,sharing=locked \
     cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
     && cp /usr/src/gitrun/target/release/gitrun-gsr-agent /usr/src/gitrun/gitrun-gsr-agent \
     && strip --strip-unneeded /usr/src/gitrun/gitrun-gsr-agent \

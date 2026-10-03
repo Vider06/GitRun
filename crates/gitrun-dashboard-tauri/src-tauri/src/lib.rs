@@ -28,9 +28,7 @@ fn load_config() -> Result<Config, String> {
 fn configured_config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
         let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
+        return path.is_file().then_some(path);
     }
 
     [
@@ -44,6 +42,45 @@ fn configured_config_path() -> Option<PathBuf> {
 #[tauri::command]
 fn is_first_run() -> bool {
     configured_config_path().is_none()
+}
+
+fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+
+    let canonical = path.canonicalize().ok()?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let metadata = std::fs::symlink_metadata(&canonical).ok()?;
+        if metadata.uid() != 0
+            || metadata.permissions().mode() & 0o222 != 0
+            || metadata.permissions().mode() & 0o111 == 0
+        {
+            return None;
+        }
+
+        let mut current = canonical.parent();
+        while let Some(directory) = current {
+            let metadata = std::fs::symlink_metadata(directory).ok()?;
+            if !metadata.is_dir()
+                || metadata.uid() != 0
+                || metadata.permissions().mode() & 0o222 != 0
+            {
+                return None;
+            }
+            if directory == std::path::Path::new("/") {
+                break;
+            }
+            current = directory.parent();
+        }
+    }
+
+    Some(canonical)
 }
 
 fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
@@ -78,7 +115,81 @@ fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
         candidates.push(PathBuf::from(r"C:\Program Files\GitRun\gitrun.exe"));
     }
 
-    candidates.into_iter().find(|path| path.is_file())
+    candidates
+        .into_iter()
+        .find_map(|path| trusted_privileged_binary(&path))
+}
+
+fn pkexec_path() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        [PathBuf::from("/usr/bin/pkexec"), PathBuf::from("/bin/pkexec")]
+            .into_iter()
+            .find_map(|path| trusted_privileged_binary(&path))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn valid_setup_repository(value: &str) -> bool {
+    let Some((owner, repository)) = value.split_once('/') else {
+        return false;
+    };
+    !owner.is_empty()
+        && !repository.is_empty()
+        && owner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        && repository
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
+fn process_has_name(pid: u32, expected_name: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        return std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .map(|name| name.trim() == expected_name)
+            .unwrap_or(false);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (pid, expected_name);
+        false
+    }
+}
+
+fn process_name_running(expected_name: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return false;
+        };
+        entries.filter_map(Result::ok).any(|entry| {
+            let name = entry.file_name();
+            let Some(pid) = name.to_str().and_then(|value| value.parse::<u32>().ok()) else {
+                return false;
+            };
+            process_has_name(pid, expected_name)
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = expected_name;
+        false
+    }
+}
+
+fn recent_event_cutoff() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().saturating_sub(24 * 60 * 60))
+        .unwrap_or(0)
 }
 
 fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
@@ -198,6 +309,9 @@ fn run_first_setup(
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical first-run setup currently targets Linux x86_64".into());
     }
+    if configured_config_path().is_some() {
+        return Err("GitRun is already configured; graphical first-run setup is only available before initial setup".into());
+    }
 
     let auth = build_first_setup_auth(
         &auth_mode,
@@ -213,31 +327,13 @@ fn run_first_setup(
         .filter(|repo| !repo.is_empty())
         .collect::<Vec<_>>();
 
-    if repositories.is_empty()
-        || repositories.iter().any(|repo| {
-            let mut parts = repo.split('/');
-            let owner = parts.next().unwrap_or_default();
-            let name = parts.next().unwrap_or_default();
-            repo.contains('\n')
-                || repo.contains('\r')
-                || owner.is_empty()
-                || name.is_empty()
-                || parts.next().is_some()
-        })
-    {
+    if repositories.is_empty() || repositories.iter().any(|repo| !valid_setup_repository(repo)) {
         return Err("Enter at least one repository as owner/repository".into());
     }
 
-    if std::process::Command::new("pkexec")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        return Err(
-            "pkexec is required for the graphical first-run setup. Run GitRun from a desktop Linux session with PolicyKit enabled."
-                .into(),
-        );
-    }
+    let pkexec = pkexec_path().ok_or(
+        "trusted pkexec was not found at a root-owned, non-writable system path; graphical setup cannot safely continue",
+    )?;
 
     let cli = dashboard_cli_path(&app).ok_or(
         "GitRun CLI executable was not found; install gitrun alongside the dashboard before running graphical setup",
@@ -269,7 +365,7 @@ fn run_first_setup(
     );
     write_setup_request(&path, &payload)?;
 
-    let result = std::process::Command::new("pkexec")
+    let result = std::process::Command::new(&pkexec)
         .arg(&cli)
         .arg("--install-root")
         .arg(&path)
@@ -317,17 +413,18 @@ pub struct OverviewData {
 fn get_overview() -> Result<OverviewData, String> {
     let config = load_config()?;
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
+    let cutoff = recent_event_cutoff();
     let recent_critical_events = gitrun_gsr::events::read_all(&events_path)
         .map(|events| {
             events
                 .iter()
-                .filter(|e| e.severity == gitrun_gsr::Severity::Critical)
+                .filter(|e| {
+                    e.severity == gitrun_gsr::Severity::Critical && e.timestamp >= cutoff
+                })
                 .count() as u32
         })
         .unwrap_or(0);
-    let gsr_watching = PathBuf::from(&config.state_dir)
-        .join("gitrun-autoscaler.pid")
-        .exists();
+    let gsr_watching = process_name_running("gitrun-gsr");
 
     Ok(OverviewData {
         repositories: config.repositories.clone(),
@@ -355,6 +452,9 @@ pub struct RepoDetail {
 #[tauri::command]
 fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     let config = load_config()?;
+    if !config.repositories.iter().any(|configured| configured == &repo) {
+        return Err(format!("repository is not configured in GitRun: {repo}"));
+    }
     let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
     let all_rules =
         gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
@@ -471,9 +571,11 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
     let pid_file = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid");
     let watched_pid = std::fs::read_to_string(&pid_file)
         .ok()
-        .and_then(|s| s.trim().parse().ok());
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|pid| process_has_name(*pid, "gitrun-autoscaler"));
+
     Ok(GsrStatus {
-        watching: pid_file.exists(),
+        watching: process_name_running("gitrun-gsr"),
         watched_pid,
     })
 }
@@ -517,7 +619,8 @@ fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
     let already_installed = std::process::Command::new("zizmor")
         .arg("--version")
         .output()
-        .is_ok();
+        .map(|output| output.status.success())
+        .unwrap_or(false);
     Ok(ZizmorDashboardInfo {
         info: gitrun_core::zizmor_info(),
         license_accepted: config.gsr_zizmor_license_accepted,
@@ -540,8 +643,26 @@ fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
 fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, String> {
     let mut config = load_config()?;
     config.gsr_zizmor_license_accepted = true;
-    config.gsr_zizmor_enabled = true;
+
+    let outcome = match gitrun_core::ensure_zizmor_installed() {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            config.gsr_zizmor_enabled = false;
+            persist_zizmor_config(&config)?;
+            return Err(error.to_string());
+        }
+    };
+
+    config.gsr_zizmor_enabled = matches!(
+        outcome,
+        gitrun_core::InstallOutcome::AlreadyInstalled | gitrun_core::InstallOutcome::Installed
+    );
     config.validate().map_err(|e| e.to_string())?;
+    persist_zizmor_config(&config)?;
+    Ok(outcome)
+}
+
+fn persist_zizmor_config(config: &Config) -> Result<(), String> {
     let path = match std::env::var("GITRUN_CONFIG_FILE") {
         Ok(path) => PathBuf::from(path),
         Err(_) => {
@@ -550,8 +671,7 @@ fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, St
             )
         }
     };
-    gitrun_setup::update_env_file(&path, &config).map_err(|e| e.to_string())?;
-    gitrun_core::ensure_zizmor_installed().map_err(|e| e.to_string())
+    gitrun_setup::update_env_file(&path, config).map_err(|e| e.to_string())
 }
 
 /// Turns the zizmor integration back off. Deliberately does NOT clear
@@ -602,36 +722,19 @@ fn save_logic_rules(
 #[tauri::command]
 fn list_vm_configs() -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
     let config = load_config()?;
-    let path = PathBuf::from(&config.state_dir).join("vm-configs.json");
-    match std::fs::read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.to_string()),
-    }
+    gitrun_scheduler::vm::load_vm_configs(std::path::Path::new(&config.state_dir))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), String> {
     let config = load_config()?;
-    let path = PathBuf::from(&config.state_dir).join("vm-configs.json");
-    let mut all: Vec<gitrun_scheduler::vm::VmConfig> = match std::fs::read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string())?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(error.to_string()),
-    };
-    all.retain(|vm| vm.name != config_entry.name);
+    let state_dir = std::path::Path::new(&config.state_dir);
+    let mut all =
+        gitrun_scheduler::vm::load_vm_configs(state_dir).map_err(|e| e.to_string())?;
+    all.retain(|vm| !vm.name.eq_ignore_ascii_case(&config_entry.name));
     all.push(config_entry);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(
-        &tmp,
-        serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-    Ok(())
+    gitrun_scheduler::vm::save_vm_configs(state_dir, &all).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------

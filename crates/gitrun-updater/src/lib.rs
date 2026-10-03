@@ -599,36 +599,50 @@ pub fn apply_installed_update(
     let staging = backup_dir.join("staging");
     let mut backups = Vec::with_capacity(artifacts.len());
 
-    for artifact in artifacts {
-        let backup = if artifact.destination.is_file() {
-            let name = artifact
-                .destination
-                .file_name()
-                .and_then(|v| v.to_str())
-                .unwrap_or("artifact");
-            let path = backup_dir.join(format!("artifact-{name}"));
-            fs::copy(&artifact.destination, &path)?;
-            Some(path)
-        } else {
-            None
-        };
-        backups.push(InstalledArtifactBackup {
-            archive_name: artifact.archive_name.clone(),
-            destination: artifact.destination.clone(),
-            backup,
-        });
+    let backup_result = (|| -> Result<(), UpdateError> {
+        for artifact in artifacts {
+            let backup = if artifact.destination.is_file() {
+                let name = artifact
+                    .destination
+                    .file_name()
+                    .and_then(|v| v.to_str())
+                    .unwrap_or("artifact");
+                let path = backup_dir.join(format!("artifact-{name}"));
+                fs::copy(&artifact.destination, &path)?;
+                Some(path)
+            } else {
+                None
+            };
+            backups.push(InstalledArtifactBackup {
+                archive_name: artifact.archive_name.clone(),
+                destination: artifact.destination.clone(),
+                backup,
+            });
+        }
+
+        if let Ok(meta) = fs::symlink_metadata(version_file) {
+            if meta.is_dir() {
+                return Err(UpdateError::Command(format!(
+                    "version file path is a directory: {}",
+                    version_file.display()
+                )));
+            }
+        }
+
+        if version_file.is_file() {
+            let path = backup_dir.join("version.txt");
+            fs::copy(version_file, &path)?;
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = backup_result {
+        let _ = fs::remove_dir_all(&backup_dir);
+        return Err(error);
     }
 
-    if version_file.is_dir() {
-        return Err(UpdateError::Command(format!(
-            "version file path is a directory: {}",
-            version_file.display()
-        )));
-    }
     let version_file_backup = if version_file.is_file() {
-        let path = backup_dir.join("version.txt");
-        fs::copy(version_file, &path)?;
-        Some(path)
+        Some(backup_dir.join("version.txt"))
     } else {
         None
     };

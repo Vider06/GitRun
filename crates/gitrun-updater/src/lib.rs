@@ -38,6 +38,22 @@ pub struct RunnerImage {
     pub minimum_version: String,
 }
 
+impl RunnerImage {
+    pub fn validate(&self) -> Result<(), UpdateError> {
+        if self.reference.trim().is_empty()
+            || self.reference.contains(['\r', '\n'])
+            || self.reference.chars().any(char::is_whitespace)
+            || !is_sha256_digest(&self.digest)
+            || !is_version(&self.minimum_version)
+        {
+            return Err(UpdateError::InvalidManifest(
+                "invalid runner image metadata".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReleaseManifest {
     pub name: String,
@@ -144,14 +160,10 @@ impl ReleaseManifest {
             }
         }
         if let Some(image) = &self.runner_image {
-            if image.reference.is_empty()
-                || !is_sha256_digest(&image.digest)
-                || image.minimum_version.is_empty()
-            {
-                return Err(UpdateError::InvalidManifest(
-                    "invalid runner image metadata".into(),
-                ));
-            }
+            image.validate()?;
+        }
+        if let Some(repository) = &self.repository {
+            validate_repository(repository)?;
         }
         Ok(())
     }
@@ -171,44 +183,53 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateEr
 }
 
 pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
-    let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
+    validate_https_url(url)?;
+    let client = http_client()?;
     let manifest: ReleaseManifest = client.get(url).send()?.error_for_status()?.json()?;
     manifest.validate()?;
     Ok(manifest)
 }
 
 pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError> {
+    validate_repository(repository)?;
     let repo = repository.trim_end_matches('/');
     let api = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
-    match client.get(&api).send().and_then(|r| r.error_for_status()) {
-        Ok(response) => {
-            let release: serde_json::Value = response.json()?;
-            let tag = release
-                .get("tag_name")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    UpdateError::InvalidManifest("GitHub release has no tag_name".into())
-                })?;
-            fetch_manifest(&format!(
-                "https://github.com/{repo}/releases/download/{tag}/release-manifest.json"
+    let client = http_client()?;
+    let response = client.get(&api).send()?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        let version = client
+            .get(format!(
+                "https://raw.githubusercontent.com/{repo}/main/version.txt"
             ))
+            .send()?
+            .error_for_status()?
+            .text()?
+            .trim()
+            .to_owned();
+        if !is_version(&version) {
+            return Err(UpdateError::InvalidManifest(
+                "fallback version.txt contains an invalid version".into(),
+            ));
         }
-        Err(_) => {
-            let version = client
-                .get(format!(
-                    "https://raw.githubusercontent.com/{repo}/main/version.txt"
-                ))
-                .send()?
-                .error_for_status()?
-                .text()?
-                .trim()
-                .to_owned();
-            fetch_manifest(&format!(
-                "https://github.com/{repo}/releases/download/{version}/release-manifest.json"
-            ))
-        }
+        return fetch_manifest(&format!(
+            "https://github.com/{repo}/releases/download/{version}/release-manifest.json"
+        ));
     }
+
+    let response = response.error_for_status()?;
+    let release: serde_json::Value = response.json()?;
+    let tag = release
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .filter(|value| is_version(value))
+        .ok_or_else(|| {
+            UpdateError::InvalidManifest("GitHub release has no valid tag_name".into())
+        })?;
+
+    fetch_manifest(&format!(
+        "https://github.com/{repo}/releases/download/{tag}/release-manifest.json"
+    ))
 }
 
 pub fn stage_update(
@@ -301,27 +322,54 @@ pub fn download_and_verify(
     expected_sha256: &str,
     destination: impl AsRef<Path>,
 ) -> Result<(), UpdateError> {
-    let client = Client::builder().user_agent("GitRun-Updater/0.3").build()?;
-    let mut response = client.get(url).send()?.error_for_status()?;
-    let mut file = fs::File::create(destination)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read = response.read(&mut buffer)?;
-        if read == 0 {
-            break;
+    validate_https_url(url)?;
+    if !is_sha256(expected_sha256) {
+        return Err(UpdateError::InvalidManifest(
+            "expected SHA-256 must be 64 hexadecimal characters".into(),
+        ));
+    }
+
+    let destination = destination.as_ref();
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let temp = temporary_sibling(destination, ".gitrun-download");
+
+    let result = (|| -> Result<(), UpdateError> {
+        let mut response = http_client()?.get(url).send()?.error_for_status()?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 64 * 1024];
+
+        loop {
+            let read = response.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            file.write_all(&buffer[..read])?;
         }
-        hasher.update(&buffer[..read]);
-        file.write_all(&buffer[..read])?;
+        file.sync_all()?;
+        drop(file);
+
+        let actual = format!("{:x}", hasher.finalize());
+        if actual != expected_sha256.to_ascii_lowercase() {
+            return Err(UpdateError::ChecksumMismatch {
+                expected: expected_sha256.to_ascii_lowercase(),
+                actual,
+            });
+        }
+
+        replace_temp_file(&temp, destination)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
     }
-    let actual = format!("{:x}", hasher.finalize());
-    if actual != expected_sha256.to_ascii_lowercase() {
-        return Err(UpdateError::ChecksumMismatch {
-            expected: expected_sha256.into(),
-            actual,
-        });
-    }
-    Ok(())
+    result
 }
 
 pub fn apply_update(
@@ -331,12 +379,23 @@ pub fn apply_update(
     version: &str,
     health_check: bool,
 ) -> Result<BackupRecord, UpdateError> {
+    validate_update_paths(paths)?;
+    if !is_version(version) {
+        return Err(UpdateError::InvalidManifest(format!(
+            "invalid update version: {version}"
+        )));
+    }
+
+    let _lock = UpdateLock::acquire(&paths.backup_root)?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
-    let backup_dir = paths.backup_root.join(format!("{version}-{timestamp}"));
+        .as_nanos();
+    let backup_dir = paths
+        .backup_root
+        .join(format!("{version}-{timestamp}"));
     fs::create_dir_all(&backup_dir)?;
+
     let install_backup = backup_dir.join("install");
     let state_backup = backup_dir.join("state");
     let config_backup = paths.config_dir.as_ref().map(|_| backup_dir.join("config"));
@@ -345,46 +404,55 @@ pub fn apply_update(
         .as_ref()
         .map(|_| backup_dir.join("service-config"));
 
-    if paths.install_dir.exists() {
-        fs::rename(&paths.install_dir, &install_backup)?;
-    }
-    if paths.state_dir.exists() {
-        copy_dir(&paths.state_dir, &state_backup)?;
-    }
-    if let Some(config_dir) = &paths.config_dir {
-        if config_dir.exists() {
-            copy_dir(
-                config_dir,
-                config_backup.as_ref().expect("config backup path"),
-            )?;
+    let backup_result = (|| -> Result<(), UpdateError> {
+        if paths.state_dir.exists() {
+            copy_dir(&paths.state_dir, &state_backup)?;
         }
-    }
-    if let Some(service_config) = &paths.service_config {
-        if service_config.is_file() {
-            if let Some(parent) = service_config_backup
-                .as_ref()
-                .and_then(|path| path.parent())
-            {
-                fs::create_dir_all(parent)?;
+        if let Some(config_dir) = &paths.config_dir {
+            if config_dir.exists() {
+                copy_dir(
+                    config_dir,
+                    config_backup.as_ref().expect("config backup path"),
+                )?;
             }
-            fs::copy(
-                service_config,
-                service_config_backup
-                    .as_ref()
-                    .expect("service config backup path"),
-            )?;
-        } else if service_config.is_dir() {
-            copy_dir(
-                service_config,
-                service_config_backup
-                    .as_ref()
-                    .expect("service config backup path"),
-            )?;
         }
+        if let Some(service_config) = &paths.service_config {
+            if service_config.is_file() {
+                if let Some(parent) = service_config_backup
+                    .as_ref()
+                    .and_then(|path| path.parent())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(
+                    service_config,
+                    service_config_backup
+                        .as_ref()
+                        .expect("service config backup path"),
+                )?;
+            } else if service_config.is_dir() {
+                copy_dir(
+                    service_config,
+                    service_config_backup
+                        .as_ref()
+                        .expect("service config backup path"),
+                )?;
+            }
+        }
+
+        if paths.install_dir.exists() {
+            fs::rename(&paths.install_dir, &install_backup)?;
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = backup_result {
+        let _ = fs::remove_dir_all(&backup_dir);
+        return Err(error);
     }
 
     let staging = backup_dir.join("staging");
-    if let Err(error) = extract_archive(archive.as_ref(), target, &staging)
+    let result = extract_archive(archive.as_ref(), target, &staging)
         .and_then(|_| atomic_install(&staging, &paths.install_dir))
         .and_then(|_| {
             if health_check {
@@ -392,28 +460,36 @@ pub fn apply_update(
             } else {
                 Ok(())
             }
-        })
-    {
-        rollback_install(
+        });
+
+    if let Err(error) = result {
+        if let Err(rollback_error) = rollback_install(
             paths,
             &install_backup,
-            &state_backup,
+            if state_backup.exists() {
+                Some(state_backup.as_path())
+            } else {
+                None
+            },
             config_backup.as_deref(),
             paths.service_config.as_deref(),
             service_config_backup.as_deref(),
-        )?;
+            true,
+        ) {
+            return Err(UpdateError::RolledBack(format!(
+                "{error}; rollback also failed: {rollback_error}"
+            )));
+        }
         return Err(UpdateError::RolledBack(error.to_string()));
     }
 
     let record = BackupRecord {
-        created_at: timestamp,
+        created_at: timestamp as u64,
         version: version.into(),
         install_backup,
-        state_backup: if state_backup.exists() {
-            Some(state_backup)
-        } else {
-            None
-        },
+        state_backup: state_backup
+            .exists()
+            .then_some(state_backup),
         config_backup,
         service_config_backup,
     };
@@ -425,16 +501,16 @@ pub fn apply_update(
 }
 
 pub fn rollback(paths: &UpdatePaths, backup: &BackupRecord) -> Result<(), UpdateError> {
+    validate_update_paths(paths)?;
+    let _lock = UpdateLock::acquire(&paths.backup_root)?;
     rollback_install(
         paths,
         &backup.install_backup,
-        backup
-            .state_backup
-            .as_deref()
-            .unwrap_or_else(|| Path::new("")),
+        backup.state_backup.as_deref(),
         backup.config_backup.as_deref(),
         paths.service_config.as_deref(),
         backup.service_config_backup.as_deref(),
+        false,
     )
 }
 
@@ -477,10 +553,12 @@ pub fn apply_installed_update(
             "invalid update version: {version}"
         )));
     }
+    validate_installed_artifacts(artifacts, version_file)?;
+    let _lock = UpdateLock::acquire(backup_root)?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
+        .as_nanos();
     let backup_dir = backup_root.join(format!("system-{version}-{timestamp}"));
     fs::create_dir_all(&backup_dir)?;
     let staging = backup_dir.join("staging");
@@ -506,6 +584,12 @@ pub fn apply_installed_update(
         });
     }
 
+    if version_file.is_dir() {
+        return Err(UpdateError::Command(format!(
+            "version file path is a directory: {}",
+            version_file.display()
+        )));
+    }
     let version_file_backup = if version_file.is_file() {
         let path = backup_dir.join("version.txt");
         fs::copy(version_file, &path)?;
@@ -561,6 +645,12 @@ pub fn apply_installed_update(
 
 pub fn rollback_installed_update(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
     for artifact in &record.artifacts {
+        if artifact.destination.is_dir() {
+            return Err(UpdateError::Command(format!(
+                "installed artifact destination is a directory: {}",
+                artifact.destination.display()
+            )));
+        }
         if artifact.destination.exists() {
             fs::remove_file(&artifact.destination)?;
         }
@@ -570,19 +660,23 @@ pub fn rollback_installed_update(record: &InstalledBackupRecord) -> Result<(), U
                 .parent()
                 .ok_or_else(|| UpdateError::Command("installed artifact has no parent".into()))?;
             fs::create_dir_all(parent)?;
-            fs::copy(backup, &artifact.destination)?;
-            set_file_mode(&artifact.destination, 0o755)?;
+            atomic_replace_installed_file(backup, &artifact.destination, 0o755)?;
         }
     }
     if record.version_file.exists() {
+        if record.version_file.is_dir() {
+            return Err(UpdateError::Command(format!(
+                "version file path is a directory: {}",
+                record.version_file.display()
+            )));
+        }
         fs::remove_file(&record.version_file)?;
     }
     if let Some(backup) = &record.version_file_backup {
         if let Some(parent) = record.version_file.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::copy(backup, &record.version_file)?;
-        set_file_mode(&record.version_file, 0o644)?;
+        atomic_write_installed_file(&record.version_file, &fs::read(backup)?, 0o644)?;
     }
     Ok(())
 }
@@ -617,31 +711,37 @@ fn atomic_replace_installed_file(
     destination: &Path,
     mode: u32,
 ) -> Result<(), UpdateError> {
+    if fs::symlink_metadata(source)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(UpdateError::InvalidManifest(format!(
+            "staged artifact is a symlink: {}",
+            source.display()
+        )));
+    }
     let parent = destination
         .parent()
         .ok_or_else(|| UpdateError::Command("installed artifact has no parent".into()))?;
     fs::create_dir_all(parent)?;
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temp = parent.join(format!(
-        ".gitrun-update-{}.{}.tmp",
-        std::process::id(),
-        nonce
-    ));
-    fs::copy(source, &temp)?;
-    set_file_mode(&temp, mode)?;
-    fs::OpenOptions::new().read(true).open(&temp)?.sync_all()?;
-    #[cfg(windows)]
-    if destination.exists() {
-        fs::remove_file(destination)?;
-    }
-    fs::rename(&temp, destination).map_err(|error| {
+    let temp = temporary_sibling(destination, ".gitrun-update");
+    let result = (|| -> Result<(), UpdateError> {
+        let mut input = fs::File::open(source)?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        set_file_mode(&temp, mode)?;
+        drop(output);
+        replace_temp_file(&temp, destination)?;
+        Ok(())
+    })();
+    if result.is_err() {
         let _ = fs::remove_file(&temp);
-        UpdateError::Io(error)
-    })?;
-    Ok(())
+    }
+    result
 }
 
 fn atomic_write_installed_file(
@@ -649,37 +749,27 @@ fn atomic_write_installed_file(
     content: &[u8],
     mode: u32,
 ) -> Result<(), UpdateError> {
-    let parent = destination
-        .parent()
-        .ok_or_else(|| UpdateError::Command("installed file has no parent".into()))?;
-    fs::create_dir_all(parent)?;
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temp = parent.join(format!(
-        ".gitrun-update-{}.{}.tmp",
-        std::process::id(),
-        nonce
-    ));
-    {
-        let mut file = fs::OpenOptions::new()
+    let temp = temporary_sibling(destination, ".gitrun-update");
+    let result = (|| -> Result<(), UpdateError> {
+        let parent = destination
+            .parent()
+            .ok_or_else(|| UpdateError::Command("installed file has no parent".into()))?;
+        fs::create_dir_all(parent)?;
+        let mut output = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temp)?;
-        file.write_all(content)?;
-        file.sync_all()?;
-    }
-    set_file_mode(&temp, mode)?;
-    #[cfg(windows)]
-    if destination.exists() {
-        fs::remove_file(destination)?;
-    }
-    fs::rename(&temp, destination).map_err(|error| {
+        output.write_all(content)?;
+        output.sync_all()?;
+        set_file_mode(&temp, mode)?;
+        drop(output);
+        replace_temp_file(&temp, destination)?;
+        Ok(())
+    })();
+    if result.is_err() {
         let _ = fs::remove_file(&temp);
-        UpdateError::Io(error)
-    })?;
-    Ok(())
+    }
+    result
 }
 
 fn set_file_mode(path: &Path, mode: u32) -> Result<(), UpdateError> {
@@ -699,6 +789,7 @@ pub fn pin_runner_image(
     config_file: impl AsRef<Path>,
     image: &RunnerImage,
 ) -> Result<(), UpdateError> {
+    image.validate()?;
     let path = config_file.as_ref();
     let content = fs::read_to_string(path)?;
     let mut found = false;
@@ -714,13 +805,18 @@ pub fn pin_runner_image(
     if !found {
         lines.push(format!("GITRUN_RUNNER_IMAGE={}", image.reference));
     }
-    let mut output = lines.join("\n");
-    output.push('\n');
-    fs::write(path, output)?;
+    let mut output = lines.join("
+");
+    output.push('
+');
+
+    let mode = existing_file_mode(path, 0o644);
+    atomic_write_installed_file(path, output.as_bytes(), mode)?;
     Ok(())
 }
 
 pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
+    image.validate()?;
     let inspect = Command::new("docker")
         .args([
             "image",
@@ -891,7 +987,8 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
 }
 
 pub fn dependency_status(name: &str, minimum_version: &str) -> DependencyStatus {
-    let installed = command_version(name);
+    let installed = dependency_command(name)
+        .and_then(command_version);
     let compatible = installed
         .as_deref()
         .map(|v| {
@@ -910,6 +1007,27 @@ pub fn dependency_status(name: &str, minimum_version: &str) -> DependencyStatus 
         } else {
             "update".into()
         },
+    }
+}
+
+fn dependency_command(name: &str) -> Option<&'static str> {
+    let normalized = name.trim();
+    match std::env::consts::OS {
+        "linux" | "macos" => match normalized {
+            "Git" | "git" => Some("git"),
+            "Docker" | "docker" => Some("docker"),
+            "Node.js" | "node" => Some("node"),
+            "Python" | "python3" => Some("python3"),
+            _ => None,
+        },
+        "windows" => match normalized {
+            "Git" | "git" => Some("git"),
+            "Docker" | "docker" => Some("docker"),
+            "Node.js" | "node" => Some("node"),
+            "Python" | "python3" | "python" => Some("python"),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -942,60 +1060,172 @@ fn extract_version(text: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn compare_versions(a: &str, b: &str) -> Result<std::cmp::Ordering, UpdateError> {
-    let parse = |v: &str| {
-        v.trim_start_matches('v')
-            .split('.')
-            .take(3)
-            .map(|part| {
-                part.parse::<u64>()
-                    .map_err(|_| UpdateError::InvalidManifest(format!("invalid version: {v}")))
-            })
-            .collect::<Result<Vec<_>, _>>()
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VersionIdentifier {
+    Numeric(u64),
+    AlphaNumeric(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedVersion {
+    core: [u64; 3],
+    prerelease: Vec<VersionIdentifier>,
+}
+
+fn parse_version(value: &str) -> Result<ParsedVersion, UpdateError> {
+    let value = value.trim();
+    let value = value.strip_prefix('v').unwrap_or(value);
+    if value.is_empty() {
+        return Err(UpdateError::InvalidManifest("invalid version: empty".into()));
+    }
+
+    let (without_build, _) = value
+        .split_once('+')
+        .map_or((value, None), |(base, build)| (base, Some(build)));
+
+    if let Some((_, build)) = value.split_once('+') {
+        if build.is_empty()
+            || build
+                .split('.')
+                .any(|part| part.is_empty()
+                    || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        {
+            return Err(UpdateError::InvalidManifest(format!(
+                "invalid version: {value}"
+            )));
+        }
+    }
+
+    let (core_text, prerelease_text) = match without_build.split_once('-') {
+        Some((core, prerelease)) => (core, Some(prerelease)),
+        None => (without_build, None),
     };
-    let av = parse(a)?;
-    let bv = parse(b)?;
-    Ok(av.cmp(&bv))
+
+    let core_parts: Vec<&str> = core_text.split('.').collect();
+    if core_parts.len() != 3 {
+        return Err(UpdateError::InvalidManifest(format!(
+            "invalid version: {value}"
+        )));
+    }
+
+    let mut core = [0u64; 3];
+    for (index, part) in core_parts.into_iter().enumerate() {
+        if part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()) {
+            return Err(UpdateError::InvalidManifest(format!(
+                "invalid version: {value}"
+            )));
+        }
+        if part.len() > 1 && part.starts_with('0') {
+            return Err(UpdateError::InvalidManifest(format!(
+                "invalid version: {value}"
+            )));
+        }
+        core[index] = part.parse::<u64>().map_err(|_| {
+            UpdateError::InvalidManifest(format!("invalid version: {value}"))
+        })?;
+    }
+
+    let prerelease = prerelease_text
+        .map(|text| {
+            if text.is_empty() {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "invalid version: {value}"
+                )));
+            }
+            text.split('.')
+                .map(|part| {
+                    if part.is_empty()
+                        || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                    {
+                        return Err(UpdateError::InvalidManifest(format!(
+                            "invalid version: {value}"
+                        )));
+                    }
+                    if part.chars().all(|c| c.is_ascii_digit()) {
+                        if part.len() > 1 && part.starts_with('0') {
+                            return Err(UpdateError::InvalidManifest(format!(
+                                "invalid version: {value}"
+                            )));
+                        }
+                        Ok(VersionIdentifier::Numeric(part.parse::<u64>().map_err(
+                            |_| {
+                                UpdateError::InvalidManifest(format!(
+                                    "invalid version: {value}"
+                                ))
+                            },
+                        )?))
+                    } else {
+                        Ok(VersionIdentifier::AlphaNumeric(part.to_ascii_lowercase()))
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(ParsedVersion { core, prerelease })
+}
+
+fn compare_versions(a: &str, b: &str) -> Result<std::cmp::Ordering, UpdateError> {
+    let av = parse_version(a)?;
+    let bv = parse_version(b)?;
+    let core_cmp = av.core.cmp(&bv.core);
+    if core_cmp != std::cmp::Ordering::Equal {
+        return Ok(core_cmp);
+    }
+
+    match (av.prerelease.is_empty(), bv.prerelease.is_empty()) {
+        (true, false) => return Ok(std::cmp::Ordering::Greater),
+        (false, true) => return Ok(std::cmp::Ordering::Less),
+        _ => {}
+    }
+
+    for (left, right) in av.prerelease.iter().zip(bv.prerelease.iter()) {
+        let cmp = match (left, right) {
+            (VersionIdentifier::Numeric(a), VersionIdentifier::Numeric(b)) => a.cmp(b),
+            (VersionIdentifier::Numeric(_), VersionIdentifier::AlphaNumeric(_)) => {
+                std::cmp::Ordering::Less
+            }
+            (VersionIdentifier::AlphaNumeric(_), VersionIdentifier::Numeric(_)) => {
+                std::cmp::Ordering::Greater
+            }
+            (VersionIdentifier::AlphaNumeric(a), VersionIdentifier::AlphaNumeric(b)) => a.cmp(b),
+        };
+        if cmp != std::cmp::Ordering::Equal {
+            return Ok(cmp);
+        }
+    }
+
+    Ok(av.prerelease.len().cmp(&bv.prerelease.len()))
 }
 
 fn is_version(value: &str) -> bool {
-    let trimmed = value.trim_start_matches('v');
-    let base = trimmed.split(['-', '+']).next().unwrap_or(trimmed);
-    base.split('.').count() == 3
-        && base
-            .split('.')
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    parse_version(value).is_ok()
 }
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
-}
-fn is_sha256_digest(value: &str) -> bool {
-    value.starts_with("sha256:")
-        && value.len() == 71
-        && value[7..].chars().all(|c| c.is_ascii_hexdigit())
-}
-
 fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<(), UpdateError> {
     fs::create_dir_all(destination)?;
     let name = archive
         .file_name()
         .and_then(|v| v.to_str())
         .unwrap_or_default();
+
     if name.ends_with(".tar.gz") {
         let decoder = flate2::read::GzDecoder::new(fs::File::open(archive)?);
         let mut archive = tar::Archive::new(decoder);
         for entry in archive.entries()? {
             let mut entry = entry?;
-            let path = entry.path()?.into_owned();
-            if path
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
+            let kind = entry.header().entry_type();
+            if kind.is_symlink()
+                || kind.is_hard_link()
+                || kind.is_character_special()
+                || kind.is_block_special()
+                || kind.is_fifo()
             {
                 return Err(UpdateError::InvalidManifest(
-                    "archive contains path traversal".into(),
+                    "archive contains links or special filesystem entries".into(),
                 ));
             }
-            entry.unpack(destination)?;
+            entry.unpack_in(destination)?;
         }
     } else if name.ends_with(".zip") {
         let file = fs::File::open(archive)?;
@@ -1017,7 +1247,12 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                 if let Some(parent) = out.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                io::copy(&mut entry, &mut fs::File::create(&out)?)?;
+                let mut output = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&out)?;
+                io::copy(&mut entry, &mut output)?;
+                output.sync_all()?;
             }
         }
     } else {
@@ -1042,64 +1277,326 @@ fn atomic_install(staging: &Path, install_dir: &Path) -> Result<(), UpdateError>
 fn rollback_install(
     paths: &UpdatePaths,
     install_backup: &Path,
-    state_backup: &Path,
+    state_backup: Option<&Path>,
     config_backup: Option<&Path>,
     service_config: Option<&Path>,
     service_config_backup: Option<&Path>,
+    remove_current_without_backup: bool,
 ) -> Result<(), UpdateError> {
-    if paths.install_dir.exists() {
-        fs::remove_dir_all(&paths.install_dir)?;
-    }
     if install_backup.exists() {
+        remove_path(&paths.install_dir)?;
         fs::rename(install_backup, &paths.install_dir)?;
+    } else if remove_current_without_backup && paths.install_dir.exists() {
+        remove_path(&paths.install_dir)?;
     }
-    if paths.state_dir.exists() {
-        fs::remove_dir_all(&paths.state_dir)?;
+
+    match state_backup {
+        Some(backup) if backup.exists() => {
+            remove_path(&paths.state_dir)?;
+            copy_dir(backup, &paths.state_dir)?;
+        }
+        Some(_) if remove_current_without_backup && paths.state_dir.exists() => {
+            remove_path(&paths.state_dir)?;
+        }
+        _ => {}
     }
-    if state_backup.exists() {
-        copy_dir(state_backup, &paths.state_dir)?;
-    }
+
     if let (Some(config), Some(backup)) = (&paths.config_dir, config_backup) {
-        if config.exists() {
-            fs::remove_dir_all(config)?;
-        }
         if backup.exists() {
+            remove_path(config)?;
             copy_dir(backup, config)?;
+        } else if remove_current_without_backup && config.exists() {
+            remove_path(config)?;
         }
     }
+
     if let (Some(service), Some(backup)) = (service_config, service_config_backup) {
-        if service.exists() {
-            if service.is_dir() {
-                fs::remove_dir_all(service)?;
-            } else {
-                fs::remove_file(service)?;
+        if backup.exists() {
+            remove_path(service)?;
+            if backup.is_file() {
+                if let Some(parent) = service.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(backup, service)?;
+            } else if backup.is_dir() {
+                copy_dir(backup, service)?;
             }
-        }
-        if backup.is_file() {
-            if let Some(parent) = service.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::copy(backup, service)?;
-        } else if backup.is_dir() {
-            copy_dir(backup, service)?;
+        } else if remove_current_without_backup && service.exists() {
+            remove_path(service)?;
         }
     }
     Ok(())
 }
 
 fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
+    let metadata = fs::symlink_metadata(source)?;
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to copy symlink: {}", source.display()),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("backup source is not a directory: {}", source.display()),
+        ));
+    }
+
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let src = entry.path();
         let dst = destination.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let entry_meta = fs::symlink_metadata(&src)?;
+
+        if entry_meta.file_type().is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("refusing to copy symlink: {}", src.display()),
+            ));
+        }
+
+        if entry_meta.is_dir() {
             copy_dir(&src, &dst)?;
+        } else if entry_meta.is_file() {
+            fs::copy(&src, &dst)?;
+            copy_permissions(&entry_meta, &dst)?;
         } else {
-            fs::copy(src, dst)?;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unsupported filesystem entry in backup: {}", src.display()),
+            ));
+        }
+    }
+    copy_permissions(&metadata, destination)?;
+    Ok(())
+}
+
+fn http_client() -> Result<Client, UpdateError> {
+    Ok(Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(300))
+        .user_agent("GitRun-Updater/0.3")
+        .build()?)
+}
+
+fn validate_https_url(value: &str) -> Result<(), UpdateError> {
+    let url = reqwest::Url::parse(value)
+        .map_err(|_| UpdateError::InvalidManifest(format!("invalid HTTPS URL: {value}")))?;
+    if url.scheme() != "https" {
+        return Err(UpdateError::InvalidManifest(format!(
+            "update URL must use HTTPS: {value}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_repository(repository: &str) -> Result<(), UpdateError> {
+    let trimmed = repository.trim_end_matches('/');
+    let mut parts = trimmed.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    if owner.is_empty()
+        || name.is_empty()
+        || parts.next().is_some()
+        || !owner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(UpdateError::InvalidManifest(format!(
+            "invalid GitHub repository: {repository}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
+    let managed = [
+        ("install", paths.install_dir.as_path()),
+        ("state", paths.state_dir.as_path()),
+        ("backup", paths.backup_root.as_path()),
+    ];
+    for i in 0..managed.len() {
+        for j in (i + 1)..managed.len() {
+            if paths_overlap(managed[i].1, managed[j].1) {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "{} and {} update paths overlap",
+                    managed[i].0, managed[j].0
+                )));
+            }
+        }
+    }
+    for (name, path) in [
+        ("config", paths.config_dir.as_deref()),
+        ("service-config", paths.service_config.as_deref()),
+    ] {
+        if let Some(path) = path {
+            if paths_overlap(path, &paths.backup_root)
+                || paths_overlap(path, &paths.install_dir)
+                || paths_overlap(path, &paths.state_dir)
+            {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "{name} update path overlaps a managed update path"
+                )));
+            }
         }
     }
     Ok(())
+}
+
+fn paths_overlap(a: &Path, b: &Path) -> bool {
+    a == b || a.starts_with(b) || b.starts_with(a)
+}
+
+fn validate_installed_artifacts(
+    artifacts: &[InstalledArtifact],
+    version_file: &Path,
+) -> Result<(), UpdateError> {
+    if artifacts.is_empty() {
+        return Err(UpdateError::InvalidManifest(
+            "installed update requires at least one artifact".into(),
+        ));
+    }
+    for artifact in artifacts {
+        if artifact.archive_name.is_empty()
+            || artifact.archive_name.contains(['/', '\'])
+            || artifact.archive_name == "."
+            || artifact.archive_name == ".."
+        {
+            return Err(UpdateError::InvalidManifest(format!(
+                "invalid installed artifact archive name: {}",
+                artifact.archive_name
+            )));
+        }
+        if artifact.destination.is_dir() {
+            return Err(UpdateError::Command(format!(
+                "installed artifact destination is a directory: {}",
+                artifact.destination.display()
+            )));
+        }
+        if artifact.destination.exists()
+            && fs::symlink_metadata(&artifact.destination)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(false)
+        {
+            return Err(UpdateError::Command(format!(
+                "installed artifact destination is a symlink: {}",
+                artifact.destination.display()
+            )));
+        }
+    }
+    if version_file.exists()
+        && fs::symlink_metadata(version_file)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+    {
+        return Err(UpdateError::Command(format!(
+            "version file is a symlink: {}",
+            version_file.display()
+        )));
+    }
+    Ok(())
+}
+
+fn temporary_sibling(path: &Path, prefix: &str) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("file");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    parent.join(format!("{prefix}-{name}-{}-{nonce}.tmp", std::process::id()))
+}
+
+fn replace_temp_file(temp: &Path, destination: &Path) -> Result<(), UpdateError> {
+    #[cfg(windows)]
+    if destination.exists() {
+        fs::remove_file(destination)?;
+    }
+    fs::rename(temp, destination)?;
+    sync_parent_directory(destination)?;
+    Ok(())
+}
+
+fn sync_parent_directory(path: &Path) -> Result<(), UpdateError> {
+    #[cfg(unix)]
+    {
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+fn existing_file_mode(path: &Path, default_mode: u32) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return fs::metadata(path)
+            .map(|meta| meta.permissions().mode())
+            .unwrap_or(default_mode);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        default_mode
+    }
+}
+
+fn remove_path(path: &Path) -> Result<(), io::Error> {
+    if path.is_dir() && !path.is_symlink() {
+        fs::remove_dir_all(path)
+    } else if path.exists() {
+        fs::remove_file(path)
+    } else {
+        Ok(())
+    }
+}
+
+fn copy_permissions(metadata: &fs::Metadata, destination: &Path) -> Result<(), io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            destination,
+            fs::Permissions::from_mode(metadata.permissions().mode()),
+        )?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (metadata, destination);
+    }
+    Ok(())
+}
+
+struct UpdateLock {
+    path: PathBuf,
+}
+
+impl UpdateLock {
+    fn acquire(root: &Path) -> Result<Self, UpdateError> {
+        fs::create_dir_all(root)?;
+        let path = root.join(".gitrun-update.lock");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        writeln!(file, "pid={}", std::process::id())?;
+        file.sync_all()?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for UpdateLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 fn run_command(command: &mut Command) -> Result<(), UpdateError> {
@@ -1117,6 +1614,7 @@ fn run_command(command: &mut Command) -> Result<(), UpdateError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn manifest() -> ReleaseManifest {
         ReleaseManifest {
             name: "GitRun".into(),
@@ -1139,6 +1637,7 @@ mod tests {
             repository: Some("Vider06/GitRun".into()),
         }
     }
+
     #[test]
     fn rejects_same_or_older_version() {
         assert!(matches!(
@@ -1150,6 +1649,7 @@ mod tests {
             Err(UpdateError::NotNewer)
         ));
     }
+
     #[test]
     fn selects_artifact_and_skips_compatible_dependency() {
         let plan = build_plan(
@@ -1165,11 +1665,13 @@ mod tests {
         );
         assert_eq!(plan.dependencies[0].action, "skip");
     }
+
     #[test]
     fn marks_missing_dependency_for_update() {
         let plan = build_plan(&manifest(), "0.2.0", "x86_64-unknown-linux-gnu", &[]).unwrap();
         assert_eq!(plan.dependencies[0].action, "update");
     }
+
     #[test]
     fn rejects_bad_runner_digest() {
         let mut m = manifest();
@@ -1179,5 +1681,79 @@ mod tests {
             minimum_version: "0.3.0".into(),
         });
         assert!(m.validate().is_err());
+    }
+
+    #[test]
+    fn version_comparison_supports_prerelease_and_rejects_truncation() {
+        assert_eq!(
+            compare_versions("1.2.3-alpha", "1.2.3").unwrap(),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("1.2.3", "1.2.3-alpha").unwrap(),
+            std::cmp::Ordering::Greater
+        );
+        assert!(compare_versions("1.2.3.4", "1.2.3").is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_runner_reference() {
+        let mut m = manifest();
+        m.runner_image = Some(RunnerImage {
+            reference: "ghcr.io/vider06/image\nGITRUN_INJECTED=1".into(),
+            digest: "sha256:".to_owned() + &"a".repeat(64),
+            minimum_version: "0.3.0".into(),
+        });
+        assert!(m.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_http_artifact_url() {
+        let mut m = manifest();
+        m.artifacts[0].download_url = Some("http://example.invalid/a".into());
+        assert!(build_plan(&m, "0.2.0", "x86_64-unknown-linux-gnu", &[]).is_err());
+    }
+
+    #[test]
+    fn dependency_status_does_not_execute_arbitrary_commands() {
+        let status = dependency_status("sh -c 'echo pwned'", "0.0.0");
+        assert!(status.installed_version.is_none());
+        assert_eq!(status.action, "update");
+    }
+
+    #[test]
+    fn rejects_overlapping_update_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-test-{}",
+            std::process::id()
+        ));
+        let paths = UpdatePaths {
+            install_dir: root.join("install"),
+            state_dir: root.join("state"),
+            config_dir: None,
+            service_config: None,
+            backup_root: root.join("install/backups"),
+        };
+        assert!(validate_update_paths(&paths).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_dir_rejects_symlinks() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-symlink-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("source")).unwrap();
+        fs::create_dir_all(root.join("outside")).unwrap();
+        fs::write(root.join("outside/data"), b"x").unwrap();
+        symlink(root.join("outside/data"), root.join("source/link")).unwrap();
+
+        let result = copy_dir(&root.join("source"), &root.join("dest"));
+        assert!(result.is_err());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

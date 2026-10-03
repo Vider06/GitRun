@@ -2,8 +2,8 @@ name: GitRun CI
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline map (needs):
-#    environment                      (independent runner check)
-#    detect ─┬─ ci-selftest · repository · workflows · shell · python · powershell
+#    variables-verification ─► environment
+#                            └► detect ─┬─ ci-selftest · repository · workflows · shell · python · powershell
 #            ├─ frontend ─┬─ audit-node
 #            │            └──────────────┐
 #            ├─ rust-lint ─────────────── tauri
@@ -66,9 +66,65 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # ─────────────────────────────────────────────── variables verification ──
+  variables-verification:
+    name: Repository CI variables
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+    runs-on: ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'self-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Verify repository variables
+        env:
+          GITRUN_CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE }}
+          GITRUN_CI_CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR }}
+          GITRUN_CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE }}
+          GITRUN_CI_UPLOAD_ARTIFACTS: ${{ vars.GITRUN_CI_UPLOAD_ARTIFACTS }}
+          GITRUN_RUNNER_MODE: ${{ vars.GITRUN_RUNNER_MODE }}
+          GITRUN_CI_FULL_RUN: ${{ vars.GITRUN_CI_FULL_RUN }}
+          GITRUN_CI_GC_DRY_RUN: ${{ vars.GITRUN_CI_GC_DRY_RUN }}
+        run: |
+          set -euo pipefail
+          echo "### Repository CI variables"
+          echo
+          echo "| Variable | Current repository value |"
+          echo "|---|---|"
+          for name in \
+            GITRUN_CI_FRESH_CACHE \
+            GITRUN_CI_CACHE_SAVE_PR \
+            GITRUN_CI_VERBOSE \
+            GITRUN_CI_UPLOAD_ARTIFACTS \
+            GITRUN_RUNNER_MODE \
+            GITRUN_CI_FULL_RUN \
+            GITRUN_CI_GC_DRY_RUN
+          do
+            value="${!name:-<unset>}"
+            printf '| `%s` | `%s` |\n' "$name" "$value"
+          done
+
+          {
+            echo "### Repository CI variables"
+            echo
+            echo "| Variable | Current repository value |"
+            echo "|---|---|"
+            for name in \
+              GITRUN_CI_FRESH_CACHE \
+              GITRUN_CI_CACHE_SAVE_PR \
+              GITRUN_CI_VERBOSE \
+              GITRUN_CI_UPLOAD_ARTIFACTS \
+              GITRUN_RUNNER_MODE \
+              GITRUN_CI_FULL_RUN \
+              GITRUN_CI_GC_DRY_RUN
+            do
+              value="${!name:-<unset>}"
+              printf '| `%s` | `%s` |\n' "$name" "$value"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
   # ───────────────────────────────────────────────────────── environment ──
   environment:
     name: Runner environment
+    needs: variables-verification
     if: &trusted ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: &runner ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'self-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
@@ -778,6 +834,7 @@ jobs:
   # ───────────────────────────────────────────────────────────── detect ──
   detect:
     name: Detect project components
+    needs: variables-verification
     if: *trusted
     runs-on: *runner
     timeout-minutes: 60

@@ -25,7 +25,7 @@ on:
       verbose:
         description: Verbose logging (environment dump, RUST_BACKTRACE=full)
         type: boolean
-        default: false
+        default: true
       full_run:
         description: Ignore the docs-only shortcut and run every job
         type: boolean
@@ -37,7 +37,7 @@ on:
       no_artifacts:
         description: Skip all artifact uploads for this run
         type: boolean
-        default: false
+        default: true
       gc_dry_run:
         description: Cache GC only reports what it would delete
         type: boolean

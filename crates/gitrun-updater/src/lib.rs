@@ -1835,6 +1835,34 @@ mod tests {
     }
 
     #[test]
+    fn extracts_zip_archive() {
+        let root =
+            std::env::temp_dir().join(format!("gitrun-updater-zip-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let archive_path = root.join("update.zip");
+        let destination = root.join("destination");
+
+        let file = fs::File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("bin/gitrun", options).unwrap();
+        writer.write_all(b"gitrun-test").unwrap();
+        writer.finish().unwrap();
+
+        extract_archive(&archive_path, "x86_64-unknown-linux-gnu", &destination).unwrap();
+
+        assert_eq!(
+            fs::read(destination.join("bin/gitrun")).unwrap(),
+            b"gitrun-test"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn rejects_overlapping_update_paths() {
         let root = std::env::temp_dir().join(format!("gitrun-updater-test-{}", std::process::id()));
         let paths = UpdatePaths {

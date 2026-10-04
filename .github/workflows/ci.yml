@@ -1994,14 +1994,14 @@ jobs:
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-mounts-v11-
       - name: Inject manager BuildKit cache mounts
-        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        uses: ./.github/actions/buildkit-cache-dance # v3.4.0
         with:
           builder: gitrun-ci
           cache-dir: .gitrun-ci/docker-cache/manager
           dockerfile: docker/manager-rs/Dockerfile
           skip-extraction: ${{ steps.c_dmounts.outputs.cache-hit == 'true' }}
       - name: Inject runner BuildKit cache mounts
-        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        uses: ./.github/actions/buildkit-cache-dance # v3.4.0
         with:
           builder: gitrun-ci
           cache-dir: .gitrun-ci/docker-cache/runner

@@ -978,7 +978,7 @@ jobs:
         if: needs.detect.outputs.rust == 'true'
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          ci_run "cargo metadata --locked --format-version 1 --no-deps" cargo metadata --locked --format-version 1 --no-deps
+          ci_run "cargo tree --workspace --locked --depth 0" cargo tree --workspace --locked --depth 0
       - *report
       - *logs
 

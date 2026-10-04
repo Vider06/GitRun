@@ -958,7 +958,7 @@ jobs:
           rustc -vV
           cargo --version
       - name: Validate locked dependency graph
-        if: needs.cargo-lock.outputs.rust == 'true'
+        if: needs.detect.outputs.rust == 'true'
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           ci_run "cargo check --workspace --locked" cargo check --workspace --locked

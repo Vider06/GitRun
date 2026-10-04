@@ -997,7 +997,6 @@ jobs:
           out="$(printf '%s\n' '{"reason":"compiler-message","message":{"rendered":"error: x\n","level":"error","message":"unneeded return, 50% sure","code":{"code":"clippy::needless_return"},"spans":[{"file_name":"'"$ws"'/crates/b/src/main.rs","is_primary":true,"line_start":7,"line_end":7,"column_start":5,"column_end":12}]}}' | ci_cargo_json)"
           expect "cargo json → annotation with relative path" '::error file=crates/b/src/main.rs,line=7,col=5' "$out"
           expect "cargo json → % escaped" '50%25 sure' "$out"
-
           out="$(printf 'Diff in %s/src/lib.rs:12:\n' "$ws" | ci_awk_fmt)"
           expect "rustfmt diff → annotation" '::error file=src/lib.rs,line=12,title=rustfmt' "$out"
 
@@ -1997,8 +1996,7 @@ jobs:
           ci_cache_note docker-tools "$PRIMARY" "$MATCHED" "$RUNNER_TOOL_CACHE/gitrun-tools/docker-cli"
           base=https://github.com
           case "$(ci_arch)" in
-            x64)
-              dk=x86_64
+            x64)              dk=x86_64
               compose_url="$base/docker/compose/releases/download/v5.5.1/docker-compose-linux-x86_64"
               compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576
               buildx_url="$base/docker/buildx/releases/download/v0.37.1/buildx-v0.37.1.linux-amd64"
@@ -2198,7 +2196,7 @@ jobs:
           docker|Docker|docker|
           JOBS
 
-          detect_ok=false; if [ "$(res cargo-lock)" = success ]; then detect_ok=true; fi
+          detect_ok=false; if [ "$(res detect)" = success ]; then detect_ok=true; fi
           declare -A STATE LABEL SECS CACHE DEPS WHY
           order=(); nfail=0; ncancel=0; nok=0; nblocked=0; nna=0
           while IFS='|' read -r id label flag extra; do
@@ -2206,7 +2204,7 @@ jobs:
             order+=("$id"); LABEL[$id]="$label"
             r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"
             case "$id" in environment|detect|cargo-lock) DEPS[$id]="–" ;; *) DEPS[$id]="cargo-lock${extra:+, ${extra// /, }}" ;; esac
-            if [ "$flag" = always ] || [ "$detect_ok" != true ] || [ "$(out cargo-lock "$flag")" = true ]; then en=1; else en=0; fi
+            if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; }; then en=1; else en=0; fi
             case "$r" in
               success) STATE[$id]=ok; nok=$((nok + 1)) ;;
               failure) STATE[$id]=fail; nfail=$((nfail + 1)) ;;
@@ -2215,7 +2213,9 @@ jobs:
                 if [ "$en" = 0 ]; then STATE[$id]=na; nna=$((nna + 1))
                 else
                   why=""
-                  for b in $([ "$id" = environment ] || [ "$id" = detect ] || echo detect) $extra; do
+                  blockers=""
+                  if [ "$id" != environment ] && [ "$id" != detect ] && [ "$id" != cargo-lock ]; then blockers="detect cargo-lock $extra"; fi
+                  for b in $blockers; do
                     if [ "$(res "$b")" != success ]; then why="$why$b "; fi
                   done
                   if [ -n "$why" ]; then STATE[$id]=blocked; WHY[$id]="${why% }"; nblocked=$((nblocked + 1))
@@ -2279,7 +2279,7 @@ jobs:
                 echo "</details>"
                 echo
               done
-              if [ "$detect_ok" != true ]; then echo "> ⚠️ Component detection did not succeed, so every job is treated as expected."; echo; fi
+              if [ "$detect_ok" != true ]; then echo "> ⚠️ Component detection did not succeed, so applicability could not be determined reliably."; echo; fi
             fi
           } > "$R"
           ci_sum < "$R"

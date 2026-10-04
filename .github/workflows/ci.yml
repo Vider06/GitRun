@@ -944,16 +944,22 @@ jobs:
     steps:
       - *checkout
       - *boot
+      - name: Configure Rust environment
+        if: needs.detect.outputs.rust == 'true'
+        run: |
+          root="$GITHUB_WORKSPACE/.gitrun-ci"
+          mkdir -p "$root/cargo" "$root/rustup" "$RUNNER_TEMP/tmp"
+          {
+            echo "CARGO_HOME=$root/cargo"
+            echo "RUSTUP_HOME=$root/rustup"
+            echo "TMPDIR=$RUNNER_TEMP/tmp"
+            echo "RUSTUP_TOOLCHAIN=$RUST_VERSION"
+          } >> "$GITHUB_ENV"
+          echo "$root/cargo/bin" >> "$GITHUB_PATH"
       - name: Install Rust toolchain
         if: needs.detect.outputs.rust == 'true'
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          root="$GITHUB_WORKSPACE/.gitrun-ci"
-          mkdir -p "$root/cargo" "$root/rustup" "$RUNNER_TEMP/tmp"
-          export CARGO_HOME="$root/cargo"
-          export RUSTUP_HOME="$root/rustup"
-          export TMPDIR="$RUNNER_TEMP/tmp"
-          export RUSTUP_TOOLCHAIN="$RUST_VERSION"
           export PATH="$CARGO_HOME/bin:$PATH"
           if ! command -v rustup >/dev/null 2>&1; then
             ci_run "download rustup-init" ci_download https://sh.rustup.rs "$RUNNER_TEMP/rustup-init.sh"
@@ -965,6 +971,7 @@ jobs:
           for c in "${comps[@]}"; do if [ -n "$c" ]; then args+=(-c "$c"); fi; done
           ci_run "rustup toolchain install $RUST_VERSION" rustup toolchain install "$RUST_VERSION" "${args[@]}"
           rustup default "$RUST_VERSION" > /dev/null
+          if ls rust-toolchain rust-toolchain.toml >/dev/null 2>&1; then ci_note "rust-toolchain file found: RUSTUP_TOOLCHAIN=$RUST_VERSION overrides it in CI"; fi
           rustc -vV
           cargo --version
       - name: Validate locked dependency graph

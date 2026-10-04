@@ -43,9 +43,9 @@
 //! backdoor); back it up if the vault holds anything that isn't otherwise
 //! recoverable.
 
-use aes_gcm::aead::{Aead, KeyInit, OsRng};
+use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
-use rand::RngCore;
+use rand::{rngs::SysRng, TryRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -94,6 +94,8 @@ pub enum VaultError {
     EmptyName,
     #[error("secret identifier contains a reserved control character")]
     InvalidIdentifier,
+    #[error("cryptographic randomness unavailable: {0}")]
+    Randomness(#[from] rand::rngs::SysError),
 }
 
 pub type Result<T> = std::result::Result<T, VaultError>;
@@ -111,6 +113,14 @@ pub trait VaultEventSink: Send + Sync {
     /// it can mean an attacker modified the vault's storage file on disk.
     fn on_decryption_failure(&self, secret_name: &str) {
         let _ = secret_name;
+    }
+
+    /// Called when the OS cryptographic random source fails while generating
+    /// material required for vault encryption. This is a security-critical
+    /// condition: the operation must fail rather than fall back to weaker
+    /// randomness.
+    fn on_randomness_failure(&self, operation: &str) {
+        let _ = operation;
     }
 }
 
@@ -181,7 +191,7 @@ impl Vault {
     ) -> Result<Self> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
-        let key_bytes = load_or_create_master_key(&dir)?;
+        let key_bytes = load_or_create_master_key(&dir, events.as_ref())?;
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key_bytes));
 
         let secrets_path = dir.join(SECRETS_FILE);
@@ -223,7 +233,11 @@ impl Vault {
         validate_name(name)?;
         validate_scope(&scope)?;
         let mut nonce_bytes = [0u8; NONCE_LEN];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        let mut rng = SysRng;
+        if let Err(error) = rng.try_fill_bytes(&mut nonce_bytes) {
+            self.events.on_randomness_failure("generating an AES-GCM nonce");
+            return Err(VaultError::from(error));
+        }
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = self
@@ -463,7 +477,7 @@ fn set_secret_file_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn load_or_create_master_key(dir: &Path) -> Result<[u8; 32]> {
+fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<[u8; 32]> {
     let path = dir.join(MASTER_KEY_FILE);
     match fs::read(&path) {
         Ok(bytes) => {
@@ -476,7 +490,11 @@ fn load_or_create_master_key(dir: &Path) -> Result<[u8; 32]> {
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut key = [0u8; 32];
-            OsRng.fill_bytes(&mut key);
+            let mut rng = SysRng;
+            if let Err(error) = rng.try_fill_bytes(&mut key) {
+                events.on_randomness_failure("generating the vault master key");
+                return Err(VaultError::from(error));
+            }
             write_master_key(&path, &key)?;
             Ok(key)
         }

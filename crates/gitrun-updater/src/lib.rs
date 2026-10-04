@@ -368,7 +368,8 @@ pub fn download_and_verify(
         file.sync_all()?;
         drop(file);
 
-        let actual = format!("{:x}", hasher.finalize());
+        let digest = hasher.finalize();
+        let actual = hex_encode(digest.as_ref());
         if actual != expected_sha256.to_ascii_lowercase() {
             return Err(UpdateError::ChecksumMismatch {
                 expected: expected_sha256.to_ascii_lowercase(),
@@ -1261,6 +1262,16 @@ fn is_version(value: &str) -> bool {
 
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn is_sha256_digest(value: &str) -> bool {

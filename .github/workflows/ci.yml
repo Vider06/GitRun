@@ -948,12 +948,22 @@ jobs:
         if: needs.detect.outputs.rust == 'true'
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
+          root="$GITHUB_WORKSPACE/.gitrun-ci"
+          mkdir -p "$root/cargo" "$root/rustup" "$RUNNER_TEMP/tmp"
+          export CARGO_HOME="$root/cargo"
+          export RUSTUP_HOME="$root/rustup"
+          export TMPDIR="$RUNNER_TEMP/tmp"
+          export RUSTUP_TOOLCHAIN="$RUST_VERSION"
+          export PATH="$CARGO_HOME/bin:$PATH"
           if ! command -v rustup >/dev/null 2>&1; then
             ci_run "download rustup-init" ci_download https://sh.rustup.rs "$RUNNER_TEMP/rustup-init.sh"
             export RUSTUP_INIT_SKIP_PATH_CHECK=yes
             ci_run "install rustup" sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none --no-modify-path
           fi
-          ci_run "rustup toolchain install $RUST_VERSION" rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+          args=(--profile minimal --no-self-update)
+          IFS=',' read -ra comps <<<"${RUST_COMPONENTS:-}"
+          for c in "${comps[@]}"; do if [ -n "$c" ]; then args+=(-c "$c"); fi; done
+          ci_run "rustup toolchain install $RUST_VERSION" rustup toolchain install "$RUST_VERSION" "${args[@]}"
           rustup default "$RUST_VERSION" > /dev/null
           rustc -vV
           cargo --version

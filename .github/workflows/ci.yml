@@ -3,10 +3,10 @@ name: GitRun CI
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline map (needs):
 #    variables-verification ─► environment
-#                            └► detect ─┬─ ci-selftest · repository · workflows · shell · python · powershell
+#                            └► detect ─┬─ cargo-lock · ci-selftest · repository · workflows · shell · python · powershell
 #            ├─ frontend ─┬─ audit-node
 #            │            └──────────────┐
-#            ├─ rust-lint ─────────────── tauri
+#            ├─ cargo-lock ─► rust-lint ─────────────── tauri
 #            ├─ rust-test · rust-build · audit-rust
 #            └─ docker
 #    everything ─► summary (PR comment + Mermaid map) ─► cache-gc (push only)
@@ -920,6 +920,36 @@ jobs:
       - *report
       - *logs
 
+  # ───────────────────────────────────────────────────────── cargo-lock ──
+  cargo-lock:
+    name: Validate Cargo.lock
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
+    runs-on: *runner
+    timeout-minutes: 60
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Install Rust toolchain
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          if ! command -v rustup >/dev/null 2>&1; then
+            ci_run "download rustup-init" ci_download https://sh.rustup.rs "$RUNNER_TEMP/rustup-init.sh"
+            export RUSTUP_INIT_SKIP_PATH_CHECK=yes
+            ci_run "install rustup" sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none --no-modify-path
+          fi
+          ci_run "rustup toolchain install $RUST_VERSION" rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+          rustup default "$RUST_VERSION" > /dev/null
+          rustc -vV
+          cargo --version
+      - name: Validate locked dependency graph
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_run "cargo check --workspace --locked" cargo check --workspace --locked
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────────────────── ci-selftest ──
   ci-selftest:
     name: CI helper self-test
@@ -1464,7 +1494,7 @@ jobs:
   # ───────────────────────────────────────────────────────────── rust-lint ──
   rust-lint:
     name: Rust lint (fmt, clippy, docs)
-    needs: detect
+    needs: [detect, cargo-lock]
     if: needs.detect.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -1660,7 +1690,7 @@ jobs:
   # ───────────────────────────────────────────────────────────── rust-test ──
   rust-test:
     name: Rust tests
-    needs: detect
+    needs: [detect, cargo-lock]
     if: needs.detect.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -1695,7 +1725,7 @@ jobs:
   # ──────────────────────────────────────────────────────────── rust-build ──
   rust-build:
     name: Rust release build
-    needs: detect
+    needs: [detect, cargo-lock]
     if: needs.detect.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -1738,7 +1768,7 @@ jobs:
   # ─────────────────────────────────────────────────────────── audit-rust ──
   audit-rust:
     name: Cargo audit and deny
-    needs: detect
+    needs: [detect, cargo-lock]
     if: needs.detect.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -2082,6 +2112,7 @@ jobs:
     needs:
       - environment
       - detect
+      - cargo-lock
       - ci-selftest
       - repository
       - workflows
@@ -2125,6 +2156,7 @@ jobs:
           read -r -d '' JOBLIST <<'JOBS' || true
           environment|Runner environment|always|
           detect|Detect components|always|
+          cargo-lock|Cargo.lock validation|rust|
           ci-selftest|CI self-test|workflows|
           repository|Hygiene and syntax|always|
           workflows|Workflow lint and security|workflows|

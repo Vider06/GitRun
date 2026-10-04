@@ -235,7 +235,8 @@ impl Vault {
         let mut nonce_bytes = [0u8; NONCE_LEN];
         let mut rng = SysRng;
         if let Err(error) = rng.try_fill_bytes(&mut nonce_bytes) {
-            self.events.on_randomness_failure("generating an AES-GCM nonce");
+            self.events
+                .on_randomness_failure("generating an AES-GCM nonce");
             return Err(VaultError::from(error));
         }
         let nonce = Nonce::from_slice(&nonce_bytes);

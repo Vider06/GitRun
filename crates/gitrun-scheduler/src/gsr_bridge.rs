@@ -93,7 +93,9 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].source, "gitvault");
         assert_eq!(events[0].severity, Severity::Critical);
-        assert!(events[0].message.contains("cryptographic randomness unavailable"));
+        assert!(events[0]
+            .message
+            .contains("cryptographic randomness unavailable"));
         assert!(events[0].message.contains("vault master key"));
 
         let _ = std::fs::remove_dir_all(state_dir);

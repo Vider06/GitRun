@@ -291,8 +291,10 @@ impl Vault {
             self.events.on_decryption_failure(name);
             VaultError::DecryptionFailed(name.to_owned())
         })?;
-        let nonce = Nonce::try_from(nonce_bytes.as_slice())
-            .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
+        let nonce = Nonce::try_from(nonce_bytes.as_slice()).map_err(|_| {
+            self.events.on_decryption_failure(name);
+            VaultError::DecryptionFailed(name.to_owned())
+        })?;
         let plaintext = self
             .cipher
             .decrypt(nonce, ciphertext.as_slice())

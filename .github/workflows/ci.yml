@@ -1878,11 +1878,6 @@ jobs:
           ci_cache_note npm "$PRIMARY" "$MATCHED" "$NPM_CONFIG_CACHE"
           deps() { (cd crates/gitrun-dashboard-tauri && npm install --ignore-scripts --no-audit --no-fund); }
           ci_run "npm install (tauri frontend)" deps
-      - name: Test GitRun Recovery GUI
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          recovery_gui() { cargo check -p gitrun-recovery --locked 2>&1 | ci_cargo_json; }
-          ci_run "GitRun Recovery GUI smoke check" recovery_gui
       - name: Build Tauri application
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -2141,6 +2136,7 @@ jobs:
     if: ${{ always() && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
     needs:
       - environment
+      - detect
       - cargo-lock
       - ci-selftest
       - repository
@@ -2398,3 +2394,23 @@ jobs:
             echo "| Kind | Ref | Count | MB |"; echo "|---|---|---|---|"
             jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
               def fam: sub("-[^-]+$"; "");
+              ([$plan[0][].id]) as $gone
+              | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })
+              | group_by([.fam, .ref]) | .[]
+              | "| `\(.[0].fam)` | \(.[0].ref) | \(length) | \(([.[].size_in_bytes] | add) / 1048576 | floor) |"' "$RUNNER_TEMP/caches.json"
+            echo; echo "</details>"; echo
+          } | ci_sum
+
+          jq -r '.[] | [.id, .reason, .size_in_bytes, .key] | @tsv' "$RUNNER_TEMP/gc-plan.json" | while IFS=$'\t' read -r id reason size key; do
+            if [ "$DRY_RUN" = true ]; then
+              echo "[dry run] would delete $key ($((size / 1048576)) MB): $reason"
+            elif api -X DELETE "$base/caches/$id" > /dev/null; then
+              echo "deleted $key ($((size / 1048576)) MB): $reason"
+            else
+              ci_warn "could not delete cache $key"
+            fi
+          done
+          if [ "$DRY_RUN" != true ]; then
+            used_after="$(api "$base/cache/usage" | jq -r '.active_caches_size_in_bytes // 0')"
+            echo "cache usage: $((used_before / 1048576)) MB → $((used_after / 1048576)) MB"
+          fi

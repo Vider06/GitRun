@@ -923,20 +923,20 @@ jobs:
   # ───────────────────────────────────────────────────────── cargo-lock ──
   cargo-lock:
     name: Validate Cargo.lock
-    needs: cargo-lock
+    needs: detect
     if: needs.detect.result == 'success'
     runs-on: *runner
     timeout-minutes: 60
     outputs:
-      rust: ${{ needs.cargo-lock.outputs.rust }}
-      python: ${{ needs.cargo-lock.outputs.python }}
-      docker: ${{ needs.cargo-lock.outputs.docker }}
-      dockerfiles: ${{ needs.cargo-lock.outputs.dockerfiles }}
-      powershell: ${{ needs.cargo-lock.outputs.powershell }}
-      node: ${{ needs.cargo-lock.outputs.node }}
-      tauri: ${{ needs.cargo-lock.outputs.tauri }}
-      shell: ${{ needs.cargo-lock.outputs.shell }}
-      workflows: ${{ needs.cargo-lock.outputs.workflows }}
+      rust: ${{ needs.detect.outputs.rust }}
+      python: ${{ needs.detect.outputs.python }}
+      docker: ${{ needs.detect.outputs.docker }}
+      dockerfiles: ${{ needs.detect.outputs.dockerfiles }}
+      powershell: ${{ needs.detect.outputs.powershell }}
+      node: ${{ needs.detect.outputs.node }}
+      tauri: ${{ needs.detect.outputs.tauri }}
+      shell: ${{ needs.detect.outputs.shell }}
+      workflows: ${{ needs.detect.outputs.workflows }}
       docs_only: ${{ needs.detect.outputs.docs_only }}
       secs: ${{ steps.report.outputs.secs }}
       cache: ${{ steps.report.outputs.cache }}
@@ -945,7 +945,7 @@ jobs:
       - *checkout
       - *boot
       - name: Install Rust toolchain
-        if: needs.cargo-lock.outputs.rust == 'true'
+        if: needs.detect.outputs.rust == 'true'
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           if ! command -v rustup >/dev/null 2>&1; then

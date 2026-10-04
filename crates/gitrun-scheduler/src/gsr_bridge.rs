@@ -29,6 +29,20 @@ impl VaultToGsrBridge {
 }
 
 impl VaultEventSink for VaultToGsrBridge {
+    fn on_randomness_failure(&self, operation: &str) {
+        let event = SecurityEvent::new(
+            "gitvault",
+            Severity::Critical,
+            format!("cryptographic randomness unavailable while {operation}"),
+        );
+        if let Err(error) = gitrun_gsr::events::emit(&self.events_path, &event) {
+            eprintln!(
+                "gitrun-autoscaler: failed to emit GitVault randomness-failure event to {}: {error}",
+                self.events_path.display()
+            );
+        }
+    }
+
     fn on_decryption_failure(&self, secret_name: &str) {
         let event = SecurityEvent::new(
             "gitvault",
@@ -63,6 +77,28 @@ mod tests {
             "gitrun-gsr-bridge-test-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn randomness_failure_is_emitted_as_critical_gsr_event() {
+        let state_dir = temp_state_dir();
+        let state_dir_str = state_dir.to_string_lossy().into_owned();
+        let bridge = VaultToGsrBridge::new(&state_dir_str);
+
+        bridge.on_randomness_failure("generating the vault master key");
+
+        let events_path = gitrun_gsr::events::default_queue_path(&state_dir_str);
+        let events = gitrun_gsr::events::read_all(&events_path).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].source, "gitvault");
+        assert_eq!(events[0].severity, Severity::Critical);
+        assert!(events[0]
+            .message
+            .contains("cryptographic randomness unavailable"));
+        assert!(events[0].message.contains("vault master key"));
+
+        let _ = std::fs::remove_dir_all(state_dir);
     }
 
     #[test]

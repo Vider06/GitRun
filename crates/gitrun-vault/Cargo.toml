@@ -8,7 +8,7 @@ description = "GitVault: encrypted secret storage shared across GitRun runner co
 [dependencies]
 aes-gcm = "0.10"
 base64 = "0.22"
-rand = "0.8"
+rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

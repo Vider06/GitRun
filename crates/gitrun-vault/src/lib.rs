@@ -242,7 +242,7 @@ impl Vault {
 
         let ciphertext = self
             .cipher
-            .encrypt(nonce, value.as_bytes())
+            .encrypt(&nonce, value.as_bytes())
             // aes-gcm encryption failures are not caused by operator-provided
             // secret content; still report them with the correct operation.
             .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
@@ -297,7 +297,7 @@ impl Vault {
         })?;
         let plaintext = self
             .cipher
-            .decrypt(nonce, ciphertext.as_slice())
+            .decrypt(&nonce, ciphertext.as_slice())
             .map_err(|_| {
                 self.events.on_decryption_failure(name);
                 VaultError::DecryptionFailed(name.to_owned())

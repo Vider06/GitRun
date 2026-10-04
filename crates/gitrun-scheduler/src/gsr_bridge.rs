@@ -29,6 +29,20 @@ impl VaultToGsrBridge {
 }
 
 impl VaultEventSink for VaultToGsrBridge {
+    fn on_randomness_failure(&self, operation: &str) {
+        let event = SecurityEvent::new(
+            "gitvault",
+            Severity::Critical,
+            format!("cryptographic randomness unavailable while {operation}"),
+        );
+        if let Err(error) = gitrun_gsr::events::emit(&self.events_path, &event) {
+            eprintln!(
+                "gitrun-autoscaler: failed to emit GitVault randomness-failure event to {}: {error}",
+                self.events_path.display()
+            );
+        }
+    }
+
     fn on_decryption_failure(&self, secret_name: &str) {
         let event = SecurityEvent::new(
             "gitvault",

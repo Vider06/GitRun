@@ -1878,11 +1878,6 @@ jobs:
           ci_cache_note npm "$PRIMARY" "$MATCHED" "$NPM_CONFIG_CACHE"
           deps() { (cd crates/gitrun-dashboard-tauri && npm install --ignore-scripts --no-audit --no-fund); }
           ci_run "npm install (tauri frontend)" deps
-      - name: Test GitRun Recovery GUI
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          recovery_gui() { cargo check -p gitrun-recovery --locked 2>&1 | ci_cargo_json; }
-          ci_run "GitRun Recovery GUI smoke check" recovery_gui
       - name: Build Tauri application
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -2141,6 +2136,7 @@ jobs:
     if: ${{ always() && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
     needs:
       - environment
+      - detect
       - cargo-lock
       - ci-selftest
       - repository

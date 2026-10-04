@@ -3,10 +3,10 @@ name: GitRun CI
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline map (needs):
 #    variables-verification ─► environment
-#                            └► detect ─┬─ ci-selftest · repository · workflows · shell · python · powershell
+#                            └► detect ─┬─ cargo-lock · ci-selftest · repository · workflows · shell · python · powershell
 #            ├─ frontend ─┬─ audit-node
 #            │            └──────────────┐
-#            ├─ rust-lint ─────────────── tauri
+#            ├─ cargo-lock ─► rust-lint ─────────────── tauri
 #            ├─ rust-test · rust-build · audit-rust
 #            └─ docker
 #    everything ─► summary (PR comment + Mermaid map) ─► cache-gc (push only)
@@ -920,11 +920,73 @@ jobs:
       - *report
       - *logs
 
+  # ───────────────────────────────────────────────────────── cargo-lock ──
+  cargo-lock:
+    name: Validate Cargo.lock
+    needs: detect
+    if: needs.detect.result == 'success'
+    runs-on: *runner
+    timeout-minutes: 60
+    outputs:
+      rust: ${{ needs.detect.outputs.rust }}
+      python: ${{ needs.detect.outputs.python }}
+      docker: ${{ needs.detect.outputs.docker }}
+      dockerfiles: ${{ needs.detect.outputs.dockerfiles }}
+      powershell: ${{ needs.detect.outputs.powershell }}
+      node: ${{ needs.detect.outputs.node }}
+      tauri: ${{ needs.detect.outputs.tauri }}
+      shell: ${{ needs.detect.outputs.shell }}
+      workflows: ${{ needs.detect.outputs.workflows }}
+      docs_only: ${{ needs.detect.outputs.docs_only }}
+      secs: ${{ steps.report.outputs.secs }}
+      cache: ${{ steps.report.outputs.cache }}
+      errors: ${{ steps.report.outputs.errors }}
+    steps:
+      - *checkout
+      - *boot
+      - name: Configure Rust environment
+        if: needs.detect.outputs.rust == 'true'
+        run: |
+          root="$GITHUB_WORKSPACE/.gitrun-ci"
+          mkdir -p "$root/cargo" "$root/rustup" "$RUNNER_TEMP/tmp"
+          {
+            echo "CARGO_HOME=$root/cargo"
+            echo "RUSTUP_HOME=$root/rustup"
+            echo "TMPDIR=$RUNNER_TEMP/tmp"
+            echo "RUSTUP_TOOLCHAIN=$RUST_VERSION"
+          } >> "$GITHUB_ENV"
+          echo "$root/cargo/bin" >> "$GITHUB_PATH"
+      - name: Install Rust toolchain
+        if: needs.detect.outputs.rust == 'true'
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          if ! command -v rustup >/dev/null 2>&1; then
+            ci_run "download rustup-init" ci_download https://sh.rustup.rs "$RUNNER_TEMP/rustup-init.sh"
+            export RUSTUP_INIT_SKIP_PATH_CHECK=yes
+            ci_run "install rustup" sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal --default-toolchain none --no-modify-path
+          fi
+          args=(--profile minimal --no-self-update)
+          IFS=',' read -ra comps <<<"${RUST_COMPONENTS:-}"
+          for c in "${comps[@]}"; do if [ -n "$c" ]; then args+=(-c "$c"); fi; done
+          ci_run "rustup toolchain install $RUST_VERSION" rustup toolchain install "$RUST_VERSION" "${args[@]}"
+          rustup default "$RUST_VERSION" > /dev/null
+          if ls rust-toolchain rust-toolchain.toml >/dev/null 2>&1; then ci_note "rust-toolchain file found: RUSTUP_TOOLCHAIN=$RUST_VERSION overrides it in CI"; fi
+          rustc -vV
+          cargo --version
+      - name: Validate locked dependency graph
+        if: needs.detect.outputs.rust == 'true'
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_run "cargo metadata --locked --format-version 1 --no-deps" cargo metadata --locked --format-version 1 --no-deps
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────────────────── ci-selftest ──
   ci-selftest:
     name: CI helper self-test
-    needs: detect
-    if: needs.detect.outputs.workflows == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.workflows == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -942,7 +1004,6 @@ jobs:
           out="$(printf '%s\n' '{"reason":"compiler-message","message":{"rendered":"error: x\n","level":"error","message":"unneeded return, 50% sure","code":{"code":"clippy::needless_return"},"spans":[{"file_name":"'"$ws"'/crates/b/src/main.rs","is_primary":true,"line_start":7,"line_end":7,"column_start":5,"column_end":12}]}}' | ci_cargo_json)"
           expect "cargo json → annotation with relative path" '::error file=crates/b/src/main.rs,line=7,col=5' "$out"
           expect "cargo json → % escaped" '50%25 sure' "$out"
-
           out="$(printf 'Diff in %s/src/lib.rs:12:\n' "$ws" | ci_awk_fmt)"
           expect "rustfmt diff → annotation" '::error file=src/lib.rs,line=12,title=rustfmt' "$out"
 
@@ -987,7 +1048,7 @@ jobs:
   # ───────────────────────────────────────────────────────── repository ──
   repository:
     name: Repository hygiene and syntax
-    needs: detect
+    needs: cargo-lock
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1149,8 +1210,8 @@ jobs:
   # ───────────────────────────────────────────────────────────── workflows ──
   workflows:
     name: Workflow lint and security audit
-    needs: detect
-    if: needs.detect.outputs.workflows == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.workflows == 'true'
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -1202,8 +1263,8 @@ jobs:
   # ───────────────────────────────────────────────────────────────── shell ──
   shell:
     name: Shell validation
-    needs: detect
-    if: needs.detect.outputs.shell == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.shell == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1230,8 +1291,8 @@ jobs:
   # ─────────────────────────────────────────────────────────────── python ──
   python:
     name: Python validation
-    needs: detect
-    if: needs.detect.outputs.python == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.python == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1262,8 +1323,8 @@ jobs:
   # ───────────────────────────────────────────────────────────── powershell ──
   powershell:
     name: PowerShell validation
-    needs: detect
-    if: needs.detect.outputs.powershell == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.powershell == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1324,8 +1385,8 @@ jobs:
   # ────────────────────────────────────────────────────────────── frontend ──
   frontend:
     name: JavaScript, TypeScript and CSS validation
-    needs: detect
-    if: needs.detect.outputs.node == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.node == 'true'
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1426,8 +1487,8 @@ jobs:
   # ───────────────────────────────────────────────────────────── audit-node ──
   audit-node:
     name: npm dependency audit
-    needs: detect
-    if: needs.detect.outputs.node == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.node == 'true'
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1464,8 +1525,8 @@ jobs:
   # ───────────────────────────────────────────────────────────── rust-lint ──
   rust-lint:
     name: Rust lint (fmt, clippy, docs)
-    needs: detect
-    if: needs.detect.outputs.rust == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1660,8 +1721,8 @@ jobs:
   # ───────────────────────────────────────────────────────────── rust-test ──
   rust-test:
     name: Rust tests
-    needs: detect
-    if: needs.detect.outputs.rust == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1695,8 +1756,8 @@ jobs:
   # ──────────────────────────────────────────────────────────── rust-build ──
   rust-build:
     name: Rust release build
-    needs: detect
-    if: needs.detect.outputs.rust == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1738,8 +1799,8 @@ jobs:
   # ─────────────────────────────────────────────────────────── audit-rust ──
   audit-rust:
     name: Cargo audit and deny
-    needs: detect
-    if: needs.detect.outputs.rust == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1782,8 +1843,8 @@ jobs:
   # ─────────────────────────────────────────────────────────────── tauri ──
   tauri:
     name: Tauri GUI build and package
-    needs: [detect, rust-lint, frontend]
-    if: needs.detect.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
+    needs: [cargo-lock, rust-lint, frontend]
+    if: needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1858,8 +1919,8 @@ jobs:
   # ─────────────────────────────────────────────────────── tauri-recovery ──
   tauri-recovery:
     name: Tauri GitRun Recovery GUI build and test
-    needs: [detect, rust-lint, frontend]
-    if: needs.detect.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
+    needs: [cargo-lock, rust-lint, frontend]
+    if: needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1910,8 +1971,8 @@ jobs:
   # ────────────────────────────────────────────────────────────── docker ──
   docker:
     name: Docker and Compose validation
-    needs: detect
-    if: needs.detect.outputs.docker == 'true'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.docker == 'true'
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1942,8 +2003,7 @@ jobs:
           ci_cache_note docker-tools "$PRIMARY" "$MATCHED" "$RUNNER_TOOL_CACHE/gitrun-tools/docker-cli"
           base=https://github.com
           case "$(ci_arch)" in
-            x64)
-              dk=x86_64
+            x64)              dk=x86_64
               compose_url="$base/docker/compose/releases/download/v5.5.1/docker-compose-linux-x86_64"
               compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576
               buildx_url="$base/docker/buildx/releases/download/v0.37.1/buildx-v0.37.1.linux-amd64"
@@ -2081,7 +2141,7 @@ jobs:
     if: ${{ always() && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
     needs:
       - environment
-      - detect
+      - cargo-lock
       - ci-selftest
       - repository
       - workflows
@@ -2125,6 +2185,7 @@ jobs:
           read -r -d '' JOBLIST <<'JOBS' || true
           environment|Runner environment|always|
           detect|Detect components|always|
+          cargo-lock|Cargo.lock validation|rust|
           ci-selftest|CI self-test|workflows|
           repository|Hygiene and syntax|always|
           workflows|Workflow lint and security|workflows|
@@ -2149,8 +2210,8 @@ jobs:
             [ -n "$id" ] || continue
             order+=("$id"); LABEL[$id]="$label"
             r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"
-            case "$id" in environment|detect) DEPS[$id]="–" ;; *) DEPS[$id]="detect${extra:+, ${extra// /, }}" ;; esac
-            if [ "$flag" = always ] || [ "$detect_ok" != true ] || [ "$(out detect "$flag")" = true ]; then en=1; else en=0; fi
+            case "$id" in environment|detect|cargo-lock) DEPS[$id]="–" ;; *) DEPS[$id]="cargo-lock${extra:+, ${extra// /, }}" ;; esac
+            if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; }; then en=1; else en=0; fi
             case "$r" in
               success) STATE[$id]=ok; nok=$((nok + 1)) ;;
               failure) STATE[$id]=fail; nfail=$((nfail + 1)) ;;
@@ -2159,7 +2220,9 @@ jobs:
                 if [ "$en" = 0 ]; then STATE[$id]=na; nna=$((nna + 1))
                 else
                   why=""
-                  for b in $([ "$id" = environment ] || [ "$id" = detect ] || echo detect) $extra; do
+                  blockers=""
+                  if [ "$id" != environment ] && [ "$id" != detect ] && [ "$id" != cargo-lock ]; then blockers="detect cargo-lock $extra"; fi
+                  for b in $blockers; do
                     if [ "$(res "$b")" != success ]; then why="$why$b "; fi
                   done
                   if [ -n "$why" ]; then STATE[$id]=blocked; WHY[$id]="${why% }"; nblocked=$((nblocked + 1))
@@ -2191,7 +2254,7 @@ jobs:
             printf '  verdict{{"%s"}}:::%s\n' "$head" "$([ "$verdict" = pass ] && echo ok || echo fail)"
             for id in "${order[@]}"; do
               n="${id//-/_}"
-              if [ "$id" != environment ] && [ "$id" != detect ]; then echo "  detect --> $n"; fi
+              if [ "$id" = cargo-lock ]; then echo "  detect --> cargo_lock"; elif [ "$id" != environment ] && [ "$id" != detect ]; then echo "  cargo_lock --> $n"; fi
               [ "$id" = tauri ] && { echo "  rust_lint --> tauri"; echo "  frontend --> tauri"; }
               [ "$id" = tauri-recovery ] && { echo "  rust_lint --> tauri_recovery"; echo "  frontend --> tauri_recovery"; }
               echo "  $n --> verdict"
@@ -2223,7 +2286,7 @@ jobs:
                 echo "</details>"
                 echo
               done
-              if [ "$detect_ok" != true ]; then echo "> ⚠️ Component detection did not succeed, so every job is treated as expected."; echo; fi
+              if [ "$detect_ok" != true ]; then echo "> ⚠️ Component detection did not succeed, so applicability could not be determined reliably."; echo; fi
             fi
           } > "$R"
           ci_sum < "$R"
@@ -2335,23 +2398,3 @@ jobs:
             echo "| Kind | Ref | Count | MB |"; echo "|---|---|---|---|"
             jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
               def fam: sub("-[^-]+$"; "");
-              ([$plan[0][].id]) as $gone
-              | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })
-              | group_by([.fam, .ref]) | .[]
-              | "| `\(.[0].fam)` | \(.[0].ref) | \(length) | \(([.[].size_in_bytes] | add) / 1048576 | floor) |"' "$RUNNER_TEMP/caches.json"
-            echo; echo "</details>"; echo
-          } | ci_sum
-
-          jq -r '.[] | [.id, .reason, .size_in_bytes, .key] | @tsv' "$RUNNER_TEMP/gc-plan.json" | while IFS=$'\t' read -r id reason size key; do
-            if [ "$DRY_RUN" = true ]; then
-              echo "[dry run] would delete $key ($((size / 1048576)) MB): $reason"
-            elif api -X DELETE "$base/caches/$id" > /dev/null; then
-              echo "deleted $key ($((size / 1048576)) MB): $reason"
-            else
-              ci_warn "could not delete cache $key"
-            fi
-          done
-          if [ "$DRY_RUN" != true ]; then
-            used_after="$(api "$base/cache/usage" | jq -r '.active_caches_size_in_bytes // 0')"
-            echo "cache usage: $((used_before / 1048576)) MB → $((used_after / 1048576)) MB"
-          fi

@@ -1,0 +1,27 @@
+name: Documentation
+description: Report missing, outdated, or unclear GitRun documentation.
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: location
+    attributes:
+      label: Documentation location
+      description: Which file, section, page, or repository area needs attention?
+      placeholder: README.md — Installation
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing?
+      description: Describe the inaccurate, incomplete, or confusing documentation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested correction
+      description: If you know the correct wording or behavior, describe it here.

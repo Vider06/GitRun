@@ -173,6 +173,7 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         println!("dependencies updated: {}", updated_dependencies.join(", "));
     }
 
+    let config_path = persistent_config_path();
     let system_install = system_install_paths();
     let work_root = match system_install {
         Some(_) => PathBuf::from(
@@ -268,7 +269,6 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()));
     let state_dir =
         PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
-    let config_path = persistent_config_path();
     let config_dir = config_path
         .as_ref()
         .and_then(|path| path.parent().map(Path::to_path_buf));

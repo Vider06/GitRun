@@ -882,7 +882,7 @@ function renderFirstRun() {
             <label for="setup-private-key-path">Private key PEM file</label>
             <input type="text" id="setup-private-key-path" autocomplete="off" spellcheck="false"
                    placeholder="/home/user/.config/gitrun/github-app.pem" />
-            <p class="field-hint">GitRun stores only this path in its configuration; the private key itself is not copied into the setup request.</p>
+            <p class="field-hint" id="setup-private-key-hint">GitRun will automatically secure this PEM to mode 0600 before setup; the private key itself is never copied into the setup request.</p>
           </div>
         </div>
 
@@ -917,6 +917,23 @@ function renderFirstRun() {
 
   authModeEl.addEventListener("change", updateAuthFields);
   updateAuthFields();
+
+  privateKeyPathEl.addEventListener("blur", async () => {
+    if (authModeEl.value !== "app") return;
+    const path = privateKeyPathEl.value.trim();
+    const hint = document.getElementById("setup-private-key-hint");
+    if (!path) return;
+
+    try {
+      const securedPath = await invoke("secure_private_key", { privateKeyPath: path });
+      privateKeyPathEl.value = securedPath;
+      hint.textContent = "Private key secured with mode 0600.";
+      hint.style.color = "var(--success)";
+    } catch (error) {
+      hint.textContent = "Private key security check: " + error;
+      hint.style.color = "var(--danger)";
+    }
+  });
 
   document.getElementById("setup-submit").addEventListener("click", async () => {
     const tokenEl = document.getElementById("setup-token");
@@ -966,6 +983,10 @@ function renderFirstRun() {
     statusEl.style.color = "var(--text-secondary)";
 
     try {
+      if (authMode === "app") {
+        const securedPath = await invoke("secure_private_key", { privateKeyPath });
+        privateKeyPathEl.value = securedPath;
+      }
       await invoke("run_first_setup", {
         authMode,
         token,

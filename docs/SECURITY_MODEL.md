@@ -60,19 +60,20 @@ Practical implications for an operator:
 
 ## Filesystem isolation
 
-Linux runner containers run with `--read-only` at the container level, with
-writable runtime storage provided by:
+Linux runner containers currently keep their root filesystem writable so normal
+GitHub Actions jobs can install tools and packages. Filesystem isolation is
+instead provided by:
 
 - a tmpfs **or per-runner Docker volume** at
   `/home/runner/actions-runner`, containing runner registration state,
   diagnostics, and job checkouts;
 - a 256 MiB tmpfs at `/tmp`;
-- a mounted volume for the shared package-manager cache
-  (Cargo/pip/npm).
+- a small tmpfs at `/run/gitrun` for GitRun policy/event state;
+- a mounted volume for the shared package-manager cache (Cargo/pip/npm).
 
-This limits what a compromised job can persist or tamper with on the
-container's own root filesystem. It does not protect the host filesystem from
-a process that can use the Docker socket.
+This limits persistent runner state and keeps temporary/runtime data separate,
+but it is **not a read-only-root sandbox**. It does not protect the host
+filesystem from a process that can use the Docker socket.
 
 Windows runners currently do not receive the Linux `--read-only`/tmpfs/PID
 hardening, so this isolation model should **not** be assumed to apply to

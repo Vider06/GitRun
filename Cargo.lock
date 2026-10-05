@@ -1394,8 +1394,8 @@ name = "gio-sys"
 version = "0.18.1"
 source = "git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a"
 dependencies = [
- "glib-sys",
- "gobject-sys",
+ "glib-sys 0.18.1 (git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a)",
+ "gobject-sys 0.18.0 (git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a)",
  "libc",
  "system-deps",
  "winapi",
@@ -1530,10 +1530,10 @@ dependencies = [
  "futures-executor",
  "futures-task",
  "futures-util",
- "gio-sys",
- "glib-macros",
- "glib-sys",
- "gobject-sys",
+ "gio-sys 0.18.1 (git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a)",
+ "glib-macros 0.18.5 (git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a)",
+ "glib-sys 0.18.1 (git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a)",
+ "gobject-sys 0.18.0 (git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a)",
  "libc",
  "memchr",
  "once_cell",
@@ -1574,7 +1574,7 @@ name = "gobject-sys"
 version = "0.18.0"
 source = "git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a"
 dependencies = [
- "glib-sys",
+ "glib-sys 0.18.1 (git+https://github.com/jcfs/gtk-rs-core?rev=ea720152f28e293ef4362ee844ee5cc499f32d2a#ea720152f28e293ef4362ee844ee5cc499f32d2a)",
  "libc",
  "system-deps",
 ]

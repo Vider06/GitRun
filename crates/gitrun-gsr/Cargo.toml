@@ -2,7 +2,7 @@
 name = "gitrun-gsr"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 description = "GSR (GitSecureRun): external watchdog + hardening layer for GitRun's runner processes"
 
 [dependencies]

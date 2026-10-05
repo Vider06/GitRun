@@ -2,7 +2,7 @@
 name = "gitrun-setup"
 version = "0.4.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 description = "Host dependency and setup checks for GitRun"
 
 [dependencies]

@@ -3,7 +3,7 @@ name = "gitrun-updater"
 version = "0.3.0"
 edition = "2021"
 rust-version = "1.88"
-license = "MIT"
+license = "Apache-2.0"
 description = "GitRun release update, dependency and rollback manager"
 
 [dependencies]

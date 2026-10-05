@@ -48,8 +48,8 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use rand::{rngs::SysRng, TryRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::mem::MaybeUninit;
 use std::fs;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -494,9 +494,8 @@ fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut key = MaybeUninit::<[u8; 32]>::uninit();
-            let key_bytes = unsafe {
-                std::slice::from_raw_parts_mut(key.as_mut_ptr().cast::<u8>(), 32)
-            };
+            let key_bytes =
+                unsafe { std::slice::from_raw_parts_mut(key.as_mut_ptr().cast::<u8>(), 32) };
             let mut rng = SysRng;
             if let Err(error) = rng.try_fill_bytes(key_bytes) {
                 events.on_randomness_failure("generating the vault master key");

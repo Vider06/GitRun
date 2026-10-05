@@ -19,4 +19,5 @@ commands.allow = [
   "respond_hypervisor_decision",
   "get_config",
   "save_config",
+  "secure_private_key",
 ]

@@ -2,9 +2,10 @@ use clap::Parser;
 use gitrun_core::{AppAuth, Config, GitHubAuth, Runner};
 use gitrun_setup::{bootstrap_linux_with_auth, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
-    apply_update, build_plan, dependency_status, download_and_verify, fetch_manifest,
-    latest_manifest, pin_runner_image, rollback, update_incompatible_dependencies,
-    update_runner_image, BackupRecord, UpdatePaths,
+    apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
+    fetch_manifest, latest_manifest, pin_runner_image, rollback, rollback_installed_update,
+    update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
+    InstalledBackupRecord, UpdatePaths,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -75,6 +76,52 @@ fn target_triple() -> Result<String, Box<dyn std::error::Error>> {
     }
 }
 
+fn system_install_paths() -> Option<(PathBuf, PathBuf)> {
+    let executable = std::env::current_exe().ok()?;
+    let is_system_binary = [
+        Path::new("/usr/bin/gitrun"),
+        Path::new("/usr/local/bin/gitrun"),
+    ]
+    .iter()
+    .any(|path| executable == *path);
+    if !is_system_binary {
+        return None;
+    }
+
+    let version_file = std::env::var("GITRUN_VERSION_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/usr/share/gitrun/version.txt"));
+    Some((executable, version_file))
+}
+
+fn running_as_root() -> bool {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("id")
+            .args(["-u"])
+            .output()
+            .map(|output| {
+                output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "0"
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn elevate_system_update(manifest_url: Option<&str>) -> Result<i32, Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+    let mut command = std::process::Command::new("sudo");
+    command.arg(executable).arg("update");
+    if let Some(url) = manifest_url {
+        command.arg(url);
+    }
+    let status = command.status()?;
+    Ok(status.code().unwrap_or(1))
+}
+
 fn dependency_snapshot() -> Vec<(String, Option<String>)> {
     [
         ("Git", "git"),
@@ -126,20 +173,102 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         println!("dependencies updated: {}", updated_dependencies.join(", "));
     }
 
-    let work_root = PathBuf::from(
-        std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| ".gitrun-update".into()),
-    );
+    let config_path = persistent_config_path();
+    let system_install = system_install_paths();
+    let work_root = match system_install {
+        Some(_) => PathBuf::from(
+            std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| "/var/lib/gitrun/update".into()),
+        ),
+        None => PathBuf::from(
+            std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| ".gitrun-update".into()),
+        ),
+    };
     std::fs::create_dir_all(&work_root)?;
     let archive = work_root.join(&plan.artifact);
     let artifact = manifest.artifact_for(&target)?;
     download_and_verify(&plan.artifact_url, &artifact.sha256, &archive)?;
     println!("checksum: PASS");
 
+    if let Some((gitrun_binary, version_file)) = system_install {
+        let backup_root = PathBuf::from(
+            std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "/var/lib/gitrun/backups".into()),
+        );
+        let artifacts = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: gitrun_binary.clone(),
+            required: true,
+        }];
+        let backup = apply_installed_update(
+            &archive,
+            &target,
+            &manifest.version,
+            &artifacts,
+            &version_file,
+            &backup_root,
+            &gitrun_binary,
+            config_path.as_deref(),
+        )?;
+
+        if let Some(image) = &plan.runner_image {
+            if let Err(error) = update_runner_image(image) {
+                let rollback_error = rollback_installed_update(&backup).err();
+                return Err(match rollback_error {
+                    Some(rollback_error) => format!(
+                        "runner update failed: {error}; GitRun rollback also failed: {rollback_error}"
+                    ),
+                    None => format!("runner update failed; GitRun was rolled back: {error}"),
+                }
+                .into());
+            }
+            if let Some(config_file) = config_path.as_deref() {
+                if let Err(error) = pin_runner_image(config_file, image) {
+                    let rollback_error = rollback_installed_update(&backup).err();
+                    return Err(match rollback_error {
+                        Some(rollback_error) => format!(
+                            "runner configuration update failed: {error}; GitRun rollback also failed: {rollback_error}"
+                        ),
+                        None => format!(
+                            "runner configuration update failed; GitRun was rolled back: {error}"
+                        ),
+                    }
+                    .into());
+                }
+            }
+        }
+
+        if let Err(error) = restart_scheduler_service() {
+            let rollback_result = rollback_installed_update(&backup);
+            let restore_result = restart_scheduler_service();
+            return match (rollback_result, restore_result) {
+                (Ok(()), Ok(())) => Err(format!(
+                    "scheduler restart failed; GitRun was rolled back and the previous service was restarted: {error}"
+                ).into()),
+                (Err(rollback_error), Ok(())) => Err(format!(
+                    "scheduler restart failed: {error}; rollback also failed: {rollback_error}"
+                ).into()),
+                (Ok(()), Err(restore_error)) => Err(format!(
+                    "scheduler restart failed and the restored service could not be restarted: {error}; restore restart failed: {restore_error}"
+                ).into()),
+                (Err(rollback_error), Err(restore_error)) => Err(format!(
+                    "scheduler restart failed: {error}; rollback failed: {rollback_error}; restoring the previous service also failed: {restore_error}"
+                ).into()),
+            };
+        }
+
+        println!("GitRun update: PASS");
+        println!(
+            "backup: {}",
+            backup_root
+                .join(format!("system-{}-{}", backup.version, backup.created_at))
+                .display()
+        );
+        return Ok(());
+    }
+
     let install_dir =
         PathBuf::from(std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()));
     let state_dir =
         PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
-    let config_path = persistent_config_path();
     let config_dir = config_path
         .as_ref()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -692,6 +821,12 @@ fn connect_command(repository: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
+    if let Ok(backup) = serde_json::from_str::<InstalledBackupRecord>(&raw) {
+        rollback_installed_update(&backup)?;
+        println!("GitRun rollback: PASS");
+        return Ok(());
+    }
+
     let backup: BackupRecord = serde_json::from_str(&raw)?;
     let install_dir =
         PathBuf::from(std::env::var("GITRUN_INSTALL_DIR").unwrap_or_else(|_| "./gitrun".into()));
@@ -932,6 +1067,17 @@ fn run_update(manifest_url: Option<&str>, only_containers: bool) -> i32 {
             }
         };
     }
+
+    if system_install_paths().is_some() && !running_as_root() {
+        match elevate_system_update(manifest_url) {
+            Ok(code) => return code,
+            Err(error) => {
+                eprintln!("GitRun update: unable to elevate system update: {error}");
+                return 1;
+            }
+        }
+    }
+
     // update_command's original signature takes a full args slice with the
     // manifest URL at index 1 — preserved as-is rather than refactored, to
     // keep this change scoped to argument *parsing*, not the update logic

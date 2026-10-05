@@ -929,16 +929,23 @@ pub fn health_check_binary(
     config_dir: Option<&Path>,
 ) -> Result<(), UpdateError> {
     let binary = if cfg!(windows) {
-        install_dir.join("gitrun-rs.exe")
+        [
+            install_dir.join("gitrun.exe"),
+            install_dir.join("gitrun-rs.exe"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
     } else {
-        install_dir.join("gitrun-rs")
-    };
-    if !binary.is_file() {
-        return Err(UpdateError::Command(format!(
-            "updated binary not found: {}",
-            binary.display()
-        )));
+        [install_dir.join("gitrun"), install_dir.join("gitrun-rs")]
+            .into_iter()
+            .find(|path| path.is_file())
     }
+    .ok_or_else(|| {
+        UpdateError::Command(format!(
+            "updated binary not found in {}",
+            install_dir.display()
+        ))
+    })?;
     let mut command = Command::new(binary);
     command.arg("doctor");
     if let Some(config) = config_dir {
@@ -1843,6 +1850,25 @@ mod tests {
         let status = dependency_status("sh -c 'echo pwned'", "0.0.0");
         assert!(status.installed_version.is_none());
         assert_eq!(status.action, "update");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn health_check_binary_accepts_unified_gitrun_binary() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("gitrun-updater-health-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let binary = root.join("gitrun");
+        fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+
+        health_check_binary(&root, None).unwrap();
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

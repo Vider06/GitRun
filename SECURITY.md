@@ -4,11 +4,11 @@ GitRun controls Docker containers and GitHub Actions self-hosted runners. A GitR
 
 ## Threat model
 
-A GitHub Actions runner executes repository-controlled workflow code. A compromised or malicious workflow can therefore access everything available inside its runner container and potentially exploit the Docker daemon if that socket is exposed to the runner. GitRun must not mount the host Docker socket into runner containers unless Docker-backed CI compatibility has been explicitly enabled for the repository/customer.
+A GitHub Actions runner executes repository-controlled workflow code. A compromised or malicious workflow can therefore access everything available inside its runner container and, on the current Linux implementation, potentially control the Docker host through the mounted Docker socket. Every GitRun-managed Linux runner currently receives that socket, so connected repositories must be treated as trusted infrastructure. A per-repository Docker-socket opt-in is not yet implemented.
 
 The manager requires Docker socket access because it creates and removes runner containers. Keep the manager isolated, do not expose Docker's API publicly, and restrict host access.
 
-Linux runner containers may also receive the host Docker socket when Docker-backed CI compatibility is explicitly enabled for the repository/customer. This is a high-risk compatibility mode: code running inside such a runner can use the Docker API available through the mounted socket. GSR container hardening reduces other container and kernel attack surfaces, but it does not remove the privileges exposed by the Docker socket.
+Every GitRun-managed Linux runner currently receives `/var/run/docker.sock`. This is a high-risk privileged mode: code running inside such a runner can use the Docker API available through the mounted socket. GSR container hardening reduces other container and kernel attack surfaces, but it does not remove the privileges exposed by the Docker socket.
 
 ## Credential handling
 
@@ -22,11 +22,11 @@ Linux runner containers may also receive the host Docker socket when Docker-back
 
 ## Container hardening
 
-Linux runner containers use CPU, memory and PID limits. The default Linux runner configuration also uses a read-only root filesystem and private temporary filesystems.
+Linux runner containers use CPU, memory and PID limits. The current Linux runner root filesystem remains writable so normal GitHub Actions jobs can install tools and packages. Isolation is provided by the dedicated runner home backend (tmpfs by default, or a per-runner Docker volume), a 256 MiB `/tmp` tmpfs, the GSR capability/no-new-privileges hardening, and the dedicated `/run/gitrun` tmpfs.
 
-The Docker socket is not equivalent to an ordinary container mount. When Docker-backed CI compatibility is enabled, the Linux runner receives /var/run/docker.sock intentionally so workflows can control the Docker daemon. Treat this as a dangerous, privileged compatibility mode and enable it only for repositories/customers whose workflow code is trusted to use Docker with host-level consequences.
+The Docker socket is not equivalent to an ordinary container mount. Because the current Linux implementation mounts it into every managed runner, treat every connected repository as trusted to exercise Docker host authority. Verify repository trust before adding it to a runner pool.
 
-Runner containers should not otherwise receive privileged mode, host networking, host PID/IPC namespaces, or arbitrary host filesystem mounts. When Docker socket compatibility is disabled, the runner should not receive the Docker socket.
+Runner containers should not otherwise receive privileged mode, host networking, host PID/IPC namespaces, or arbitrary host filesystem mounts. The Docker socket itself remains the intentional privileged compatibility boundary for Linux runners.
 
 The manager itself necessarily has access to the Docker socket and must therefore be treated as a host-administrator component.
 
@@ -47,7 +47,7 @@ Before production:
 1. Create a dedicated least-privilege GitHub credential.
 2. Restrict access to the GitRun host.
 3. Enable ephemeral runners for untrusted workloads.
-4. Verify Docker socket compatibility is disabled unless the repository/customer explicitly requires Docker-backed CI; when enabled, verify that the runner has no additional privileged flags, host namespaces, or arbitrary host mounts.
+4. Treat every connected Linux repository as trusted to use Docker host authority through the mounted socket; verify that it does not require additional privileged flags, host namespaces, or arbitrary host mounts.
 5. Keep Docker, the runner image, GitRun and the host OS patched.
 6. Test recovery and credential rotation.
 

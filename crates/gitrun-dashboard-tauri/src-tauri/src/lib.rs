@@ -58,8 +58,7 @@ fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {
 
         let metadata = std::fs::symlink_metadata(&canonical).ok()?;
         if metadata.uid() != 0
-            || metadata.permissions().mode() & 0o222 != 0
-            || metadata.permissions().mode() & 0o111 == 0
+            || !trusted_executable_mode(metadata.permissions().mode() & 0o777)
         {
             return None;
         }
@@ -217,28 +216,82 @@ fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
 fn validate_private_key_path(value: &str) -> Result<String, String> {
     let path = validate_setup_value(value, "private key path")?;
     let path_buf = PathBuf::from(&path);
-    let metadata = std::fs::symlink_metadata(&path_buf)
-        .map_err(|e| format!("unable to inspect GitHub App private key {path}: {e}"))?;
+    secure_private_key_file(&path_buf)?;
+    Ok(path)
+}
+
+/// Harden a user-supplied GitHub App private key before the privileged setup
+/// process receives its path. On Unix this deliberately normalizes the file
+/// to 0600 rather than merely rejecting common download modes such as 0644 or
+/// 0664: the operator already owns the file, and root can still read a 0600
+/// file when the setup is elevated through pkexec.
+fn secure_private_key_file(path: &std::path::Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| {
+        format!(
+            "unable to inspect GitHub App private key {}: {e}",
+            path.display()
+        )
+    })?;
     if metadata.file_type().is_symlink() {
         return Err("GitHub App private key path must not be a symbolic link".into());
     }
     if !metadata.is_file() {
         return Err(format!(
-            "GitHub App private key path is not a regular file: {path}"
+            "GitHub App private key path is not a regular file: {}",
+            path.display()
         ));
     }
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| {
+            format!(
+                "unable to secure GitHub App private key {} to mode 0600: {e}",
+                path.display()
+            )
+        })?;
+
+        let metadata = std::fs::symlink_metadata(path).map_err(|e| {
+            format!(
+                "unable to re-check GitHub App private key {} after chmod: {e}",
+                path.display()
+            )
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(
+                "GitHub App private key path changed or is no longer a regular file".into(),
+            );
+        }
+
         let mode = metadata.permissions().mode() & 0o777;
-        if mode & 0o077 != 0 {
+        if mode != 0o600 {
             return Err(format!(
-                "GitHub App private key must not be group/world accessible (mode {mode:o}); chmod it to 0600"
+                "GitHub App private key could not be secured to mode 0600 (actual mode {mode:o})"
             ));
         }
+
+        std::fs::File::open(path).map_err(|e| {
+            format!(
+                "GitHub App private key {} is not readable after securing it to 0600: {e}",
+                path.display()
+            )
+        })?;
     }
 
+    Ok(())
+}
+
+fn trusted_executable_mode(mode: u32) -> bool {
+    mode & 0o022 == 0 && mode & 0o111 != 0
+}
+
+#[tauri::command]
+fn secure_private_key(private_key_path: String) -> Result<String, String> {
+    let path = validate_setup_value(&private_key_path, "private key path")?;
+    let path_buf = PathBuf::from(&path);
+    secure_private_key_file(&path_buf)?;
     Ok(path)
 }
 
@@ -821,6 +874,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             is_first_run,
+            secure_private_key,
             run_first_setup,
             get_overview,
             get_repo_detail,
@@ -843,4 +897,45 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running the GitRun dashboard");
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trusted_executable_mode_accepts_setuid_root_binary_with_owner_write() {
+        assert!(trusted_executable_mode(0o4755));
+    }
+
+    #[test]
+    fn trusted_executable_mode_rejects_group_or_world_writable_binary() {
+        assert!(!trusted_executable_mode(0o4775));
+        assert!(!trusted_executable_mode(0o4757));
+        assert!(!trusted_executable_mode(0o0644));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_key_permissions_are_normalized_to_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-private-key-permissions-{}-{}.pem",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, "test private key").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664)).unwrap();
+
+        validate_private_key_path(path.to_str().unwrap()).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        std::fs::remove_file(path).unwrap();
+    }
 }

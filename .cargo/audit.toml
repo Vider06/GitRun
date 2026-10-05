@@ -1,0 +1,6 @@
+[advisories]
+ignore = [
+  # GLib 0.18.5 source is pinned to the byte-identical RUSTSEC-2024-0429 backport.
+  # cargo-audit matches this advisory by package version and cannot represent the source fix.
+  "RUSTSEC-2024-0429",
+]

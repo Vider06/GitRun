@@ -8,7 +8,7 @@ GitRun is a self-contained Rust control plane for Docker-based GitHub Actions se
 
 It is designed for administrators running their own repositories on a small private server. GitRun handles runner lifecycle, autoscaling, health checks, GitHub authentication, recovery, updates and host integration without Kubernetes.
 
-> **Security boundary:** GitRun-managed runners should receive the host Docker socket only when Docker-backed CI compatibility has been explicitly enabled for the relevant repository/customer. A workflow running with that socket can potentially control the Docker host. Connect only repositories whose workflow code you trust; see [SECURITY.md](SECURITY.md).
+> **Security boundary:** GitRun-managed **Linux runners currently receive the host Docker socket by design**. A workflow running on such a runner can potentially control the Docker host. Connect only repositories whose workflow code you trust, treat the Linux runner as host-level privileged infrastructure, and see [SECURITY.md](SECURITY.md). A per-repository Docker-socket opt-in is not yet implemented.
 
 ## Features
 
@@ -131,7 +131,7 @@ For either authentication mode, the configured credential must have enough repos
 
 GitHub runner registration tokens are generated on demand and expire after one hour. Long-lived GitHub credentials are used by the manager to obtain the required GitHub API access.
 
-The graphical first-run wizard accepts a GitHub PAT. GitHub App authentication is supported by the terminal setup flow with `gitrun setup --terminal`. The dashboard can edit and persist non-secret GitRun settings; credentials are not displayed as ordinary dashboard configuration values.
+The graphical first-run wizard supports both GitHub PAT and GitHub App authentication. The dashboard can edit and persist non-secret GitRun settings; credentials are not displayed as ordinary dashboard configuration values.
 
 ### Connecting another repository
 
@@ -277,11 +277,11 @@ The updater resolves the latest GitHub release, selects the native precompiled a
 
 Static validation does not contact GitHub and does not prove that live runners are healthy.
 
-Tagged releases are built and published on the self-hosted Linux x64 runner with SHA-256 checksums, a machine-readable release manifest and the versioned GHCR runner image. Windows/macOS remain supported through the local release builder scripts.
+Tagged releases are built and published on the self-hosted Linux x64 runner with SHA-256 checksums and a machine-readable release manifest. GitRun uses version-pinned runner images with digest validation; Windows/macOS remain supported through the local release builder scripts.
 
 ## Current architecture
 
-BigRework is migrating GitRun's manager and operator tooling into a Rust workspace. The workspace contains the Rust core, CLI, setup, updater, recovery, scheduler, vault, GSR and the Tauri dashboard component.
+GitRun is a Rust-native workspace containing the core, CLI, setup, updater, recovery, scheduler, vault, GSR and Tauri dashboard components. The Rust CLI is the primary operator entry point, while the scheduler and dashboard share the same core configuration and GitHub authentication abstractions.
 
 The Rust CLI is the primary operator entry point. The scheduler and dashboard use the shared core configuration and GitHub authentication abstractions so PAT and GitHub App behavior remains consistent across terminal and graphical setup.
 

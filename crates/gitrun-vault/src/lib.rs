@@ -44,11 +44,12 @@
 //! recoverable.
 
 use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::{Aes256Gcm, Nonce};
 use rand::{rngs::SysRng, TryRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -173,9 +174,6 @@ pub struct Vault {
     events: Box<dyn VaultEventSink>,
 }
 
-// aes-gcm currently exposes generic-array 0.x constructors that Clippy flags
-// as deprecated; keep the dependency API localized until aes-gcm is upgraded.
-#[allow(deprecated)]
 impl Vault {
     /// Opens (or initializes) a vault at `dir`, generating a new master key
     /// on first use. `dir` should be a path only GitRun's own processes can
@@ -192,7 +190,8 @@ impl Vault {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
         let key_bytes = load_or_create_master_key(&dir, events.as_ref())?;
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key_bytes));
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|_| VaultError::InvalidMasterKey(key_bytes.len()))?;
 
         let secrets_path = dir.join(SECRETS_FILE);
         let data = match fs::metadata(&secrets_path) {
@@ -239,11 +238,12 @@ impl Vault {
                 .on_randomness_failure("generating an AES-GCM nonce");
             return Err(VaultError::from(error));
         }
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::try_from(nonce_bytes.as_slice())
+            .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
 
         let ciphertext = self
             .cipher
-            .encrypt(nonce, value.as_bytes())
+            .encrypt(&nonce, value.as_bytes())
             // aes-gcm encryption failures are not caused by operator-provided
             // secret content; still report them with the correct operation.
             .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
@@ -292,10 +292,13 @@ impl Vault {
             self.events.on_decryption_failure(name);
             VaultError::DecryptionFailed(name.to_owned())
         })?;
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::try_from(nonce_bytes.as_slice()).map_err(|_| {
+            self.events.on_decryption_failure(name);
+            VaultError::DecryptionFailed(name.to_owned())
+        })?;
         let plaintext = self
             .cipher
-            .decrypt(nonce, ciphertext.as_slice())
+            .decrypt(&nonce, ciphertext.as_slice())
             .map_err(|_| {
                 self.events.on_decryption_failure(name);
                 VaultError::DecryptionFailed(name.to_owned())
@@ -485,17 +488,20 @@ fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<
             if bytes.len() != 32 {
                 return Err(VaultError::InvalidMasterKey(bytes.len()));
             }
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&bytes);
-            Ok(key)
+            bytes
+                .try_into()
+                .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut key = [0u8; 32];
+            let mut key = MaybeUninit::<[u8; 32]>::uninit();
+            let key_bytes =
+                unsafe { std::slice::from_raw_parts_mut(key.as_mut_ptr().cast::<u8>(), 32) };
             let mut rng = SysRng;
-            if let Err(error) = rng.try_fill_bytes(&mut key) {
+            if let Err(error) = rng.try_fill_bytes(key_bytes) {
                 events.on_randomness_failure("generating the vault master key");
                 return Err(VaultError::from(error));
             }
+            let key = unsafe { key.assume_init() };
             write_master_key(&path, &key)?;
             Ok(key)
         }

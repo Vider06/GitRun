@@ -101,8 +101,7 @@ fn running_as_root() -> bool {
             .args(["-u"])
             .output()
             .map(|output| {
-                output.status.success()
-                    && String::from_utf8_lossy(&output.stdout).trim() == "0"
+                output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "0"
             })
             .unwrap_or(false)
     }
@@ -177,8 +176,7 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let system_install = system_install_paths();
     let work_root = match system_install {
         Some(_) => PathBuf::from(
-            std::env::var("GITRUN_UPDATE_DIR")
-                .unwrap_or_else(|_| "/var/lib/gitrun/update".into()),
+            std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| "/var/lib/gitrun/update".into()),
         ),
         None => PathBuf::from(
             std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| ".gitrun-update".into()),
@@ -192,8 +190,7 @@ fn update_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some((gitrun_binary, version_file)) = system_install {
         let backup_root = PathBuf::from(
-            std::env::var("GITRUN_BACKUP_DIR")
-                .unwrap_or_else(|_| "/var/lib/gitrun/backups".into()),
+            std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "/var/lib/gitrun/backups".into()),
         );
         let artifacts = [InstalledArtifact {
             archive_name: "gitrun".into(),

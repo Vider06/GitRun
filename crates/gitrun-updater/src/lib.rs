@@ -929,9 +929,12 @@ pub fn health_check_binary(
     config_dir: Option<&Path>,
 ) -> Result<(), UpdateError> {
     let binary = if cfg!(windows) {
-        [install_dir.join("gitrun.exe"), install_dir.join("gitrun-rs.exe")]
-            .into_iter()
-            .find(|path| path.is_file())
+        [
+            install_dir.join("gitrun.exe"),
+            install_dir.join("gitrun-rs.exe"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
     } else {
         [install_dir.join("gitrun"), install_dir.join("gitrun-rs")]
             .into_iter()
@@ -1854,10 +1857,8 @@ mod tests {
     fn health_check_binary_accepts_unified_gitrun_binary() {
         use std::os::unix::fs::PermissionsExt;
 
-        let root = std::env::temp_dir().join(format!(
-            "gitrun-updater-health-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("gitrun-updater-health-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
 

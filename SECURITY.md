@@ -52,3 +52,12 @@ Before production:
 6. Test recovery and credential rotation.
 
 GitRun is intended for administrators managing repositories they trust. It is not an open public runner service.
+
+
+## GLib / RUSTSEC-2024-0429
+
+GitRun's Linux Tauri 2 stack currently resolves the GTK3 bindings to `glib 0.18.5`. The advisory affects that release, while the published fix is `glib >= 0.20.0`; moving the existing Tauri 2 GTK3 stack to that API level is not a compatible point update. Tauri's GTK4/WebKitGTK 6 migration is part of the Tauri 3 line, which is not used here.
+
+GitRun therefore pins the byte-identical backport of the upstream `VariantStrIter::impl_get` fix from gtk-rs/gtk-rs-core PR #2009 at commit `ea720152f28e293ef4362ee844ee5cc499f32d2a`. The pin is immutable. The RustSec advisory is allowed in `cargo audit` only because the scanner keys on the package version (`0.18.5`) and cannot represent this source-level backport; this is not an acceptance of the vulnerable implementation.
+
+Revisit and remove this pin as soon as either an official `glib 0.18.6` containing the backport is released or GitRun migrates to a stable GTK4/WebKitGTK 6 stack.

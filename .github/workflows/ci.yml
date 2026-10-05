@@ -978,18 +978,7 @@ jobs:
         if: needs.detect.outputs.rust == 'true'
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          validate_lock() {
-            if cargo tree --workspace --locked --depth 0 >/dev/null 2>"$RUNNER_TEMP/cargo-lock.err"; then
-              echo "locked dependency graph is coherent"
-              return 0
-            fi
-            echo "locked dependency graph is stale; generating Cargo's lockfile offline for diagnosis"
-            cargo generate-lockfile --offline >/dev/null
-            echo "--- Cargo.lock diff requested by Cargo ---"
-            git diff -- Cargo.lock
-            return 1
-          }
-          ci_run "cargo lockfile coherence" validate_lock
+          ci_run "cargo tree --workspace --locked --depth 0" cargo tree --workspace --locked --depth 0
       - *report
       - *logs
 

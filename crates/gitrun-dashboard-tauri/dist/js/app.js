@@ -908,6 +908,7 @@ function renderFirstRun() {
   const authModeEl = document.getElementById("setup-auth-mode");
   const patFields = document.getElementById("setup-pat-fields");
   const appFields = document.getElementById("setup-app-fields");
+  const privateKeyPathEl = document.getElementById("setup-private-key-path");
 
   function updateAuthFields() {
     const appMode = authModeEl.value === "app";

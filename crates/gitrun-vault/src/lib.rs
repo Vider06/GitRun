@@ -48,6 +48,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use rand::{rngs::SysRng, TryRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::mem::MaybeUninit;
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -487,17 +488,21 @@ fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<
             if bytes.len() != 32 {
                 return Err(VaultError::InvalidMasterKey(bytes.len()));
             }
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&bytes);
-            Ok(key)
+            bytes
+                .try_into()
+                .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut key = [0u8; 32];
+            let mut key = MaybeUninit::<[u8; 32]>::uninit();
+            let key_bytes = unsafe {
+                std::slice::from_raw_parts_mut(key.as_mut_ptr().cast::<u8>(), 32)
+            };
             let mut rng = SysRng;
-            if let Err(error) = rng.try_fill_bytes(&mut key) {
+            if let Err(error) = rng.try_fill_bytes(key_bytes) {
                 events.on_randomness_failure("generating the vault master key");
                 return Err(VaultError::from(error));
             }
+            let key = unsafe { key.assume_init() };
             write_master_key(&path, &key)?;
             Ok(key)
         }

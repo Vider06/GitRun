@@ -174,7 +174,9 @@ mod tests {
         assert!(!RUNNER_BUILD_CARGO_MANIFEST.contains("[patch.crates-io]"));
         assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-core\""));
         assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-gsr\""));
-        assert!(!include_str!("runner-bootstrap.lock").contains("name = \"gitrun-dashboard-tauri\""));
+        assert!(
+            !include_str!("runner-bootstrap.lock").contains("name = \"gitrun-dashboard-tauri\"")
+        );
     }
 
     #[test]
@@ -188,10 +190,16 @@ mod tests {
         assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/exec_supervisor.rs"));
-        assert_eq!(RUNNER_ENTRYPOINT, include_str!("../../../docker/runner/entrypoint.sh"));
+        assert_eq!(
+            RUNNER_ENTRYPOINT,
+            include_str!("../../../docker/runner/entrypoint.sh")
+        );
         assert!(RUNNER_ENTRYPOINT.contains("docker_socket_group"));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
-        assert_eq!(SYSTEMD_SERVICE, include_str!("../../../systemd/gitrun.service"));
+        assert_eq!(
+            SYSTEMD_SERVICE,
+            include_str!("../../../systemd/gitrun.service")
+        );
         assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
         assert!(!SYSTEMD_SERVICE.contains("docker compose"));
     }

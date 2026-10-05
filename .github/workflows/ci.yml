@@ -833,7 +833,6 @@ jobs:
   detect:
     name: Detect project components
     needs: variables-verification
-    if: *trusted
     runs-on: *runner
     timeout-minutes: 60
     outputs:

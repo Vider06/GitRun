@@ -1,0 +1,36 @@
+name: Support / Configuration
+description: Ask for help with GitRun usage, setup, configuration, or operation.
+title: "[Support]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include GitHub tokens, credentials, private keys, runtime environment files, or other secrets.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe the GitRun setup, workflow, or result you are aiming for.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Environment and configuration
+      description: Include the GitRun version, platform, relevant configuration, and sanitized logs.
+      placeholder: |
+        GitRun:
+        Platform:
+        Relevant configuration:
+        Sanitized logs:
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: List the steps or troubleshooting you already performed.

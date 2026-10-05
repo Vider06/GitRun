@@ -57,9 +57,7 @@ fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         let metadata = std::fs::symlink_metadata(&canonical).ok()?;
-        if metadata.uid() != 0
-            || !trusted_executable_mode(metadata.permissions().mode() & 0o777)
-        {
+        if metadata.uid() != 0 || !trusted_executable_mode(metadata.permissions().mode() & 0o777) {
             return None;
         }
 
@@ -898,7 +896,6 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running the GitRun dashboard");
 }
-
 
 #[cfg(test)]
 mod tests {

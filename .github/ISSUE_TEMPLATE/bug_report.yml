@@ -21,7 +21,7 @@ body:
     id: version
     attributes:
       label: GitRun version
-      placeholder: "0.4.7"
+      placeholder: "1.0.0"
     validations:
       required: true
 

@@ -15,12 +15,12 @@ name: GitRun CI
 #  Docker BuildKit cache scopes follow the same namespace shape and live in
 #  GitHub Actions Cache instead of the ephemeral runner filesystem.
 #  Bump CACHE_EPOCH to invalidate every cache at once.
-#  Fork PRs never run on the self-hosted runners (security).
+#  Fork PRs run on GitHub-hosted runners; write permissions are never granted to them.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
   push:
-    branches: [main, BigRework]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -40,7 +40,7 @@ env:
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && '1' || '0' }}
   CI_UPLOAD_ARTIFACTS: ${{ vars.GITRUN_CI_UPLOAD_ARTIFACTS == 'true' && 'true' || 'false' }}
-  CI_RUNNER_MODE: ${{ vars.GITRUN_RUNNER_MODE || 'self-hosted' }}
+  CI_RUNNER_MODE: ${{ vars.GITRUN_RUNNER_MODE || 'github-hosted' }}
   CI_FULL_RUN: ${{ vars.GITRUN_CI_FULL_RUN == 'true' && 'true' || 'false' }}
   CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && 'true' || 'false' }}
   CI_GC_DRY_RUN: ${{ vars.GITRUN_CI_GC_DRY_RUN == 'true' && 'true' || 'false' }}
@@ -69,8 +69,7 @@ jobs:
   # ─────────────────────────────────────────────── variables verification ──
   variables-verification:
     name: Repository CI variables
-    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
-    runs-on: ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'self-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -125,8 +124,7 @@ jobs:
   environment:
     name: Runner environment
     needs: variables-verification
-    if: &trusted ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
-    runs-on: &runner ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'self-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: &runner ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -2133,7 +2131,7 @@ jobs:
   # ───────────────────────────────────────────────────────────── summary ──
   summary:
     name: Verification summary
-    if: ${{ always() && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ always() }}
     needs:
       - environment
       - detect

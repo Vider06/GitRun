@@ -66,7 +66,7 @@ fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {
             let metadata = std::fs::symlink_metadata(directory).ok()?;
             if !metadata.is_dir()
                 || metadata.uid() != 0
-                || metadata.permissions().mode() & 0o222 != 0
+                || metadata.permissions().mode() & 0o022 != 0
             {
                 return None;
             }

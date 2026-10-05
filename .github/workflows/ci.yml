@@ -3,7 +3,7 @@ name: GitRun CI
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline map (needs):
 #    variables-verification ─► environment
-#                            └► detect ─┬─ cargo-lock · ci-selftest · repository · workflows · shell · python · powershell
+#                            └► detect ─┬─ cargo-lock · ci-selftest · repository · workflows · shell · powershell
 #            ├─ frontend ─┬─ audit-node
 #            │            └──────────────┐
 #            ├─ cargo-lock ─► rust-lint ─────────────── tauri
@@ -2088,7 +2088,6 @@ jobs:
       - repository
       - workflows
       - shell
-      - python
       - powershell
       - frontend
       - audit-node

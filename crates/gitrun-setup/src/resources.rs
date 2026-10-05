@@ -56,6 +56,15 @@ WantedBy=multi-user.target
 pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
 resolver = "2"
 members = ["crates/gitrun-core", "crates/gitrun-gsr"]
+
+[patch.crates-io]
+# Keep the bootstrap workspace's Cargo resolution identical to the repository
+# workspace even though only the GSR-related crates are copied into the image.
+glib = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
+glib-sys = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
+gobject-sys = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
+gio-sys = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
+glib-macros = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
 "#;
 
 pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
@@ -164,6 +173,15 @@ mod tests {
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
         assert!(!dockerfile.contains("COPY crates ./crates"));
         assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
+    }
+
+    #[test]
+    fn bootstrap_manifest_preserves_workspace_patches_for_locked_resolution() {
+        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("[patch.crates-io]"));
+        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gtk-rs-core"));
+        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains(
+            "ea720152f28e293ef4362ee844ee5cc499f32d2a"
+        ));
     }
 
     #[test]

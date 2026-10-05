@@ -117,6 +117,20 @@ jobs:
             xdg-utils \
             imagemagick
 
+      - name: Normalize Tauri PNG icons to RGBA
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+          [ "${#icons[@]}" -gt 0 ] || { echo "No Tauri PNG icons found" >&2; exit 1; }
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+            mv "$tmp" "$icon"
+          done
+          echo "${#icons[@]} Tauri PNG icons normalized to RGBA with ImageMagick"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
         with:

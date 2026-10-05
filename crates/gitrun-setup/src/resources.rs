@@ -179,9 +179,7 @@ mod tests {
     fn bootstrap_manifest_preserves_workspace_patches_for_locked_resolution() {
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("[patch.crates-io]"));
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gtk-rs-core"));
-        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains(
-            "ea720152f28e293ef4362ee844ee5cc499f32d2a"
-        ));
+        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("ea720152f28e293ef4362ee844ee5cc499f32d2a"));
     }
 
     #[test]

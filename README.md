@@ -258,10 +258,11 @@ Stopping a runner manually can be superseded by the autoscaler's next reconcilia
 
 ## Checks
 
-Run the repository's static validation with:
+Run the repository's CI validation locally with the relevant project checks. For Rust changes, start with:
 
 ```bash
-python3 scripts/test-gitrun.py
+cargo fmt --all --check
+cargo check --workspace --locked
 ```
 
 For a configured host:

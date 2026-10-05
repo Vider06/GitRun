@@ -640,22 +640,6 @@ jobs:
               { prev = $0 }'
           }
 
-          # python -m py_compile errors:  File "x.py", line 3 ... SyntaxError: msg
-          ci_awk_py() {
-            awk -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              { print }
-              match($0, /File "[^"]+", line [0-9]+/) {
-                f = $0; sub(/^.*File "/, "", f); sub(/".*$/, "", f)
-                l = $0; sub(/^.*, line /, "", l); sub(/[^0-9].*$/, "", l)
-                pending = 1; next
-              }
-              pending && /^[A-Za-z]*(Error|Exception): / {
-                m = $0; sub(/^[A-Za-z]*(Error|Exception): /, "", m); kind = $0; sub(/: .*$/, "", kind)
-                printf "::error file=%s,line=%s,title=%s::%s\n", pe(f), l, pe(kind), me(m)
-                print "• " f ":" l " [" kind "] " m >> out
-                pending = 0
-              }'
-          }
           # node --check errors:  /abs/file.js:12 ... SyntaxError: msg   (-v ws via GITHUB_WORKSPACE)
           ci_awk_node() {
             awk -v ws="${GITHUB_WORKSPACE:-}/" -v out="$CI_ANNOT" "$CI_AWK_FN"'
@@ -756,7 +740,7 @@ jobs:
             if [ "${#miss[@]}" -gt 0 ]; then echo "missing: ${miss[*]}"; return 1; fi
             echo "all present"
           }
-          chk_python() { python3 -c 'import sys; assert sys.version_info >= (3, 8), sys.version; print(sys.version.split()[0])'; }
+
           chk_host() {
             local code
             code="$(curl -sS -o /dev/null --connect-timeout 5 --max-time 10 -w '%{http_code}' "https://$1/" 2>&1)" || { echo "unreachable: $1"; return 1; }
@@ -794,8 +778,8 @@ jobs:
           ci_check error "platform" chk_platform
           ci_check error "writable directories" chk_dirs
           ci_check error "RUNNER_TEMP executable" chk_exec_temp
-          ci_check error "required commands" chk_cmds bash git curl python3 tar gzip xz sha256sum awk sed grep find
-          ci_check error "python3 >= 3.8" chk_python
+          ci_check error "required commands" chk_cmds bash git curl tar gzip xz sha256sum awk sed grep find
+
           ci_check warn "build tools (Rust/Tauri jobs)" chk_cmds cc pkg-config make
           ci_check warn "optional tools" chk_cmds docker
           ci_check error "GitHub Actions environment" chk_ghenv
@@ -837,7 +821,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
-      python: ${{ steps.detect.outputs.python }}
+
       docker: ${{ steps.detect.outputs.docker }}
       dockerfiles: ${{ steps.detect.outputs.dockerfiles }}
       powershell: ${{ steps.detect.outputs.powershell }}
@@ -868,7 +852,7 @@ jobs:
           flag() { if has "$1"; then echo true; else echo false; fi; }
 
           rust="$(flag '^Cargo\.toml$')"
-          python="$(flag '\.py$')"
+
           powershell="$(flag '\.ps1$')"
           node="$(flag '(^|/)package\.json$')"
           shell="$(flag '\.sh$')"
@@ -901,7 +885,7 @@ jobs:
           fi
 
           {
-            echo "rust=$rust"; echo "python=$python"; echo "powershell=$powershell"; echo "node=$node"
+            echo "rust=$rust"; echo "powershell=$powershell"; echo "node=$node"
             echo "shell=$shell"; echo "workflows=$workflows"; echo "dockerfiles=$dockerfiles"
             echo "docker=$docker"; echo "tauri=$tauri"; echo "docs_only=$docs_only"
           } >> "$GITHUB_OUTPUT"
@@ -909,7 +893,7 @@ jobs:
           {
             echo "### 🔎 Detected components"; echo
             echo "| Component | Active |"; echo "|---|---|"
-            for k in rust python powershell node shell workflows dockerfiles docker tauri docs_only; do
+            for k in rust powershell node shell workflows dockerfiles docker tauri docs_only; do
               v="${!k}"; if [ "$v" = true ]; then echo "| $k | ✅ |"; else echo "| $k | – |"; fi
             done
             echo
@@ -926,7 +910,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       rust: ${{ needs.detect.outputs.rust }}
-      python: ${{ needs.detect.outputs.python }}
+
       docker: ${{ needs.detect.outputs.docker }}
       dockerfiles: ${{ needs.detect.outputs.dockerfiles }}
       powershell: ${{ needs.detect.outputs.powershell }}
@@ -1020,9 +1004,6 @@ jobs:
 
           out="$(printf 'braces  <3.0.3\nSeverity: high\nBad thing in braces\n' | ci_awk_npm app/package.json)"
           expect "npm audit high → error" '::error file=app/package.json,title=npm audit high' "$out"
-
-          out="$(printf '  File "x.py", line 3\n    foo(\n       ^\nSyntaxError: bad\n' | ci_awk_py)"
-          expect "python syntax error → annotation" '::error file=x.py,line=3,title=SyntaxError::bad' "$out"
           out="$(printf '%s/web/a.js:4\nfoo(\n   ^\n\nSyntaxError: Unexpected token\n' "$ws" | ci_awk_node)"
           expect "node --check → annotation" '::error file=web/a.js,line=4,title=node --check' "$out"
           out="$(printf 'x.sh: line 4: syntax error near unexpected token `fi\x27\n' | ci_awk_bashn)"
@@ -1281,38 +1262,6 @@ jobs:
           rc=0
           ci_run "bash -n (${#files[@]} files)" syntax_run || rc=1
           ci_run "shellcheck (${#files[@]} files)" lint_run || rc=1
-          exit "$rc"
-      - *report
-      - *logs
-
-  # ─────────────────────────────────────────────────────────────── python ──
-  python:
-    name: Python validation
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.python == 'true'
-    runs-on: *runner
-    timeout-minutes: 60
-    outputs: *job_outputs
-    steps:
-      - *checkout
-      - *boot
-      - name: Compile sources and run static checks
-        env:
-          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          ci_need python3
-          ci_need_report
-          python3 --version
-          compile_all() { git ls-files -z '*.py' | xargs -0 -r python3 -m py_compile 2>&1 | ci_awk_py; }
-          rc=0
-          ci_run "py_compile (tracked .py files)" compile_all || rc=1
-          if [ -f scripts/test-gitrun.py ]; then
-            ci_run "scripts/test-gitrun.py" python3 scripts/test-gitrun.py || rc=1
-          else
-            ci_err "scripts/test-gitrun.py not found: the project static checks cannot run"
-            rc=1
-          fi
           exit "$rc"
       - *report
       - *logs
@@ -2183,7 +2132,6 @@ jobs:
           repository|Hygiene and syntax|always|
           workflows|Workflow lint and security|workflows|
           shell|Shell|shell|
-          python|Python|python|
           powershell|PowerShell|powershell|
           frontend|JS, TS and CSS|node|
           audit-node|npm audit|node|

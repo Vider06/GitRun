@@ -34,13 +34,13 @@ jobs:
             echo "RUSTUP_HOME=$root/rustup"
             echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
             echo "TMPDIR=$RUNNER_TEMP/tmp"
-            echo "RUSTUP_TOOLCHAIN=1.98.1"
+            echo "RUSTUP_TOOLCHAIN=1.99.0"
           } >> "$GITHUB_ENV"
           mkdir -p "$GITHUB_WORKSPACE/target"
           echo "$root/cargo/bin" >> "$GITHUB_PATH"
           ns="gitrun-e1-$RUNNER_OS-$RUNNER_ARCH"
           comps="$(printf '%s' "$RUST_COMPONENTS" | tr ',' '+')"
-          echo "toolchain=$ns-rustup-1.98.1-$comps" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$ns-rustup-1.99.0-$comps" >> "$GITHUB_OUTPUT"
 
       - name: Restore Rust toolchain cache
         id: c_tc
@@ -61,8 +61,8 @@ jobs:
             chmod +x "$RUNNER_TEMP/rustup-init.sh"
             RUSTUP_INIT_SKIP_PATH_CHECK=yes               "$RUNNER_TEMP/rustup-init.sh"               -y --profile minimal --default-toolchain none --no-modify-path
           fi
-          rustup toolchain install 1.98.1             --profile minimal             --component rustfmt             --no-self-update
-          rustup default 1.98.1
+          rustup toolchain install 1.99.0             --profile minimal             --component rustfmt             --no-self-update
+          rustup default 1.99.0
           rustfmt --version
 
       - name: Apply rustfmt

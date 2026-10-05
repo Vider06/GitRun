@@ -994,9 +994,14 @@ fn run_dashboard() -> i32 {
                 1
             }
         }
-        Ok(_) => {
-            if let Err(error) = gitrun_recovery::mark_startup_healthy() {
-                eprintln!("GitRun: unable to persist startup health: {error}");
+        Ok(report) => {
+            // A pristine installation has no persistent state directory yet.
+            // Do not attempt to record startup health before the first-run
+            // setup has created the configured state path.
+            if report.config_ok {
+                if let Err(error) = gitrun_recovery::mark_startup_healthy() {
+                    eprintln!("GitRun: unable to persist startup health: {error}");
+                }
             }
             gitrun_dashboard_tauri_lib::run();
             0

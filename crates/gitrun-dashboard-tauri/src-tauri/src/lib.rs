@@ -351,7 +351,7 @@ fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), Stri
 }
 
 #[tauri::command]
-fn run_first_setup(
+async fn run_first_setup(
     app: AppHandle,
     auth_mode: String,
     token: String,
@@ -423,34 +423,38 @@ fn run_first_setup(
     );
     write_setup_request(&path, &payload)?;
 
-    let result = std::process::Command::new(&pkexec)
-        .arg(&cli)
-        .arg("--install-root")
-        .arg(&path)
-        .output();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = std::process::Command::new(&pkexec)
+            .arg(&cli)
+            .arg("--install-root")
+            .arg(&path)
+            .output();
 
-    let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&path);
 
-    match result {
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            Err(if stderr.is_empty() {
-                if stdout.is_empty() {
-                    format!(
-                        "privileged GitRun setup failed with status {}",
-                        output.status
-                    )
+        match result {
+            Ok(output) if output.status.success() => Ok(()),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                Err(if stderr.is_empty() {
+                    if stdout.is_empty() {
+                        format!(
+                            "privileged GitRun setup failed with status {}",
+                            output.status
+                        )
+                    } else {
+                        stdout
+                    }
                 } else {
-                    stdout
-                }
-            } else {
-                stderr
-            })
+                    stderr
+                })
+            }
+            Err(error) => Err(format!("unable to start privileged GitRun setup: {error}")),
         }
-        Err(error) => Err(format!("unable to start privileged GitRun setup: {error}")),
-    }
+    })
+    .await
+    .map_err(|error| format!("privileged GitRun setup task failed: {error}"))?
 }
 
 // ---------------------------------------------------------------------

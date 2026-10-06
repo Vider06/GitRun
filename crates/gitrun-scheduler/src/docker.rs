@@ -964,19 +964,130 @@ pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     Ok(None)
 }
 
-c")
-        .arg("-i")
-        .arg(name)
+
+/// Executes a command in a managed container after the caller has already
+/// passed the relevant GSR authorization gate.
+pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
+    let mut command = Command::new("docker");
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .arg("exec")
+        .arg(container)
         .args(args);
+    command.output().map_err(DockerError::Spawn)
+}
+
+/// Executes a command in a managed container and writes a bounded payload to
+/// its stdin. Used by controlled GitWriteRun operations.
+pub fn exec_container_with_stdin(
+    container: &str,
+    args: &[&str],
+    input: &[u8],
+) -> Result<Output> {
+    if input.len() > 16 * 1024 * 1024 {
+        return Err(DockerError::Command(
+            "container stdin payload exceeds the 16 MiB safety limit".into(),
+        ));
+    }
+
+    let mut command = Command::new("docker");
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .arg("exec")
+        .arg("-i")
+        .arg(container)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = command.spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write as _;
         stdin.write_all(input)?;
     }
-    let output = child.wait_with_output()?;
-    Ok(output)
+    child.wait_with_output().map_err(DockerError::Spawn)
 }
+
+/// Executes a command in one managed container while forwarding stdout and
+/// stderr chunks to the caller as they arrive.
+pub fn exec_container_stream<F>(
+    container: &str,
+    args: &[&str],
+    mut on_output: F,
+) -> Result<i32>
+where
+    F: FnMut(bool, &[u8]),
+{
+    let mut command = Command::new("docker");
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .arg("exec")
+        .arg(container)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| DockerError::Command("docker exec did not expose stdout".into()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| DockerError::Command("docker exec did not expose stderr".into()))?;
+
+    let stdout_thread = thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        let mut chunks = Vec::new();
+        loop {
+            match stdout.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => chunks.push(buffer[..count].to_vec()),
+                Err(_) => break,
+            }
+        }
+        chunks
+    });
+    let stderr_thread = thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        let mut chunks = Vec::new();
+        loop {
+            match stderr.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => chunks.push(buffer[..count].to_vec()),
+                Err(_) => break,
+            }
+        }
+        chunks
+    });
+
+    for chunk in stdout_thread
+        .join()
+        .map_err(|_| DockerError::Command("stdout reader thread panicked".into()))?
+    {
+        on_output(false, &chunk);
+    }
+    for chunk in stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))?
+    {
+        on_output(true, &chunk);
+    }
+
+    Ok(child.wait()?.code().unwrap_or(1))
+}
+
 
 /// Extra `docker run` flags applied to a Linux runner container when
 /// `RunnerSpec::docker_socket_hardening` is true (the default).

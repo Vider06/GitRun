@@ -67,6 +67,8 @@ pub struct ReconcileInput {
     /// Missing names are treated as unknown and are never used to create a
     /// pre-marked Dock target.
     pub queued_job_names: Vec<String>,
+    /// GitHub workflow run IDs aligned with queued_job_names.
+    pub queued_job_run_ids: Vec<u64>,
     /// Logical workflow jobs that the static validator marked as GitDockRun
     /// targets. A matching queued job gets dedicated dynamic capacity even
     /// when the default runner labels would otherwise satisfy it.
@@ -107,6 +109,7 @@ pub enum Action {
         permanent: bool,
         job_labels: Vec<String>,
         job_name: Option<String>,
+        job_run_id: Option<u64>,
     },
     /// Runner is online in Docker but GitHub doesn't know about it anymore:
     /// remove and recreate, preserving its permanent/dynamic role.
@@ -218,6 +221,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             permanent: true,
             job_labels: Vec::new(),
             job_name: None,
+            job_run_id: None,
         });
         current += 1;
         permanent_count += 1;
@@ -228,12 +232,13 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // intentionally may raise the total above desired_count, but never
     // above max_runners: the count-based formula assumes runners are
     // interchangeable, which is not true once Logic Containers exist.
-    let specialized_jobs: Vec<(Option<String>, Vec<String>)> = input
+    let specialized_jobs: Vec<(Option<String>, Option<u64>, Vec<String>)> = input
         .queued_job_labels
         .iter()
         .enumerate()
         .filter_map(|(index, labels)| {
             let job_name = input.queued_job_names.get(index).cloned();
+            let job_run_id = input.queued_job_run_ids.get(index).copied();
             let routed = crate::logic_containers::resolve(&input.logic_rules, labels).is_some();
             let specialized = routed
                 && (job_requires_specialized_runner(labels, &input.configured_runner_labels)
@@ -241,17 +246,18 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                         .as_deref()
                         .is_some_and(|name| input.dock_target_jobs.iter().any(|target| target == name)));
 
-            specialized.then_some((job_name, labels.clone()))
+            specialized.then_some((job_name, job_run_id, labels.clone()))
         })
         .collect();
 
     let mut specialized_index = 0usize;
     while current < input.max_runners && specialized_index < specialized_jobs.len() {
-        let (job_name, job_labels) = &specialized_jobs[specialized_index];
+        let (job_name, job_run_id, job_labels) = &specialized_jobs[specialized_index];
         actions.push(Action::CreateRunner {
             permanent: false,
             job_labels: job_labels.clone(),
             job_name: job_name.clone(),
+            job_run_id: *job_run_id,
         });
         specialized_index += 1;
         current += 1;
@@ -274,14 +280,21 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             })
             .nth(dynamic_index);
 
-        let (job_name, job_labels) = next
-            .map(|(index, labels)| (input.queued_job_names.get(index).cloned(), labels.clone()))
-            .unwrap_or((None, Vec::new()));
+        let (job_name, job_run_id, job_labels) = next
+            .map(|(index, labels)| {
+                (
+                    input.queued_job_names.get(index).cloned(),
+                    input.queued_job_run_ids.get(index).copied(),
+                    labels.clone(),
+                )
+            })
+            .unwrap_or((None, None, Vec::new()));
 
         actions.push(Action::CreateRunner {
             permanent: false,
             job_labels,
             job_name,
+            job_run_id,
         });
         dynamic_index += 1;
         current += 1;
@@ -330,6 +343,7 @@ mod tests {
             queued_jobs: 0,
             queued_job_labels: Vec::new(),
             queued_job_names: Vec::new(),
+            queued_job_run_ids: Vec::new(),
             dock_target_jobs: Vec::new(),
             configured_runner_labels: vec!["self-hosted".into(), "Linux".into()],
             logic_rules: Vec::new(),
@@ -455,6 +469,7 @@ mod tests {
             permanent: false,
             job_labels: vec!["self-hosted".into(), "windows".into()],
             job_name: None,
+            job_run_id: None,
         }));
     }
 

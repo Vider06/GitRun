@@ -11,6 +11,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod cat;
+
 fn persistent_config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
         return Some(PathBuf::from(path));
@@ -881,6 +883,7 @@ fn main() {
                 run_setup()
             }
         }
+        Command::Cat => cat::run(),
         Command::Connect { repository } => match connect_command(&repository) {
             Ok(()) => 0,
             Err(error) => {
@@ -952,6 +955,8 @@ enum Command {
         #[arg(long)]
         terminal: bool,
     },
+    /// Play the GitRun terminal cat easter egg.
+    Cat,
     /// Add a repository using the currently configured GitHub authentication.
     Connect {
         /// Repository in owner/repository form.

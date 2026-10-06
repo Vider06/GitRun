@@ -485,6 +485,9 @@ pub struct RunnerSpec<'a> {
     pub pids_limit: &'a str,
     pub shared_cache_volume: &'a str,
     pub docker_socket_gid: &'a str,
+    /// Runner-scoped capability used by the workflow Git*Run client to
+    /// authenticate to the host-side API socket.
+    pub api_token: &'a str,
     /// Size string (e.g. "8g") for the runner's home directory, whether
     /// backed by tmpfs or a disk volume (see `home_backend`).
     pub runner_home_size: &'a str,
@@ -692,6 +695,10 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         format!("RUNNER_EPHEMERAL={}", spec.ephemeral),
         "-e".into(),
         format!("RUNNER_DISABLE_UPDATE={}", spec.disable_update),
+        "-e".into(),
+        format!("GITRUN_API_TOKEN={}", spec.api_token),
+        "-e".into(),
+        "GITRUN_API_SOCKET=/run/gitrun/api.sock".into(),
         spec.image.to_owned(),
     ]);
     // Secrets are inserted before the image argument (Docker requires -e

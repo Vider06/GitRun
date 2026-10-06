@@ -41,6 +41,7 @@ use crate::reconcile::{ContainerHealth, ContainerView, IdleInfo, RunnerView};
 use crate::state::SchedulerState;
 use crate::vm_resolution::VmResolutionRegistry;
 use gitrun_core::{Config, GitHubAuth, StateStore};
+use gitrun_exe::protocol::ChannelKey;
 use gitrun_vault::Vault;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -662,6 +663,7 @@ fn create_runner(
     } else {
         String::new()
     };
+    let api_token = ChannelKey::generate()?.to_hex();
     let secret_env = vault_env_for_repo(config, repo);
 
     let Some((backend, image, is_windows)) =
@@ -690,6 +692,7 @@ fn create_runner(
             pids_limit: &config.container_pids_limit,
             shared_cache_volume: &config.shared_cache_volume,
             docker_socket_gid: &docker_socket_gid,
+            api_token: &api_token,
             docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
             runner_home_size: &config.runner_home_size,
             home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),

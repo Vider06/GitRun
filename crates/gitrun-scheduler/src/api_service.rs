@@ -811,11 +811,12 @@ impl ApiExecutionBackend {
         }
 
         if dynamic && completed {
-            make_dock_only(&runner_name, &self.state_dir).map_err(|error| failed(error.to_string()))?;
+            make_dock_only(&runner_name, &self.state_dir)
+                .map_err(|error| failed(error.to_string()))?;
         }
 
-        let mut registry = DockRegistry::load(&self.state_dir)
-            .map_err(|error| failed(error.to_string()))?;
+        let mut registry =
+            DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
         registry.upsert(DockBinding {
             repository: request.repository.clone(),
             run_id,
@@ -845,8 +846,8 @@ impl ApiExecutionBackend {
         }
         let job = arg(request, "job")?;
 
-        let mut registry = DockRegistry::load(&self.state_dir)
-            .map_err(|error| failed(error.to_string()))?;
+        let mut registry =
+            DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
         let binding = registry
             .binding(&request.repository, run_id, job)
             .cloned()

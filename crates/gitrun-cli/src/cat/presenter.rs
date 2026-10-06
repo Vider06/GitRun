@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use crossterm::{cursor, execute, terminal::ClearType};
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -52,6 +53,7 @@ pub(crate) struct CatPresenter {
     writer: Option<Box<dyn Write>>,
     states: Option<CatStates>,
     last_state: Option<ValidationState>,
+    rendered: bool,
 }
 
 impl CatPresenter {
@@ -61,6 +63,7 @@ impl CatPresenter {
                 writer: None,
                 states: None,
                 last_state: None,
+                rendered: false,
             };
         }
 
@@ -73,6 +76,7 @@ impl CatPresenter {
             writer,
             states,
             last_state: None,
+            rendered: false,
         }
     }
 
@@ -103,16 +107,26 @@ impl CatPresenter {
             return;
         };
 
-        let mut rendered = String::new();
-        rendered.push('\n');
-        for line in &sprite.lines {
-            rendered.push_str(line);
-            rendered.push('\n');
+        if self.rendered {
+            let _ = execute!(writer, cursor::SavePosition, cursor::MoveUp(4));
         }
-        rendered.push('\n');
 
-        let _ = writer.write_all(rendered.as_bytes());
+        let _ = execute!(writer, cursor::MoveToColumn(0));
+        for (index, line) in sprite.lines.iter().enumerate() {
+            let _ = execute!(writer, crossterm::terminal::Clear(ClearType::CurrentLine));
+            let _ = writer.write_all(line.as_bytes());
+            let _ = writer.write_all(b"\r\n");
+            if index + 1 == sprite.lines.len() {
+                let _ = execute!(writer, crossterm::terminal::Clear(ClearType::CurrentLine));
+            }
+        }
+        let _ = writer.write_all(b"\r\n");
+
+        if self.rendered {
+            let _ = execute!(writer, cursor::RestorePosition);
+        }
         let _ = writer.flush();
+        self.rendered = true;
     }
 
     pub(crate) fn finish(&mut self, exit_code: i32) {

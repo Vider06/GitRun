@@ -167,7 +167,6 @@ impl CatPresenter {
             .last_state
             .map(LiveSelection::Validation)
             .unwrap_or_else(|| LiveSelection::Named(states.default_state.clone()));
-        render_live_frame(writer, states, &initial, 0);
         true
     }
 
@@ -235,9 +234,6 @@ impl CatPresenter {
 
         if let Ok(mut current) = live.selection.lock() {
             *current = selection.clone();
-        }
-        if let (Some(writer), Some(states)) = (self.writer.as_ref(), self.states.as_ref()) {
-            render_live_frame(writer, states, &selection, 0);
         }
         live.wake.notify_one();
     }

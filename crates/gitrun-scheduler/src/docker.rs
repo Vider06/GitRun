@@ -164,6 +164,9 @@ pub struct ManagedContainer {
     pub name: String,
     pub status: String,
     pub permanent: bool,
+    pub dock_target: bool,
+    pub workflow_job: Option<String>,
+    pub workflow_run_id: Option<u64>,
 }
 
 pub fn shared_cache_volume(configured: Option<&str>) -> String {
@@ -319,6 +322,27 @@ pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Resul
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
+fn container_label_on(
+    host: &DockerHost,
+    name: &str,
+    label: &str,
+) -> Result<Option<String>> {
+    let format = format!("{{index .Config.Labels \\\"{label}\\\"}}");
+    let output = run_on(host, &["inspect", "-f", &format, name])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if is_missing_container_error(&stderr) {
+            return Ok(None);
+        }
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker inspect {name} failed")
+        } else {
+            stderr
+        }));
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((!value.is_empty()).then_some(value))
+}
 fn container_status_string(host: &DockerHost, name: &str) -> Result<Option<String>> {
     let output = run_on(host, &["inspect", "-f", "{{json .State}}", name])?;
     if !output.status.success() {

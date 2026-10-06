@@ -75,6 +75,12 @@ pub(crate) struct CatPresenter {
     live: Option<LiveHandle>,
 }
 
+impl Drop for CatPresenter {
+    fn drop(&mut self) {
+        self.stop_live();
+    }
+}
+
 impl CatPresenter {
     pub(crate) fn new() -> Self {
         if std::env::var_os("GITRUN_NO_CAT").is_some() {
@@ -163,11 +169,6 @@ impl CatPresenter {
             join: Some(join),
         });
 
-        let initial = self
-            .last_state
-            .map(LiveSelection::Validation)
-            .unwrap_or_else(|| LiveSelection::Named(states.default_state.clone()));
-        render_live_frame(writer, states, &initial, 0);
         true
     }
 
@@ -236,9 +237,6 @@ impl CatPresenter {
         if let Ok(mut current) = live.selection.lock() {
             *current = selection.clone();
         }
-        if let (Some(writer), Some(states)) = (self.writer.as_ref(), self.states.as_ref()) {
-            render_live_frame(writer, states, &selection, 0);
-        }
         live.wake.notify_one();
     }
 
@@ -277,7 +275,12 @@ fn terminal_writer() -> Option<Box<dyn Write + Send>> {
 
     #[cfg(windows)]
     {
-        Some(Box::new(io::stderr()))
+        use std::fs::OpenOptions;
+        OpenOptions::new()
+            .write(true)
+            .open("CONOUT$")
+            .ok()
+            .map(|file| Box::new(file) as Box<dyn Write + Send>)
     }
 
     #[cfg(not(any(unix, windows)))]

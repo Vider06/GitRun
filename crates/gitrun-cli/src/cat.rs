@@ -200,7 +200,7 @@ fn contains_readable_message(lines: &[String]) -> bool {
         let trimmed = line.trim();
         trimmed.contains("~purr~")
             || trimmed.contains("<3")
-            || trimmed.contains("Thanks for using GitRun! May the same love I have for this project spread to everyone :3")
+            || trimmed.contains("Thanks for using GitRun!")
             || trimmed.contains("-Vider06")
     })
 }
@@ -319,6 +319,15 @@ mod tests {
     #[test]
     fn readable_messages_get_more_time() {
         let lines = vec!["  ~purr~".to_owned()];
+        assert!(contains_readable_message(&lines));
+    }
+
+    #[test]
+    fn final_message_is_detected_after_line_wrap() {
+        let lines = vec![
+            "Thanks for using GitRun! May the same love".to_owned(),
+            "I have for this project spread to everyone".to_owned(),
+        ];
         assert!(contains_readable_message(&lines));
     }
 

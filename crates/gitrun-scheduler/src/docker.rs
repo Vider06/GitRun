@@ -923,6 +923,79 @@ pub fn runner_for_api_token(token: &str) -> Result<Option<ApiRunnerIdentity>> {
     Ok(None)
 }
 
+/// Executes an already-authorized container command while forwarding
+/// stdout/stderr chunks as they arrive. No command policy is evaluated here;
+/// GSR must have authorized the request before this function is reachable.
+pub fn exec_container_stream<F>(
+    container: &str,
+    args: &[&str],
+    mut on_output: F,
+) -> Result<i32>
+where
+    F: FnMut(bool, &[u8]),
+{
+    use std::sync::mpsc;
+    use std::thread;
+
+    let mut command = Command::new("docker");
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .arg("exec")
+        .arg(container)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| DockerError::Command("docker exec did not expose stdout".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| DockerError::Command("docker exec did not expose stderr".into()))?;
+
+    let (tx, rx) = mpsc::channel::<(bool, Vec<u8>)>();
+    for (is_stderr, mut stream) in [(false, stdout), (true, stderr)] {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let mut buffer = [0u8; 8192];
+            loop {
+                match stream.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        if tx.send((is_stderr, buffer[..count].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = tx.send((is_stderr, Vec::new()));
+        });
+    }
+    drop(tx);
+
+    let mut closed_streams = 0usize;
+    while let Ok((is_stderr, chunk)) = rx.recv() {
+        if chunk.is_empty() {
+            closed_streams += 1;
+            if closed_streams == 2 {
+                break;
+            }
+            continue;
+        }
+        on_output(is_stderr, &chunk);
+    }
+
+    let status = child.wait()?;
+    Ok(status.code().unwrap_or(1))
+}
+
 /// Executes an explicitly authorized command in one container. This helper
 /// is only used by Git*Run handlers after GSR authorization; workflow code
 /// never gets direct access to this primitive.

@@ -90,6 +90,8 @@ struct JobsResponse {
 
 #[derive(Debug, Deserialize)]
 struct Job {
+    #[serde(default)]
+    id: u64,
     status: String,
     #[serde(default)]
     labels: Vec<String>,
@@ -428,7 +430,7 @@ impl GitHubClient {
                 .find(|job| job.name == job_name)
             {
                 return Ok(Some(WorkflowJobInfo {
-                    id: 0,
+                    id: job.id,
                     name: job.name,
                     status: job.status,
                     conclusion: job.conclusion,

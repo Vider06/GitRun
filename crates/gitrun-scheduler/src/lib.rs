@@ -602,10 +602,12 @@ fn execute(
                 state_dir,
                 vm_registry,
                 repo,
-                *permanent,
-                job_name.as_deref(),
-                *job_run_id,
-                job_labels,
+                RunnerCreateContext {
+                    permanent: *permanent,
+                    job_name: job_name.as_deref(),
+                    job_run_id: *job_run_id,
+                    job_labels,
+                },
             )?;
         }
         Action::RecreateOrphaned { name, permanent } => {
@@ -619,10 +621,12 @@ fn execute(
                 state_dir,
                 vm_registry,
                 repo,
-                *permanent,
-                None,
-                None,
-                &[],
+                RunnerCreateContext {
+                    permanent: *permanent,
+                    job_name: None,
+                    job_run_id: None,
+                    job_labels: &[],
+                },
             )?;
             state.clear_recovery(name);
         }
@@ -690,17 +694,27 @@ fn remove_if_still_idle(
     Ok(true)
 }
 
+struct RunnerCreateContext<'a> {
+    permanent: bool,
+    job_name: Option<&'a str>,
+    job_run_id: Option<u64>,
+    job_labels: &'a [String],
+}
+
 fn create_runner(
     client: &GitHubClient,
     config: &Config,
     state_dir: &std::path::Path,
     vm_registry: &VmResolutionRegistry,
     repo: &str,
-    permanent: bool,
-    job_name: Option<&str>,
-    job_run_id: Option<u64>,
-    job_labels: &[String],
+    context: RunnerCreateContext<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let RunnerCreateContext {
+        permanent,
+        job_name,
+        job_run_id,
+        job_labels,
+    } = context;
     let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
         std::io::Error::other(format!(
             "cannot safely create runner for {repo}: GSR ban state is unreadable: {error}"

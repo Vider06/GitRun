@@ -1428,6 +1428,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gitrun-exe"
+version = "0.1.0"
+dependencies = [
+ "gitrun-core",
+]
+
+[[package]]
 name = "gitrun-dashboard-tauri"
 version = "0.1.0"
 dependencies = [

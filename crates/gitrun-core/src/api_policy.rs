@@ -432,6 +432,4 @@ mod tests {
         );
         assert!(matches!(result, Err(error) if error.contains("unknown argument")));
     }
-
-
 }

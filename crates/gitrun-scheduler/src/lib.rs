@@ -422,6 +422,10 @@ fn reconcile_repo(
         .iter()
         .map(|job| job.name.clone())
         .collect();
+    let queued_job_run_ids: Vec<u64> = queued_jobs_info
+        .iter()
+        .map(|job| job.run_id)
+        .collect();
     let dock_target_jobs = load_dock_target_jobs(state_dir, repo);
     let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
         .map_err(|error| {
@@ -496,6 +500,7 @@ fn reconcile_repo(
         queued_jobs,
         queued_job_labels,
         queued_job_names,
+        queued_job_run_ids,
         dock_target_jobs,
         configured_runner_labels: config
             .runner_labels
@@ -573,6 +578,7 @@ fn execute(
             permanent,
             job_labels,
             job_name,
+            job_run_id,
         } => {
             create_runner(
                 client,
@@ -582,6 +588,7 @@ fn execute(
                 repo,
                 *permanent,
                 job_name.as_deref(),
+                *job_run_id,
                 job_labels,
             )?;
         }
@@ -597,6 +604,7 @@ fn execute(
                 vm_registry,
                 repo,
                 *permanent,
+                None,
                 None,
                 &[],
             )?;
@@ -674,6 +682,7 @@ fn create_runner(
     repo: &str,
     permanent: bool,
     job_name: Option<&str>,
+    job_run_id: Option<u64>,
     job_labels: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
@@ -737,7 +746,7 @@ fn create_runner(
             is_windows,
             docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
             workflow_job_name: job_name,
-            workflow_run_id: None,
+            workflow_run_id: job_run_id,
             dock_target: load_dock_target_jobs(state_dir, repo)
                 .into_iter()
                 .any(|target| Some(target.as_str()) == job_name),

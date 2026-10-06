@@ -507,6 +507,7 @@ pub struct RepoDetail {
     pub repo: String,
     pub vault_groups: Vec<String>,
     pub logic_rules: Vec<gitrun_scheduler::logic_containers::LogicRule>,
+    pub docker_policy: gitrun_core::DockerPolicy,
 }
 
 #[tauri::command]
@@ -522,10 +523,16 @@ fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
     let all_rules =
         gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
+    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
+        .map_err(|e| e.to_string())?;
+    let docker_policy = settings
+        .effective_for_repository(&repo)
+        .docker;
     Ok(RepoDetail {
         vault_groups: config.vault_groups_for_repo(&repo),
         repo,
         logic_rules: all_rules,
+        docker_policy,
     })
 }
 

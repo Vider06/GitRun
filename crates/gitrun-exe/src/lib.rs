@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 pub mod protocol;
+pub mod ipc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiInvocation {

@@ -394,4 +394,44 @@ mod tests {
         assert_eq!(GitRunApi::GitVaultRun.as_str(), "GitVaultRun");
         assert_eq!(GitRunOperation::Melt.as_str(), "melt");
     }
+    #[test]
+    fn install_accepts_package_with_optional_version() {
+        assert!(validate_arguments(
+            GitRunApi::GitInstallRun,
+            GitRunOperation::Install,
+            &BTreeMap::from([
+                ("package".into(), "ImageMagick".into()),
+                ("version".into(), "1.0.0".into()),
+            ]),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn register_requires_permanent_modifier_and_rejects_unknown_keys() {
+        assert!(validate_arguments(
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            &BTreeMap::from([
+                ("name".into(), "tool".into()),
+                ("entry".into(), "/opt/tool".into()),
+                ("permanent".into(), "false".into()),
+            ]),
+        )
+        .is_ok());
+
+        let result = validate_arguments(
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            &BTreeMap::from([
+                ("name".into(), "tool".into()),
+                ("entry".into(), "/opt/tool".into()),
+                ("permanent".into(), "false".into()),
+                ("unexpected".into(), "value".into()),
+            ]),
+        );
+        assert!(matches!(result, Err(error) if error.contains("unknown argument")));
+    }
+
+
 }

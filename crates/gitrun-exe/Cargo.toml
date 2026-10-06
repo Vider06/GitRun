@@ -9,3 +9,6 @@ description = "Internal GitRun execution engine for authorized Git*Run operation
 gitrun-core = { path = "../gitrun-core" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+hmac = "0.13"
+sha2 = "0.11"
+getrandom = "0.4"

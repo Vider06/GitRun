@@ -278,7 +278,8 @@ fn handle_stream(
         &request.invocation.workflow,
         &request.invocation.job,
         &identity.name,
-    );
+    )
+    .with_run_id(request.invocation.run_id);
 
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
     let settings = GitRunSettings::load_or_default(&settings_path)

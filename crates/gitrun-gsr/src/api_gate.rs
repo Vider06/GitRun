@@ -96,6 +96,7 @@ fn lock_replay(mutex: &Mutex<ReplayGuard>) -> Result<MutexGuard<'_, ReplayGuard>
 pub struct VerifiedCaller {
     pub repository: String,
     pub workflow: String,
+    pub run_id: Option<u64>,
     pub job: String,
     pub runner: String,
 }
@@ -110,12 +111,19 @@ impl VerifiedCaller {
         Self {
             repository: repository.into(),
             workflow: workflow.into(),
+            run_id: None,
             job: job.into(),
             runner: runner.into(),
         }
     }
 }
 
+impl VerifiedCaller {
+    pub fn with_run_id(mut self, run_id: Option<u64>) -> Self {
+        self.run_id = run_id;
+        self
+    }
+}
 /// Authorize one explicit Git*Run request and convert it to the internal
 /// execution-engine request only after every gate has passed.
 pub fn authorize(
@@ -179,7 +187,7 @@ pub fn authorize_with_effective(
         operation,
         repository: caller.repository.clone(),
         workflow: caller.workflow.clone(),
-        run_id: None,
+        run_id: caller.run_id,
         job: caller.job.clone(),
         resource: resource.map(str::to_owned),
         arguments,

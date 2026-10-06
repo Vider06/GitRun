@@ -395,6 +395,10 @@ fn reconcile_repo(
 ) -> Result<(), Box<dyn std::error::Error>> {
     api_service::reconcile_dock_bindings(client, state_dir, repo).map_err(std::io::Error::other)?;
 
+    if config.gsr_workflow_validation_enabled {
+        validate_repo_workflows_best_effort(client, config, repo);
+    }
+
     let containers = docker::managed_containers(repo)?;
     let preserved_docks =
         api_service::preserved_dock_containers(state_dir, repo).map_err(std::io::Error::other)?;
@@ -408,8 +412,17 @@ fn reconcile_repo(
     // the labels-carrying variant so Logic Containers can route dynamic
     // runners per job; `queued_jobs` below is just this list's length, so
     // desired_count()'s formula (busy + queued, clamped) is unchanged.
-    let queued_job_labels = client.queued_self_hosted_jobs_with_labels(repo)?;
-    let queued_jobs = queued_job_labels.len() as u32;
+    let queued_jobs_info = client.queued_self_hosted_jobs_with_info(repo)?;
+    let queued_jobs = queued_jobs_info.len() as u32;
+    let queued_job_labels: Vec<Vec<String>> = queued_jobs_info
+        .iter()
+        .map(|job| job.labels.clone())
+        .collect();
+    let queued_job_names: Vec<String> = queued_jobs_info
+        .iter()
+        .map(|job| job.name.clone())
+        .collect();
+    let dock_target_jobs = load_dock_target_jobs(state_dir, repo);
     let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
         .map_err(|error| {
             std::io::Error::other(format!(
@@ -482,6 +495,8 @@ fn reconcile_repo(
             .collect(),
         queued_jobs,
         queued_job_labels,
+        queued_job_names,
+        dock_target_jobs,
         configured_runner_labels: config
             .runner_labels
             .split(',')
@@ -557,6 +572,7 @@ fn execute(
         Action::CreateRunner {
             permanent,
             job_labels,
+            job_name,
         } => {
             create_runner(
                 client,
@@ -565,6 +581,7 @@ fn execute(
                 vm_registry,
                 repo,
                 *permanent,
+                job_name.as_deref(),
                 job_labels,
             )?;
         }
@@ -580,6 +597,7 @@ fn execute(
                 vm_registry,
                 repo,
                 *permanent,
+                None,
                 &[],
             )?;
             state.clear_recovery(name);
@@ -655,6 +673,7 @@ fn create_runner(
     vm_registry: &VmResolutionRegistry,
     repo: &str,
     permanent: bool,
+    job_name: Option<&str>,
     job_labels: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
@@ -668,10 +687,6 @@ fn create_runner(
     }
 
     let registration_token = client.registration_token(repo)?;
-
-    if config.gsr_workflow_validation_enabled {
-        validate_repo_workflows_best_effort(client, config, repo);
-    }
 
     let gsr_policy_env = gsr_policy_env(config);
     let safe = docker::sanitize(repo, '-');
@@ -720,10 +735,41 @@ fn create_runner(
             secret_env: &secret_env,
             gsr_policy_env: &gsr_policy_env,
             is_windows,
+            docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
+            workflow_job_name: job_name,
+            workflow_run_id: None,
+            dock_target: load_dock_target_jobs(state_dir, repo)
+                .into_iter()
+                .any(|target| Some(target.as_str()) == job_name),
             docker_socket_hardening: config.gsr_docker_socket_hardening,
         },
     )?;
     Ok(())
+}
+
+fn load_dock_target_jobs(
+    state_dir: &std::path::Path,
+    repo: &str,
+) -> Vec<String> {
+    let path = state_dir
+        .join("workflow-dock-requirements")
+        .join(format!("{}.json", docker::sanitize(repo, '_')));
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return Vec::new(),
+    };
+
+    serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw)
+        .map(|requests| {
+            let mut jobs = Vec::new();
+            for request in requests {
+                if !jobs.iter().any(|job| job == &request.target_job) {
+                    jobs.push(request.target_job);
+                }
+            }
+            jobs
+        })
+        .unwrap_or_default()
 }
 
 /// Combines the globally configured runner labels with the labels of the

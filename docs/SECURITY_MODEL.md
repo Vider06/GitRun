@@ -135,3 +135,16 @@ If your threat model requires stronger isolation than this today, consider
 running GitRun's Docker host itself inside a dedicated VM rather than
 alongside other workloads, until the remaining isolation limitations are
 addressed.
+
+
+## Git*Run API boundary
+
+The workflow-facing Git*Run API is deliberately closed. The available API names and operation verbs are compiled into `gitrun-core`; configuration can disable or narrow them but cannot create a new API/operation pair. Requests are validated before authorization and are converted into `gitrun-exe::AuthorizedOperation` only after repository policy, resource policy and GSR command policy allow them.
+
+The default workflow transport is the Unix socket `/run/gitrun/api.sock`. It carries structured identity and arguments, not a reusable workflow bearer token. The private GSR-to-executor handoff adds HMAC-SHA256 authentication, a random nonce, timestamp checks and replay protection.
+
+This boundary does not reduce Docker-socket privilege. A workflow that can already control the Linux runner's Docker socket can still exercise Docker host authority. The API is intended to constrain GitRun-specific privileged operations, not to turn a privileged runner into a host-isolated sandbox.
+
+## VM boundary
+
+Logic Containers can route jobs into a Docker daemon inside a KVM/libvirt or VirtualBox VM. This can provide a stronger infrastructure boundary than placing the runner directly on the GitRun host, but the guest Docker daemon, base disk image, guest credentials and hypervisor remain trusted infrastructure. VM-backed runners should be used when the deployment threat model benefits from that additional boundary; they do not make an untrusted GitHub repository automatically safe.

@@ -366,19 +366,27 @@ impl ExecutionBackend for ApiExecutionBackend {
     ) -> Result<i32, ExecutionError> {
         sink(ExecutionEvent::Started);
 
-        let result = self.execute(request)?;
+        let exit_code = match (request.api, request.operation) {
+            (GitRunApi::GitDockRun, GitRunOperation::Execute) => {
+                self.dock_execute_stream(request, sink)?
+            }
+            (GitRunApi::GitInstallRun, GitRunOperation::Install) => {
+                self.install_stream(request, sink)?
+            }
+            _ => {
+                let result = self.execute(request)?;
+                if !result.stdout.is_empty() {
+                    sink(ExecutionEvent::Stdout(result.stdout.clone()));
+                }
+                if !result.stderr.is_empty() {
+                    sink(ExecutionEvent::Stderr(result.stderr.clone()));
+                }
+                result.exit_code
+            }
+        };
 
-        if !result.stdout.is_empty() {
-            sink(ExecutionEvent::Stdout(result.stdout.clone()));
-        }
-        if !result.stderr.is_empty() {
-            sink(ExecutionEvent::Stderr(result.stderr.clone()));
-        }
-
-        sink(ExecutionEvent::Finished {
-            exit_code: result.exit_code,
-        });
-        Ok(result.exit_code)
+        sink(ExecutionEvent::Finished { exit_code });
+        Ok(exit_code)
     }
 }
 
@@ -564,28 +572,51 @@ impl ApiExecutionBackend {
         )))
     }
 
-    fn install(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+    fn install_stream(
+        &self,
+        request: &AuthorizedOperation,
+        sink: &mut dyn FnMut(ExecutionEvent),
+    ) -> Result<i32, ExecutionError> {
         let package = arg(request, "package")?;
         ensure_safe_package(package)?;
+        let spec = match request.arguments.get("version") {
+            Some(version) => {
+                ensure_safe_package(version)?;
+                format!("{package}={version}")
+            }
+            None => package.to_owned(),
+        };
 
-        if request.operation == GitRunOperation::Install {
-            let mut command = vec![
+        docker::exec_container_stream(
+            &self.caller.runner,
+            &[
                 "sh",
                 "-c",
                 "if command -v apt-get >/dev/null 2>&1; then apt-get install -y --no-install-recommends \"$1\"; elif command -v dnf >/dev/null 2>&1; then dnf install -y \"$1\"; elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm \"$1\"; else echo 'no supported package manager' >&2; exit 127; fi",
                 "gitrun-install",
-                package,
-            ];
-            if let Some(version) = request.arguments.get("version") {
-                ensure_safe_package(version)?;
-                command.push(version);
-            }
-            let _ = command;
-        }
+                spec.as_str(),
+            ],
+            |is_stderr, bytes| {
+                let value = String::from_utf8_lossy(bytes).into_owned();
+                if is_stderr {
+                    sink(ExecutionEvent::Stderr(value));
+                } else {
+                    sink(ExecutionEvent::Stdout(value));
+                }
+            },
+        )
+        .map_err(|error| failed(error.to_string()))
+    }
 
-        let version = request.arguments.get("version");
-        let spec = match version {
-            Some(version) => format!("{package}={version}"),
+    fn install(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        let package = arg(request, "package")?;
+        ensure_safe_package(package)?;
+
+        let spec = match request.arguments.get("version") {
+            Some(version) => {
+                ensure_safe_package(version)?;
+                format!("{package}={version}")
+            }
             None => package.to_owned(),
         };
 
@@ -598,6 +629,7 @@ impl ApiExecutionBackend {
         ];
         run_docker_command(&self.caller.runner, &args)
     }
+
 
     fn read(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         let path = arg(request, "path")?;
@@ -776,6 +808,32 @@ impl ApiExecutionBackend {
         )
         .map_err(|error| failed(error.to_string()))?;
         command_output(output)
+    }
+
+    fn dock_execute_stream(
+        &self,
+        request: &AuthorizedOperation,
+        sink: &mut dyn FnMut(ExecutionEvent),
+    ) -> Result<i32, ExecutionError> {
+        let container = request
+            .resource
+            .as_deref()
+            .ok_or_else(|| failed("missing docked container"))?;
+        let command = arg(request, "command")?;
+
+        docker::exec_container_stream(
+            container,
+            &["sh", "-c", command],
+            |is_stderr, bytes| {
+                let value = String::from_utf8_lossy(bytes).into_owned();
+                if is_stderr {
+                    sink(ExecutionEvent::Stderr(value));
+                } else {
+                    sink(ExecutionEvent::Stdout(value));
+                }
+            },
+        )
+        .map_err(|error| failed(error.to_string()))
     }
 
     fn dock_execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {

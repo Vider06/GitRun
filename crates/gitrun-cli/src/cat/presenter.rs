@@ -514,6 +514,9 @@ mod tests {
 
     #[test]
     fn secret_roll_range_is_tiny() {
-        assert_eq!((SECRET_ROLL_LIMIT, KEBAB_ROLL_LIMIT, SECRET_ROLL_RANGE), (1, 3, 2_000));
+        assert_eq!(
+            (SECRET_ROLL_LIMIT, KEBAB_ROLL_LIMIT, SECRET_ROLL_RANGE),
+            (1, 3, 2_000)
+        );
     }
 }

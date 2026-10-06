@@ -575,6 +575,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         format!("gitrun.permanent={}", spec.permanent),
         "--label".into(),
         format!("gitrun.dynamic={}", !spec.permanent),
+        "--label".into(),
+        format!("gitrun.dock_target={}", spec.dock_target),
         "--cpus".into(),
         spec.cpus.into(),
         "--memory".into(),
@@ -582,6 +584,19 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         "--restart".into(),
         "unless-stopped".into(),
     ]);
+
+    if let Some(job_name) = spec.workflow_job_name {
+        args.extend([
+            "--label".into(),
+            format!("gitrun.workflow_job={job_name}"),
+        ]);
+    }
+    if let Some(run_id) = spec.workflow_run_id {
+        args.extend([
+            "--label".into(),
+            format!("gitrun.workflow_run={run_id}"),
+        ]);
+    }
 
     if spec.is_windows {
         // Windows containers: no --read-only/--tmpfs/--pids-limit/Unix

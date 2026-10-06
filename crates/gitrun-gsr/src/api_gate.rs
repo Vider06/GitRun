@@ -6,7 +6,7 @@
 //! before it can be converted into an AuthorizedOperation for gitrun-exe.
 
 use gitrun_core::{
-    api_policy::{GitRunApi, GitRunOperation},
+    api_policy::{validate_arguments, GitRunApi, GitRunOperation},
     command_policy::{CommandPolicy, Decision},
     settings::EffectiveRepositorySettings,
     GitRunSettings,
@@ -24,11 +24,11 @@ pub enum ApiGateError {
         api: GitRunApi,
         operation: GitRunOperation,
     },
-    #[error("malformed {api:?}/{operation:?} request: missing {argument}")]
-    MissingArgument {
+    #[error("invalid {api:?}/{operation:?} request: {detail}")]
+    InvalidArguments {
         api: GitRunApi,
         operation: GitRunOperation,
-        argument: &'static str,
+        detail: String,
     },
     #[error("resource is not allowed by repository policy: {resource}")]
     ResourceDenied { resource: String },
@@ -99,6 +99,14 @@ pub fn authorize_with_effective(
     arguments: BTreeMap<String, String>,
     command_policy: Option<&CommandPolicy>,
 ) -> Result<AuthorizedOperation, ApiGateError> {
+    if let Err(detail) = validate_arguments(api, operation, &arguments) {
+        return Err(ApiGateError::InvalidArguments {
+            api,
+            operation,
+            detail,
+        });
+    }
+
     let api_policy = effective.api_policy.get(api);
     if !api_policy.enabled {
         return Err(ApiGateError::ApiDisabled { api });
@@ -169,13 +177,22 @@ fn authorize_resource_scope(
                     reason: "resource registration is disabled".into(),
                 });
             }
-            match operation {
-                GitRunOperation::Register if effective.register.allow_workflow => Ok(()),
-                GitRunOperation::Permanent if effective.register.allow_permanent => Ok(()),
-                _ => Err(ApiGateError::PolicyDenied {
-                    reason: "requested registration scope is disabled".into(),
-                }),
+            let permanent = arguments
+                .get("permanent")
+                .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+            if permanent && effective.register.allow_permanent {
+                return Ok(());
             }
+            if !permanent && effective.register.allow_workflow {
+                return Ok(());
+            }
+            Err(ApiGateError::PolicyDenied {
+                reason: if permanent {
+                    "permanent registration is disabled".into()
+                } else {
+                    "workflow registration is disabled".into()
+                },
+            })
         }
         _ => Ok(()),
     }
@@ -238,10 +255,10 @@ fn authorize_dock(
         | GitRunOperation::Melt => {
             let container = resource
                 .filter(|value| !value.trim().is_empty())
-                .ok_or(ApiGateError::MissingArgument {
+                .ok_or_else(|| ApiGateError::InvalidArguments {
                     api: GitRunApi::GitDockRun,
                     operation,
-                    argument: "docked",
+                    detail: "missing docked resource".into(),
                 })?;
 
             if !effective.docker.allows_container(container) {

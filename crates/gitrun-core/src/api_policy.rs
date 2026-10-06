@@ -51,12 +51,46 @@ impl GitRunApi {
             Self::GitStatusRun => "GitStatusRun",
         }
     }
+
+    /// Returns true only for an operation that is part of this API's
+    /// explicitly defined contract. Policy configuration cannot create a new
+    /// API/operation pairing by accident.
+    pub const fn supports_operation(self, operation: GitRunOperation) -> bool {
+        match self {
+            Self::GitVaultRun => matches!(
+                operation,
+                GitRunOperation::Read
+                    | GitRunOperation::Write
+                    | GitRunOperation::Exists
+                    | GitRunOperation::Delete
+                    | GitRunOperation::List
+            ),
+            Self::GitDockRun => matches!(
+                operation,
+                GitRunOperation::Connect
+                    | GitRunOperation::Disconnect
+                    | GitRunOperation::Read
+                    | GitRunOperation::Write
+                    | GitRunOperation::Execute
+                    | GitRunOperation::Melt
+            ),
+            Self::GitSaveRun => matches!(operation, GitRunOperation::File | GitRunOperation::Logs),
+            Self::GitRegisterRun => {
+                matches!(operation, GitRunOperation::Register | GitRunOperation::Permanent)
+            }
+            Self::GitInstallRun => matches!(
+                operation,
+                GitRunOperation::Install | GitRunOperation::Remove | GitRunOperation::Update
+            ),
+            Self::GitReadRun => matches!(operation, GitRunOperation::Read),
+            Self::GitWriteRun => matches!(operation, GitRunOperation::Write),
+            Self::GitVerifyRun => matches!(operation, GitRunOperation::Verify),
+            Self::GitStatusRun => matches!(operation, GitRunOperation::Status),
+        }
+    }
 }
 
 /// Closed set of operation verbs understood by the GitRun APIs.
-///
-/// The same operation verb may be used by multiple APIs, but it is always
-/// interpreted in the context of the enclosing GitRunApi.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum GitRunOperation {
     Read,
@@ -172,7 +206,7 @@ impl PolicyMatrix {
     }
 
     pub fn allows(&self, api: GitRunApi, operation: GitRunOperation) -> bool {
-        self.get(api).allows(operation)
+        api.supports_operation(operation) && self.get(api).allows(operation)
     }
 
     /// Compute the capabilities left after applying a narrower policy
@@ -197,8 +231,20 @@ mod tests {
     }
 
     #[test]
+    fn invalid_api_operation_pair_is_always_denied() {
+        let mut matrix = PolicyMatrix::default();
+        matrix.set(
+            GitRunApi::GitDockRun,
+            ApiPolicy::enabled_with([GitRunOperation::Write]),
+        );
+        assert!(!matrix.allows(GitRunApi::GitDockRun, GitRunOperation::Write));
+        assert!(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Melt));
+    }
+
+    #[test]
     fn api_policy_can_limit_operations() {
-        let policy = ApiPolicy::enabled_with([GitRunOperation::Connect, GitRunOperation::Disconnect]);
+        let policy =
+            ApiPolicy::enabled_with([GitRunOperation::Connect, GitRunOperation::Disconnect]);
         assert!(policy.allows(GitRunOperation::Connect));
         assert!(!policy.allows(GitRunOperation::Melt));
     }
@@ -208,14 +254,12 @@ mod tests {
         let broad = ApiPolicy::enabled_with([
             GitRunOperation::Connect,
             GitRunOperation::Disconnect,
-            GitRunOperation::Read,
             GitRunOperation::Melt,
         ]);
         let narrow = ApiPolicy::enabled_with([GitRunOperation::Connect, GitRunOperation::Read]);
         let effective = broad.intersection(&narrow);
 
         assert!(effective.allows(GitRunOperation::Connect));
-        assert!(effective.allows(GitRunOperation::Read));
         assert!(!effective.allows(GitRunOperation::Disconnect));
         assert!(!effective.allows(GitRunOperation::Melt));
     }

@@ -75,7 +75,7 @@ impl GitRunApi {
                     | GitRunOperation::Melt
             ),
             Self::GitSaveRun => matches!(operation, GitRunOperation::File | GitRunOperation::Logs),
-            Self::GitRegisterRun => matches!(operation, GitRunOperation::Register)
+            Self::GitRegisterRun => matches!(operation, GitRunOperation::Register),
             Self::GitInstallRun => matches!(
                 operation,
                 GitRunOperation::Install | GitRunOperation::Remove | GitRunOperation::Update

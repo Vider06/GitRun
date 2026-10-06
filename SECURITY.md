@@ -61,3 +61,16 @@ GitRun's Linux Tauri 2 stack currently resolves the GTK3 bindings to `glib 0.18.
 GitRun therefore pins the byte-identical backport of the upstream `VariantStrIter::impl_get` fix from gtk-rs/gtk-rs-core PR #2009 at commit `ea720152f28e293ef4362ee844ee5cc499f32d2a`. The pin is immutable. The RustSec advisory is allowed in `cargo audit` only because the scanner keys on the package version (`0.18.5`) and cannot represent this source-level backport; this is not an acceptance of the vulnerable implementation.
 
 Revisit and remove this pin as soon as either an official `glib 0.18.6` containing the backport is released or GitRun migrates to a stable GTK4/WebKitGTK 6 stack.
+
+
+## Git*Run API and local IPC
+
+The workflow-facing Git*Run API is a closed set of explicit operations transported over the local Unix socket at `/run/gitrun/api.sock` by default. The socket path may be changed with `GITRUN_API_SOCKET`. The API launcher does not execute privileged work itself: it sends a structured request containing GitHub workflow identity to the host-side authorization boundary.
+
+GSR validates the API/operation contract, effective repository policy, resource restrictions and the existing command policy before an authorized operation reaches `gitrun-exe`. The private GSR-to-executor envelope uses HMAC-SHA256, random nonces, timestamp validation and replay protection.
+
+The API socket is therefore an authorization boundary, not a sandbox. A Linux runner that can already use the host Docker socket retains Docker host authority. Protect the socket filesystem location and keep GitRun's runtime state directory accessible only to the service/dashboard accounts that require it.
+
+## VM-backed runners
+
+VM-backed Logic Containers can route jobs to Docker daemons inside KVM/libvirt or VirtualBox guests. Protect the guest Docker endpoint and base disk image as trusted infrastructure. VM configuration does not remove the need to review repository trust, workflow permissions or guest credentials.

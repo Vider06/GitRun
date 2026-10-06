@@ -27,3 +27,8 @@ Do not merge known-broken CI into main.
 Before adding a new file, check that it contains no credentials, personal addresses, private hostnames, access tokens, or generated state.
 
 Runtime configuration should use environment variables or secret-management systems rather than hardcoded values.
+
+
+## Documentation structure
+
+Architecture and operator behavior are documented under `docs/`. Every repository directory has a local `README.md` describing its responsibility; keep that README aligned when adding, removing or repurposing a directory. Changes to public behavior must update the relevant top-level documentation and detailed architecture/API/security documentation.

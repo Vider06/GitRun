@@ -17,3 +17,10 @@ member or release artifact.
 A Rust-only Docker Compose manager profile remains available for source-based
 development/compatibility workflows; it is not required by the installed Linux service.
 `systemd/gitrun.service` launches `/usr/local/bin/gitrun scheduler` directly.
+
+
+## Post-migration runtime additions
+
+The Rust runtime now also owns the Git*Run security/execution path: `gitrun-core` defines the closed API policy, `gitrun-gsr` authorizes workflow requests, and `gitrun-exe` is the internal execution boundary. Workflow requests use the local Unix API socket documented in [GITRUN_API.md](GITRUN_API.md) and [IPC.md](IPC.md).
+
+VM-backed Logic Containers are part of the scheduler runtime. VM definitions are shared with the Tauri dashboard through `{GITRUN_STATE_DIR}/vm-configs.json`; KVM/libvirt is preferred and VirtualBox is the fallback path when KVM is unavailable. See [VM.md](VM.md).

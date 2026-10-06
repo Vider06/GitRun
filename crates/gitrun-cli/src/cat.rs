@@ -229,7 +229,7 @@ fn half_block_row(top: &str, bottom: Option<&str>, width: usize) -> String {
                 if top == bottom {
                     top
                 } else {
-                    '█'
+                    '#'
                 }
             }
         });
@@ -255,7 +255,7 @@ mod tests {
     fn half_block_preserves_vertical_information() {
         assert_eq!(half_block_row("# ", Some(" #"), 2), "##");
         assert_eq!(half_block_row("##", Some("##"), 2), "##");
-        assert_eq!(half_block_row("#:", Some(": "), 2), "█:");
+        assert_eq!(half_block_row("#:", Some(": "), 2), "##");
     }
 
     #[test]

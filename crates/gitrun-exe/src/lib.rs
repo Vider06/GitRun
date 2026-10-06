@@ -49,6 +49,7 @@ pub struct AuthorizedOperation {
     pub operation: GitRunOperation,
     pub repository: String,
     pub workflow: String,
+    pub run_id: Option<u64>,
     pub job: String,
     /// Logical resource identity, never trusted as a raw Docker command.
     pub resource: Option<String>,

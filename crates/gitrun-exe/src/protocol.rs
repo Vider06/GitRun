@@ -93,7 +93,8 @@ impl SignedRequest {
         };
         let bytes = serde_json::to_vec(&payload).map_err(ChannelAuthError::Encode)?;
 
-        let mut mac = <HmacSha256 as KeyInit>::new_from_slice(&key.0).map_err(|_| ChannelAuthError::WeakKey)?;
+        let mut mac = <HmacSha256 as KeyInit>::new_from_slice(&key.0)
+            .map_err(|_| ChannelAuthError::WeakKey)?;
         mac.update(&bytes);
         mac.verify_slice(&self.mac)
             .map_err(|_| ChannelAuthError::Authentication)?;
@@ -114,7 +115,8 @@ struct SigningPayload<'a> {
 }
 
 fn compute_mac(key: &[u8], payload: &[u8]) -> Result<Vec<u8>, ChannelAuthError> {
-    let mut mac = <HmacSha256 as KeyInit>::new_from_slice(key).map_err(|_| ChannelAuthError::WeakKey)?;
+    let mut mac =
+        <HmacSha256 as KeyInit>::new_from_slice(key).map_err(|_| ChannelAuthError::WeakKey)?;
     mac.update(payload);
     Ok(mac.finalize().into_bytes().to_vec())
 }

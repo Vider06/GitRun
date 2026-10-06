@@ -1431,7 +1431,12 @@ dependencies = [
 name = "gitrun-exe"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.4.3",
  "gitrun-core",
+ "hmac",
+ "serde",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

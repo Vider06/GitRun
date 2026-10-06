@@ -811,10 +811,11 @@ impl ApiExecutionBackend {
         }
 
         if dynamic && completed {
-            make_dock_only(&runner_name, &self.state_dir)?;
+            make_dock_only(&runner_name, &self.state_dir).map_err(|error| failed(error.to_string()))?;
         }
 
-        let mut registry = DockRegistry::load(&self.state_dir)?;
+        let mut registry = DockRegistry::load(&self.state_dir)
+            .map_err(|error| failed(error.to_string()))?;
         registry.upsert(DockBinding {
             repository: request.repository.clone(),
             run_id,
@@ -825,7 +826,9 @@ impl ApiExecutionBackend {
             requester_runner: self.caller.runner.clone(),
             connected_at: now(),
         });
-        registry.save(&self.state_dir)?;
+        registry
+            .save(&self.state_dir)
+            .map_err(|error| failed(error.to_string()))?;
 
         Ok(success(format!(
             "GitDockRun CONNECT: PASS\njob={job}\ncontainer={runner_name}\nid={container}\n"
@@ -842,7 +845,8 @@ impl ApiExecutionBackend {
         }
         let job = arg(request, "job")?;
 
-        let mut registry = DockRegistry::load(&self.state_dir)?;
+        let mut registry = DockRegistry::load(&self.state_dir)
+            .map_err(|error| failed(error.to_string()))?;
         let binding = registry
             .binding(&request.repository, run_id, job)
             .cloned()
@@ -866,7 +870,9 @@ impl ApiExecutionBackend {
         let binding = registry
             .remove(&request.repository, run_id, job)
             .ok_or_else(|| failed(format!("no GitDockRun binding exists for job {job}")))?;
-        registry.save(&self.state_dir)?;
+        registry
+            .save(&self.state_dir)
+            .map_err(|error| failed(error.to_string()))?;
 
         if binding.dynamic {
             let _ = docker::remove_container(&binding.container);

@@ -252,29 +252,77 @@ async function renderRepoView(repo) {
     const name = prompt("Logical container name:");
     if (!name || !name.trim()) return;
     const key = name.trim();
-    if (logicPolicies[key]) { alert("That Logic Container already has a policy."); return; }
-    logicPolicies[key] = { connect: true, read: true, write: true, execute: false, melt: false, mountable: false, allowed_melt_targets: ["runner"] };
-    renderRepoView(repo);
+    if (logicPolicies[key]) {
+      alert("That Logic Container already has a policy.");
+      return;
+    }
+    logicPolicies[key] = {
+      connect: true,
+      read: true,
+      write: true,
+      execute: false,
+      melt: false,
+      mountable: false,
+      allowed_melt_targets: ["runner"],
+    };
+    const list = document.getElementById("logic-policy-list");
+    const card = document.createElement("div");
+    card.className = "card";
+    card.style.marginBottom = "10px";
+    card.dataset.logicPolicy = key;
+    card.innerHTML = '<div class="toolbar"><strong class="mono">' +
+      escapeHtml(key) +
+      '</strong><button class="btn btn-sm btn-danger" data-remove-logic-policy="' +
+      escapeHtml(key) +
+      '">Remove</button></div>' +
+      '<div class="chip-row">' +
+      ["connect","read","write","execute","melt","mountable"].map((op) =>
+        '<label class="field-checkbox"><input type="checkbox" data-logic-op="' +
+        escapeHtml(key) + '|' + op + '" ' + (logicPolicies[key][op] ? "checked" : "") +
+        ' /><span>' + op + '</span></label>'
+      ).join("") +
+      '</div><div class="field"><label>Allowed melt targets</label><input data-logic-targets="' +
+      escapeHtml(key) + '" value="runner" placeholder="runner,build-cache" /></div>';
+    list.appendChild(card);
+    card.querySelector("[data-remove-logic-policy]").addEventListener("click", () => {
+      delete logicPolicies[key];
+      card.remove();
+    });
   });
 
   content.querySelectorAll("[data-remove-logic-policy]").forEach((btn) => btn.addEventListener("click", () => {
-    delete logicPolicies[btn.dataset.removeLogicPolicy];
-    renderRepoView(repo);
+    const key = btn.dataset.removeLogicPolicy;
+    delete logicPolicies[key];
+    btn.closest("[data-logic-policy]")?.remove();
   }));
 
   const addMountButton = document.getElementById("add-mount-rule");
   addMountButton.addEventListener("click", () => {
-    mountPolicy.rules = [...(mountPolicy.rules || []), { source: "/path", recursive: false, read_only: true, allow: true }];
-    renderRepoView(repo);
+    const list = document.getElementById("mount-rules-list");
+    const index = list.querySelectorAll(".mount-rule").length;
+    const card = document.createElement("div");
+    card.className = "card mount-rule";
+    card.dataset.mountIndex = String(index);
+    card.style.marginBottom = "10px";
+    card.innerHTML = '<div class="field"><label>Source</label><input data-mount-source="' + index + '" value="/path" /></div>' +
+      '<div class="chip-row"><label class="field-checkbox"><input type="checkbox" data-mount-recursive="' + index + '" /><span>recursive</span></label>' +
+      '<label class="field-checkbox"><input type="checkbox" data-mount-readonly="' + index + '" checked /><span>read-only</span></label>' +
+      '<label class="field-checkbox"><input type="checkbox" data-mount-allow="' + index + '" checked /><span>allow</span></label>' +
+      '<button class="btn btn-sm btn-danger" data-remove-mount="' + index + '">Remove</button></div>';
+    list.appendChild(card);
+    card.querySelector("[data-remove-mount]").addEventListener("click", () => card.remove());
   });
   content.querySelectorAll("[data-remove-mount]").forEach((btn) => btn.addEventListener("click", () => {
-    mountPolicy.rules.splice(Number(btn.dataset.removeMount), 1);
-    renderRepoView(repo);
+    btn.closest(".mount-rule")?.remove();
   }));
 
   document.getElementById("save-repo-docker-policy").addEventListener("click", async () => {
     const status = document.getElementById("repo-docker-save-status");
     try {
+      const socketEnabled = document.getElementById("repo-direct-socket").checked;
+      if (socketEnabled && !confirm("Enable direct Docker socket access for this repository? This bypasses the normal socket isolation compatibility boundary and gives workflows Docker daemon access. GitDockRun remains available without it.")) {
+        return;
+      }
       const settings = await invoke("get_gitrun_settings");
       settings.repositories = settings.repositories || {};
       const repoSettings = settings.repositories[repo] || {};
@@ -917,7 +965,7 @@ async function renderSettings() {
     }
     next.repositories[repo] = repoSettings;
 
-    nextConfigDangerGate = {
+    const nextConfigDangerGate = {
       ...config,
       gsr_docker_socket_hardening: document.getElementById("global-hardening").checked,
       gsr_allow_unsafe_runner: document.getElementById("unsafe-runner").checked,
@@ -925,6 +973,11 @@ async function renderSettings() {
 
     const status = document.getElementById("security-save-status");
     try {
+      if (config.gsr_docker_socket_hardening && !nextConfigDangerGate.gsr_docker_socket_hardening) {
+        if (!confirm("Disable GSR Docker socket hardening? The existing unsafe-runner danger gate will be required before GitRun accepts this configuration.")) {
+          return;
+        }
+      }
       await invoke("save_gitrun_settings", { settings: next, confirmSocketOptOut: repoSettings.docker.direct_socket_enabled });
       await invoke("save_config", { updated: nextConfigDangerGate });
       settings = next;

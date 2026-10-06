@@ -150,10 +150,12 @@ fn api_from_invocation(invocation: &str) -> Result<GitRunApi, String> {
     }
 }
 
+type ParsedApiRequest = (GitRunOperation, Option<String>, BTreeMap<String, String>);
+
 fn parse_api(
     api: GitRunApi,
     args: &[String],
-) -> Result<(GitRunOperation, Option<String>, BTreeMap<String, String>), String> {
+) -> Result<ParsedApiRequest, String> {
     let mut values = BTreeMap::new();
     let mut resource = None;
     let mut operation = None;

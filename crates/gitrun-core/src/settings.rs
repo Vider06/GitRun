@@ -29,9 +29,9 @@ pub enum SettingsError {
     #[error("unable to read settings: {0}")]
     Io(#[from] std::io::Error),
     #[error("unable to decode settings: {0}")]
-    Decode(#[from] serde_json::Error),
+    Decode(#[source] serde_json::Error),
     #[error("unable to encode settings: {0}")]
-    Encode(#[from] serde_json::Error),
+    Encode(#[source] serde_json::Error),
 }
 
 /// Global policy plus per-repository restrictions.
@@ -71,7 +71,19 @@ impl GitRunSettings {
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self, SettingsError> {
         let raw = fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&raw)?)
+        serde_json::from_str(&raw).map_err(SettingsError::Decode)
+    }
+
+    /// Load existing settings, or return a secure fail-closed policy when
+    /// the settings file has not been created yet.
+    pub fn load_or_default(path: impl AsRef<Path>) -> Result<Self, SettingsError> {
+        match Self::load(path) {
+            Ok(settings) => Ok(settings),
+            Err(SettingsError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(Self::default())
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Atomic replacement of the policy file. The file is not secret data,
@@ -83,7 +95,7 @@ impl GitRunSettings {
             fs::create_dir_all(parent)?;
         }
 
-        let raw = serde_json::to_vec_pretty(self)?;
+        let raw = serde_json::to_vec_pretty(self).map_err(SettingsError::Encode)?;
         let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
 
         {
@@ -188,7 +200,8 @@ impl Default for RepositorySettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DockerPolicy {
     /// Direct Docker socket exposure to workflow containers. This is the
-    /// legacy/compatibility escape hatch and is disabled by default.
+    /// compatibility opt-out and remains disabled unless explicitly enabled
+    /// for this repository.
     pub direct_socket_enabled: bool,
     /// Logical job names that may be connected with GitDockRun --job.
     /// Empty means none; * is an explicit opt-in for all logical jobs.
@@ -196,6 +209,10 @@ pub struct DockerPolicy {
     /// Logical container names that may be targeted by --docked.
     /// Empty means none; * is an explicit opt-in for all logical containers.
     pub allowed_container_names: Vec<String>,
+    /// Per logic-container restrictions. These are evaluated after the API
+    /// policy, so a repository can expose GitDockRun while still blocking one
+    /// particular container or one of its operations.
+    pub logic_containers: BTreeMap<String, LogicContainerPolicy>,
     pub allowed_mounts: MountPolicy,
 }
 
@@ -205,6 +222,7 @@ impl Default for DockerPolicy {
             direct_socket_enabled: false,
             allowed_job_names: Vec::new(),
             allowed_container_names: Vec::new(),
+            logic_containers: BTreeMap::new(),
             allowed_mounts: MountPolicy::default(),
         }
     }
@@ -218,12 +236,65 @@ impl DockerPolicy {
     pub fn allows_container(&self, container_name: &str) -> bool {
         logical_name_allowed(&self.allowed_container_names, container_name)
     }
+
+    pub fn logic_container(&self, container_name: &str) -> Option<&LogicContainerPolicy> {
+        self.logic_containers.get(container_name)
+    }
+}
+
+/// Per logic-container capability policy. This is deliberately named and
+/// stable; the actual Docker ID is resolved by GitRun at runtime and is not
+/// a durable security identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogicContainerPolicy {
+    pub connect: bool,
+    pub read: bool,
+    pub write: bool,
+    pub execute: bool,
+    pub melt: bool,
+    pub mountable: bool,
+    /// Logical names this source container may be melted into. The special
+    /// value "runner" means the requesting runner's container. Empty means
+    /// no target is permitted; * explicitly allows every configured target.
+    pub allowed_melt_targets: Vec<String>,
+}
+
+impl Default for LogicContainerPolicy {
+    fn default() -> Self {
+        Self {
+            connect: false,
+            read: false,
+            write: false,
+            execute: false,
+            melt: false,
+            mountable: false,
+            allowed_melt_targets: Vec::new(),
+        }
+    }
+}
+
+impl LogicContainerPolicy {
+    pub fn allows_operation(&self, operation: GitRunOperation) -> bool {
+        match operation {
+            GitRunOperation::Connect => self.connect,
+            GitRunOperation::Read => self.read,
+            GitRunOperation::Write => self.write,
+            GitRunOperation::Execute => self.execute,
+            GitRunOperation::Melt => self.melt,
+            _ => false,
+        }
+    }
+
+    pub fn allows_melt_target(&self, target: &str) -> bool {
+        logical_name_allowed(&self.allowed_melt_targets, target)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MountPolicy {
-    /// Explicit deny-by-default mount policy. A rule may then permit one
-    /// exact source path or an explicitly configured subtree.
+    /// Explicit deny-by-default mount policy. A rule may then permit a host
+    /// file, directory, filesystem, volume, or other source according to the
+    /// resource identity resolved by GitRun.
     pub enabled: bool,
     pub rules: Vec<MountRule>,
 }
@@ -240,6 +311,9 @@ impl Default for MountPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MountRule {
     pub source: String,
+    /// When true the source may be mounted recursively; when false the
+    /// enforcement layer should require an exact source match.
+    pub recursive: bool,
     pub read_only: bool,
     pub allow: bool,
 }
@@ -322,7 +396,9 @@ pub struct EffectiveRepositorySettings {
 }
 
 fn logical_name_allowed(allowed: &[String], value: &str) -> bool {
-    allowed.iter().any(|candidate| candidate == "*" || candidate == value)
+    allowed
+        .iter()
+        .any(|candidate| candidate == "*" || candidate == value)
 }
 
 #[cfg(test)]
@@ -406,6 +482,31 @@ mod tests {
         assert!(!effective
             .api_policy
             .allows(GitRunApi::GitDockRun, GitRunOperation::Melt));
+    }
+
+    #[test]
+    fn container_policy_can_deny_melt_without_disabling_dock() {
+        let mut docker = DockerPolicy::default();
+        docker.logic_containers.insert(
+            "cache".into(),
+            LogicContainerPolicy {
+                melt: false,
+                ..LogicContainerPolicy::default()
+            },
+        );
+        assert!(!docker.logic_container("cache").unwrap().melt);
+    }
+
+    #[test]
+    fn melt_target_is_allowlisted_explicitly() {
+        let policy = LogicContainerPolicy {
+            melt: true,
+            allowed_melt_targets: vec!["runner".into(), "build".into()],
+            ..LogicContainerPolicy::default()
+        };
+        assert!(policy.allows_melt_target("runner"));
+        assert!(policy.allows_melt_target("build"));
+        assert!(!policy.allows_melt_target("production"));
     }
 
     #[test]

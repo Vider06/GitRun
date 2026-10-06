@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -62,6 +62,9 @@ enum LiveSelection {
 
 struct LiveHandle {
     stop: Arc<AtomicBool>,
+    wake: Arc<Condvar>,
+    wake_guard: Arc<Mutex<()>>,
+    selection: Arc<Mutex<LiveSelection>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -87,7 +90,6 @@ impl CatPresenter {
             .ok()
             .filter(validate_states)
             .map(Arc::new);
-
         let writer = states
             .as_ref()
             .and_then(|_| terminal_writer())
@@ -109,7 +111,6 @@ impl CatPresenter {
         let (Some(writer), Some(states)) = (self.writer.as_ref(), self.states.as_ref()) else {
             return false;
         };
-
         let Ok((_, rows)) = terminal::size() else {
             return false;
         };
@@ -123,11 +124,15 @@ impl CatPresenter {
                 .unwrap_or_else(|| LiveSelection::Named(states.default_state.clone())),
         ));
         let stop = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(Condvar::new());
+        let wake_guard = Arc::new(Mutex::new(()));
 
         let thread_writer = Arc::clone(writer);
         let thread_states = Arc::clone(states);
         let thread_selection = Arc::clone(&selection);
         let thread_stop = Arc::clone(&stop);
+        let thread_wake = Arc::clone(&wake);
+        let thread_guard = Arc::clone(&wake_guard);
 
         let join = thread::spawn(move || {
             let mut tick = 0usize;
@@ -143,26 +148,27 @@ impl CatPresenter {
 
                 render_live_frame(&thread_writer, &thread_states, &current, tick);
                 tick = tick.wrapping_add(1);
-                thread::sleep(LIVE_REFRESH);
+
+                let Ok(guard) = thread_guard.lock() else {
+                    break;
+                };
+                let _ = thread_wake.wait_timeout(guard, LIVE_REFRESH);
             }
         });
 
         self.live = Some(LiveHandle {
             stop,
+            wake,
+            wake_guard,
+            selection,
             join: Some(join),
         });
 
-        let selection = self
+        let initial = self
             .last_state
             .map(LiveSelection::Validation)
             .unwrap_or_else(|| LiveSelection::Named(states.default_state.clone()));
-        if let Ok(mut current) = selection.lock() {
-            *current = self
-                .last_state
-                .map(LiveSelection::Validation)
-                .unwrap_or_else(|| LiveSelection::Named(states.default_state.clone()));
-        }
-        render_live_frame(writer, states, &selection, 0);
+        render_live_frame(writer, states, &initial, 0);
         true
     }
 
@@ -181,13 +187,9 @@ impl CatPresenter {
     }
 
     pub(crate) fn show_named(&mut self, state_name: &str) {
-        let Some(writer) = self.writer.as_ref() else {
-            return;
-        };
         let Some(states) = self.states.as_ref() else {
             return;
         };
-
         let state_name = if states.states.contains_key(state_name) {
             state_name
         } else {
@@ -199,10 +201,12 @@ impl CatPresenter {
             return;
         }
 
+        let Some(writer) = self.writer.as_ref() else {
+            return;
+        };
         let Some(sprite) = states.states.get(state_name) else {
             return;
         };
-
         let Ok(mut writer) = writer.lock() else {
             return;
         };
@@ -229,21 +233,14 @@ impl CatPresenter {
         let Some(live) = self.live.as_ref() else {
             return;
         };
-        let current = LIVE_SELECTION
-            .get_or_init(|| Arc::new(Mutex::new(LiveSelection::Named(String::new()))));
-        let _ = current;
 
-        if let Some(writer) = self.writer.as_ref() {
-            if let Some(states) = self.states.as_ref() {
-                if let Some(shared) = live_selection_registry(live) {
-                    if let Ok(mut current) = shared.lock() {
-                        *current = selection.clone();
-                    }
-                    render_live_frame(writer, states, &selection, 0);
-                    return;
-                }
-            }
+        if let Ok(mut current) = live.selection.lock() {
+            *current = selection.clone();
         }
+        if let (Some(writer), Some(states)) = (self.writer.as_ref(), self.states.as_ref()) {
+            render_live_frame(writer, states, &selection, 0);
+        }
+        live.wake.notify_one();
     }
 
     fn stop_live(&mut self) {
@@ -252,6 +249,8 @@ impl CatPresenter {
         };
 
         live.stop.store(true, Ordering::Relaxed);
+        live.wake.notify_one();
+
         if let Some(join) = live.join.take() {
             let _ = join.join();
         }
@@ -292,11 +291,9 @@ fn validate_states(states: &CatStates) -> bool {
     if states.width == 0 || states.height == 0 {
         return false;
     }
-
     if !states.states.contains_key(&states.default_state) {
         return false;
     }
-
     states.states.values().all(|sprite| {
         sprite.lines.len() == states.height
             && sprite.lines.iter().all(|line| {
@@ -366,12 +363,6 @@ fn live_state_name(state: ValidationState, tick: usize) -> &'static str {
     sequence[tick % sequence.len()]
 }
 
-fn live_selection_registry(_live: &LiveHandle) -> Option<Arc<Mutex<LiveSelection>>> {
-    None
-}
-
-static LIVE_SELECTION: std::sync::OnceLock<Arc<Mutex<LiveSelection>>> = std::sync::OnceLock::new();
-
 fn render_live_frame(
     writer: &Arc<Mutex<Box<dyn Write + Send>>>,
     states: &CatStates,
@@ -399,18 +390,13 @@ fn render_live_frame(
     };
 
     let panel_top = rows.saturating_sub(LIVE_PANEL_HEIGHT) + 1;
-    let mut output = String::new();
-    output.push_str("\x1b[s");
-    output.push_str(&format!("\x1b[1;{}r", rows.saturating_sub(LIVE_PANEL_HEIGHT)));
+    let scroll_bottom = rows.saturating_sub(LIVE_PANEL_HEIGHT);
+    let mut output = format!("\x1b[s\x1b[1;{}r", scroll_bottom);
     for (index, line) in sprite.lines.iter().enumerate().take(3) {
         let row = panel_top.saturating_add(index);
         output.push_str(&format!("\x1b[{};1H\x1b[2K{}", row, line));
     }
-    output.push_str(&format!(
-        "\x1b[{};1H\x1b[2K",
-        rows.saturating_add(1)
-    ));
-    output.push_str("\x1b[u");
+    output.push_str(&format!("\x1b[{};1H\x1b[2K\x1b[u", rows));
 
     if let Ok(mut writer) = writer.lock() {
         let _ = writer.write_all(output.as_bytes());
@@ -423,9 +409,8 @@ fn clear_live_panel(writer: &Arc<Mutex<Box<dyn Write + Send>>>) {
         return;
     };
 
-    let mut output = String::new();
-    output.push_str("\x1b[s\x1b[r");
     let first = rows.saturating_sub(LIVE_PANEL_HEIGHT) + 1;
+    let mut output = String::from("\x1b[s\x1b[r");
     for row in first..=rows {
         output.push_str(&format!("\x1b[{};1H\x1b[2K", row));
     }
@@ -481,7 +466,6 @@ mod tests {
             ValidationState::Failure,
             ValidationState::Unknown,
         ];
-
         for state in states {
             assert!(!choose_cat_state(state).is_empty());
             assert!(!live_state_name(state, 0).is_empty());
@@ -521,7 +505,6 @@ mod tests {
             ValidationState::Failure,
             ValidationState::Unknown,
         ];
-
         for state in validation_states {
             for tick in 0..6 {
                 assert!(states.states.contains_key(live_state_name(state, tick)));

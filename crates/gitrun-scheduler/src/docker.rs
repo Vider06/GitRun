@@ -485,9 +485,6 @@ pub struct RunnerSpec<'a> {
     pub pids_limit: &'a str,
     pub shared_cache_volume: &'a str,
     pub docker_socket_gid: &'a str,
-    /// Runner-scoped capability used by the workflow Git*Run client to
-    /// authenticate to the host-side API socket.
-    pub api_token: &'a str,
     /// Size string (e.g. "8g") for the runner's home directory, whether
     /// backed by tmpfs or a disk volume (see `home_backend`).
     pub runner_home_size: &'a str,
@@ -564,6 +561,9 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let cache_key = cache_path_key(spec.repo);
+    let api_token = gitrun_exe::protocol::ChannelKey::generate()
+        .map_err(|error| DockerError::Command(format!("unable to create runner API capability: {error}")))?
+        .to_hex();
     let labels = ensure_label(spec.labels, "gitrun-ci");
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
@@ -696,7 +696,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         "-e".into(),
         format!("RUNNER_DISABLE_UPDATE={}", spec.disable_update),
         "-e".into(),
-        format!("GITRUN_API_TOKEN={}", spec.api_token),
+        format!("GITRUN_API_TOKEN={api_token}"),
         "-e".into(),
         "GITRUN_API_SOCKET=/run/gitrun/api.sock".into(),
         spec.image.to_owned(),
@@ -714,6 +714,106 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     run_checked_on(host, &arg_refs)?;
     Ok(())
+}
+
+/// Identity discovered from a GitRun-managed runner container.
+/// The API token itself is never returned from this helper; it is only used
+/// for equality matching against the inspected environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiRunnerIdentity {
+    pub name: String,
+    pub repository: String,
+}
+
+/// Finds the GitRun runner container that owns a workflow API capability.
+pub fn runner_for_api_token(token: &str) -> Result<Option<ApiRunnerIdentity>> {
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+
+    let output = run_checked_on(
+        &DockerHost::Local,
+        &[
+            "ps",
+            "-a",
+            "--filter",
+            "label=gitrun.runner=true",
+            "--format",
+            "{{.Names}}",
+        ],
+    )?;
+
+    for name in output.lines().map(str::trim).filter(|value| !value.is_empty()) {
+        let inspection = run_checked_on(
+            &DockerHost::Local,
+            &[
+                "inspect",
+                "-f",
+                "{{index .Config.Labels \"gitrun.repo\"}}|{{range .Config.Env}}{{println .}}{{end}}",
+                name,
+            ],
+        )?;
+
+        let mut lines = inspection.lines();
+        let repository = lines.next().unwrap_or_default().trim();
+        let token_match = lines
+            .map(str::trim)
+            .any(|line| line == format!("GITRUN_API_TOKEN={token}"));
+
+        if token_match && !repository.is_empty() {
+            return Ok(Some(ApiRunnerIdentity {
+                name: name.to_owned(),
+                repository: repository.to_owned(),
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Executes an explicitly authorized command in one container. This helper
+/// is only used by Git*Run handlers after GSR authorization; workflow code
+/// never gets direct access to this primitive.
+pub fn exec_container(name: &str, args: &[&str]) -> Result<Output> {
+    run_on(
+        &DockerHost::Local,
+        &{
+            let mut command = vec!["exec", name];
+            command.extend_from_slice(args);
+            command
+        },
+    )
+}
+
+/// Runs a command in a managed container and feeds a bounded byte payload to
+/// stdin. Intended for GitWriteRun where the actual operation is just writing
+/// the already-authorized value to a file.
+pub fn exec_container_with_stdin(
+    name: &str,
+    args: &[&str],
+    input: &[u8],
+) -> Result<Output> {
+    let mut command = Command::new("docker");
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .arg("exec")
+        .arg("-i")
+        .arg(name)
+        .args(args);
+
+    let mut child = command.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write as _;
+        stdin.write_all(input)?;
+    }
+    let output = child.wait_with_output()?;
+    Ok(output)
 }
 
 /// Extra `docker run` flags applied to a Linux runner container when

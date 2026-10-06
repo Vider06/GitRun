@@ -393,8 +393,8 @@ fn render_live_frame(
     let panel_top = rows.saturating_sub(LIVE_PANEL_HEIGHT) + 1;
     let scroll_bottom = rows.saturating_sub(LIVE_PANEL_HEIGHT);
     let mut output = format!("\x1b[s\x1b[1;{}r", scroll_bottom);
-    for (index, line) in sprite.lines.iter().enumerate().take(3) {
-        let row = panel_top.saturating_add(index);
+    for (offset, line) in (0u16..).zip(sprite.lines.iter()).take(3) {
+        let row = panel_top.saturating_add(offset);
         output.push_str(&format!("\x1b[{};1H\x1b[2K{}", row, line));
     }
     output.push_str(&format!("\x1b[{};1H\x1b[2K\x1b[u", rows));

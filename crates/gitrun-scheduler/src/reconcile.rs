@@ -432,7 +432,8 @@ mod tests {
                 action,
                 Action::CreateRunner {
                     permanent: false,
-                    job_labels
+                    job_labels,
+                    ..
                 } if job_labels.iter().any(|label| label.eq_ignore_ascii_case("windows"))
             )
         }));
@@ -829,6 +830,7 @@ mod tests {
                 Action::CreateRunner {
                     permanent: false,
                     job_labels,
+                    ..
                 } => Some(job_labels.clone()),
                 _ => None,
             })
@@ -843,6 +845,7 @@ mod tests {
                 Action::CreateRunner {
                     permanent: true,
                     job_labels,
+                    ..
                 } => Some(job_labels.clone()),
                 _ => None,
             })
@@ -866,6 +869,7 @@ mod tests {
                 Action::CreateRunner {
                     permanent: false,
                     job_labels,
+                    ..
                 } => Some(job_labels.clone()),
                 _ => None,
             })

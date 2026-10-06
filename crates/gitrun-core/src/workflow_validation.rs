@@ -30,7 +30,7 @@
 //!    see `run_zizmor` — since it's an optional enhancement, not a
 //!    dependency GitRun installs on the operator's behalf.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Command;
 
@@ -52,7 +52,7 @@ pub struct ValidationReport {
 }
 
 /// One statically detected GitDockRun job reference.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DockRequest {
     pub file: String,
     pub line: usize,
@@ -61,7 +61,7 @@ pub struct DockRequest {
     pub operation: DockOperation,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DockOperation {
     Connect,
     Disconnect,

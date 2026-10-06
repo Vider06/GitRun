@@ -1491,6 +1491,7 @@ dependencies = [
  "gitrun-core",
  "gitrun-exe",
  "gitrun-gsr",
+ "libc",
  "gitrun-updater",
  "gitrun-vault",
  "reqwest 0.12.28",

@@ -1,3 +1,4 @@
+pub mod api_service;
 pub mod backoff;
 pub mod dock_registry;
 pub mod docker;

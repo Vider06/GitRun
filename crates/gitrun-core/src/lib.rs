@@ -33,8 +33,8 @@ pub use settings::{
 };
 pub use state::{HealthReport, StateError, StateStore};
 pub use workflow_validation::{
-    ensure_zizmor_installed, run_zizmor, scan, validate_workflows_dir, zizmor_info, Finding,
-    InstallOutcome, ValidationReport, ZizmorInfo,
+    ensure_zizmor_installed, run_zizmor, scan, scan_dock_requests, validate_workflows_dir,
+    zizmor_info, DockOperation, DockRequest, Finding, InstallOutcome, ValidationReport, ZizmorInfo,
 };
 
 pub use compatibility::{

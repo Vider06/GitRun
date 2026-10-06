@@ -874,7 +874,8 @@ fn main() {
     }
 
     let command = cli.command.unwrap_or(Command::Dashboard);
-    if !matches!(&command, Command::Cat) {
+    let is_cat_command = matches!(&command, Command::Cat);
+    if !is_cat_command {
         presenter.transition(validation_state_for_command(&command));
     }
 
@@ -928,7 +929,7 @@ fn main() {
         } => run_api_policy(&api, operation.as_deref(), enabled),
     };
 
-    if !matches!(command, Command::Cat) {
+    if !is_cat_command {
         presenter.finish(exit_code);
     }
     std::process::exit(exit_code);

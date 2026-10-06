@@ -884,12 +884,14 @@ fn main() {
     let mut presenter = cat::presenter::CatPresenter::new();
 
     if cli.gitrun {
+        presenter.start_live();
         presenter.transition(cat::presenter::ValidationState::Ready);
         println!("GitRun {}", current_version());
         presenter.finish(0);
         std::process::exit(0);
     }
     if cli.version || cli.all_crates || cli.crate_name.is_some() {
+        presenter.start_live();
         presenter.transition(cat::presenter::ValidationState::Ready);
         let exit_code = run_version(cli.crate_name.as_deref());
         presenter.finish(exit_code);
@@ -899,6 +901,9 @@ fn main() {
     let command = cli.command.unwrap_or(Command::Dashboard);
     let is_cat_command = matches!(&command, Command::Cat);
     let is_status_command = matches!(&command, Command::Status { .. });
+    if !is_cat_command && !is_status_command {
+        presenter.start_live();
+    }
     if !is_cat_command {
         presenter.transition(validation_state_for_command(&command));
     }

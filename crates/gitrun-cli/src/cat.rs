@@ -176,7 +176,7 @@ fn compact_half_block(lines: &[String], width: usize) -> Vec<String> {
         compact_source.push(line.as_str());
     }
 
-    let mut output = Vec::with_capacity((compact_source.len() + 1) / 2);
+    let mut output = Vec::with_capacity(compact_source.len().div_ceil(2));
     let mut index = 0;
 
     while index < compact_source.len() {

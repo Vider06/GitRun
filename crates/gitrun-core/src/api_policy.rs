@@ -312,11 +312,12 @@ mod tests {
     fn invalid_api_operation_pair_is_always_denied() {
         let mut matrix = PolicyMatrix::default();
         matrix.set(
-            GitRunApi::GitDockRun,
+            GitRunApi::GitStatusRun,
             ApiPolicy::enabled_with([GitRunOperation::Write]),
         );
-        assert!(!matrix.allows(GitRunApi::GitDockRun, GitRunOperation::Write));
-        assert!(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Melt));
+
+        assert!(!matrix.allows(GitRunApi::GitStatusRun, GitRunOperation::Write));
+        assert!(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Write));
     }
 
     #[test]

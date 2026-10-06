@@ -167,9 +167,12 @@ function renderOverview() {
 async function renderRepoView(repo) {
   const generation = state.navigationGeneration;
   content.innerHTML = `<div class="empty-state">Loading ${escapeHtml(repo)}…</div>`;
-  let detail;
+  let detail, dockRequirements;
   try {
-    detail = await invoke("get_repo_detail", { repo });
+    [detail, dockRequirements] = await Promise.all([
+      invoke("get_repo_detail", { repo }),
+      invoke("get_dock_requirements", { repo }),
+    ]);
   } catch (error) {
     if (generation !== state.navigationGeneration) return;
     content.innerHTML = errorBanner(String(error));
@@ -177,14 +180,14 @@ async function renderRepoView(repo) {
   }
   if (generation !== state.navigationGeneration || state.view !== "repo:" + repo) return;
 
-
+  const dockerPolicy = detail.docker_policy || {};
+  const logicPolicies = dockerPolicy.logic_containers || {};
+  const mountPolicy = dockerPolicy.allowed_mounts || { enabled: false, rules: [] };
 
   content.innerHTML = `
     <div class="view-header">
       <h1 class="view-title mono">${escapeHtml(repo)}</h1>
-      <p class="view-subtitle">GitVault groups: ${
-        detail.vault_groups.length ? detail.vault_groups.map((g) => `<span class="pill pill-info">${escapeHtml(g)}</span>`).join(" ") : '<span class="text-muted">none</span>'
-      }</p>
+      <p class="view-subtitle">GitVault groups: ${detail.vault_groups.length ? detail.vault_groups.map((g) => `<span class="pill pill-info">${escapeHtml(g)}</span>`).join(" ") : '<span class="text-muted">none</span>'}</p>
     </div>
 
     <div class="section">
@@ -192,31 +195,41 @@ async function renderRepoView(repo) {
         <h2 class="section-title" style="margin:0">Logic Containers rules</h2>
         <button class="btn btn-primary btn-sm" id="add-rule-btn">+ Add rule</button>
       </div>
-      <p class="field-hint" style="margin-bottom:12px">
-        Rules decide which backend/image a dynamic runner uses, based on a queued job's labels.
-        First matching rule wins. These rules are global (shared across repos) but shown here
-        since this is where you'll usually want to add one.
-      </p>
-      ${
-        detail.logic_rules.length === 0
-          ? `<div class="empty-state">No Logic Containers rules configured. Dynamic runners use the default image.</div>`
-          : `<div class="table-scroll"><table class="data-table">
-              <thead><tr><th>Rule</th><th>Match labels</th><th>Backend</th><th>Image</th><th></th></tr></thead>
-              <tbody>
-                ${detail.logic_rules
-                  .map(
-                    (rule, i) => `<tr>
-                      <td>${escapeHtml(rule.name)}</td>
-                      <td>${rule.match_labels.map((l) => `<span class="pill pill-muted">${escapeHtml(l)}</span>`).join(" ")}</td>
-                      <td>${formatBackend(rule.backend)}</td>
-                      <td class="mono">${escapeHtml(rule.image)}</td>
-                      <td><button class="btn btn-sm btn-danger" data-delete-rule="${i}">Remove</button></td>
-                    </tr>`
-                  )
-                  .join("")}
-              </tbody>
-            </table></div>`
-      }
+      <p class="field-hint" style="margin-bottom:12px">Rules choose the backend and image for matching dynamic jobs. GitDockRun requirements are detected separately from workflow files.</p>
+      ${detail.logic_rules.length === 0 ? `<div class="empty-state">No Logic Containers rules configured. Dynamic runners use the default image.</div>` : `<div class="table-scroll"><table class="data-table"><thead><tr><th>Rule</th><th>Match labels</th><th>Backend</th><th>Image</th><th></th></tr></thead><tbody>${detail.logic_rules.map((rule, i) => `<tr><td>${escapeHtml(rule.name)}</td><td>${rule.match_labels.map((l) => `<span class="pill pill-muted">${escapeHtml(l)}</span>`).join(" ")}</td><td>${formatBackend(rule.backend)}</td><td class="mono">${escapeHtml(rule.image)}</td><td><button class="btn btn-sm btn-danger" data-delete-rule="${i}">Remove</button></td></tr>`).join("")}</tbody></table></div>`}
+    </div>
+
+    <div class="section">
+      <h2 class="section-title">GitDockRun workflow requirements</h2>
+      <p class="field-hint">Pre-flight validation marks the logical job names used by <span class="mono">GitDockRun --job</span>. The real Docker container is resolved only after GitHub confirms the run/job/runner binding.</p>
+      ${dockRequirements.length === 0 ? `<div class="empty-state">No GitDockRun job references detected.</div>` : `<div class="table-scroll"><table class="data-table"><thead><tr><th>Workflow</th><th>Calling job</th><th>Target job</th><th>Operation</th></tr></thead><tbody>${dockRequirements.map((r) => `<tr><td class="mono">${escapeHtml(r.file)}:${r.line}</td><td>${escapeHtml(r.calling_job || "—")}</td><td class="mono">${escapeHtml(r.target_job)}</td><td><span class="pill pill-info">${escapeHtml(r.operation)}</span></td></tr>`).join("")}</tbody></table></div>`}
+    </div>
+
+    <div class="section" style="max-width:860px">
+      <h2 class="section-title">Docker resource policy</h2>
+      <label class="field-checkbox"><input type="checkbox" id="repo-direct-socket" ${dockerPolicy.direct_socket_enabled ? "checked" : ""} /><span><strong>Direct Docker socket compatibility</strong></span></label>
+      <p class="field-hint">Dangerous compatibility opt-out. GitDockRun does not require this switch.</p>
+      <div class="field">
+        <label>Allowed GitDockRun job names <span class="text-muted">(comma-separated, * for all)</span></label>
+        <input id="repo-allowed-jobs" value="${escapeHtml((dockerPolicy.allowed_job_names || []).join(","))}" />
+      </div>
+      <div class="field">
+        <label>Allowed Logic Container names <span class="text-muted">(comma-separated, * for all)</span></label>
+        <input id="repo-allowed-containers" value="${escapeHtml((dockerPolicy.allowed_container_names || []).join(","))}" />
+      </div>
+
+      <h3 class="section-title" style="font-size:16px">Logic Container capabilities</h3>
+      <p class="field-hint">A container may be connected/read/written/executed/melted independently of the global API enablement.</p>
+      <div id="logic-policy-list">
+        ${Object.entries(logicPolicies).map(([name, policy]) => `<div class="card" style="margin-bottom:10px" data-logic-policy="${escapeHtml(name)}"><div class="toolbar"><strong class="mono">${escapeHtml(name)}</strong><button class="btn btn-sm btn-danger" data-remove-logic-policy="${escapeHtml(name)}">Remove</button></div><div class="chip-row">${["connect","read","write","execute","melt","mountable"].map((op) => `<label class="field-checkbox"><input type="checkbox" data-logic-op="${escapeHtml(name)}|${op}" ${policy?.[op] ? "checked" : ""} /><span>${op}</span></label>`).join("")}</div><div class="field"><label>Allowed melt targets</label><input data-logic-targets="${escapeHtml(name)}" value="${escapeHtml((policy?.allowed_melt_targets || []).join(","))}" placeholder="runner,build-cache" /></div></div>`).join("")}
+      </div>
+      <button class="btn btn-sm" id="add-logic-policy">+ Add Logic Container policy</button>
+
+      <h3 class="section-title" style="font-size:16px;margin-top:24px">Mount allowlist</h3>
+      <label class="field-checkbox"><input type="checkbox" id="mount-enabled" ${mountPolicy.enabled ? "checked" : ""} /><span>Enable configured mounts</span></label>
+      <div id="mount-rules-list">${(mountPolicy.rules || []).map((rule, i) => `<div class="card mount-rule" data-mount-index="${i}" style="margin-bottom:10px"><div class="field"><label>Source</label><input data-mount-source="${i}" value="${escapeHtml(rule.source || "")}" /></div><div class="chip-row"><label class="field-checkbox"><input type="checkbox" data-mount-recursive="${i}" ${rule.recursive ? "checked" : ""} /><span>recursive</span></label><label class="field-checkbox"><input type="checkbox" data-mount-readonly="${i}" ${rule.read_only ? "checked" : ""} /><span>read-only</span></label><label class="field-checkbox"><input type="checkbox" data-mount-allow="${i}" ${rule.allow ? "checked" : ""} /><span>allow</span></label><button class="btn btn-sm btn-danger" data-remove-mount="${i}">Remove</button></div></div>`).join("")}</div>
+      <button class="btn btn-sm" id="add-mount-rule">+ Add mount rule</button>
+      <div class="toolbar" style="margin-top:18px"><span id="repo-docker-save-status" class="field-hint"></span><button class="btn btn-primary" id="save-repo-docker-policy">Save Docker policy</button></div>
     </div>
   `;
 
@@ -231,13 +244,127 @@ async function renderRepoView(repo) {
         const updated = detail.logic_rules.filter((_, i) => i !== index);
         await invoke("save_logic_rules", { rules: updated });
         await navigate("repo:" + repo);
-      } catch (error) {
-        alert("Could not remove rule: " + error);
-      }
+      } catch (error) { alert("Could not remove rule: " + error); }
     });
   });
-}
 
+  document.getElementById("add-logic-policy").addEventListener("click", () => {
+    const name = prompt("Logical container name:");
+    if (!name || !name.trim()) return;
+    const key = name.trim();
+    if (logicPolicies[key]) {
+      alert("That Logic Container already has a policy.");
+      return;
+    }
+    logicPolicies[key] = {
+      connect: true,
+      read: true,
+      write: true,
+      execute: false,
+      melt: false,
+      mountable: false,
+      allowed_melt_targets: ["runner"],
+    };
+    const list = document.getElementById("logic-policy-list");
+    const card = document.createElement("div");
+    card.className = "card";
+    card.style.marginBottom = "10px";
+    card.dataset.logicPolicy = key;
+    card.innerHTML = '<div class="toolbar"><strong class="mono">' +
+      escapeHtml(key) +
+      '</strong><button class="btn btn-sm btn-danger" data-remove-logic-policy="' +
+      escapeHtml(key) +
+      '">Remove</button></div>' +
+      '<div class="chip-row">' +
+      ["connect","read","write","execute","melt","mountable"].map((op) =>
+        '<label class="field-checkbox"><input type="checkbox" data-logic-op="' +
+        escapeHtml(key) + '|' + op + '" ' + (logicPolicies[key][op] ? "checked" : "") +
+        ' /><span>' + op + '</span></label>'
+      ).join("") +
+      '</div><div class="field"><label>Allowed melt targets</label><input data-logic-targets="' +
+      escapeHtml(key) + '" value="runner" placeholder="runner,build-cache" /></div>';
+    list.appendChild(card);
+    card.querySelector("[data-remove-logic-policy]").addEventListener("click", () => {
+      delete logicPolicies[key];
+      card.remove();
+    });
+  });
+
+  content.querySelectorAll("[data-remove-logic-policy]").forEach((btn) => btn.addEventListener("click", () => {
+    const key = btn.dataset.removeLogicPolicy;
+    delete logicPolicies[key];
+    btn.closest("[data-logic-policy]")?.remove();
+  }));
+
+  const addMountButton = document.getElementById("add-mount-rule");
+  addMountButton.addEventListener("click", () => {
+    const list = document.getElementById("mount-rules-list");
+    const index = list.querySelectorAll(".mount-rule").length;
+    const card = document.createElement("div");
+    card.className = "card mount-rule";
+    card.dataset.mountIndex = String(index);
+    card.style.marginBottom = "10px";
+    card.innerHTML = '<div class="field"><label>Source</label><input data-mount-source="' + index + '" value="/path" /></div>' +
+      '<div class="chip-row"><label class="field-checkbox"><input type="checkbox" data-mount-recursive="' + index + '" /><span>recursive</span></label>' +
+      '<label class="field-checkbox"><input type="checkbox" data-mount-readonly="' + index + '" checked /><span>read-only</span></label>' +
+      '<label class="field-checkbox"><input type="checkbox" data-mount-allow="' + index + '" checked /><span>allow</span></label>' +
+      '<button class="btn btn-sm btn-danger" data-remove-mount="' + index + '">Remove</button></div>';
+    list.appendChild(card);
+    card.querySelector("[data-remove-mount]").addEventListener("click", () => card.remove());
+  });
+  content.querySelectorAll("[data-remove-mount]").forEach((btn) => btn.addEventListener("click", () => {
+    btn.closest(".mount-rule")?.remove();
+  }));
+
+  document.getElementById("save-repo-docker-policy").addEventListener("click", async () => {
+    const status = document.getElementById("repo-docker-save-status");
+    try {
+      const socketEnabled = document.getElementById("repo-direct-socket").checked;
+      if (socketEnabled && !confirm("Enable direct Docker socket access for this repository? This bypasses the normal socket isolation compatibility boundary and gives workflows Docker daemon access. GitDockRun remains available without it.")) {
+        return;
+      }
+      const settings = await invoke("get_gitrun_settings");
+      settings.repositories = settings.repositories || {};
+      const repoSettings = settings.repositories[repo] || {};
+      repoSettings.api_overrides = repoSettings.api_overrides || {};
+      repoSettings.docker = repoSettings.docker || {};
+      repoSettings.docker.direct_socket_enabled = document.getElementById("repo-direct-socket").checked;
+      repoSettings.docker.allowed_job_names = document.getElementById("repo-allowed-jobs").value.split(",").map((v) => v.trim()).filter(Boolean);
+      repoSettings.docker.allowed_container_names = document.getElementById("repo-allowed-containers").value.split(",").map((v) => v.trim()).filter(Boolean);
+      repoSettings.docker.logic_containers = {};
+      Object.keys(logicPolicies).forEach((name) => {
+        const policy = logicPolicies[name];
+        const result = { ...policy, allowed_melt_targets: [...(policy.allowed_melt_targets || [])] };
+        ["connect","read","write","execute","melt","mountable"].forEach((op) => {
+          const el = document.querySelector(`[data-logic-op="${CSS.escape(name)}|${op}"]`);
+          if (el) result[op] = el.checked;
+        });
+        const targetEl = document.querySelector(`[data-logic-targets="${CSS.escape(name)}"]`);
+        result.allowed_melt_targets = targetEl ? targetEl.value.split(",").map((v) => v.trim()).filter(Boolean) : [];
+        repoSettings.docker.logic_containers[name] = result;
+      });
+      repoSettings.docker.allowed_mounts = {
+        enabled: document.getElementById("mount-enabled").checked,
+        rules: Array.from(document.querySelectorAll(".mount-rule")).map((row) => {
+          const index = row.dataset.mountIndex;
+          return {
+            source: row.querySelector(`[data-mount-source="${index}"]`).value.trim(),
+            recursive: row.querySelector(`[data-mount-recursive="${index}"]`).checked,
+            read_only: row.querySelector(`[data-mount-readonly="${index}"]`).checked,
+            allow: row.querySelector(`[data-mount-allow="${index}"]`).checked,
+          };
+        }),
+      };
+      settings.repositories[repo] = repoSettings;
+      await invoke("save_gitrun_settings", { settings, confirmSocketOptOut: repoSettings.docker.direct_socket_enabled });
+      status.textContent = "Docker policy saved.";
+      status.style.color = "var(--success)";
+    } catch (error) {
+      status.textContent = "Error: " + error;
+      status.style.color = "var(--danger)";
+    }
+  });
+}
 // Logic Containers rules are stored globally (one file), not per-repo — this
 // is a placeholder hook in case a future revision scopes rules to a repo the
 // same way GitVault secrets are scoped. Today it shows every rule under
@@ -682,9 +809,9 @@ function severityPill(severity) {
 async function renderSettings() {
   const generation = state.navigationGeneration;
   content.innerHTML = `<div class="empty-state">Loading…</div>`;
-  let config;
+  let config, settings;
   try {
-    config = await invoke("get_config");
+    [config, settings] = await Promise.all([invoke("get_config"), invoke("get_gitrun_settings")]);
   } catch (error) {
     if (generation !== state.navigationGeneration) return;
     content.innerHTML = errorBanner(String(error));
@@ -692,68 +819,176 @@ async function renderSettings() {
   }
   if (generation !== state.navigationGeneration || state.view !== "settings") return;
 
+  const apiOps = {
+    GitVaultRun: ["Read", "Write", "Exists", "Delete", "List"],
+    GitDockRun: ["Connect", "Disconnect", "Read", "Write", "Execute", "Melt"],
+    GitSaveRun: ["File", "Logs"],
+    GitRegisterRun: ["Register"],
+    GitInstallRun: ["Install", "Remove", "Update"],
+    GitReadRun: ["Read"],
+    GitWriteRun: ["Write"],
+    GitVerifyRun: ["Verify"],
+    GitStatusRun: ["Status"],
+  };
+  const apiNames = Object.keys(apiOps);
+  const globalApis = settings.global?.apis || {};
+
   content.innerHTML = `
     <div class="view-header">
       <h1 class="view-title">Settings</h1>
-      <p class="view-subtitle">Core scheduling configuration.</p>
+      <p class="view-subtitle">GitRun security policy, API capabilities and Docker compatibility controls.</p>
     </div>
 
-    <div class="section" style="max-width:520px">
+    <div class="section">
+      <h2 class="section-title">Workflow APIs — global policy</h2>
+      <p class="field-hint">Disabled by default. Repository settings can only restrict these capabilities further.</p>
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>API</th><th>Enabled</th><th>Operations</th></tr></thead>
+        <tbody>
+          ${apiNames.map((api) => {
+            const policy = globalApis[api] || { enabled: false, allowed_operations: [] };
+            return `<tr>
+              <td class="mono">${api}</td>
+              <td><label class="field-checkbox"><input type="checkbox" data-global-api="${api}" ${policy.enabled ? "checked" : ""} /><span>${policy.enabled ? "Enabled" : "Disabled"}</span></label></td>
+              <td><div class="chip-row">${apiOps[api].map((op) => `<label class="field-checkbox"><input type="checkbox" data-global-op="${api}|${op}" ${(policy.allowed_operations || []).includes(op) ? "checked" : ""} ${policy.enabled ? "" : "disabled"} /><span>${op.toLowerCase()}</span></label>`).join("")}</div></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="section" style="max-width:760px">
+      <h2 class="section-title">Repository policy</h2>
       <div class="field">
-        <label>Repositories (comma-separated)</label>
-        <input type="text" id="cfg-repositories" value="${escapeHtml(config.repositories.join(","))}" />
+        <label for="policy-repo">Repository</label>
+        <select id="policy-repo">${config.repositories.map((repo) => `<option value="${escapeHtml(repo)}">${escapeHtml(repo)}</option>`).join("")}</select>
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Min runners</label>
-          <input type="number" id="cfg-min" value="${config.min_runners}" min="1" />
-        </div>
-        <div class="field">
-          <label>Max runners</label>
-          <input type="number" id="cfg-max" value="${config.max_runners}" min="1" />
-        </div>
+      <div id="repo-policy-editor"></div>
+    </div>
+
+    <div class="section" style="max-width:760px">
+      <h2 class="section-title">Docker Socket Protection</h2>
+      <label class="field-checkbox">
+        <input type="checkbox" id="global-hardening" ${config.gsr_docker_socket_hardening ? "checked" : ""} />
+        <span><strong>GSR Docker socket hardening</strong></span>
+      </label>
+      <p class="field-hint">Hardening is the global danger gate. Turning it off requires the existing unsafe-runner gate as well.</p>
+      <label class="field-checkbox">
+        <input type="checkbox" id="unsafe-runner" ${config.gsr_allow_unsafe_runner ? "checked" : ""} />
+        <span>Allow unsafe runner configuration</span>
+      </label>
+    </div>
+
+    <div class="section" style="max-width:760px">
+      <div class="toolbar">
+        <span id="security-save-status" class="field-hint"></span>
+        <button class="btn btn-primary" id="save-security-settings">Save security settings</button>
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Idle timeout (s)</label>
-          <input type="number" id="cfg-idle" value="${config.idle_timeout}" min="0" />
-        </div>
-        <div class="field">
-          <label>Poll interval (s)</label>
-          <input type="number" id="cfg-poll" value="${config.poll_interval}" min="1" />
-        </div>
-      </div>
-      <div class="field">
-        <label>Runner image</label>
-        <input type="text" id="cfg-image" value="${escapeHtml(config.runner_image)}" />
-      </div>
-      <button class="btn btn-primary" id="save-settings-btn">Save settings</button>
-      <span id="save-status" class="field-hint"></span>
     </div>
   `;
 
-  document.getElementById("save-settings-btn").addEventListener("click", async () => {
-    const updated = {
-      ...config,
-      repositories: document.getElementById("cfg-repositories").value.split(",").map((s) => s.trim()).filter(Boolean),
-      min_runners: Number(document.getElementById("cfg-min").value),
-      max_runners: Number(document.getElementById("cfg-max").value),
-      idle_timeout: Number(document.getElementById("cfg-idle").value),
-      poll_interval: Number(document.getElementById("cfg-poll").value),
-      runner_image: document.getElementById("cfg-image").value.trim(),
+  const repoSelect = document.getElementById("policy-repo");
+  const repoEditor = document.getElementById("repo-policy-editor");
+
+  function effectiveRepoSettings(repo) {
+    return settings.repositories?.[repo] || {
+      api_overrides: {},
+      docker: { direct_socket_enabled: false, allowed_job_names: [], allowed_container_names: [], logic_containers: {}, allowed_mounts: { enabled: false, rules: [] } },
+      vault: { read: false, write: false, exists: false, delete: false, list_metadata: false, allowed_names: [] },
+      storage: { enabled: false, allow_files: false, allow_logs: false, max_file_size_bytes: 67108864 },
+      register: { enabled: false, allow_workflow: false, allow_permanent: false, allowed_entries: [] },
     };
-    const statusEl = document.getElementById("save-status");
+  }
+
+  function renderRepoPolicy(repo) {
+    const policy = effectiveRepoSettings(repo);
+    const overrides = policy.api_overrides || {};
+    repoEditor.innerHTML = `
+      <div class="field-row">
+        <label class="field-checkbox"><input type="checkbox" id="repo-socket" ${policy.docker?.direct_socket_enabled ? "checked" : ""} /><span><strong>Direct Docker socket compatibility</strong></span></label>
+      </div>
+      <p class="field-hint">This is the explicit repository opt-out. GitDockRun remains separate and does not require the socket.</p>
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>API override</th><th>Enabled</th><th>Allowed operations</th></tr></thead>
+        <tbody>${apiNames.map((api) => {
+          const override = overrides[api] || { enabled: null, allowed_operations: null };
+          const selected = override.allowed_operations || [];
+          return `<tr>
+            <td class="mono">${api}</td>
+            <td><select data-repo-enabled="${api}"><option value="inherit" ${override.enabled === null || override.enabled === undefined ? "selected" : ""}>Inherit</option><option value="true" ${override.enabled === true ? "selected" : ""}>Allow</option><option value="false" ${override.enabled === false ? "selected" : ""}>Deny</option></select></td>
+            <td><div class="chip-row">${apiOps[api].map((op) => `<label class="field-checkbox"><input type="checkbox" data-repo-op="${api}|${op}" ${selected.includes(op) ? "checked" : ""} /><span>${op.toLowerCase()}</span></label>`).join("")}</div></td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table></div>
+    `;
+    document.getElementById("repo-socket").addEventListener("change", () => {});
+  }
+
+  repoSelect.addEventListener("change", () => renderRepoPolicy(repoSelect.value));
+  renderRepoPolicy(repoSelect.value || config.repositories[0] || "");
+
+  apiNames.forEach((api) => {
+    const checkbox = document.querySelector(`[data-global-api="${CSS.escape(api)}"]`);
+    checkbox?.addEventListener("change", () => {
+      document.querySelectorAll(`[data-global-op^="${CSS.escape(api)}|"]`).forEach((op) => {
+        op.disabled = !checkbox.checked;
+        if (!checkbox.checked) op.checked = false;
+      });
+    });
+  });
+
+  document.getElementById("save-security-settings").addEventListener("click", async () => {
+    const next = structuredClone(settings);
+    next.global = next.global || { apis: {} };
+    next.global.apis = next.global.apis || {};
+    for (const api of apiNames) {
+      const enabled = document.querySelector(`[data-global-api="${CSS.escape(api)}"]`).checked;
+      const operations = Array.from(document.querySelectorAll(`[data-global-op^="${CSS.escape(api)}|"]`))
+        .filter((el) => el.checked).map((el) => el.dataset.globalOp.split("|")[1]);
+      next.global.apis[api] = { enabled, allowed_operations: operations };
+    }
+
+    const repo = repoSelect.value;
+    next.repositories = next.repositories || {};
+    const repoSettings = effectiveRepoSettings(repo);
+    repoSettings.docker = repoSettings.docker || { direct_socket_enabled: false, allowed_job_names: [], allowed_container_names: [], logic_containers: {}, allowed_mounts: { enabled: false, rules: [] } };
+    repoSettings.docker.direct_socket_enabled = document.getElementById("repo-socket").checked;
+    repoSettings.api_overrides = repoSettings.api_overrides || {};
+    for (const api of apiNames) {
+      const enabledValue = document.querySelector(`[data-repo-enabled="${CSS.escape(api)}"]`).value;
+      const selected = Array.from(document.querySelectorAll(`[data-repo-op^="${CSS.escape(api)}|"]`))
+        .filter((el) => el.checked).map((el) => el.dataset.repoOp.split("|")[1]);
+      repoSettings.api_overrides[api] = {
+        enabled: enabledValue === "inherit" ? null : enabledValue === "true",
+        allowed_operations: selected.length ? selected : null,
+      };
+    }
+    next.repositories[repo] = repoSettings;
+
+    const nextConfigDangerGate = {
+      ...config,
+      gsr_docker_socket_hardening: document.getElementById("global-hardening").checked,
+      gsr_allow_unsafe_runner: document.getElementById("unsafe-runner").checked,
+    };
+
+    const status = document.getElementById("security-save-status");
     try {
-      await invoke("save_config", { updated });
-      statusEl.textContent = "Saved.";
-      statusEl.style.color = "var(--success)";
+      if (config.gsr_docker_socket_hardening && !nextConfigDangerGate.gsr_docker_socket_hardening) {
+        if (!confirm("Disable GSR Docker socket hardening? The existing unsafe-runner danger gate will be required before GitRun accepts this configuration.")) {
+          return;
+        }
+      }
+      await invoke("save_gitrun_settings", { settings: next, confirmSocketOptOut: repoSettings.docker.direct_socket_enabled });
+      await invoke("save_config", { updated: nextConfigDangerGate });
+      settings = next;
+      status.textContent = "Security settings saved.";
+      status.style.color = "var(--success)";
     } catch (error) {
-      statusEl.textContent = "Error: " + error;
-      statusEl.style.color = "var(--danger)";
+      status.textContent = "Error: " + error;
+      status.style.color = "var(--danger)";
     }
   });
 }
-
 // ---------------------------------------------------------------------
 // Hypervisor decisions — global, cross-view prompt. Polled independently
 // of `navigate()`/`state.view` because this is time-sensitive (the

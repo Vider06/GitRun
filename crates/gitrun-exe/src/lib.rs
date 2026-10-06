@@ -1,0 +1,158 @@
+//! Internal execution engine for GitRun.
+//!
+//! This crate is intentionally not a workflow-facing command API.
+//! Workflow invocations are modeled as explicit GitRun APIs, authenticated
+//! and authorized by GSR before they reach this layer. There is deliberately
+//! no variant for arbitrary shell/Docker commands.
+
+use gitrun_core::{GitRunApi, GitRunOperation};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use thiserror::Error;
+
+pub mod ipc;
+pub mod protocol;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiInvocation {
+    pub api: GitRunApi,
+    pub operation: GitRunOperation,
+    pub repository: String,
+    pub workflow: String,
+    pub run_id: Option<u64>,
+    pub job: String,
+    pub runner: String,
+    pub resource: Option<String>,
+    pub arguments: BTreeMap<String, String>,
+}
+
+impl ApiInvocation {
+    pub fn into_authorized(self, request_id: String) -> AuthorizedOperation {
+        AuthorizedOperation {
+            request_id,
+            api: self.api,
+            operation: self.operation,
+            repository: self.repository,
+            workflow: self.workflow,
+            run_id: self.run_id,
+            job: self.job,
+            resource: self.resource,
+            arguments: self.arguments,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorizedOperation {
+    pub request_id: String,
+    pub api: GitRunApi,
+    pub operation: GitRunOperation,
+    pub repository: String,
+    pub workflow: String,
+    pub run_id: Option<u64>,
+    pub job: String,
+    /// Logical resource identity, never trusted as a raw Docker command.
+    pub resource: Option<String>,
+    /// Parsed API arguments. GSR is responsible for schema validation before
+    /// creating this request; handlers must still validate resource-specific
+    /// invariants before doing privileged work.
+    pub arguments: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionEvent {
+    Started,
+    Stdout(String),
+    Stderr(String),
+    Finished { exit_code: i32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionResult {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+#[derive(Debug, Error)]
+pub enum ExecutionError {
+    #[error("execution backend does not implement {api:?}/{operation:?}")]
+    Unsupported {
+        api: GitRunApi,
+        operation: GitRunOperation,
+    },
+    #[error("execution failed: {0}")]
+    Failed(String),
+}
+
+/// Internal boundary used by GSR-approved handlers.
+///
+/// Implementations should be composed from explicit API handlers
+/// (GitVaultRun, GitDockRun, ...) rather than a generic shell runner.
+pub trait ExecutionBackend: Send + Sync {
+    fn execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError>;
+
+    /// Streaming adapter used by the IPC server. Backends that can stream
+    /// process output should override this method; the default keeps older
+    /// handlers correct by emitting the buffered result as events.
+    fn execute_stream(
+        &self,
+        request: &AuthorizedOperation,
+        sink: &mut dyn FnMut(ExecutionEvent),
+    ) -> Result<i32, ExecutionError> {
+        sink(ExecutionEvent::Started);
+        let result = self.execute(request)?;
+        if !result.stdout.is_empty() {
+            sink(ExecutionEvent::Stdout(result.stdout.clone()));
+        }
+        if !result.stderr.is_empty() {
+            sink(ExecutionEvent::Stderr(result.stderr.clone()));
+        }
+        sink(ExecutionEvent::Finished {
+            exit_code: result.exit_code,
+        });
+        Ok(result.exit_code)
+    }
+}
+
+/// Safe default backend used while the concrete handlers are introduced.
+/// It guarantees that an accidentally unregistered operation cannot execute.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopExecutionBackend;
+
+impl ExecutionBackend for NoopExecutionBackend {
+    fn execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        Err(ExecutionError::Unsupported {
+            api: request.api,
+            operation: request.operation,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(api: GitRunApi, operation: GitRunOperation) -> AuthorizedOperation {
+        AuthorizedOperation {
+            request_id: "test-request".into(),
+            api,
+            operation,
+            repository: "owner/repo".into(),
+            workflow: "ci.yml".into(),
+            run_id: Some(1),
+            job: "build".into(),
+            resource: None,
+            arguments: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn noop_backend_never_executes_unknown_operation() {
+        let backend = NoopExecutionBackend;
+        let error = backend
+            .execute(&request(GitRunApi::GitDockRun, GitRunOperation::Melt))
+            .unwrap_err();
+        assert!(matches!(error, ExecutionError::Unsupported { .. }));
+    }
+}

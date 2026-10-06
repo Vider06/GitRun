@@ -1,0 +1,16 @@
+[package]
+name = "gitrun-exe"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Internal GitRun execution engine for authorized Git*Run operations"
+
+[dependencies]
+gitrun-core = { path = "../gitrun-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+hmac = "0.13"
+sha2 = "0.11"
+getrandom = "0.4"
+hex = "0.4"

@@ -1,4 +1,4 @@
-use gitrun_core::Config;
+use gitrun_core::{Config, GitRunSettings};
 use std::{
     fs,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -84,6 +84,13 @@ pub fn prepare_directories(
     ensure_directory(&state_dir, 0o750)?;
     ensure_directory(&log_dir, 0o750)?;
 
+    let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
+    if !settings_path.exists() {
+        GitRunSettings::default()
+            .save(&settings_path)
+            .map_err(|error| SetupError::Io(std::io::Error::other(error.to_string())))?;
+    }
+
     Ok(SetupReport {
         dependencies: check_dependencies(),
         config_dir,
@@ -138,6 +145,13 @@ pub fn bootstrap_linux_with_auth(
     ensure_directory(&state_dir, 0o750)?;
     ensure_directory(&log_dir, 0o750)?;
     ensure_directory(&root, 0o755)?;
+
+    let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
+    if !settings_path.exists() {
+        GitRunSettings::default()
+            .save(&settings_path)
+            .map_err(|error| SetupError::Io(std::io::Error::other(error.to_string())))?;
+    }
 
     let runner_dockerfile = resources::runner_dockerfile_for_bootstrap();
     write_resource(
@@ -194,6 +208,7 @@ pub fn bootstrap_linux_with_auth(
         chown_path(&config_path, uid)?;
         chown_path(&state_dir, uid)?;
         chown_path(&log_dir, uid)?;
+        chown_path(&settings_path, uid)?;
         add_user_to_docker_group(uid)?;
     }
 

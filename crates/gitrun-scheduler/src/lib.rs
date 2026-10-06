@@ -1,4 +1,6 @@
+pub mod api_service;
 pub mod backoff;
+pub mod dock_registry;
 pub mod docker;
 pub mod github;
 pub mod gsr_bridge;
@@ -71,7 +73,7 @@ pub fn run() {
     }
 
     let client = match build_github_client(&config) {
-        Ok(client) => client,
+        Ok(client) => Arc::new(client),
         Err(error) => {
             eprintln!("gitrun-autoscaler: {error}");
             std::process::exit(2);
@@ -115,8 +117,15 @@ pub fn run() {
     }
 
     // Only start background workers after every fatal startup check has passed
-    // and this process owns the singleton PID file. Otherwise GTUU/GSR could
+    // and this process owns the singleton PID file. Otherwise GTUU/GSR/API could
     // act briefly and concurrently while startup is about to abort.
+    if let Err(error) =
+        api_service::spawn(config.clone(), Arc::clone(&client), Arc::clone(&stopping))
+    {
+        eprintln!("gitrun-autoscaler: GitRun API service failed to start: {error}");
+        let _ = std::fs::remove_file(&pid_file);
+        std::process::exit(2);
+    }
     spawn_gtuu_thread(&config, &stopping);
     spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
 
@@ -384,14 +393,56 @@ fn reconcile_repo(
     vm_registry: &VmResolutionRegistry,
     repo: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    api_service::reconcile_dock_bindings(client, state_dir, repo).map_err(std::io::Error::other)?;
+
+    if config.gsr_workflow_validation_enabled {
+        validate_repo_workflows_best_effort(client, config, repo);
+    }
+
     let containers = docker::managed_containers(repo)?;
+    api_service::reconcile_dock_target_containers(client, state_dir, repo, &containers)
+        .map_err(std::io::Error::other)?;
+    let mut preserved_docks =
+        api_service::preserved_dock_containers(state_dir, repo).map_err(std::io::Error::other)?;
+    preserved_docks.extend(
+        containers
+            .iter()
+            .filter(|container| {
+                container.dock_target
+                    && container
+                        .workflow_job
+                        .as_deref()
+                        .map(|job| {
+                            load_dock_target_jobs(state_dir, repo)
+                                .iter()
+                                .any(|target| target == job)
+                        })
+                        .unwrap_or(false)
+            })
+            .map(|container| container.name.clone()),
+    );
+    let plan_containers: Vec<_> = containers
+        .iter()
+        .filter(|container| !preserved_docks.contains(&container.name))
+        .cloned()
+        .collect();
     let runners = client.list_runners(repo)?;
     // Was: client.queued_self_hosted_jobs(repo)? (count only). Switched to
     // the labels-carrying variant so Logic Containers can route dynamic
     // runners per job; `queued_jobs` below is just this list's length, so
     // desired_count()'s formula (busy + queued, clamped) is unchanged.
-    let queued_job_labels = client.queued_self_hosted_jobs_with_labels(repo)?;
-    let queued_jobs = queued_job_labels.len() as u32;
+    let queued_jobs_info = client.queued_self_hosted_jobs_with_info(repo)?;
+    let queued_jobs = queued_jobs_info.len() as u32;
+    let queued_job_labels: Vec<Vec<String>> = queued_jobs_info
+        .iter()
+        .map(|job| job.labels.clone())
+        .collect();
+    let queued_job_names: Vec<String> = queued_jobs_info
+        .iter()
+        .map(|job| job.name.clone())
+        .collect();
+    let queued_job_run_ids: Vec<u64> = queued_jobs_info.iter().map(|job| job.run_id).collect();
+    let dock_target_jobs = load_dock_target_jobs(state_dir, repo);
     let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
         .map_err(|error| {
             std::io::Error::other(format!(
@@ -400,7 +451,7 @@ fn reconcile_repo(
         })?;
 
     let mut state = SchedulerState::load(state_dir)?;
-    let live_names: Vec<String> = containers
+    let live_names: Vec<String> = plan_containers
         .iter()
         .filter(|c| c.status == "running")
         .map(|c| c.name.clone())
@@ -453,7 +504,7 @@ fn reconcile_repo(
     let input = ReconcileInput {
         min_runners: config.min_runners,
         max_runners: config.max_runners,
-        containers: containers.iter().map(to_container_view).collect(),
+        containers: plan_containers.iter().map(to_container_view).collect(),
         runners: runners
             .iter()
             .map(|r| RunnerView {
@@ -464,6 +515,9 @@ fn reconcile_repo(
             .collect(),
         queued_jobs,
         queued_job_labels,
+        queued_job_names,
+        queued_job_run_ids,
+        dock_target_jobs,
         configured_runner_labels: config
             .runner_labels
             .split(',')
@@ -529,6 +583,9 @@ fn execute(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         Action::RemoveExited { name } => {
+            if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
+                return Ok(());
+            }
             deregister_and_remove(client, repo, name)?;
             state.clear_idle(name);
             state.clear_recovery(name);
@@ -536,6 +593,8 @@ fn execute(
         Action::CreateRunner {
             permanent,
             job_labels,
+            job_name,
+            job_run_id,
         } => {
             create_runner(
                 client,
@@ -543,8 +602,12 @@ fn execute(
                 state_dir,
                 vm_registry,
                 repo,
-                *permanent,
-                job_labels,
+                RunnerCreateContext {
+                    permanent: *permanent,
+                    job_name: job_name.as_deref(),
+                    job_run_id: *job_run_id,
+                    job_labels,
+                },
             )?;
         }
         Action::RecreateOrphaned { name, permanent } => {
@@ -558,8 +621,12 @@ fn execute(
                 state_dir,
                 vm_registry,
                 repo,
-                *permanent,
-                &[],
+                RunnerCreateContext {
+                    permanent: *permanent,
+                    job_name: None,
+                    job_run_id: None,
+                    job_labels: &[],
+                },
             )?;
             state.clear_recovery(name);
         }
@@ -571,6 +638,9 @@ fn execute(
             docker::restart_container(name)?;
         }
         Action::RemoveIdle { name } => {
+            if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
+                return Ok(());
+            }
             let _ = remove_if_still_idle(client, repo, name)?;
             state.clear_idle(name);
         }
@@ -624,15 +694,27 @@ fn remove_if_still_idle(
     Ok(true)
 }
 
+struct RunnerCreateContext<'a> {
+    permanent: bool,
+    job_name: Option<&'a str>,
+    job_run_id: Option<u64>,
+    job_labels: &'a [String],
+}
+
 fn create_runner(
     client: &GitHubClient,
     config: &Config,
     state_dir: &std::path::Path,
     vm_registry: &VmResolutionRegistry,
     repo: &str,
-    permanent: bool,
-    job_labels: &[String],
+    context: RunnerCreateContext<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let RunnerCreateContext {
+        permanent,
+        job_name,
+        job_run_id,
+        job_labels,
+    } = context;
     let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
         std::io::Error::other(format!(
             "cannot safely create runner for {repo}: GSR ban state is unreadable: {error}"
@@ -645,15 +727,19 @@ fn create_runner(
 
     let registration_token = client.registration_token(repo)?;
 
-    if config.gsr_workflow_validation_enabled {
-        validate_repo_workflows_best_effort(client, config, repo);
-    }
-
     let gsr_policy_env = gsr_policy_env(config);
     let safe = docker::sanitize(repo, '-');
     let name = format!("gitrun-{safe}-{}", uuid_like_suffix());
     docker::ensure_shared_cache_volume(&config.shared_cache_volume)?;
-    let docker_socket_gid = resolve_docker_socket_gid()?;
+    let settings = gitrun_core::GitRunSettings::load_or_default(
+        gitrun_core::GitRunSettings::path_for_state_dir(state_dir),
+    )?;
+    let repository_settings = settings.effective_for_repository(repo);
+    let docker_socket_gid = if repository_settings.docker.direct_socket_enabled {
+        resolve_docker_socket_gid()?
+    } else {
+        String::new()
+    };
     let secret_env = vault_env_for_repo(config, repo);
 
     let Some((backend, image, is_windows)) =
@@ -682,15 +768,43 @@ fn create_runner(
             pids_limit: &config.container_pids_limit,
             shared_cache_volume: &config.shared_cache_volume,
             docker_socket_gid: &docker_socket_gid,
+            docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
             runner_home_size: &config.runner_home_size,
             home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
             secret_env: &secret_env,
             gsr_policy_env: &gsr_policy_env,
             is_windows,
+            workflow_job_name: job_name,
+            workflow_run_id: job_run_id,
+            dock_target: load_dock_target_jobs(state_dir, repo)
+                .into_iter()
+                .any(|target| Some(target.as_str()) == job_name),
             docker_socket_hardening: config.gsr_docker_socket_hardening,
         },
     )?;
     Ok(())
+}
+
+fn load_dock_target_jobs(state_dir: &std::path::Path, repo: &str) -> Vec<String> {
+    let path = state_dir
+        .join("workflow-dock-requirements")
+        .join(format!("{}.json", docker::sanitize(repo, '_')));
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return Vec::new(),
+    };
+
+    serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw)
+        .map(|requests| {
+            let mut jobs = Vec::new();
+            for request in requests {
+                if !jobs.iter().any(|job| job == &request.target_job) {
+                    jobs.push(request.target_job);
+                }
+            }
+            jobs
+        })
+        .unwrap_or_default()
 }
 
 /// Combines the globally configured runner labels with the labels of the
@@ -750,8 +864,16 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
     };
 
     let mut findings = Vec::new();
+    let mut dock_requests = Vec::new();
     for (name, content) in &files {
         findings.extend(gitrun_core::scan(name, content));
+        dock_requests.extend(gitrun_core::scan_dock_requests(name, content));
+    }
+
+    if let Err(error) = save_workflow_dock_requirements(&config.state_dir, repo, &dock_requests) {
+        eprintln!(
+            "gitrun-autoscaler: workflow validation for {repo}: could not persist GitDockRun requirements: {error}"
+        );
     }
 
     if config.gsr_zizmor_enabled {
@@ -796,6 +918,43 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
     }
 }
 
+fn save_workflow_dock_requirements(
+    state_dir: &str,
+    repo: &str,
+    requests: &[gitrun_core::DockRequest],
+) -> std::io::Result<()> {
+    let directory = std::path::Path::new(state_dir).join("workflow-dock-requirements");
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join(format!("{}.json", docker::sanitize(repo, '_')));
+    if requests.is_empty() {
+        match std::fs::remove_file(&path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+    let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    let raw = serde_json::to_vec_pretty(requests).map_err(std::io::Error::other)?;
+    {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        use std::io::Write;
+        file.write_all(&raw)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+    }
+    if let Err(error) = std::fs::rename(&temp, &path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    Ok(())
+}
 fn write_scratch_workflows(
     dir: &std::path::Path,
     files: &[(String, String)],
@@ -977,7 +1136,24 @@ fn resolve_docker_socket_gid() -> Result<String, Box<dyn std::error::Error>> {
 pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
     let client = build_github_client(&config)?;
-    let docker_socket_gid = resolve_docker_socket_gid()?;
+    let settings = gitrun_core::GitRunSettings::load_or_default(
+        gitrun_core::GitRunSettings::path_for_state_dir(&config.state_dir),
+    )?;
+    let socket_enabled_for_repo = |repo: &str| {
+        settings
+            .effective_for_repository(repo)
+            .docker
+            .direct_socket_enabled
+    };
+    let docker_socket_gid = if config
+        .repositories
+        .iter()
+        .any(|repo| socket_enabled_for_repo(repo))
+    {
+        resolve_docker_socket_gid()?
+    } else {
+        String::new()
+    };
     let gsr_policy_env = gsr_policy_env(&config);
     let gtuu_config = GtuuConfig {
         image: &config.runner_image,
@@ -998,6 +1174,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
         gsr_policy_env: &gsr_policy_env,
+        docker_socket_enabled_for_repo: &socket_enabled_for_repo,
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }

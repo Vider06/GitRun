@@ -164,6 +164,9 @@ pub struct ManagedContainer {
     pub name: String,
     pub status: String,
     pub permanent: bool,
+    pub dock_target: bool,
+    pub workflow_job: Option<String>,
+    pub workflow_run_id: Option<u64>,
 }
 
 pub fn shared_cache_volume(configured: Option<&str>) -> String {
@@ -277,10 +280,24 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             continue;
         };
         let permanent = container_is_permanent_on(host, name).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
+        let dock_target = container_label_on(host, name, "gitrun.dock_target")
+            .ok()
+            .flatten()
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+        let workflow_job = container_label_on(host, name, "gitrun.workflow_job")
+            .ok()
+            .flatten();
+        let workflow_run_id = container_label_on(host, name, "gitrun.workflow_run")
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse::<u64>().ok());
         containers.push(ManagedContainer {
             name: name.to_owned(),
             status,
             permanent,
+            dock_target,
+            workflow_job,
+            workflow_run_id,
         });
     }
     Ok(containers)
@@ -319,6 +336,23 @@ pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Resul
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
+fn container_label_on(host: &DockerHost, name: &str, label: &str) -> Result<Option<String>> {
+    let format = format!("{{index .Config.Labels \\\"{label}\\\"}}");
+    let output = run_on(host, &["inspect", "-f", &format, name])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if is_missing_container_error(&stderr) {
+            return Ok(None);
+        }
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker inspect {name} failed")
+        } else {
+            stderr
+        }));
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((!value.is_empty()).then_some(value))
+}
 fn container_status_string(host: &DockerHost, name: &str) -> Result<Option<String>> {
     let output = run_on(host, &["inspect", "-f", "{{json .State}}", name])?;
     if !output.status.success() {
@@ -505,6 +539,14 @@ pub struct RunnerSpec<'a> {
     /// bootstrap snapshots them into a root-owned file before the Actions
     /// runner starts; the GSR agent never trusts the workflow environment.
     pub gsr_policy_env: &'a [(String, String)],
+    /// Workflow job name this runner is reserved for, when created from a
+    /// queued job that GitDockRun statically marked as a target.
+    pub workflow_job_name: Option<&'a str>,
+    /// Workflow run ID paired with workflow_job_name.
+    pub workflow_run_id: Option<u64>,
+    /// Whether this container is a GitDockRun target that must survive the
+    /// normal Dynamic-runner cleanup until the dock binding is released.
+    pub dock_target: bool,
     /// True for a Windows container runner (Logic Containers). Changes which
     /// flags are valid: Windows containers don't support `--read-only`,
     /// `--tmpfs`, `--pids-limit`, or Unix-style socket/group-add mounts —
@@ -514,6 +556,11 @@ pub struct RunnerSpec<'a> {
     /// implemented here, so a Windows runner cannot itself run Docker builds
     /// until that's added.
     pub is_windows: bool,
+    /// Whether this runner is explicitly allowed to expose the host Docker
+    /// socket to workflow code. This is a repository policy decision and is
+    /// false unless the repository settings explicitly enable the compatibility
+    /// opt-out. GSR/GitDockRun do not depend on this flag.
+    pub docker_socket_enabled: bool,
     /// GSR's "danger gate" (see `gitrun_core::Config::gsr_docker_socket_hardening`).
     /// When true (the default), extra Docker-level restrictions are applied
     /// to Linux runner containers to reduce what a process that escapes
@@ -570,6 +617,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         format!("gitrun.permanent={}", spec.permanent),
         "--label".into(),
         format!("gitrun.dynamic={}", !spec.permanent),
+        "--label".into(),
+        format!("gitrun.dock_target={}", spec.dock_target),
         "--cpus".into(),
         spec.cpus.into(),
         "--memory".into(),
@@ -577,6 +626,13 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         "--restart".into(),
         "unless-stopped".into(),
     ]);
+
+    if let Some(job_name) = spec.workflow_job_name {
+        args.extend(["--label".into(), format!("gitrun.workflow_job={job_name}")]);
+    }
+    if let Some(run_id) = spec.workflow_run_id {
+        args.extend(["--label".into(), format!("gitrun.workflow_run={run_id}")]);
+    }
 
     if spec.is_windows {
         // Windows containers: no --read-only/--tmpfs/--pids-limit/Unix
@@ -630,15 +686,27 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.extend([
             "--tmpfs".into(),
             "/tmp:rw,nosuid,nodev,exec,size=256m".into(),
-            "--volume".into(),
-            "/var/run/docker.sock:/var/run/docker.sock".into(),
-            "--group-add".into(),
-            spec.docker_socket_gid.into(),
+        ]);
+        if spec.docker_socket_enabled {
+            args.extend([
+                "--volume".into(),
+                "/var/run/docker.sock:/var/run/docker.sock".into(),
+                "--group-add".into(),
+                spec.docker_socket_gid.into(),
+            ]);
+        }
+        args.extend([
             "--mount".into(),
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",
                 spec.shared_cache_volume
             ),
+            // The API service lives on the host. The runner gets only this
+            // Unix socket file, never the host API process or a workflow token.
+            // Authentication happens from SO_PEERCRED + the container cgroup
+            // on the host side before GSR authorizes the request.
+            "--volume".into(),
+            "/run/gitrun/api.sock:/run/gitrun/api.sock".into(),
             "-e".into(),
             "GITRUN_SHARED_CACHE_DIR=/var/lib/gitrun/shared".into(),
             "-e".into(),
@@ -682,6 +750,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         format!("RUNNER_EPHEMERAL={}", spec.ephemeral),
         "-e".into(),
         format!("RUNNER_DISABLE_UPDATE={}", spec.disable_update),
+        "-e".into(),
+        "GITRUN_API_SOCKET=/run/gitrun/api.sock".into(),
         spec.image.to_owned(),
     ]);
     // Secrets are inserted before the image argument (Docker requires -e
@@ -697,6 +767,338 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     run_checked_on(host, &arg_refs)?;
     Ok(())
+}
+
+pub fn container_status(name: &str) -> Result<Option<String>> {
+    container_status_string(&DockerHost::Local, name)
+}
+
+pub fn start_container(name: &str) -> Result<()> {
+    run_checked(&["start", name])?;
+    Ok(())
+}
+
+pub fn stop_container(name: &str) -> Result<()> {
+    run_checked(&["stop", "--time", "10", name])?;
+    Ok(())
+}
+
+pub fn container_id(name: &str) -> Result<Option<String>> {
+    let output = run_on(&DockerHost::Local, &["inspect", "-f", "{{.Id}}", name])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if is_missing_container_error(&stderr) {
+            return Ok(None);
+        }
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker inspect {name} failed")
+        } else {
+            stderr
+        }));
+    }
+
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((!value.is_empty()).then_some(value))
+}
+
+pub fn copy_to_container(
+    container: &str,
+    local_file: &std::path::Path,
+    destination: &str,
+) -> Result<()> {
+    let source = local_file.to_string_lossy();
+    run_checked(&["cp", source.as_ref(), &format!("{container}:{destination}")])?;
+    Ok(())
+}
+
+pub fn remove_file_in_container(container: &str, path: &str) -> Result<()> {
+    let output = exec_container(container, &["rm", "-f", "--", path])?;
+    if !output.status.success() {
+        return Err(DockerError::Command(if output.stderr.is_empty() {
+            format!("unable to remove {path} from container {container}")
+        } else {
+            String::from_utf8_lossy(&output.stderr).trim().to_owned()
+        }));
+    }
+    Ok(())
+}
+
+pub fn container_logs(name: &str) -> Result<String> {
+    run_checked(&["logs", "--timestamps", name])
+}
+
+pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
+    // Docker does not provide a literal "merge two container namespaces"
+    // primitive. GitDockRun melt therefore merges the source container's
+    // exported filesystem into the target container's writable filesystem.
+    // Runtime/pseudo filesystems and the Actions runner installation are
+    // deliberately excluded: the target remains the runner container.
+    let mut export = Command::new("docker");
+    export
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .args(["export", source])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut extract = Command::new("docker");
+    extract
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .args([
+            "exec",
+            "-i",
+            target,
+            "tar",
+            "-xpf",
+            "-",
+            "-C",
+            "/",
+            "--no-same-owner",
+            "--exclude=./proc",
+            "--exclude=./proc/*",
+            "--exclude=./sys",
+            "--exclude=./sys/*",
+            "--exclude=./dev",
+            "--exclude=./dev/*",
+            "--exclude=./run",
+            "--exclude=./run/*",
+            "--exclude=./var/run",
+            "--exclude=./var/run/*",
+            "--exclude=./home/runner/actions-runner",
+            "--exclude=./home/runner/actions-runner/*",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut export_child = export.spawn()?;
+    let mut extract_child = extract.spawn()?;
+    let mut export_stdout = export_child
+        .stdout
+        .take()
+        .ok_or_else(|| DockerError::Command("docker export did not expose stdout".into()))?;
+    let mut extract_stdin = extract_child
+        .stdin
+        .take()
+        .ok_or_else(|| DockerError::Command("docker exec did not expose stdin".into()))?;
+
+    let pipe = std::thread::spawn(move || std::io::copy(&mut export_stdout, &mut extract_stdin));
+
+    let extract_output = extract_child.wait_with_output()?;
+    let export_status = export_child.wait()?;
+    let copied = pipe
+        .join()
+        .map_err(|_| DockerError::Command("melt pipe thread panicked".into()))?
+        .map_err(DockerError::Spawn)?;
+
+    if !export_status.success() {
+        return Err(DockerError::Command(format!(
+            "docker export {source} failed"
+        )));
+    }
+    if !extract_output.status.success() {
+        let stderr = String::from_utf8_lossy(&extract_output.stderr)
+            .trim()
+            .to_owned();
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("filesystem melt into {target} failed")
+        } else {
+            stderr
+        }));
+    }
+
+    if copied == 0 {
+        return Err(DockerError::Command(
+            "filesystem melt copied no data from source container".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Identity discovered from a GitRun-managed runner container.
+/// The API service derives this identity from the peer process cgroup,
+/// rather than a workflow-visible token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiRunnerIdentity {
+    pub name: String,
+    pub repository: String,
+}
+
+/// Resolves the GitRun-managed runner container that owns a Unix-socket
+/// peer process. On Linux, the connecting PID is taken from SO_PEERCRED and
+/// its cgroup identifies the Docker container without exposing a secret to
+/// the workflow environment.
+#[cfg(target_os = "linux")]
+pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
+    let cgroup =
+        std::fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(DockerError::Spawn)?;
+    let Some(container_id) = container_id_from_cgroup(&cgroup) else {
+        return Ok(None);
+    };
+
+    let output = run_on(
+        &DockerHost::Local,
+        &[
+            "inspect",
+            "-f",
+            "{{.Name}}|{{index .Config.Labels \"gitrun.runner\"}}|{{index .Config.Labels \"gitrun.repo\"}}",
+            &container_id,
+        ],
+    )?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let mut parts = raw.trim().splitn(3, '|');
+    let name = parts.next().unwrap_or_default().trim_start_matches('/');
+    let runner_label = parts.next().unwrap_or_default();
+    let repository = parts.next().unwrap_or_default();
+
+    if runner_label != "true" || name.is_empty() || repository.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(ApiRunnerIdentity {
+        name: name.to_owned(),
+        repository: repository.to_owned(),
+    }))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
+    Ok(None)
+}
+
+/// Extracts a Docker-style 64-hex container id from a Linux cgroup path.
+#[cfg(target_os = "linux")]
+fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
+    cgroup
+        .split(|ch: char| !ch.is_ascii_hexdigit())
+        .find(|part| part.len() == 64)
+        .map(str::to_owned)
+}
+
+/// Executes a command in a managed container after the caller has already
+/// passed the relevant GSR authorization gate.
+pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
+    let mut command = Command::new("docker");
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .arg("exec")
+        .arg(container)
+        .args(args);
+    command.output().map_err(DockerError::Spawn)
+}
+
+/// Executes a command in a managed container and writes a bounded payload to
+/// its stdin. Used by controlled GitWriteRun operations.
+pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -> Result<Output> {
+    if input.len() > 16 * 1024 * 1024 {
+        return Err(DockerError::Command(
+            "container stdin payload exceeds the 16 MiB safety limit".into(),
+        ));
+    }
+
+    let mut command = Command::new("docker");
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .arg("exec")
+        .arg("-i")
+        .arg(container)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write as _;
+        stdin.write_all(input)?;
+    }
+    child.wait_with_output().map_err(DockerError::Spawn)
+}
+
+/// Executes a command in one managed container while forwarding stdout and
+/// stderr chunks to the caller as they arrive.
+pub fn exec_container_stream<F>(container: &str, args: &[&str], mut on_output: F) -> Result<i32>
+where
+    F: FnMut(bool, &[u8]),
+{
+    let mut command = Command::new("docker");
+    command
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .arg("exec")
+        .arg(container)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| DockerError::Command("docker exec did not expose stdout".into()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| DockerError::Command("docker exec did not expose stderr".into()))?;
+
+    let stdout_thread = thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        let mut chunks = Vec::new();
+        loop {
+            match stdout.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => chunks.push(buffer[..count].to_vec()),
+                Err(_) => break,
+            }
+        }
+        chunks
+    });
+    let stderr_thread = thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        let mut chunks = Vec::new();
+        loop {
+            match stderr.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => chunks.push(buffer[..count].to_vec()),
+                Err(_) => break,
+            }
+        }
+        chunks
+    });
+
+    for chunk in stdout_thread
+        .join()
+        .map_err(|_| DockerError::Command("stdout reader thread panicked".into()))?
+    {
+        on_output(false, &chunk);
+    }
+    for chunk in stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))?
+    {
+        on_output(true, &chunk);
+    }
+
+    Ok(child.wait()?.code().unwrap_or(1))
 }
 
 /// Extra `docker run` flags applied to a Linux runner container when
@@ -843,5 +1245,21 @@ mod tests {
     fn cache_path_key_is_collision_free_for_sanitization_collisions() {
         assert_ne!(cache_path_key("a_b/c"), cache_path_key("a/b_c"));
         assert_eq!(cache_path_key("owner/repo"), "6f776e65722f7265706f");
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn host_process_cgroup_without_container_id_is_not_a_runner_container() {
+        assert_eq!(
+            container_id_from_cgroup("0::/user.slice/user-1000.slice/session-42.scope"),
+            None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn docker_cgroup_parser_extracts_only_full_container_id() {
+        let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let cgroup = format!("0::/system.slice/docker-{id}.scope");
+        assert_eq!(container_id_from_cgroup(&cgroup).as_deref(), Some(id));
     }
 }

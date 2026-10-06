@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/gitrun-core","crates/gitrun-cli","crates/gitrun-setup","crates/gitrun-updater","crates/gitrun-recovery","crates/gitrun-scheduler","crates/gitrun-vault","crates/gitrun-gsr","crates/gitrun-dashboard-tauri/src-tauri"]
-default-members = ["crates/gitrun-core","crates/gitrun-cli","crates/gitrun-setup","crates/gitrun-updater","crates/gitrun-recovery","crates/gitrun-scheduler","crates/gitrun-vault","crates/gitrun-gsr"]
+members = ["crates/gitrun-core","crates/gitrun-exe","crates/gitrun-cli","crates/gitrun-setup","crates/gitrun-updater","crates/gitrun-recovery","crates/gitrun-scheduler","crates/gitrun-vault","crates/gitrun-gsr","crates/gitrun-dashboard-tauri/src-tauri"]
+default-members = ["crates/gitrun-core","crates/gitrun-exe","crates/gitrun-cli","crates/gitrun-setup","crates/gitrun-updater","crates/gitrun-recovery","crates/gitrun-scheduler","crates/gitrun-vault","crates/gitrun-gsr"]
 
 
 [patch.crates-io]

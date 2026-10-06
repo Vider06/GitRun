@@ -187,6 +187,8 @@ pub struct GtuuConfig<'a> {
     pub docker_socket_hardening: bool,
     /// GSR policy values snapshotted by the runner entrypoint before startup.
     pub gsr_policy_env: &'a [(String, String)],
+    /// Repository-specific Docker socket compatibility policy.
+    pub docker_socket_enabled_for_repo: &'a dyn Fn(&str) -> bool,
 }
 
 /// Updates every permanent container for the configured repositories whose
@@ -258,6 +260,7 @@ fn update_one(
     let registration_token = client.registration_token(repo)?;
     let replacement_name = format!("{}-gtuu-{}", sanitize(name, '-'), replacement_suffix());
     let secret_env = (config.secret_env_for_repo)(repo);
+    let docker_socket_enabled = (config.docker_socket_enabled_for_repo)(repo);
 
     docker::create_runner(&crate::docker::RunnerSpec {
         name: &replacement_name,
@@ -278,6 +281,10 @@ fn update_one(
         secret_env: &secret_env,
         gsr_policy_env: config.gsr_policy_env,
         is_windows: false,
+        workflow_job_name: None,
+        workflow_run_id: None,
+        dock_target: false,
+        docker_socket_enabled,
         docker_socket_hardening: config.docker_socket_hardening,
     })?;
 

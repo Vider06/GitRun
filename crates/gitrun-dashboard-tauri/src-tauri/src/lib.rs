@@ -9,7 +9,7 @@
 //! dashboard showing fake data would be actively misleading for an
 //! infrastructure tool.
 
-use gitrun_core::Config;
+use gitrun_core::{Config, GitRunApi, GitRunSettings};
 use gitrun_setup::BootstrapAuth;
 use gitrun_vault::{Scope, Vault};
 use serde::{Deserialize, Serialize};
@@ -507,6 +507,7 @@ pub struct RepoDetail {
     pub repo: String,
     pub vault_groups: Vec<String>,
     pub logic_rules: Vec<gitrun_scheduler::logic_containers::LogicRule>,
+    pub docker_policy: gitrun_core::DockerPolicy,
 }
 
 #[tauri::command]
@@ -522,10 +523,14 @@ fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
     let all_rules =
         gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
+    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
+        .map_err(|e| e.to_string())?;
+    let docker_policy = settings.effective_for_repository(&repo).docker;
     Ok(RepoDetail {
         vault_groups: config.vault_groups_for_repo(&repo),
         repo,
         logic_rules: all_rules,
+        docker_policy,
     })
 }
 
@@ -841,6 +846,138 @@ fn respond_hypervisor_decision(
 }
 
 // ---------------------------------------------------------------------
+// GitRun API / security settings
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct ApiPolicySummary {
+    pub api: String,
+    pub enabled: bool,
+    pub operations: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DockRequirementSummary {
+    pub file: String,
+    pub line: usize,
+    pub calling_job: Option<String>,
+    pub target_job: String,
+    pub operation: String,
+}
+
+fn gitrun_settings_path(config: &Config) -> PathBuf {
+    GitRunSettings::path_for_state_dir(&config.state_dir)
+}
+
+#[tauri::command]
+fn get_gitrun_settings() -> Result<GitRunSettings, String> {
+    let config = load_config()?;
+    GitRunSettings::load_or_default(gitrun_settings_path(&config)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_gitrun_settings(
+    settings: GitRunSettings,
+    confirm_socket_opt_out: bool,
+) -> Result<(), String> {
+    let config = load_config()?;
+    if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported GitRun settings schema version {}",
+            settings.schema_version
+        ));
+    }
+    if settings.repositories.keys().any(|repo| {
+        !config
+            .repositories
+            .iter()
+            .any(|configured| configured == repo)
+    }) {
+        return Err("GitRun settings contain a repository that is not configured in GitRun".into());
+    }
+    let socket_opt_out = settings
+        .repositories
+        .values()
+        .any(|repo| repo.docker.direct_socket_enabled);
+    if socket_opt_out && !confirm_socket_opt_out {
+        return Err(
+            "enabling direct Docker socket access requires explicit danger-gate confirmation"
+                .into(),
+        );
+    }
+    settings
+        .save(gitrun_settings_path(&config))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> {
+    let config = load_config()?;
+    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
+        .map_err(|e| e.to_string())?;
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repo)
+    {
+        return Err(format!("repository is not configured in GitRun: {repo}"));
+    }
+    let effective = settings.effective_for_repository(&repo);
+    Ok(GitRunApi::ALL
+        .into_iter()
+        .map(|api| {
+            let policy = effective.api_policy.get(api);
+            ApiPolicySummary {
+                api: api.as_str().into(),
+                enabled: policy.enabled,
+                operations: policy
+                    .allowed_operations
+                    .into_iter()
+                    .map(|op| op.as_str().into())
+                    .collect(),
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
+    let config = load_config()?;
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repo)
+    {
+        return Err(format!("repository is not configured in GitRun: {repo}"));
+    }
+    let path = PathBuf::from(&config.state_dir)
+        .join("workflow-dock-requirements")
+        .join(format!(
+            "{}.json",
+            gitrun_scheduler::docker::sanitize(&repo, '_')
+        ));
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw)
+        .map(|requests| {
+            requests
+                .into_iter()
+                .map(|request| DockRequirementSummary {
+                    file: request.file,
+                    line: request.line,
+                    calling_job: request.calling_job,
+                    target_job: request.target_job,
+                    operation: request.operation.as_str().into(),
+                })
+                .collect()
+        })
+        .map_err(|e| format!("decode Dock requirements: {e}"))
+}
+
+// ---------------------------------------------------------------------
 // Config (Settings screen)
 // ---------------------------------------------------------------------
 
@@ -896,6 +1033,10 @@ pub fn run() {
             respond_hypervisor_decision,
             get_config,
             save_config,
+            get_gitrun_settings,
+            save_gitrun_settings,
+            get_repo_api_policies,
+            get_dock_requirements,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the GitRun dashboard");

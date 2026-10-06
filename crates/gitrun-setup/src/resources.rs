@@ -1,12 +1,14 @@
 /// The runner Dockerfile remains the repository source of truth. The bootstrap
 /// uses the exact same image definition, with one deliberate adjustment: a
 /// packaged GitRun installation does not ship the entire workspace, so the
-/// build context is reduced to the two crates needed by the GSR shell agent.
+/// build context is reduced to the crates needed by the GSR shell agent and
+/// its workflow API client.
 pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     const FULL_WORKSPACE_COPY: &str = "COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates";
     const MINIMAL_WORKSPACE_COPY: &str = concat!(
         "COPY Cargo.toml Cargo.lock ./\n",
         "COPY crates/gitrun-core ./crates/gitrun-core\n",
+        "COPY crates/gitrun-exe ./crates/gitrun-exe\n",
         "COPY crates/gitrun-gsr ./crates/gitrun-gsr"
     );
 
@@ -55,7 +57,7 @@ WantedBy=multi-user.target
 /// application's main workspace manifest.
 pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
 resolver = "2"
-members = ["crates/gitrun-core", "crates/gitrun-gsr"]
+members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]
 
 "#;
 
@@ -113,6 +115,26 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         0o644,
     ),
     (
+        "crates/gitrun-exe/Cargo.toml",
+        include_str!("../../../crates/gitrun-exe/Cargo.toml"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-exe/src/lib.rs",
+        include_str!("../../../crates/gitrun-exe/src/lib.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-exe/src/ipc.rs",
+        include_str!("../../../crates/gitrun-exe/src/ipc.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-exe/src/protocol.rs",
+        include_str!("../../../crates/gitrun-exe/src/protocol.rs"),
+        0o644,
+    ),
+    (
         "crates/gitrun-gsr/Cargo.toml",
         include_str!("../../../crates/gitrun-gsr/Cargo.toml"),
         0o644,
@@ -152,6 +174,11 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         include_str!("../../../crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"),
         0o644,
     ),
+    (
+        "crates/gitrun-gsr/src/bin/gitrun-api.rs",
+        include_str!("../../../crates/gitrun-gsr/src/bin/gitrun-api.rs"),
+        0o644,
+    ),
 ];
 
 #[cfg(test)]
@@ -162,6 +189,7 @@ mod tests {
     fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
         let dockerfile = runner_dockerfile_for_bootstrap();
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
+        assert!(dockerfile.contains("COPY crates/gitrun-exe ./crates/gitrun-exe"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
         assert!(!dockerfile.contains("COPY crates ./crates"));
         assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
@@ -170,6 +198,7 @@ mod tests {
     #[test]
     fn bootstrap_lock_matches_the_minimal_workspace() {
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-core"));
+        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-exe"));
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-gsr"));
         assert!(!RUNNER_BUILD_CARGO_MANIFEST.contains("[patch.crates-io]"));
         assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-core\""));
@@ -188,7 +217,11 @@ mod tests {
         assert!(paths.contains(&"Cargo.toml"));
         assert!(paths.contains(&"Cargo.lock"));
         assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
+        assert!(paths.contains(&"crates/gitrun-exe/src/lib.rs"));
+        assert!(paths.contains(&"crates/gitrun-exe/src/ipc.rs"));
+        assert!(paths.contains(&"crates/gitrun-exe/src/protocol.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
+        assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-api.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/exec_supervisor.rs"));
         assert_eq!(
             RUNNER_ENTRYPOINT,

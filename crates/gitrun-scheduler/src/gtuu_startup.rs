@@ -3,7 +3,7 @@
 use crate::{
     build_github_client, load_config, resolve_docker_socket_gid, vault_env_for_repo, GtuuConfig,
 };
-use gitrun_core::Config;
+use gitrun_core::{Config, GitRunSettings};
 use gitrun_updater::{self, UpdateError};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -104,12 +104,28 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         }
     };
 
-    let docker_socket_gid = match resolve_docker_socket_gid() {
-        Ok(gid) => gid,
-        Err(error) => {
-            report.containers_error = Some(error.to_string());
-            return Ok(report);
+    let settings =
+        GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(&config.state_dir))?;
+    let socket_enabled_for_repo = |repo: &str| {
+        settings
+            .effective_for_repository(repo)
+            .docker
+            .direct_socket_enabled
+    };
+    let docker_socket_gid = if config
+        .repositories
+        .iter()
+        .any(|repo| socket_enabled_for_repo(repo))
+    {
+        match resolve_docker_socket_gid() {
+            Ok(gid) => gid,
+            Err(error) => {
+                report.containers_error = Some(error.to_string());
+                return Ok(report);
+            }
         }
+    } else {
+        String::new()
     };
 
     let gsr_policy_env = super::gsr_policy_env(&config);
@@ -132,6 +148,7 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
         gsr_policy_env: &gsr_policy_env,
+        docker_socket_enabled_for_repo: &socket_enabled_for_repo,
     };
 
     match crate::gtuu::update_permanent_containers(&client, &gtuu_config) {

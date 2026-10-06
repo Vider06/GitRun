@@ -400,8 +400,23 @@ fn reconcile_repo(
     }
 
     let containers = docker::managed_containers(repo)?;
-    let preserved_docks =
+    api_service::reconcile_dock_target_containers(client, state_dir, repo, &containers)
+        .map_err(std::io::Error::other)?;
+    let mut preserved_docks =
         api_service::preserved_dock_containers(state_dir, repo).map_err(std::io::Error::other)?;
+    preserved_docks.extend(
+        containers
+            .iter()
+            .filter(|container| {
+                container.dock_target
+                    && container
+                        .workflow_job
+                        .as_deref()
+                        .map(|job| load_dock_target_jobs(state_dir, repo).iter().any(|target| target == job))
+                        .unwrap_or(false)
+            })
+            .map(|container| container.name.clone()),
+    );
     let plan_containers: Vec<_> = containers
         .iter()
         .filter(|container| !preserved_docks.contains(&container.name))

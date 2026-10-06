@@ -165,6 +165,51 @@ pub(crate) fn reconcile_dock_bindings(
     Ok(())
 }
 
+pub(crate) fn reconcile_dock_target_containers(
+    client: &GitHubClient,
+    state_dir: &Path,
+    repository: &str,
+    containers: &[docker::ManagedContainer],
+) -> Result<(), String> {
+    for container in containers.iter().filter(|container| container.dock_target) {
+        let (Some(run_id), Some(job)) =
+            (container.workflow_run_id, container.workflow_job.as_deref())
+        else {
+            continue;
+        };
+
+        let Some(job_info) = client
+            .find_workflow_job(repository, run_id, job)
+            .map_err(|error| format!("check Dock target {job}: {error}"))?
+        else {
+            continue;
+        };
+
+        let completed =
+            job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
+        if completed
+            && container.status.eq_ignore_ascii_case("running")
+            && container
+                .container_is_dynamic()
+        {
+            make_dock_only(&container.name, state_dir)
+                .map_err(|error| format!("freeze Dock target {}: {error}", container.name))?;
+        }
+    }
+
+    Ok(())
+}
+
+trait ManagedContainerDockExt {
+    fn container_is_dynamic(&self) -> bool;
+}
+
+impl ManagedContainerDockExt for docker::ManagedContainer {
+    fn container_is_dynamic(&self) -> bool {
+        !self.permanent
+    }
+}
+
 pub(crate) fn preserved_dock_containers(
     state_dir: &Path,
     repository: &str,

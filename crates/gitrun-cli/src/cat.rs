@@ -204,7 +204,7 @@ fn preserve_text_line(line: &str) -> bool {
     trimmed.starts_with("$ gitrun ")
         || (trimmed.starts_with('[') && trimmed.contains("/8]"))
         || trimmed.contains("~purr~")
-        || trimmed.contains("Thanks for using GitRun")
+        || trimmed.contains("Thanks for using GitRun! May the same love I have for this project spread to everyone :3")
         || trimmed.contains("-Vider06")
 }
 

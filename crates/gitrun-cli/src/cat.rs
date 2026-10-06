@@ -8,6 +8,8 @@ use crossterm::{
     },
 };
 use serde::Deserialize;
+
+pub(crate) mod presenter;
 use std::io::{self, IsTerminal, Stdout, Write};
 
 const ANIMATION: &str = include_str!("cat/gitrun.json");

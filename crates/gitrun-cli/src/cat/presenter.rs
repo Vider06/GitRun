@@ -51,6 +51,7 @@ struct CatSprite {
 pub(crate) struct CatPresenter {
     writer: Option<Box<dyn Write>>,
     states: Option<CatStates>,
+    last_state: Option<ValidationState>,
 }
 
 impl CatPresenter {
@@ -59,6 +60,7 @@ impl CatPresenter {
             return Self {
                 writer: None,
                 states: None,
+                last_state: None,
             };
         }
 
@@ -67,10 +69,24 @@ impl CatPresenter {
             .filter(validate_states);
 
         let writer = states.as_ref().and_then(|_| terminal_writer());
-        Self { writer, states }
+        Self {
+            writer,
+            states,
+            last_state: None,
+        }
     }
 
     pub(crate) fn transition(&mut self, state: ValidationState) {
+        if self.last_state == Some(state) {
+            return;
+        }
+
+        let state_name = choose_cat_state(state);
+        self.show_named(state_name);
+        self.last_state = Some(state);
+    }
+
+    pub(crate) fn show_named(&mut self, state_name: &str) {
         let Some(writer) = self.writer.as_mut() else {
             return;
         };
@@ -78,7 +94,6 @@ impl CatPresenter {
             return;
         };
 
-        let state_name = choose_cat_state(state);
         let state_name = if states.states.contains_key(state_name) {
             state_name
         } else {

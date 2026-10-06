@@ -4,8 +4,7 @@ use crossterm::{
     style::Print,
     terminal::{
         self, BeginSynchronizedUpdate, Clear, ClearType, DisableLineWrap, EnableLineWrap,
-        EndSynchronizedUpdate,
-        EnterAlternateScreen, LeaveAlternateScreen,
+        EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
     },
 };
 use serde::Deserialize;

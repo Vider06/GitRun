@@ -858,7 +858,11 @@ fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     let cli = Cli::parse();
-    if cli.version || cli.all_crates || cli.crate_name.is_some() {
+    if cli.version && !cli.all_crates && cli.crate_name.is_none() {
+        println!("gitrun {}", current_version());
+        std::process::exit(0);
+    }
+    if cli.all_crates || cli.crate_name.is_some() {
         run_version(cli.crate_name.as_deref());
         std::process::exit(0);
     }
@@ -1020,7 +1024,6 @@ enum Command {
 
 fn run_version(crate_name: Option<&str>) {
     let version = current_version();
-    println!("gitrun {version}");
     let lock = include_str!("../../../Cargo.lock");
     let mut crates = Vec::new();
     for block in lock.split("[[package]]").skip(1) {

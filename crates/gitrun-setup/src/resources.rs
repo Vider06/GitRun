@@ -57,19 +57,11 @@ pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
 resolver = "2"
 members = ["crates/gitrun-core", "crates/gitrun-gsr"]
 
-[patch.crates-io]
-# Keep the bootstrap workspace's Cargo resolution identical to the repository
-# workspace even though only the GSR-related crates are copied into the image.
-glib = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
-glib-sys = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
-gobject-sys = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
-gio-sys = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
-glib-macros = { git = "https://github.com/jcfs/gtk-rs-core", rev = "ea720152f28e293ef4362ee844ee5cc499f32d2a" }
 "#;
 
 pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
     ("Cargo.toml", RUNNER_BUILD_CARGO_MANIFEST, 0o644),
-    ("Cargo.lock", include_str!("../../../Cargo.lock"), 0o644),
+    ("Cargo.lock", include_str!("runner-bootstrap.lock"), 0o644),
     (
         "crates/gitrun-core/Cargo.toml",
         include_str!("../../../crates/gitrun-core/Cargo.toml"),
@@ -176,10 +168,15 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_manifest_preserves_workspace_patches_for_locked_resolution() {
-        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("[patch.crates-io]"));
-        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gtk-rs-core"));
-        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("ea720152f28e293ef4362ee844ee5cc499f32d2a"));
+    fn bootstrap_lock_matches_the_minimal_workspace() {
+        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-core"));
+        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-gsr"));
+        assert!(!RUNNER_BUILD_CARGO_MANIFEST.contains("[patch.crates-io]"));
+        assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-core\""));
+        assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-gsr\""));
+        assert!(
+            !include_str!("runner-bootstrap.lock").contains("name = \"gitrun-dashboard-tauri\"")
+        );
     }
 
     #[test]

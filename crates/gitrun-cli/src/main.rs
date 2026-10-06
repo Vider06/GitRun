@@ -858,15 +858,27 @@ fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     let cli = Cli::parse();
+    let mut presenter = cat::presenter::CatPresenter::new();
+
     if cli.gitrun {
+        presenter.transition(cat::presenter::ValidationState::Ready);
         println!("GitRun {}", current_version());
+        presenter.finish(0);
         std::process::exit(0);
     }
     if cli.version || cli.all_crates || cli.crate_name.is_some() {
-        run_version(cli.crate_name.as_deref());
-        std::process::exit(0);
+        presenter.transition(cat::presenter::ValidationState::Ready);
+        let exit_code = run_version(cli.crate_name.as_deref());
+        presenter.finish(exit_code);
+        std::process::exit(exit_code);
     }
-    let exit_code = match cli.command.unwrap_or(Command::Dashboard) {
+
+    let command = cli.command.unwrap_or(Command::Dashboard);
+    if !matches!(&command, Command::Cat) {
+        presenter.transition(validation_state_for_command(&command));
+    }
+
+    let exit_code = match command {
         Command::Config => run_config(),
         Command::Desired {
             min,
@@ -915,7 +927,31 @@ fn main() {
             enabled,
         } => run_api_policy(&api, operation.as_deref(), enabled),
     };
+
+    if !matches!(command, Command::Cat) {
+        presenter.finish(exit_code);
+    }
     std::process::exit(exit_code);
+}
+
+fn validation_state_for_command(command: &Command) -> cat::presenter::ValidationState {
+    use cat::presenter::ValidationState;
+
+    match command {
+        Command::Config | Command::Settings => ValidationState::Reading,
+        Command::Desired { .. } => ValidationState::Working,
+        Command::Setup { .. } | Command::InstallRoot { .. } => ValidationState::Setup,
+        Command::Cat => ValidationState::Ready,
+        Command::Connect { .. } => ValidationState::Connecting,
+        Command::Doctor => ValidationState::Validating,
+        Command::Update { .. } => ValidationState::Updating,
+        Command::Scheduler | Command::Dashboard => ValidationState::Running,
+        Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
+            ValidationState::Recovering
+        }
+        Command::CheckCompatibility { .. } => ValidationState::Validating,
+        Command::ApiList | Command::ApiPolicy { .. } => ValidationState::Api,
+    }
 }
 
 /// GitRun: self-hosted GitHub Actions runner manager.
@@ -1025,7 +1061,7 @@ enum Command {
     },
 }
 
-fn run_version(crate_name: Option<&str>) {
+fn run_version(crate_name: Option<&str>) -> i32 {
     let version = current_version();
     let lock = include_str!("../../../Cargo.lock");
     let mut crates = Vec::new();
@@ -1066,7 +1102,7 @@ fn run_version(crate_name: Option<&str>) {
             println!("{wanted} {ver}");
         } else {
             eprintln!("unknown GitRun crate: {name}");
-            std::process::exit(2);
+            return 2;
         }
     } else {
         println!("GitRun {version}");
@@ -1074,6 +1110,7 @@ fn run_version(crate_name: Option<&str>) {
             println!("{name} {ver}");
         }
     }
+    0
 }
 
 fn run_api_list() -> i32 {

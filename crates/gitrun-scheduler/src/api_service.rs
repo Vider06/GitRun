@@ -882,7 +882,8 @@ impl ApiExecutionBackend {
         }
 
         Ok(success(format!(
-            "GitDockRun DISCONNECT: PASS\njob={job}\ncontainer={}\n"
+            "GitDockRun DISCONNECT: PASS\njob={job}\ncontainer={}\n",
+            binding.container
         )))
     }
 

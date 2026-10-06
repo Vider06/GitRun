@@ -17,6 +17,7 @@ const LIVE_MIN_ROWS: u16 = LIVE_PANEL_HEIGHT + 4;
 
 static ROLL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ValidationState {
     Ready,
@@ -63,7 +64,6 @@ enum LiveSelection {
 struct LiveHandle {
     stop: Arc<AtomicBool>,
     wake: Arc<Condvar>,
-    wake_guard: Arc<Mutex<()>>,
     selection: Arc<Mutex<LiveSelection>>,
     join: Option<JoinHandle<()>>,
 }
@@ -159,7 +159,6 @@ impl CatPresenter {
         self.live = Some(LiveHandle {
             stop,
             wake,
-            wake_guard,
             selection,
             join: Some(join),
         });
@@ -515,8 +514,6 @@ mod tests {
 
     #[test]
     fn secret_roll_range_is_tiny() {
-        assert!(SECRET_ROLL_LIMIT < KEBAB_ROLL_LIMIT);
-        assert!(KEBAB_ROLL_LIMIT < 10);
-        assert_eq!(SECRET_ROLL_RANGE, 2_000);
+        assert_eq!((SECRET_ROLL_LIMIT, KEBAB_ROLL_LIMIT, SECRET_ROLL_RANGE), (1, 3, 2_000));
     }
 }

@@ -858,11 +858,11 @@ fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     let cli = Cli::parse();
-    if cli.version && !cli.all_crates && cli.crate_name.is_none() {
-        println!("gitrun {}", current_version());
+    if cli.gitrun {
+        println!("GitRun {}", current_version());
         std::process::exit(0);
     }
-    if cli.all_crates || cli.crate_name.is_some() {
+    if cli.version || cli.all_crates || cli.crate_name.is_some() {
         run_version(cli.crate_name.as_deref());
         std::process::exit(0);
     }
@@ -928,6 +928,9 @@ struct Cli {
     /// use for `-v` on this top-level flag set to conflict with.
     #[arg(short = 'V', long = "version", short_alias = 'v', alias = "v")]
     version: bool,
+    /// Print only the GitRun program version, without workspace crate versions.
+    #[arg(long = "gitrun")]
+    gitrun: bool,
     /// Show one crate version; omit it to show GitRun and every workspace crate.
     #[arg(long = "crate")]
     crate_name: Option<String>,
@@ -1058,7 +1061,7 @@ fn run_version(crate_name: Option<&str>) {
             format!("gitrun-{name}")
         };
         if wanted == "gitrun" {
-            println!("gitrun {version}");
+            println!("GitRun {version}");
         } else if let Some((_, ver)) = crates.iter().find(|(n, _)| n == &wanted) {
             println!("{wanted} {ver}");
         } else {
@@ -1066,7 +1069,7 @@ fn run_version(crate_name: Option<&str>) {
             std::process::exit(2);
         }
     } else {
-        println!("gitrun {version}");
+        println!("GitRun {version}");
         for (name, ver) in crates {
             println!("{name} {ver}");
         }

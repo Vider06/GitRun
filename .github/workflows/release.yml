@@ -154,7 +154,7 @@ jobs:
           set -euo pipefail
           cargo build --locked --release -p gitrun-cli --bin gitrun
           test -x target/release/gitrun
-          test "$(target/release/gitrun --version)" = "gitrun $VERSION"
+          test "$(target/release/gitrun --version --gitrun)" = "GitRun $VERSION"
       - name: Save Rust common cache
         if: success() && steps.rust-common-cache.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -279,7 +279,7 @@ jobs:
           test -x "$RUNNER_TEMP/server-check/gitrun"
           test "$(find "$RUNNER_TEMP/server-check" -type f -perm /111 | wc -l)" -eq 1
           test "$(cat "$RUNNER_TEMP/server-check/version.txt")" = "${VERSION#v}"
-          test "$(target/release/gitrun --version)" = "gitrun ${VERSION#v}"
+          test "$(target/release/gitrun --version --gitrun)" = "GitRun ${VERSION#v}"
 
           command -v jq >/dev/null 2>&1
           jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["linux-x86_64-deb", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 2) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null

@@ -263,6 +263,7 @@ fn update_command(
             };
         }
 
+        presenter.transition(cat::presenter::ValidationState::Success);
         println!("GitRun update: PASS");
         println!(
             "backup: {}",
@@ -342,6 +343,7 @@ fn update_command(
             }
         };
     }
+    presenter.transition(cat::presenter::ValidationState::Success);
     println!("GitRun update: PASS");
     println!(
         "backup: {}",
@@ -829,6 +831,7 @@ fn connect_command(
     repositories.push(repository.to_owned());
     write_repositories_to_config(&path, &repositories)?;
 
+    presenter.transition(cat::presenter::ValidationState::Success);
     println!("Repository connected: {repository}");
     println!("Configuration updated: {}", path.display());
     println!("Restart GitRun to apply it to the scheduler.");
@@ -843,6 +846,7 @@ fn rollback_command(
     let raw = std::fs::read_to_string(path)?;
     if let Ok(backup) = serde_json::from_str::<InstalledBackupRecord>(&raw) {
         rollback_installed_update(&backup)?;
+        presenter.transition(cat::presenter::ValidationState::Success);
         println!("GitRun rollback: PASS");
         return Ok(());
     }
@@ -870,6 +874,7 @@ fn rollback_command(
         backup_root,
     };
     rollback(&paths, &backup)?;
+    presenter.transition(cat::presenter::ValidationState::Success);
     println!("GitRun rollback: PASS");
     Ok(())
 }
@@ -1343,6 +1348,7 @@ fn run_setup(presenter: &mut cat::presenter::CatPresenter) -> i32 {
                         eprintln!("GitRun setup: FAIL — {failed} dependency check(s) failed");
                         return 1;
                     }
+                    presenter.transition(cat::presenter::ValidationState::Success);
                     println!("GitRun setup: PASS");
                     0
                 }

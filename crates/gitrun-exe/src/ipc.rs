@@ -1,7 +1,8 @@
 //! Wire protocol for workflow Git*Run requests.
 //!
-//! Requests cross a local protected GitRun socket. The bearer token is
-//! runner-scoped; GSR binds it to the managed runner before authorization.
+//! Requests cross the local GitRun API socket. The socket transport is only
+//! a delivery mechanism: the host service authenticates the peer process as
+//! a GitRun-managed runner and GSR authorizes the exact operation.
 //! Responses are framed as newline-delimited JSON events so handlers can
 //! later stream stdout/stderr without changing the transport.
 
@@ -12,6 +13,8 @@ pub const DEFAULT_SOCKET_PATH: &str = "/run/gitrun/api.sock";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireRequest {
+    /// Transport metadata is deliberately limited to the invocation itself;
+    /// there is no workflow-visible bearer token to steal or replay.
     pub invocation: ApiInvocation,
 }
 

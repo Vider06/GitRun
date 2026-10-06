@@ -57,9 +57,8 @@ impl TerminalSession {
             .min(visible_width);
 
         let left = terminal_width.saturating_sub(frame_width as u16) / 2;
-        let top = terminal_height
-            .saturating_sub(lines.len().min(terminal_height as usize) as u16)
-            / 2;
+        let top =
+            terminal_height.saturating_sub(lines.len().min(terminal_height as usize) as u16) / 2;
 
         queue!(self.stdout, BeginSynchronizedUpdate, Clear(ClearType::All))?;
         for (row, line) in lines.iter().take(terminal_height as usize).enumerate() {
@@ -215,9 +214,7 @@ fn half_block_row(top: &str, bottom: Option<&str>, width: usize) -> String {
     let mut output = String::with_capacity(width);
 
     for column in 0..width {
-        let top_set = top_chars
-            .get(column)
-            .is_some_and(|ch| !ch.is_whitespace());
+        let top_set = top_chars.get(column).is_some_and(|ch| !ch.is_whitespace());
         let bottom_set = bottom_chars
             .get(column)
             .is_some_and(|ch| !ch.is_whitespace());

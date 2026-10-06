@@ -226,7 +226,11 @@ fn half_block_row(top: &str, bottom: Option<&str>, width: usize) -> String {
             (true, true) => {
                 let top = top_chars[column];
                 let bottom = bottom_chars[column];
-                if top == bottom { top } else { '█' }
+                if top == bottom {
+                    top
+                } else {
+                    '█'
+                }
             }
         });
     }

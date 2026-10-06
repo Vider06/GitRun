@@ -359,6 +359,51 @@ impl Vault {
         self.data.secrets.contains_key(&storage_key(name, scope))
     }
 
+    /// Resolves one secret using the same repo > group > global
+    /// precedence as resolve_for_repo, without decrypting unrelated entries.
+    pub fn get_effective_for_repo(
+        &self,
+        name: &str,
+        repo: &str,
+        groups: &[String],
+    ) -> Result<String> {
+        validate_name(name)?;
+        let mut selected: Option<(&Scope, &StoredSecret)> = None;
+
+        for (key, secret) in &self.data.secrets {
+            if name_part_of_key(key) != name {
+                continue;
+            }
+            let applies = match &secret.scope {
+                Scope::Global => true,
+                Scope::Group(group) => groups.iter().any(|owned| owned == group),
+                Scope::Repo(owner_repo) => owner_repo == repo,
+            };
+            if !applies {
+                continue;
+            }
+            if selected
+                .as_ref()
+                .is_none_or(|(scope, _)| secret.scope.specificity() > scope.specificity())
+            {
+                selected = Some((&secret.scope, secret));
+            }
+        }
+
+        let (_, entry) = selected.ok_or_else(|| VaultError::NotFound(name.to_owned()))?;
+        self.decrypt_entry(name, entry)
+    }
+
+    /// Reports whether a secret name is available to a repository without
+    /// decrypting unrelated secrets.
+    pub fn effective_contains_for_repo(
+        &self,
+        name: &str,
+        repo: &str,
+        groups: &[String],
+    ) -> bool {
+        self.get_effective_for_repo(name, repo, groups).is_ok()
+    }
     /// Resolves every secret a given repo's runners should receive,
     /// decrypted and ready to inject as environment variables — the
     /// counterpart to the old `main.rs::vault_env_for_repo` naming-prefix

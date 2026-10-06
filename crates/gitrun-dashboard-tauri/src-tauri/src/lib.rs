@@ -525,9 +525,7 @@ fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
         gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
     let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
         .map_err(|e| e.to_string())?;
-    let docker_policy = settings
-        .effective_for_repository(&repo)
-        .docker;
+    let docker_policy = settings.effective_for_repository(&repo).docker;
     Ok(RepoDetail {
         vault_groups: config.vault_groups_for_repo(&repo),
         repo,

@@ -280,10 +280,24 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             continue;
         };
         let permanent = container_is_permanent_on(host, name).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
+        let dock_target = container_label_on(host, name, "gitrun.dock_target")
+            .ok()
+            .flatten()
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+        let workflow_job = container_label_on(host, name, "gitrun.workflow_job")
+            .ok()
+            .flatten();
+        let workflow_run_id = container_label_on(host, name, "gitrun.workflow_run")
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse::<u64>().ok());
         containers.push(ManagedContainer {
             name: name.to_owned(),
             status,
             permanent,
+            dock_target,
+            workflow_job,
+            workflow_run_id,
         });
     }
     Ok(containers)
@@ -525,6 +539,14 @@ pub struct RunnerSpec<'a> {
     /// bootstrap snapshots them into a root-owned file before the Actions
     /// runner starts; the GSR agent never trusts the workflow environment.
     pub gsr_policy_env: &'a [(String, String)],
+    /// Workflow job name this runner is reserved for, when created from a
+    /// queued job that GitDockRun statically marked as a target.
+    pub workflow_job_name: Option<&'a str>,
+    /// Workflow run ID paired with workflow_job_name.
+    pub workflow_run_id: Option<u64>,
+    /// Whether this container is a GitDockRun target that must survive the
+    /// normal Dynamic-runner cleanup until the dock binding is released.
+    pub dock_target: bool,
     /// True for a Windows container runner (Logic Containers). Changes which
     /// flags are valid: Windows containers don't support `--read-only`,
     /// `--tmpfs`, `--pids-limit`, or Unix-style socket/group-add mounts —

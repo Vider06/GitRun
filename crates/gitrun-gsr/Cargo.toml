@@ -21,3 +21,8 @@ path = "src/main.rs"
 [[bin]]
 name = "gitrun-gsr-agent"
 path = "src/bin/gitrun-gsr-agent.rs"
+
+
+[[bin]]
+name = "gitrun-api"
+path = "src/bin/gitrun-api.rs"

@@ -1167,6 +1167,27 @@ fn build_status_github_client(
     }
 }
 
+fn runner_validation_state(
+    runner: &gitrun_scheduler::Runner,
+    container: Option<&gitrun_scheduler::docker::ManagedContainer>,
+) -> cat::presenter::ValidationState {
+    use cat::presenter::ValidationState;
+
+    if !runner.is_online() {
+        return ValidationState::Failure;
+    }
+    if let Some(container) = container {
+        if !container.status.eq_ignore_ascii_case("running") {
+            return ValidationState::Recovering;
+        }
+    }
+    if runner.busy {
+        ValidationState::Running
+    } else {
+        ValidationState::Ready
+    }
+}
+
 fn runner_cat_state(
     runner: &gitrun_scheduler::Runner,
     container: Option<&gitrun_scheduler::docker::ManagedContainer>,
@@ -1308,6 +1329,7 @@ fn run_status(runner_id: u64, presenter: &mut cat::presenter::CatPresenter) -> i
         Vec::new()
     };
 
+    let validation_state = runner_validation_state(&runner, container);
     let cat_state = runner_cat_state(&runner, container, &commands);
     presenter.show_named(cat_state);
 
@@ -1322,7 +1344,7 @@ fn run_status(runner_id: u64, presenter: &mut cat::presenter::CatPresenter) -> i
             .map(|container| container.status.as_str())
             .unwrap_or("not-found")
     );
-    println!("Validation State: {}", cat_state);
+    println!("Validation State: {:?}", validation_state);
     println!("Cat State: {}", cat_state);
 
     0

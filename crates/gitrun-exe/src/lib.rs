@@ -88,6 +88,28 @@ pub enum ExecutionError {
 /// (GitVaultRun, GitDockRun, ...) rather than a generic shell runner.
 pub trait ExecutionBackend: Send + Sync {
     fn execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError>;
+
+    /// Streaming adapter used by the IPC server. Backends that can stream
+    /// process output should override this method; the default keeps older
+    /// handlers correct by emitting the buffered result as events.
+    fn execute_stream(
+        &self,
+        request: &AuthorizedOperation,
+        sink: &mut dyn FnMut(ExecutionEvent),
+    ) -> Result<i32, ExecutionError> {
+        sink(ExecutionEvent::Started);
+        let result = self.execute(request)?;
+        if !result.stdout.is_empty() {
+            sink(ExecutionEvent::Stdout(result.stdout.clone()));
+        }
+        if !result.stderr.is_empty() {
+            sink(ExecutionEvent::Stderr(result.stderr.clone()));
+        }
+        sink(ExecutionEvent::Finished {
+            exit_code: result.exit_code,
+        });
+        Ok(result.exit_code)
+    }
 }
 
 /// Safe default backend used while the concrete handlers are introduced.

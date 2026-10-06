@@ -323,6 +323,15 @@ mod tests {
     }
 
     #[test]
+    fn final_message_is_detected_after_line_wrap() {
+        let lines = vec![
+            "Thanks for using GitRun! May the same love".to_owned(),
+            "I have for this project spread to everyone".to_owned(),
+        ];
+        assert!(contains_readable_message(&lines));
+    }
+
+    #[test]
     fn actual_animation_fits_typical_terminal() {
         let animation = serde_json::from_str::<CatAnimation>(ANIMATION).unwrap();
         for frame in &animation.frames {

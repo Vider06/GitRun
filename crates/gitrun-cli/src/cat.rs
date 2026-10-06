@@ -221,9 +221,13 @@ fn half_block_row(top: &str, bottom: Option<&str>, width: usize) -> String {
 
         output.push(match (top_set, bottom_set) {
             (false, false) => ' ',
-            (true, false) => '▀',
-            (false, true) => '▄',
-            (true, true) => '█',
+            (true, false) => top_chars[column],
+            (false, true) => bottom_chars[column],
+            (true, true) => {
+                let top = top_chars[column];
+                let bottom = bottom_chars[column];
+                if top == bottom { top } else { '█' }
+            }
         });
     }
 
@@ -245,8 +249,9 @@ mod tests {
 
     #[test]
     fn half_block_preserves_vertical_information() {
-        assert_eq!(half_block_row("# ", Some(" #"), 2), "▀▄");
-        assert_eq!(half_block_row("##", Some("##"), 2), "██");
+        assert_eq!(half_block_row("# ", Some(" #"), 2), "##");
+        assert_eq!(half_block_row("##", Some("##"), 2), "##");
+        assert_eq!(half_block_row("#:", Some(": "), 2), "#█");
     }
 
     #[test]

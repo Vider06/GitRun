@@ -760,7 +760,6 @@ fn create_runner(
             secret_env: &secret_env,
             gsr_policy_env: &gsr_policy_env,
             is_windows,
-            docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
             workflow_job_name: job_name,
             workflow_run_id: job_run_id,
             dock_target: load_dock_target_jobs(state_dir, repo)

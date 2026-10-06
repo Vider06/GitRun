@@ -275,9 +275,10 @@ fn authorize_vault(
             "name",
         )?;
         if !effective.vault.allows_name(name) {
-        return Err(ApiGateError::ResourceDenied {
-            resource: name.to_owned(),
-        });
+            return Err(ApiGateError::ResourceDenied {
+                resource: name.to_owned(),
+            });
+        }
     }
 
     let allowed = match operation {
@@ -288,6 +289,7 @@ fn authorize_vault(
         GitRunOperation::List => effective.vault.list_metadata,
         _ => false,
     };
+
     if allowed {
         Ok(())
     } else {

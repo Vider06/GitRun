@@ -180,6 +180,7 @@ pub fn authorize_with_effective(
         operation,
         repository: caller.repository.clone(),
         workflow: caller.workflow.clone(),
+        run_id: None,
         job: caller.job.clone(),
         resource: resource.map(str::to_owned),
         arguments,

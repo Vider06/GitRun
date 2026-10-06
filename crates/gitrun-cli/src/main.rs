@@ -373,7 +373,6 @@ fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    presenter.transition(cat::presenter::ValidationState::Recovering);
     let raw = std::fs::read_to_string(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
@@ -840,6 +839,7 @@ fn rollback_command(
     path: &str,
     presenter: &mut cat::presenter::CatPresenter,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    presenter.transition(cat::presenter::ValidationState::Recovering);
     let raw = std::fs::read_to_string(path)?;
     if let Ok(backup) = serde_json::from_str::<InstalledBackupRecord>(&raw) {
         rollback_installed_update(&backup)?;

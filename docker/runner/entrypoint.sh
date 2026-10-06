@@ -4,7 +4,6 @@ set -Eeuo pipefail
 cd /home/runner/actions-runner
 
 : "${RUNNER_URL:?RUNNER_URL is required}"
-: "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
 : "${RUNNER_NAME:?RUNNER_NAME is required}"
 
 RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,Linux,X64,gitrun,gitrun-ci}"
@@ -72,6 +71,10 @@ chown runner:runner "$SHARED_CACHE_DIR"
 # dock-only resource. The marker lives in the container writable layer, not
 # in /run (which is tmpfs), so the state survives stop/start without starting
 # another GitHub Actions runner.
+if [[ ! -f "$DOCK_ONLY_MARKER" ]]; then
+  : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
+fi
+
 DOCK_ONLY_MARKER=/home/runner/.gitrun-dock-only
 if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   echo "gitrun-runner: starting in GitDockRun dock-only mode"

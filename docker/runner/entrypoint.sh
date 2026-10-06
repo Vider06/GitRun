@@ -68,6 +68,24 @@ chmod 0600 "$GSR_EVENTS_FILE"
 mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 
+# GitDockRun can temporarily convert a completed runner container into a
+# dock-only resource. The marker lives in the container writable layer, not
+# in /run (which is tmpfs), so the state survives stop/start without starting
+# another GitHub Actions runner.
+DOCK_ONLY_MARKER=/home/runner/.gitrun-dock-only
+if [[ -f "$DOCK_ONLY_MARKER" ]]; then
+  echo "gitrun-runner: starting in GitDockRun dock-only mode"
+  unset RUNNER_TOKEN
+  unset GITRUN_GSR_COMMAND_POLICY_ENABLED
+  unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED
+  unset GITRUN_GSR_COMMAND_BLACKLIST_ENABLED
+  unset GITRUN_GSR_COMMAND_BLACKLIST
+  unset GITRUN_GSR_COMMAND_WHITELIST_ENABLED
+  unset GITRUN_GSR_COMMAND_WHITELIST
+  unset GITRUN_GSR_VIOLATION_ACTION
+  exec sudo -u runner -E /bin/bash -c 'exec sleep infinity'
+fi
+
 if [[ -S /var/run/docker.sock ]]; then
   socket_gid="$(stat -c '%g' /var/run/docker.sock)"
   if [[ "$socket_gid" != "0" ]]; then

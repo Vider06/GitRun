@@ -910,12 +910,7 @@ pub struct ApiRunnerIdentity {
 pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     let cgroup =
         std::fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(DockerError::Spawn)?;
-    let container_id = cgroup
-        .split(|ch: char| !ch.is_ascii_hexdigit())
-        .find(|part| part.len() == 64)
-        .map(str::to_owned);
-
-    let Some(container_id) = container_id else {
+    let Some(container_id) = container_id_from_cgroup(&cgroup) else {
         return Ok(None);
     };
 
@@ -952,6 +947,15 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
 #[cfg(not(target_os = "linux"))]
 pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     Ok(None)
+}
+
+/// Extracts a Docker-style 64-hex container id from a Linux cgroup path.
+#[cfg(target_os = "linux")]
+fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
+    cgroup
+        .split(|ch: char| !ch.is_ascii_hexdigit())
+        .find(|part| part.len() == 64)
+        .map(str::to_owned)
 }
 
 /// Executes a command in a managed container after the caller has already
@@ -1214,4 +1218,24 @@ mod tests {
         assert_ne!(cache_path_key("a_b/c"), cache_path_key("a/b_c"));
         assert_eq!(cache_path_key("owner/repo"), "6f776e65722f7265706f");
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn host_process_cgroup_without_container_id_is_not_a_runner_container() {
+        assert_eq!(
+            container_id_from_cgroup(
+                "0::/user.slice/user-1000.slice/session-42.scope"
+            ),
+            None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn docker_cgroup_parser_extracts_only_full_container_id() {
+        let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let cgroup = format!("0::/system.slice/docker-{id}.scope");
+        assert_eq!(container_id_from_cgroup(&cgroup).as_deref(), Some(id));
+    }
+
+
 }

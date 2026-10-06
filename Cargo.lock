@@ -1436,6 +1436,7 @@ dependencies = [
  "hex",
  "hmac",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.21",
 ]
@@ -1488,6 +1489,7 @@ dependencies = [
  "base64 0.23.1",
  "filetime",
  "gitrun-core",
+ "gitrun-exe",
  "gitrun-gsr",
  "gitrun-updater",
  "gitrun-vault",

@@ -1,7 +1,8 @@
 /// The runner Dockerfile remains the repository source of truth. The bootstrap
 /// uses the exact same image definition, with one deliberate adjustment: a
 /// packaged GitRun installation does not ship the entire workspace, so the
-/// build context is reduced to the two crates needed by the GSR shell agent.
+/// build context is reduced to the crates needed by the GSR shell agent and
+/// its workflow API client.
 pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     const FULL_WORKSPACE_COPY: &str = "COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates";
     const MINIMAL_WORKSPACE_COPY: &str = concat!(

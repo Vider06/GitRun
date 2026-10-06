@@ -38,6 +38,7 @@ mod tests {
                 operation: GitRunOperation::Status,
                 repository: "owner/repo".into(),
                 workflow: "ci.yml".into(),
+                run_id: Some(1),
                 job: "build".into(),
                 runner: "runner-1".into(),
                 resource: None,

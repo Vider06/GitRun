@@ -139,6 +139,7 @@ mod tests {
             operation,
             repository: "owner/repo".into(),
             workflow: "ci.yml".into(),
+            run_id: Some(1),
             job: "build".into(),
             resource: None,
             arguments: BTreeMap::new(),

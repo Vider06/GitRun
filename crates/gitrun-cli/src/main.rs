@@ -951,7 +951,7 @@ fn main() {
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
-        },
+        }
         Command::Settings => run_settings(),
         Command::ApiList => run_api_list(),
         Command::ApiPolicy {
@@ -983,7 +983,9 @@ fn validation_state_for_command(command: &Command) -> cat::presenter::Validation
             ValidationState::Recovering
         }
         Command::CheckCompatibility { .. } => ValidationState::Validating,
-        Command::ApiList | Command::ApiPolicy { .. } | Command::Status { .. } => ValidationState::Api,
+        Command::ApiList | Command::ApiPolicy { .. } | Command::Status { .. } => {
+            ValidationState::Api
+        }
     }
 }
 
@@ -1314,7 +1316,9 @@ fn run_status(runner_id: u64, presenter: &mut cat::presenter::CatPresenter) -> i
         }
     };
 
-    let container = containers.iter().find(|container| container.name == runner.name);
+    let container = containers
+        .iter()
+        .find(|container| container.name == runner.name);
     let commands = if container
         .map(|container| container.status.eq_ignore_ascii_case("running"))
         .unwrap_or(false)

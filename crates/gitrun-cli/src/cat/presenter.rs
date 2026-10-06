@@ -296,9 +296,10 @@ fn validate_states(states: &CatStates) -> bool {
     }
     states.states.values().all(|sprite| {
         sprite.lines.len() == states.height
-            && sprite.lines.iter().all(|line| {
-                line.chars().count() == states.width && line.is_ascii()
-            })
+            && sprite
+                .lines
+                .iter()
+                .all(|line| line.chars().count() == states.width && line.is_ascii())
     })
 }
 

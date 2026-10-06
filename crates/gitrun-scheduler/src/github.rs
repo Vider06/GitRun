@@ -93,6 +93,24 @@ struct Job {
     status: String,
     #[serde(default)]
     labels: Vec<String>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    runner_name: Option<String>,
+    #[serde(default)]
+    conclusion: Option<String>,
+}
+
+/// Public job identity needed by GitDockRun to resolve a named job in the
+/// current workflow run back to the GitRun-managed runner container that
+/// hosted it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowJobInfo {
+    pub id: u64,
+    pub name: String,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub runner_name: Option<String>,
 }
 
 /// Splits "owner/repo" into its two parts, validating the shape up front so
@@ -383,6 +401,48 @@ impl GitHubClient {
     /// self-hosted runner. Paginates both the run list and, implicitly, is
     /// bounded per-run by GitHub's own per-run job count (jobs are paginated
     /// too, followed the same way).
+    /// Finds a named job inside one GitHub Actions workflow run. The
+    /// caller uses this to map GitDockRun --job <name> to the runner that
+    /// executed that job.
+    pub fn find_workflow_job(
+        &self,
+        repo: &str,
+        run_id: u64,
+        job_name: &str,
+    ) -> Result<Option<WorkflowJobInfo>> {
+        let (owner, name) = split_repo(repo)?;
+        let mut url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs/{run_id}/jobs?per_page=100",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+
+        loop {
+            let response = self.request(reqwest::Method::GET, &url)?;
+            let next_url = parse_next_link(response.headers());
+            let parsed: JobsResponse = response.json()?;
+
+            if let Some(job) = parsed
+                .jobs
+                .into_iter()
+                .find(|job| job.name == job_name)
+            {
+                return Ok(Some(WorkflowJobInfo {
+                    id: 0,
+                    name: job.name,
+                    status: job.status,
+                    conclusion: job.conclusion,
+                    runner_name: job.runner_name,
+                }));
+            }
+
+            match next_url {
+                Some(next) => url = next,
+                None => return Ok(None),
+            }
+        }
+    }
+
     pub fn queued_self_hosted_jobs(&self, repo: &str) -> Result<u32> {
         Ok(self.queued_self_hosted_jobs_with_labels(repo)?.len() as u32)
     }

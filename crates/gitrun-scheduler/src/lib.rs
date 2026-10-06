@@ -789,9 +789,7 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
         dock_requests.extend(gitrun_core::scan_dock_requests(name, content));
     }
 
-    if let Err(error) =
-        save_workflow_dock_requirements(&config.state_dir, repo, &dock_requests)
-    {
+    if let Err(error) = save_workflow_dock_requirements(&config.state_dir, repo, &dock_requests) {
         eprintln!(
             "gitrun-autoscaler: workflow validation for {repo}: could not persist GitDockRun requirements: {error}"
         );

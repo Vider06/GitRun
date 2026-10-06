@@ -14,14 +14,16 @@ use gitrun_exe::{
     AuthorizedOperation, ExecutionBackend, ExecutionError, ExecutionEvent, ExecutionResult,
 };
 use gitrun_gsr::api_gate::{authorize, VerifiedCaller};
-use gitrun_vault::{Scope, Vault, VaultEventSink};
+use gitrun_vault::{Scope, Vault};
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
@@ -50,12 +52,17 @@ pub fn spawn(
 
         let listener = UnixListener::bind(path)
             .map_err(|e| format!("bind GitRun API socket {}: {e}", path.display()))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|e| format!("set GitRun API socket nonblocking: {e}"))?;
 
-        fs::set_permissions(
-            path,
-            fs::Permissions::from_mode(0o666),
-        )
-        .map_err(|e| format!("set API socket permissions: {e}"))?;
+        // The socket itself is not the authorization boundary: every request
+        // still needs a random runner capability. 0666 is required so the
+        // unprivileged runner user inside each bind-mounted container can
+        // connect; the random token and container identity checks remain the
+        // gate.
+        fs::set_permissions(path, fs::Permissions::from_mode(0o666))
+            .map_err(|e| format!("set API socket permissions: {e}"))?;
 
         let state_dir = Path::new(&config.state_dir).to_path_buf();
         let thread_stopping = stopping.clone();
@@ -84,8 +91,12 @@ pub fn spawn(
                                 .ok();
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
                         Err(error) => {
                             eprintln!("gitrun-api: accept failed: {error}");
+                            std::thread::sleep(std::time::Duration::from_millis(250));
                         }
                     }
                 }
@@ -155,6 +166,24 @@ fn handle_stream(
     {
         send_error(&mut stream, "runner API identity does not match the managed container")?;
         return Ok(());
+    }
+
+    if let Some(run_id) = request.invocation.run_id {
+        let job = request.invocation.job.clone();
+        let current_job = github
+            .find_workflow_job(&request.invocation.repository, run_id, &job)
+            .map_err(|error| format!("verify current workflow job: {error}"))?;
+        let Some(current_job) = current_job else {
+            send_error(&mut stream, "current GitHub workflow job could not be verified")?;
+            return Ok(());
+        };
+        if current_job.runner_name.as_deref() != Some(identity.name.as_str()) {
+            send_error(
+                &mut stream,
+                "GitRun API request is not being made by the runner assigned to this workflow job",
+            )?;
+            return Ok(());
+        }
     }
 
     let caller = VerifiedCaller::new(
@@ -279,7 +308,7 @@ impl ApiExecutionBackend {
     fn status(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         Ok(success(format!(
             "GitRun API STATUS\nrunner={}\nrepository={}\nworkflow={}\njob={}\n",
-            request.job, request.repository, request.workflow, request.job
+            self.caller.runner, request.repository, request.workflow, request.job
         )))
     }
 
@@ -733,14 +762,7 @@ fn arg<'a>(request: &'a AuthorizedOperation, name: &str) -> Result<&'a str, Exec
 }
 
 fn request_run_id(request: &AuthorizedOperation) -> u64 {
-    // The run ID is carried in the workflow context by convention. Older
-    // AuthorizedOperation values may not have it, so keep a fail-closed zero
-    // for operations that require a workflow run.
-    request
-        .arguments
-        .get("run_id")
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0)
+    request.run_id.unwrap_or(0)
 }
 
 fn docker_exec_checked(

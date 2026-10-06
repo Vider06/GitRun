@@ -9,6 +9,7 @@
 pub mod app_auth;
 pub mod api_policy;
 pub mod command_policy;
+pub mod compatibility;
 pub mod config;
 pub mod github_auth;
 pub mod hypervisor_decision;
@@ -35,3 +36,5 @@ pub use workflow_validation::{
     ensure_zizmor_installed, run_zizmor, scan, validate_workflows_dir, zizmor_info, Finding,
     InstallOutcome, ValidationReport, ZizmorInfo,
 };
+
+pub use compatibility::{analyze as analyze_compatibility, CompatibilityFinding, CompatibilityReport, CompatibilityStatus};

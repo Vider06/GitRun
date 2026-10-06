@@ -7,6 +7,7 @@ description = "GitRun autoscaler: reconciles desired vs actual runner containers
 
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
+gitrun-exe = { path = "../gitrun-exe" }
 gitrun-gsr = { path = "../gitrun-gsr" }
 gitrun-vault = { path = "../gitrun-vault" }
 gitrun-updater = { path = "../gitrun-updater" }

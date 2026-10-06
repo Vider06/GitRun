@@ -8,6 +8,7 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     const MINIMAL_WORKSPACE_COPY: &str = concat!(
         "COPY Cargo.toml Cargo.lock ./\n",
         "COPY crates/gitrun-core ./crates/gitrun-core\n",
+        "COPY crates/gitrun-exe ./crates/gitrun-exe\n",
         "COPY crates/gitrun-gsr ./crates/gitrun-gsr"
     );
 

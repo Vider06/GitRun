@@ -1,4 +1,5 @@
 pub mod backoff;
+pub mod dock_registry;
 pub mod docker;
 pub mod github;
 pub mod gsr_bridge;

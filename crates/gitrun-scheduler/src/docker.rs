@@ -701,6 +701,12 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
                 "type=volume,source={},target=/var/lib/gitrun/shared",
                 spec.shared_cache_volume
             ),
+            // The API service lives on the host. The runner gets only this
+            // Unix socket file, never the host API process or a workflow token.
+            // Authentication happens from SO_PEERCRED + the container cgroup
+            // on the host side before GSR authorizes the request.
+            "--volume".into(),
+            "/run/gitrun/api.sock:/run/gitrun/api.sock".into(),
             "-e".into(),
             "GITRUN_SHARED_CACHE_DIR=/var/lib/gitrun/shared".into(),
             "-e".into(),

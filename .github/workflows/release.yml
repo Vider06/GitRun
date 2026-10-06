@@ -66,6 +66,7 @@ jobs:
             echo "Tag $version is missing from the checkout." >&2
             exit 1
           fi
+          echo "GITRUN_VERSION=$expected_version" >> "$GITHUB_ENV"
           {
             echo "version=$version"
             echo "version_number=$expected_version"

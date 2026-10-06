@@ -19,5 +19,9 @@ commands.allow = [
   "respond_hypervisor_decision",
   "get_config",
   "save_config",
+  "get_gitrun_settings",
+  "save_gitrun_settings",
+  "get_repo_api_policies",
+  "get_dock_requirements",
   "secure_private_key",
 ]

@@ -856,7 +856,7 @@ fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     let cli = Cli::parse();
-    if cli.version {
+    if cli.version || cli.all_crates || cli.crate_name.is_some() {
         run_version(cli.crate_name.as_deref());
         std::process::exit(0);
     }
@@ -919,11 +919,14 @@ struct Cli {
     /// convention, e.g. `gcc -V`, `rustc -V`) and `-v` as a short form,
     /// since operators reach for either out of habit and there's no other
     /// use for `-v` on this top-level flag set to conflict with.
-    #[arg(short = 'V', long = "version", short_alias = 'v')]
+    #[arg(short = 'V', long = "version", short_alias = 'v', long_alias = "v")]
     version: bool,
     /// Show one crate version; omit it to show GitRun and every workspace crate.
     #[arg(long = "crate")]
     crate_name: Option<String>,
+    /// Show GitRun and every GitRun crate version.
+    #[arg(long = "crates")]
+    all_crates: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }

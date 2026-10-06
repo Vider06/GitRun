@@ -910,6 +910,7 @@ fn main() {
             busy,
             queued,
         } => run_desired(min, max, busy, queued),
+        Command::Status { runner } => run_status(runner, &mut presenter),
         Command::Setup { terminal } => {
             if terminal {
                 match terminal_setup_command(&mut presenter) {
@@ -954,7 +955,7 @@ fn main() {
         } => run_api_policy(&api, operation.as_deref(), enabled),
     };
 
-    if !is_cat_command {
+    if !is_cat_command && !matches!(command, Command::Status { .. }) {
         presenter.finish(exit_code);
     }
     std::process::exit(exit_code);
@@ -976,7 +977,7 @@ fn validation_state_for_command(command: &Command) -> cat::presenter::Validation
             ValidationState::Recovering
         }
         Command::CheckCompatibility { .. } => ValidationState::Validating,
-        Command::ApiList | Command::ApiPolicy { .. } => ValidationState::Api,
+        Command::ApiList | Command::ApiPolicy { .. } | Command::Status { .. } => ValidationState::Api,
     }
 }
 
@@ -1017,6 +1018,12 @@ enum Command {
         busy: u32,
         /// Currently queued self-hosted jobs.
         queued: u32,
+    },
+    /// Inspect a GitHub Actions runner and its GitRun container.
+    Status {
+        /// GitHub Actions runner ID.
+        #[arg(long)]
+        runner: u64,
     },
     /// Check dependencies and prepare config/state/log directories.
     Setup {
@@ -1136,6 +1143,187 @@ fn run_version(crate_name: Option<&str>) -> i32 {
             println!("{name} {ver}");
         }
     }
+    0
+}
+
+fn build_status_github_client(
+    config: &Config,
+) -> Result<gitrun_scheduler::GitHubClient, Box<dyn std::error::Error>> {
+    let connect_timeout = std::time::Duration::from_secs(config.github_connect_timeout);
+    let request_timeout = std::time::Duration::from_secs(config.github_request_timeout);
+
+    match GitHubAuth::from_config(config)? {
+        GitHubAuth::App(auth) => Ok(gitrun_scheduler::GitHubClient::with_app_auth(
+            auth,
+            connect_timeout,
+            request_timeout,
+        )?),
+        GitHubAuth::Pat(token) => Ok(gitrun_scheduler::GitHubClient::with_timeouts(
+            token,
+            connect_timeout,
+            request_timeout,
+        )?),
+    }
+}
+
+fn runner_cat_state(
+    runner: &gitrun_scheduler::Runner,
+    container: Option<&gitrun_scheduler::docker::ManagedContainer>,
+    commands: &[String],
+) -> &'static str {
+    use cat::presenter::ValidationState;
+
+    if !runner.is_online() {
+        return "sad";
+    }
+    let Some(container) = container else {
+        return if runner.busy { "runner" } else { "seated" };
+    };
+    if !container.status.eq_ignore_ascii_case("running") {
+        return "recovery";
+    }
+    if !runner.busy {
+        return "seated";
+    }
+
+    let joined = commands.join(" ").to_ascii_lowercase();
+
+    if joined.contains("cargo test")
+        || joined.contains("cargo nextest")
+        || joined.contains("pytest")
+        || joined.contains("npm test")
+        || joined.contains("pnpm test")
+        || joined.contains("yarn test")
+    {
+        return "testing";
+    }
+    if joined.contains("cargo build")
+        || joined.contains("cargo check")
+        || joined.contains("cargo clippy")
+        || joined.contains("cargo rustc")
+    {
+        return "compiling";
+    }
+    if joined.contains("rustc") || joined.contains("cargo ") {
+        return "rust";
+    }
+    if joined.contains("docker build")
+        || joined.contains("docker compose")
+        || joined.contains("docker pull")
+        || joined.contains("docker push")
+    {
+        return "docker";
+    }
+    if joined.contains("npm run build")
+        || joined.contains("npm run tauri")
+        || joined.contains("pnpm build")
+        || joined.contains("yarn build")
+    {
+        return "building";
+    }
+    if joined.contains("git ") {
+        return "working";
+    }
+    if joined.contains("setup") {
+        return "setup";
+    }
+    if joined.contains("curl ") || joined.contains("wget ") {
+        return "loading";
+    }
+
+    let _ = ValidationState::Running;
+    "runner"
+}
+
+fn run_status(runner_id: u64, presenter: &mut cat::presenter::CatPresenter) -> i32 {
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(error) => {
+            presenter.show_named("failed");
+            eprintln!("configuration error: {error}");
+            return 2;
+        }
+    };
+
+    presenter.transition(cat::presenter::ValidationState::Api);
+
+    let client = match build_status_github_client(&config) {
+        Ok(client) => client,
+        Err(error) => {
+            presenter.show_named("failed");
+            eprintln!("GitRun status: unable to initialize GitHub client: {error}");
+            return 2;
+        }
+    };
+
+    let mut matches = Vec::new();
+    for repository in &config.repositories {
+        match client.list_runners(repository) {
+            Ok(runners) => {
+                if let Some(runner) = runners.into_iter().find(|runner| runner.id == runner_id) {
+                    matches.push((repository.clone(), runner));
+                }
+            }
+            Err(error) => {
+                presenter.show_named("failed");
+                eprintln!("GitRun status: unable to query {repository}: {error}");
+                return 1;
+            }
+        }
+    }
+
+    let Some((repository, runner)) = matches.into_iter().next() else {
+        presenter.show_named("unknown");
+        eprintln!("GitRun status: runner {runner_id} was not found in configured repositories");
+        return 1;
+    };
+
+    let containers = match gitrun_scheduler::docker::managed_containers(&repository) {
+        Ok(containers) => containers,
+        Err(error) => {
+            presenter.show_named("failed");
+            eprintln!("GitRun status: unable to inspect GitRun runner containers: {error}");
+            return 1;
+        }
+    };
+
+    let container = containers.iter().find(|container| container.name == runner.name);
+    let commands = if container
+        .map(|container| container.status.eq_ignore_ascii_case("running"))
+        .unwrap_or(false)
+    {
+        match gitrun_scheduler::docker::container_command_lines_on(
+            &gitrun_scheduler::docker::DockerHost::Local,
+            &runner.name,
+        ) {
+            Ok(commands) => commands,
+            Err(error) => {
+                presenter.show_named("failed");
+                eprintln!("GitRun status: unable to inspect runner activity: {error}");
+                return 1;
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    let cat_state = runner_cat_state(&runner, container, &commands);
+    presenter.show_named(cat_state);
+
+    println!("runner_id: {}", runner.id);
+    println!("runner_name: {}", runner.name);
+    println!("repository: {}", repository);
+    println!("status: {}", runner.status);
+    println!("busy: {}", runner.busy);
+    println!(
+        "container: {}",
+        container
+            .map(|container| container.status.as_str())
+            .unwrap_or("not-found")
+    );
+    println!("Validation State: {}", cat_state);
+    println!("Cat State: {}", cat_state);
+
     0
 }
 

@@ -395,7 +395,17 @@ fn reconcile_repo(
     vm_registry: &VmResolutionRegistry,
     repo: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    api_service::reconcile_dock_bindings(client, state_dir, repo)
+        .map_err(std::io::Error::other)?;
+
     let containers = docker::managed_containers(repo)?;
+    let preserved_docks = api_service::preserved_dock_containers(state_dir, repo)
+        .map_err(std::io::Error::other)?;
+    let plan_containers: Vec<_> = containers
+        .iter()
+        .filter(|container| !preserved_docks.contains(&container.name))
+        .cloned()
+        .collect();
     let runners = client.list_runners(repo)?;
     // Was: client.queued_self_hosted_jobs(repo)? (count only). Switched to
     // the labels-carrying variant so Logic Containers can route dynamic
@@ -411,7 +421,7 @@ fn reconcile_repo(
         })?;
 
     let mut state = SchedulerState::load(state_dir)?;
-    let live_names: Vec<String> = containers
+    let live_names: Vec<String> = plan_containers
         .iter()
         .filter(|c| c.status == "running")
         .map(|c| c.name.clone())
@@ -464,7 +474,7 @@ fn reconcile_repo(
     let input = ReconcileInput {
         min_runners: config.min_runners,
         max_runners: config.max_runners,
-        containers: containers.iter().map(to_container_view).collect(),
+        containers: plan_containers.iter().map(to_container_view).collect(),
         runners: runners
             .iter()
             .map(|r| RunnerView {
@@ -540,6 +550,11 @@ fn execute(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         Action::RemoveExited { name } => {
+            if api_service::is_dock_bound(state_dir, repo, name)
+                .map_err(std::io::Error::other)?
+            {
+                return Ok(());
+            }
             deregister_and_remove(client, repo, name)?;
             state.clear_idle(name);
             state.clear_recovery(name);
@@ -582,6 +597,11 @@ fn execute(
             docker::restart_container(name)?;
         }
         Action::RemoveIdle { name } => {
+            if api_service::is_dock_bound(state_dir, repo, name)
+                .map_err(std::io::Error::other)?
+            {
+                return Ok(());
+            }
             let _ = remove_if_still_idle(client, repo, name)?;
             state.clear_idle(name);
         }

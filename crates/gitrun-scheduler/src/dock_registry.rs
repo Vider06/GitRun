@@ -28,6 +28,8 @@ pub struct DockBinding {
     pub job: String,
     pub container: String,
     pub dynamic: bool,
+    #[serde(default)]
+    pub dock_only: bool,
     pub requester_runner: String,
     pub connected_at: u64,
 }

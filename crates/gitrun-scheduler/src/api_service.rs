@@ -121,6 +121,73 @@ pub fn spawn(
     }
 }
 
+pub(crate) fn reconcile_dock_bindings(
+    client: &GitHubClient,
+    state_dir: &Path,
+    repository: &str,
+) -> Result<(), String> {
+    let mut registry =
+        DockRegistry::load(state_dir).map_err(|error| format!("load GitDockRun registry: {error}"))?;
+    let mut changed = false;
+
+    for binding in registry
+        .bindings
+        .iter_mut()
+        .filter(|binding| binding.repository == repository && binding.dynamic && !binding.dock_only)
+    {
+        let Some(job) = client
+            .find_workflow_job(repository, binding.run_id, &binding.job)
+            .map_err(|error| format!("check GitDockRun job {}: {error}", binding.job))?
+        else {
+            continue;
+        };
+
+        let completed = job.status.eq_ignore_ascii_case("completed")
+            || job.conclusion.is_some();
+
+        if completed {
+            make_dock_only(&binding.container, state_dir)
+                .map_err(|error| format!("freeze GitRun Dock container {}: {error}", binding.container))?;
+            binding.dock_only = true;
+            changed = true;
+        }
+    }
+
+    if changed {
+        registry
+            .save(state_dir)
+            .map_err(|error| format!("save GitDockRun registry: {error}"))?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn preserved_dock_containers(
+    state_dir: &Path,
+    repository: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let registry =
+        DockRegistry::load(state_dir).map_err(|error| format!("load GitDockRun registry: {error}"))?;
+    Ok(registry
+        .bindings
+        .into_iter()
+        .filter(|binding| binding.repository == repository)
+        .map(|binding| binding.container)
+        .collect())
+}
+
+pub(crate) fn is_dock_bound(
+    state_dir: &Path,
+    repository: &str,
+    container: &str,
+) -> Result<bool, String> {
+    let registry =
+        DockRegistry::load(state_dir).map_err(|error| format!("load GitDockRun registry: {error}"))?;
+    Ok(registry.bindings.iter().any(|binding| {
+        binding.repository == repository && binding.container == container
+    }))
+}
+
 #[cfg(unix)]
 fn handle_stream(
     mut stream: UnixStream,

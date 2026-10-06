@@ -37,6 +37,7 @@ fn run() -> Result<(), String> {
 
     let repository = required_env("GITHUB_REPOSITORY")?;
     let workflow = env::var("GITHUB_WORKFLOW").unwrap_or_else(|_| "unknown".into());
+    let run_id = env::var("GITHUB_RUN_ID").ok().and_then(|value| value.parse().ok());
     let job = env::var("GITHUB_JOB").unwrap_or_else(|_| "unknown".into());
     let runner = required_env("RUNNER_NAME")?;
     let token = required_env("GITRUN_API_TOKEN")?;
@@ -48,6 +49,7 @@ fn run() -> Result<(), String> {
             operation,
             repository,
             workflow,
+            run_id,
             job,
             runner,
             resource,
@@ -159,14 +161,6 @@ fn parse_api(
                 if i < args.len() {
                     let key = if api == GitRunApi::GitVaultRun { "name" } else { "path" };
                     values.insert(key.into(), args[i].clone());
-                    i += 1;
-                }
-            }
-            "--get" => {
-                operation = Some(GitRunOperation::Read);
-                i += 1;
-                if i < args.len() {
-                    values.insert("path".into(), args[i].clone());
                     i += 1;
                 }
             }

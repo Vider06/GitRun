@@ -218,6 +218,7 @@ mod tests {
             operation: GitRunOperation::Status,
             repository: "owner/repo".into(),
             workflow: "ci.yml".into(),
+            run_id: Some(123),
             job: "build".into(),
             resource: None,
             arguments: BTreeMap::new(),

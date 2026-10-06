@@ -514,6 +514,11 @@ pub struct RunnerSpec<'a> {
     /// implemented here, so a Windows runner cannot itself run Docker builds
     /// until that's added.
     pub is_windows: bool,
+    /// Whether this runner is explicitly allowed to expose the host Docker
+    /// socket to workflow code. This is a repository policy decision and is
+    /// false unless the repository settings explicitly enable the compatibility
+    /// opt-out. GSR/GitDockRun do not depend on this flag.
+    pub docker_socket_enabled: bool,
     /// GSR's "danger gate" (see `gitrun_core::Config::gsr_docker_socket_hardening`).
     /// When true (the default), extra Docker-level restrictions are applied
     /// to Linux runner containers to reduce what a process that escapes
@@ -630,11 +635,16 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.extend([
             "--tmpfs".into(),
             "/tmp:rw,nosuid,nodev,exec,size=256m".into(),
-            "--volume".into(),
-            "/var/run/docker.sock:/var/run/docker.sock".into(),
-            "--group-add".into(),
-            spec.docker_socket_gid.into(),
-            "--mount".into(),
+        ]);
+        if spec.docker_socket_enabled {
+            args.extend([
+                "--volume".into(),
+                "/var/run/docker.sock:/var/run/docker.sock".into(),
+                "--group-add".into(),
+                spec.docker_socket_gid.into(),
+            ]);
+        }
+        args.extend([ "--mount".into(),
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",
                 spec.shared_cache_volume

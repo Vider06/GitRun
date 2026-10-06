@@ -653,7 +653,15 @@ fn create_runner(
     let safe = docker::sanitize(repo, '-');
     let name = format!("gitrun-{safe}-{}", uuid_like_suffix());
     docker::ensure_shared_cache_volume(&config.shared_cache_volume)?;
-    let docker_socket_gid = resolve_docker_socket_gid()?;
+    let settings = gitrun_core::GitRunSettings::load_or_default(
+        gitrun_core::GitRunSettings::path_for_state_dir(state_dir),
+    )?;
+    let repository_settings = settings.effective_for_repository(repo);
+    let docker_socket_gid = if repository_settings.docker.direct_socket_enabled {
+        resolve_docker_socket_gid()?
+    } else {
+        String::new()
+    };
     let secret_env = vault_env_for_repo(config, repo);
 
     let Some((backend, image, is_windows)) =
@@ -682,6 +690,7 @@ fn create_runner(
             pids_limit: &config.container_pids_limit,
             shared_cache_volume: &config.shared_cache_volume,
             docker_socket_gid: &docker_socket_gid,
+            docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
             runner_home_size: &config.runner_home_size,
             home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
             secret_env: &secret_env,

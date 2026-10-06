@@ -1222,9 +1222,7 @@ mod tests {
     #[test]
     fn host_process_cgroup_without_container_id_is_not_a_runner_container() {
         assert_eq!(
-            container_id_from_cgroup(
-                "0::/user.slice/user-1000.slice/session-42.scope"
-            ),
+            container_id_from_cgroup("0::/user.slice/user-1000.slice/session-42.scope"),
             None
         );
     }
@@ -1236,6 +1234,4 @@ mod tests {
         let cgroup = format!("0::/system.slice/docker-{id}.scope");
         assert_eq!(container_id_from_cgroup(&cgroup).as_deref(), Some(id));
     }
-
-
 }

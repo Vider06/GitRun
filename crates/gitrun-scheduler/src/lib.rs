@@ -783,8 +783,18 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
     };
 
     let mut findings = Vec::new();
+    let mut dock_requests = Vec::new();
     for (name, content) in &files {
         findings.extend(gitrun_core::scan(name, content));
+        dock_requests.extend(gitrun_core::scan_dock_requests(name, content));
+    }
+
+    if let Err(error) =
+        save_workflow_dock_requirements(&config.state_dir, repo, &dock_requests)
+    {
+        eprintln!(
+            "gitrun-autoscaler: workflow validation for {repo}: could not persist GitDockRun requirements: {error}"
+        );
     }
 
     if config.gsr_zizmor_enabled {
@@ -829,6 +839,43 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
     }
 }
 
+fn save_workflow_dock_requirements(
+    state_dir: &str,
+    repo: &str,
+    requests: &[gitrun_core::DockRequest],
+) -> std::io::Result<()> {
+    let directory = std::path::Path::new(state_dir).join("workflow-dock-requirements");
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join(format!("{}.json", docker::sanitize(repo, '_')));
+    if requests.is_empty() {
+        match std::fs::remove_file(&path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+    let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    let raw = serde_json::to_vec_pretty(requests).map_err(std::io::Error::other)?;
+    {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        use std::io::Write;
+        file.write_all(&raw)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+    }
+    if let Err(error) = std::fs::rename(&temp, &path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    Ok(())
+}
 fn write_scratch_workflows(
     dir: &std::path::Path,
     files: &[(String, String)],

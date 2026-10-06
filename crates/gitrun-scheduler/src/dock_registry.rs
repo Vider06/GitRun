@@ -27,6 +27,7 @@ pub struct DockBinding {
     pub run_id: u64,
     pub job: String,
     pub container: String,
+    pub dynamic: bool,
     pub requester_runner: String,
     pub connected_at: u64,
 }

@@ -668,6 +668,20 @@ impl ApiExecutionBackend {
             .map_err(|error| failed(error.to_string()))?
             == false;
 
+        let completed = job_info.status.eq_ignore_ascii_case("completed")
+            || job_info.conclusion.is_some();
+
+        if dynamic && docker::container_status(&runner_name)
+            .map_err(|error| failed(error.to_string()))?
+            .is_none()
+        {
+            return Err(failed(format!("runner container {runner_name} disappeared during connect")));
+        }
+
+        if dynamic && completed {
+            make_dock_only(&runner_name, &self.state_dir)?;
+        }
+
         let mut registry = DockRegistry::load(&self.state_dir)?;
         registry.upsert(DockBinding {
             repository: request.repository.clone(),
@@ -675,17 +689,11 @@ impl ApiExecutionBackend {
             job: job.to_owned(),
             container: runner_name.clone(),
             dynamic,
+            dock_only: dynamic && completed,
             requester_runner: self.caller.runner.clone(),
             connected_at: now(),
         });
         registry.save(&self.state_dir)?;
-
-        let completed = job_info.status.eq_ignore_ascii_case("completed")
-            || job_info.conclusion.is_some();
-
-        if completed && dynamic {
-            make_dock_only(&runner_name, &self.state_dir)?;
-        }
 
         Ok(success(format!(
             "GitDockRun CONNECT: PASS\njob={job}\ncontainer={runner_name}\nid={container}\n"
@@ -703,6 +711,26 @@ impl ApiExecutionBackend {
         let job = arg(request, "job")?;
 
         let mut registry = DockRegistry::load(&self.state_dir)?;
+        let binding = registry
+            .binding(&request.repository, run_id, job)
+            .cloned()
+            .ok_or_else(|| failed(format!("no GitDockRun binding exists for job {job}")))?;
+
+        if binding.dynamic {
+            let job_info = self
+                .github
+                .find_workflow_job(&request.repository, run_id, job)
+                .map_err(|error| failed(error.to_string()))?
+                .ok_or_else(|| failed(format!("workflow job {job} could not be verified")))?;
+            let completed = job_info.status.eq_ignore_ascii_case("completed")
+                || job_info.conclusion.is_some();
+            if !completed {
+                return Err(failed(
+                    "GitDockRun --disconnect cannot remove a Dynamic container while its source job is running",
+                ));
+            }
+        }
+
         let binding = registry
             .remove(&request.repository, run_id, job)
             .ok_or_else(|| failed(format!("no GitDockRun binding exists for job {job}")))?;
@@ -799,6 +827,12 @@ impl ApiExecutionBackend {
             .is_none()
         {
             return Err(failed(format!("melt target container {target} was not found")));
+        }
+
+        let target_repo = docker::container_repo_label_on(&docker::DockerHost::Local, target)
+            .map_err(|error| failed(error.to_string()))?;
+        if target_repo.as_deref() != Some(request.repository.as_str()) {
+            return Err(failed("GitDockRun --melt target is not a GitRun runner for this repository"));
         }
 
         docker::melt_filesystem(source, target)

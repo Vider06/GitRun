@@ -76,6 +76,7 @@ DOCK_ONLY_MARKER=/home/runner/.gitrun-dock-only
 if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   echo "gitrun-runner: starting in GitDockRun dock-only mode"
   unset RUNNER_TOKEN
+  unset GITRUN_API_TOKEN
   unset GITRUN_GSR_COMMAND_POLICY_ENABLED
   unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED
   unset GITRUN_GSR_COMMAND_BLACKLIST_ENABLED

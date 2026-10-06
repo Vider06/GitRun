@@ -322,11 +322,7 @@ pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Resul
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
-fn container_label_on(
-    host: &DockerHost,
-    name: &str,
-    label: &str,
-) -> Result<Option<String>> {
+fn container_label_on(host: &DockerHost, name: &str, label: &str) -> Result<Option<String>> {
     let format = format!("{{index .Config.Labels \\\"{label}\\\"}}");
     let output = run_on(host, &["inspect", "-f", &format, name])?;
     if !output.status.success() {
@@ -610,16 +606,10 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     ]);
 
     if let Some(job_name) = spec.workflow_job_name {
-        args.extend([
-            "--label".into(),
-            format!("gitrun.workflow_job={job_name}"),
-        ]);
+        args.extend(["--label".into(), format!("gitrun.workflow_job={job_name}")]);
     }
     if let Some(run_id) = spec.workflow_run_id {
-        args.extend([
-            "--label".into(),
-            format!("gitrun.workflow_run={run_id}"),
-        ]);
+        args.extend(["--label".into(), format!("gitrun.workflow_run={run_id}")]);
     }
 
     if spec.is_windows {
@@ -918,8 +908,8 @@ pub struct ApiRunnerIdentity {
 /// the workflow environment.
 #[cfg(target_os = "linux")]
 pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
-    let cgroup = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
-        .map_err(DockerError::Spawn)?;
+    let cgroup =
+        std::fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(DockerError::Spawn)?;
     let container_id = cgroup
         .split(|ch: char| !ch.is_ascii_hexdigit())
         .find(|part| part.len() == 64)
@@ -964,7 +954,6 @@ pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     Ok(None)
 }
 
-
 /// Executes a command in a managed container after the caller has already
 /// passed the relevant GSR authorization gate.
 pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
@@ -982,11 +971,7 @@ pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
 
 /// Executes a command in a managed container and writes a bounded payload to
 /// its stdin. Used by controlled GitWriteRun operations.
-pub fn exec_container_with_stdin(
-    container: &str,
-    args: &[&str],
-    input: &[u8],
-) -> Result<Output> {
+pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -> Result<Output> {
     if input.len() > 16 * 1024 * 1024 {
         return Err(DockerError::Command(
             "container stdin payload exceeds the 16 MiB safety limit".into(),
@@ -1017,11 +1002,7 @@ pub fn exec_container_with_stdin(
 
 /// Executes a command in one managed container while forwarding stdout and
 /// stderr chunks to the caller as they arrive.
-pub fn exec_container_stream<F>(
-    container: &str,
-    args: &[&str],
-    mut on_output: F,
-) -> Result<i32>
+pub fn exec_container_stream<F>(container: &str, args: &[&str], mut on_output: F) -> Result<i32>
 where
     F: FnMut(bool, &[u8]),
 {
@@ -1087,7 +1068,6 @@ where
 
     Ok(child.wait()?.code().unwrap_or(1))
 }
-
 
 /// Extra `docker run` flags applied to a Linux runner container when
 /// `RunnerSpec::docker_socket_hardening` is true (the default).

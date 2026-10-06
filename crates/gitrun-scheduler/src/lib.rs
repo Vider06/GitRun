@@ -412,7 +412,11 @@ fn reconcile_repo(
                     && container
                         .workflow_job
                         .as_deref()
-                        .map(|job| load_dock_target_jobs(state_dir, repo).iter().any(|target| target == job))
+                        .map(|job| {
+                            load_dock_target_jobs(state_dir, repo)
+                                .iter()
+                                .any(|target| target == job)
+                        })
                         .unwrap_or(false)
             })
             .map(|container| container.name.clone()),
@@ -437,10 +441,7 @@ fn reconcile_repo(
         .iter()
         .map(|job| job.name.clone())
         .collect();
-    let queued_job_run_ids: Vec<u64> = queued_jobs_info
-        .iter()
-        .map(|job| job.run_id)
-        .collect();
+    let queued_job_run_ids: Vec<u64> = queued_jobs_info.iter().map(|job| job.run_id).collect();
     let dock_target_jobs = load_dock_target_jobs(state_dir, repo);
     let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
         .map_err(|error| {
@@ -771,10 +772,7 @@ fn create_runner(
     Ok(())
 }
 
-fn load_dock_target_jobs(
-    state_dir: &std::path::Path,
-    repo: &str,
-) -> Vec<String> {
+fn load_dock_target_jobs(state_dir: &std::path::Path, repo: &str) -> Vec<String> {
     let path = state_dir
         .join("workflow-dock-requirements")
         .join(format!("{}.json", docker::sanitize(repo, '_')));

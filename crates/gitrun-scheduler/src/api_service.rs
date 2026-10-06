@@ -189,8 +189,7 @@ pub(crate) fn reconcile_dock_target_containers(
             job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
         if completed
             && container.status.eq_ignore_ascii_case("running")
-            && container
-                .container_is_dynamic()
+            && container.container_is_dynamic()
         {
             make_dock_only(&container.name, state_dir)
                 .map_err(|error| format!("freeze Dock target {}: {error}", container.name))?;
@@ -272,12 +271,15 @@ fn handle_stream(
         }
     };
 
-    let peer_pid = peer_pid(&stream)
-        .map_err(|error| format!("read API socket peer credentials: {error}"))?;
+    let peer_pid =
+        peer_pid(&stream).map_err(|error| format!("read API socket peer credentials: {error}"))?;
     let identity = match docker::runner_for_peer_pid(peer_pid) {
         Ok(Some(identity)) => identity,
         Ok(None) => {
-            send_error(&mut stream, "GitRun API caller is not a managed runner container")?;
+            send_error(
+                &mut stream,
+                "GitRun API caller is not a managed runner container",
+            )?;
             return Ok(());
         }
         Err(error) => {
@@ -378,7 +380,11 @@ fn handle_stream(
 fn peer_pid(stream: &UnixStream) -> Result<i32, std::io::Error> {
     use std::os::unix::io::AsRawFd;
     let fd = stream.as_raw_fd();
-    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     let result = unsafe {
         libc::getsockopt(

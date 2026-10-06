@@ -242,9 +242,9 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             let routed = crate::logic_containers::resolve(&input.logic_rules, labels).is_some();
             let specialized = routed
                 && (job_requires_specialized_runner(labels, &input.configured_runner_labels)
-                    || job_name
-                        .as_deref()
-                        .is_some_and(|name| input.dock_target_jobs.iter().any(|target| target == name)));
+                    || job_name.as_deref().is_some_and(|name| {
+                        input.dock_target_jobs.iter().any(|target| target == name)
+                    }));
 
             specialized.then_some((job_name, job_run_id, labels.clone()))
         })

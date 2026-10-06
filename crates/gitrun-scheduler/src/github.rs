@@ -469,10 +469,7 @@ impl GitHubClient {
     /// logical job name and labels. The run/job identity is what lets
     /// GitDockRun reserve the exact runner container rather than relying on
     /// positional label matching alone.
-    pub fn queued_self_hosted_jobs_with_info(
-        &self,
-        repo: &str,
-    ) -> Result<Vec<QueuedJobInfo>> {
+    pub fn queued_self_hosted_jobs_with_info(&self, repo: &str) -> Result<Vec<QueuedJobInfo>> {
         let (owner, name) = split_repo(repo)?;
         let mut jobs = Vec::new();
         let runs_path = format!(

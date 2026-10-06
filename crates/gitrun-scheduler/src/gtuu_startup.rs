@@ -104,16 +104,19 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         }
     };
 
-    let settings = GitRunSettings::load_or_default(
-        GitRunSettings::path_for_state_dir(&config.state_dir),
-    )?;
+    let settings =
+        GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(&config.state_dir))?;
     let socket_enabled_for_repo = |repo: &str| {
         settings
             .effective_for_repository(repo)
             .docker
             .direct_socket_enabled
     };
-    let docker_socket_gid = if config.repositories.iter().any(|repo| socket_enabled_for_repo(repo)) {
+    let docker_socket_gid = if config
+        .repositories
+        .iter()
+        .any(|repo| socket_enabled_for_repo(repo))
+    {
         match resolve_docker_socket_gid() {
             Ok(gid) => gid,
             Err(error) => {

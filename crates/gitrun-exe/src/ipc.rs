@@ -12,7 +12,6 @@ pub const DEFAULT_SOCKET_PATH: &str = "/run/gitrun/api.sock";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireRequest {
-    pub token: String,
     pub invocation: ApiInvocation,
 }
 
@@ -32,7 +31,6 @@ mod tests {
     #[test]
     fn wire_request_round_trips() {
         let request = WireRequest {
-            token: "token".into(),
             invocation: ApiInvocation {
                 api: GitRunApi::GitStatusRun,
                 operation: GitRunOperation::Status,

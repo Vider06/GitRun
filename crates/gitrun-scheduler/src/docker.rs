@@ -561,11 +561,6 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let cache_key = cache_path_key(spec.repo);
-    let api_token = gitrun_exe::protocol::ChannelKey::generate()
-        .map_err(|error| {
-            DockerError::Command(format!("unable to create runner API capability: {error}"))
-        })?
-        .to_hex();
     let labels = ensure_label(spec.labels, "gitrun-ci");
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
@@ -698,8 +693,6 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         format!("RUNNER_EPHEMERAL={}", spec.ephemeral),
         "-e".into(),
         format!("RUNNER_DISABLE_UPDATE={}", spec.disable_update),
-        "-e".into(),
-        format!("GITRUN_API_TOKEN={api_token}"),
         "-e".into(),
         "GITRUN_API_SOCKET=/run/gitrun/api.sock".into(),
         spec.image.to_owned(),
@@ -872,158 +865,67 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
 }
 
 /// Identity discovered from a GitRun-managed runner container.
-/// The API token itself is never returned from this helper; it is only used
-/// for equality matching against the inspected environment.
+/// The API service derives this identity from the peer process cgroup,
+/// rather than a workflow-visible token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRunnerIdentity {
     pub name: String,
     pub repository: String,
 }
 
-/// Finds the GitRun runner container that owns a workflow API capability.
-pub fn runner_for_api_token(token: &str) -> Result<Option<ApiRunnerIdentity>> {
-    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Ok(None);
-    }
+/// Resolves the GitRun-managed runner container that owns a Unix-socket
+/// peer process. On Linux, the connecting PID is taken from SO_PEERCRED and
+/// its cgroup identifies the Docker container without exposing a secret to
+/// the workflow environment.
+#[cfg(target_os = "linux")]
+pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
+    let cgroup = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
+        .map_err(DockerError::Spawn)?;
+    let container_id = cgroup
+        .split(|ch: char| !ch.is_ascii_hexdigit())
+        .find(|part| part.len() == 64)
+        .map(str::to_owned);
 
-    let output = run_checked_on(
+    let Some(container_id) = container_id else {
+        return Ok(None);
+    };
+
+    let output = run_on(
         &DockerHost::Local,
         &[
-            "ps",
-            "-a",
-            "--filter",
-            "label=gitrun.runner=true",
-            "--format",
-            "{{.Names}}",
+            "inspect",
+            "-f",
+            "{{.Name}}|{{index .Config.Labels \"gitrun.runner\"}}|{{index .Config.Labels \"gitrun.repo\"}}",
+            &container_id,
         ],
     )?;
 
-    for name in output
-        .lines()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let inspection = run_checked_on(
-            &DockerHost::Local,
-            &[
-                "inspect",
-                "-f",
-                "{{index .Config.Labels \"gitrun.repo\"}}|{{range .Config.Env}}{{println .}}{{end}}",
-                name,
-            ],
-        )?;
-
-        let mut lines = inspection.lines();
-        let repository = lines.next().unwrap_or_default().trim();
-        let token_match = lines
-            .map(str::trim)
-            .any(|line| line == format!("GITRUN_API_TOKEN={token}"));
-
-        if token_match && !repository.is_empty() {
-            return Ok(Some(ApiRunnerIdentity {
-                name: name.to_owned(),
-                repository: repository.to_owned(),
-            }));
-        }
+    if !output.status.success() {
+        return Ok(None);
     }
 
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let mut parts = raw.trim().splitn(3, '|');
+    let name = parts.next().unwrap_or_default().trim_start_matches('/');
+    let runner_label = parts.next().unwrap_or_default();
+    let repository = parts.next().unwrap_or_default();
+
+    if runner_label != "true" || name.is_empty() || repository.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(ApiRunnerIdentity {
+        name: name.to_owned(),
+        repository: repository.to_owned(),
+    }))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     Ok(None)
 }
 
-/// Executes an already-authorized container command while forwarding
-/// stdout/stderr chunks as they arrive. No command policy is evaluated here;
-/// GSR must have authorized the request before this function is reachable.
-pub fn exec_container_stream<F>(container: &str, args: &[&str], mut on_output: F) -> Result<i32>
-where
-    F: FnMut(bool, &[u8]),
-{
-    use std::sync::mpsc;
-    use std::thread;
-
-    let mut command = Command::new("docker");
-    command
-        .env_remove("DOCKER_CONTEXT")
-        .env_remove("DOCKER_TLS_VERIFY")
-        .env_remove("DOCKER_CERT_PATH")
-        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
-        .arg("exec")
-        .arg(container)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = command.spawn()?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| DockerError::Command("docker exec did not expose stdout".into()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| DockerError::Command("docker exec did not expose stderr".into()))?;
-
-    let (tx, rx) = mpsc::channel::<(bool, Vec<u8>)>();
-    for (is_stderr, mut stream) in [(false, stdout), (true, stderr)] {
-        let tx = tx.clone();
-        thread::spawn(move || {
-            let mut buffer = [0u8; 8192];
-            loop {
-                match stream.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(count) => {
-                        if tx.send((is_stderr, buffer[..count].to_vec())).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-            let _ = tx.send((is_stderr, Vec::new()));
-        });
-    }
-    drop(tx);
-
-    let mut closed_streams = 0usize;
-    while let Ok((is_stderr, chunk)) = rx.recv() {
-        if chunk.is_empty() {
-            closed_streams += 1;
-            if closed_streams == 2 {
-                break;
-            }
-            continue;
-        }
-        on_output(is_stderr, &chunk);
-    }
-
-    let status = child.wait()?;
-    Ok(status.code().unwrap_or(1))
-}
-
-/// Executes an explicitly authorized command in one container. This helper
-/// is only used by Git*Run handlers after GSR authorization; workflow code
-/// never gets direct access to this primitive.
-pub fn exec_container(name: &str, args: &[&str]) -> Result<Output> {
-    run_on(&DockerHost::Local, &{
-        let mut command = vec!["exec", name];
-        command.extend_from_slice(args);
-        command
-    })
-}
-
-/// Runs a command in a managed container and feeds a bounded byte payload to
-/// stdin. Intended for GitWriteRun where the actual operation is just writing
-/// the already-authorized value to a file.
-pub fn exec_container_with_stdin(name: &str, args: &[&str], input: &[u8]) -> Result<Output> {
-    let mut command = Command::new("docker");
-    command
-        .env_remove("DOCKER_CONTEXT")
-        .env_remove("DOCKER_TLS_VERIFY")
-        .env_remove("DOCKER_CERT_PATH")
-        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .arg("exec")
+c")
         .arg("-i")
         .arg(name)
         .args(args);

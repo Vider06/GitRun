@@ -227,16 +227,18 @@ fn handle_stream(
         }
     };
 
-    let identity = match docker::runner_for_api_token(&request.token) {
+    let peer_pid = peer_pid(&stream)
+        .map_err(|error| format!("read API socket peer credentials: {error}"))?;
+    let identity = match docker::runner_for_peer_pid(peer_pid) {
         Ok(Some(identity)) => identity,
         Ok(None) => {
-            send_error(&mut stream, "runner API authentication failed")?;
+            send_error(&mut stream, "GitRun API caller is not a managed runner container")?;
             return Ok(());
         }
         Err(error) => {
             send_error(
                 &mut stream,
-                "runner API authentication could not be checked",
+                "GitRun API caller identity could not be checked",
             )?;
             return Err(error.to_string());
         }
@@ -327,6 +329,35 @@ fn handle_stream(
 }
 
 #[cfg(unix)]
+#[cfg(target_os = "linux")]
+fn peer_pid(stream: &UnixStream) -> Result<i32, std::io::Error> {
+    use std::os::unix::io::AsRawFd;
+    let fd = stream.as_raw_fd();
+    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let result = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut len,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(cred.pid)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn peer_pid(_stream: &UnixStream) -> Result<i32, std::io::Error> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "peer credential authentication requires Linux",
+    ))
+}
+
 fn send_response(stream: &mut UnixStream, response: WireResponse) -> Result<(), String> {
     let encoded =
         serde_json::to_string(&response).map_err(|e| format!("encode API response: {e}"))?;

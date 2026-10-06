@@ -40,10 +40,8 @@ fn run() -> Result<(), String> {
         .and_then(|value| value.parse().ok());
     let job = env::var("GITHUB_JOB").unwrap_or_else(|_| "unknown".into());
     let runner = required_env("RUNNER_NAME")?;
-    let token = required_env("GITRUN_API_TOKEN")?;
 
     let request = WireRequest {
-        token,
         invocation: ApiInvocation {
             api,
             operation,

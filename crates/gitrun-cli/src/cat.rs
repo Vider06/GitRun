@@ -1,7 +1,7 @@
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     execute, queue,
-    style::Print,
+    style::{Attribute, Print, SetAttribute},
     terminal::{
         self, BeginSynchronizedUpdate, Clear, ClearType, DisableLineWrap, EnableLineWrap,
         EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
@@ -79,7 +79,13 @@ impl TerminalSession {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
-        let _ = execute!(self.stdout, Show, EnableLineWrap, LeaveAlternateScreen);
+        let _ = execute!(
+            self.stdout,
+            SetAttribute(Attribute::Reset),
+            Show,
+            EnableLineWrap,
+            LeaveAlternateScreen
+        );
         let _ = self.stdout.flush();
     }
 }
@@ -121,24 +127,40 @@ pub fn run() -> i32 {
             animation.width.min(u16::MAX as usize) as u16,
             animation.height.min(u16::MAX as usize) as u16,
         ));
-        let fitted = fit_page(&frame.lines, animation.width, rows as usize);
+
+        let cleaned = remove_phase_messages(&frame.lines);
+        let fitted = fit_page(&cleaned, animation.width, columns as usize, rows as usize);
+
         if let Err(error) = terminal.draw(&fitted, columns, rows) {
             eprintln!("GitRun cat: terminal rendering failed: {error}");
             return 1;
         }
-        std::thread::sleep(std::time::Duration::from_millis(frame.delay));
+
+        let delay = if contains_readable_message(&cleaned) {
+            frame.delay.max(300)
+        } else {
+            frame.delay
+        };
+        std::thread::sleep(std::time::Duration::from_millis(delay));
     }
 
     0
 }
 
-fn fit_page(lines: &[String], width: usize, terminal_rows: usize) -> Vec<String> {
-    let full = normalize_lines(lines, width);
+fn fit_page(
+    lines: &[String],
+    width: usize,
+    terminal_columns: usize,
+    terminal_rows: usize,
+) -> Vec<String> {
+    let usable_width = width.min(terminal_columns);
+    let full = normalize_lines(lines, usable_width);
+
     if full.len() <= terminal_rows {
         return full;
     }
 
-    let compact = compact_half_block(&full, width);
+    let compact = compact_half_block(&full, usable_width);
     if compact.len() <= terminal_rows {
         return compact;
     }
@@ -158,6 +180,27 @@ fn normalize_lines(lines: &[String], width: usize) -> Vec<String> {
             normalized
         })
         .collect()
+}
+
+fn remove_phase_messages(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !(trimmed.starts_with('[') && trimmed.contains("/8]"))
+        })
+        .cloned()
+        .collect()
+}
+
+fn contains_readable_message(lines: &[String]) -> bool {
+    lines.iter().any(|line| {
+        let trimmed = line.trim();
+        trimmed.contains("~purr~")
+            || trimmed.contains("<3")
+            || trimmed.contains("Thanks for using GitRun!")
+            || trimmed.contains("-Vider06")
+    })
 }
 
 fn compact_half_block(lines: &[String], width: usize) -> Vec<String> {
@@ -202,9 +245,9 @@ fn compact_half_block(lines: &[String], width: usize) -> Vec<String> {
 fn preserve_text_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.starts_with("$ gitrun ")
-        || (trimmed.starts_with('[') && trimmed.contains("/8]"))
         || trimmed.contains("~purr~")
-        || trimmed.contains("Thanks for using GitRun! May the same love I have for this project spread to everyone :3")
+        || trimmed.contains("<3")
+        || trimmed.contains("Thanks for using GitRun!")
         || trimmed.contains("-Vider06")
 }
 
@@ -259,49 +302,39 @@ mod tests {
     }
 
     #[test]
-    fn compact_mode_keeps_stage_and_purr_text() {
+    fn phase_messages_are_removed() {
         let lines = vec![
             "$ gitrun --docker toolbox".to_owned(),
-            "  ##".to_owned(),
-            "  ##".to_owned(),
-            "".to_owned(),
             "[1/8] il gatto arriva...".to_owned(),
             "  ~purr~".to_owned(),
         ];
-        let compact = compact_half_block(&normalize_lines(&lines, 28), 28);
-        assert!(compact
-            .iter()
-            .any(|line| line.starts_with("$ gitrun --docker toolbox")));
-        assert!(compact
-            .iter()
-            .any(|line| line.contains("[1/8] il gatto arriva...")));
-        assert!(compact.iter().any(|line| line.contains("~purr~")));
-        assert!(compact.len() < lines.len());
+        let cleaned = remove_phase_messages(&lines);
+        assert_eq!(cleaned.len(), 2);
+        assert!(!cleaned.iter().any(|line| line.contains("[1/8]")));
+        assert!(cleaned.iter().any(|line| line.contains("~purr~")));
     }
 
     #[test]
-    fn actual_animation_compacts_to_24_rows_or_less() {
+    fn readable_messages_get_more_time() {
+        let lines = vec!["  ~purr~".to_owned()];
+        assert!(contains_readable_message(&lines));
+    }
+
+    #[test]
+    fn actual_animation_fits_typical_terminal() {
         let animation = serde_json::from_str::<CatAnimation>(ANIMATION).unwrap();
-        let max_rows = animation
-            .frames
-            .iter()
-            .map(|frame| {
-                compact_half_block(
-                    &normalize_lines(&frame.lines, animation.width),
-                    animation.width,
-                )
-                .len()
-            })
-            .max()
-            .unwrap();
-        assert!(max_rows <= 24);
+        for frame in &animation.frames {
+            let cleaned = remove_phase_messages(&frame.lines);
+            let fitted = fit_page(&cleaned, animation.width, 120, 24);
+            assert!(fitted.len() <= 24);
+        }
     }
 
     #[test]
     fn fit_page_uses_full_when_it_fits() {
-        let lines = vec!["##".to_owned(), "##".to_owned(), "[1/8] stage".to_owned()];
+        let lines = vec!["##".to_owned(), "##".to_owned(), "  ~purr~".to_owned()];
         let normalized = normalize_lines(&lines, 12);
-        assert_eq!(fit_page(&lines, 12, 3), normalized);
-        assert!(fit_page(&lines, 12, 2).len() <= 2);
+        assert_eq!(fit_page(&lines, 12, 80, 3), normalized);
+        assert!(fit_page(&lines, 12, 80, 2).len() <= 2);
     }
 }

@@ -151,7 +151,6 @@ pub fn validate_arguments(
         (GitRunApi::GitSaveRun, GitRunOperation::File) => &["path"],
         (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &["namefile"],
         (GitRunApi::GitRegisterRun, GitRunOperation::Register)
-        | (GitRunApi::GitRegisterRun, GitRunOperation::Permanent) => &["name", "entry"],
         (GitRunApi::GitInstallRun, GitRunOperation::Install) => &["package", "version"],
         (GitRunApi::GitInstallRun, GitRunOperation::Remove) => &["package"],
         (GitRunApi::GitInstallRun, GitRunOperation::Update) => &["package"],

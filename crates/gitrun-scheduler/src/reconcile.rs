@@ -63,6 +63,14 @@ pub struct ReconcileInput {
     /// missing entry the same as an empty label set, which
     /// `logic_containers::resolve` always falls through to the default for.
     pub queued_job_labels: Vec<Vec<String>>,
+    /// GitHub Actions job names aligned with queued_job_labels.
+    /// Missing names are treated as unknown and are never used to create a
+    /// pre-marked Dock target.
+    pub queued_job_names: Vec<String>,
+    /// Logical workflow jobs that the static validator marked as GitDockRun
+    /// targets. A matching queued job gets dedicated dynamic capacity even
+    /// when the default runner labels would otherwise satisfy it.
+    pub dock_target_jobs: Vec<String>,
     /// Labels configured on every default GitRun runner. Used to distinguish
     /// jobs that can use the warm pool from jobs requiring specialized capacity.
     pub configured_runner_labels: Vec<String>,
@@ -98,6 +106,7 @@ pub enum Action {
     CreateRunner {
         permanent: bool,
         job_labels: Vec<String>,
+        job_name: Option<String>,
     },
     /// Runner is online in Docker but GitHub doesn't know about it anymore:
     /// remove and recreate, preserving its permanent/dynamic role.
@@ -208,6 +217,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         actions.push(Action::CreateRunner {
             permanent: true,
             job_labels: Vec::new(),
+            job_name: None,
         });
         current += 1;
         permanent_count += 1;
@@ -218,25 +228,35 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // intentionally may raise the total above desired_count, but never
     // above max_runners: the count-based formula assumes runners are
     // interchangeable, which is not true once Logic Containers exist.
-    let specialized_jobs: Vec<Vec<String>> = input
+    let specialized_jobs: Vec<(Option<String>, Vec<String>)> = input
         .queued_job_labels
         .iter()
-        .filter(|labels| {
-            crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
-                && job_requires_specialized_runner(labels, &input.configured_runner_labels)
+        .enumerate()
+        .filter_map(|(index, labels)| {
+            let job_name = input.queued_job_names.get(index).cloned();
+            let routed = crate::logic_containers::resolve(&input.logic_rules, labels).is_some();
+            let specialized = routed
+                && (job_requires_specialized_runner(labels, &input.configured_runner_labels)
+                    || job_name
+                        .as_deref()
+                        .is_some_and(|name| input.dock_target_jobs.iter().any(|target| target == name)));
+
+            specialized.then_some((job_name, labels.clone()))
         })
-        .cloned()
         .collect();
 
     let mut specialized_index = 0usize;
     while current < input.max_runners && specialized_index < specialized_jobs.len() {
+        let (job_name, job_labels) = &specialized_jobs[specialized_index];
         actions.push(Action::CreateRunner {
             permanent: false,
-            job_labels: specialized_jobs[specialized_index].clone(),
+            job_labels: job_labels.clone(),
+            job_name: job_name.clone(),
         });
         specialized_index += 1;
         current += 1;
     }
+
     // Generic dynamic overflow is used only for queued jobs whose labels are
     // already covered by the global runner label set. Specialized jobs were
     // reserved above, so they aren't duplicated here. There is no per-job
@@ -244,19 +264,24 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // for the generic overflow path.
     let mut dynamic_index = 0usize;
     while current < desired {
-        let job_labels = input
+        let next = input
             .queued_job_labels
             .iter()
-            .filter(|labels| {
+            .enumerate()
+            .filter(|(_, labels)| {
                 !(crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
                     && job_requires_specialized_runner(labels, &input.configured_runner_labels))
             })
-            .nth(dynamic_index)
-            .cloned()
-            .unwrap_or_default();
+            .nth(dynamic_index);
+
+        let (job_name, job_labels) = next
+            .map(|(index, labels)| (input.queued_job_names.get(index).cloned(), labels.clone()))
+            .unwrap_or((None, Vec::new()));
+
         actions.push(Action::CreateRunner {
             permanent: false,
             job_labels,
+            job_name,
         });
         dynamic_index += 1;
         current += 1;
@@ -304,6 +329,8 @@ mod tests {
             runners: Vec::new(),
             queued_jobs: 0,
             queued_job_labels: Vec::new(),
+            queued_job_names: Vec::new(),
+            dock_target_jobs: Vec::new(),
             configured_runner_labels: vec!["self-hosted".into(), "Linux".into()],
             logic_rules: Vec::new(),
             idle: Vec::new(),
@@ -427,6 +454,7 @@ mod tests {
         assert!(actions.contains(&Action::CreateRunner {
             permanent: false,
             job_labels: vec!["self-hosted".into(), "windows".into()],
+            job_name: None,
         }));
     }
 

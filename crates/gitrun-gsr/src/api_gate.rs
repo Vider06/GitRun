@@ -327,10 +327,10 @@ fn required_argument<'a>(
         .get(name)
         .map(String::as_str)
         .filter(|value| !value.trim().is_empty())
-        .ok_or(ApiGateError::MissingArgument {
+        .ok_or_else(|| ApiGateError::InvalidArguments {
             api,
             operation,
-            argument: name,
+            detail: format!("missing argument: {name}"),
         })
 }
 
@@ -465,6 +465,46 @@ mod tests {
             Some(&policy),
         );
         assert!(matches!(result, Err(ApiGateError::CommandDenied { .. })));
+    }
+
+    #[test]
+    fn register_permanent_uses_boolean_modifier() {
+        let mut settings = GitRunSettings::default();
+        let mut matrix = gitrun_core::PolicyMatrix::default();
+        matrix.set(
+            GitRunApi::GitRegisterRun,
+            ApiPolicy::enabled_with([GitRunOperation::Register]),
+        );
+        settings.global = matrix;
+        settings.repositories.insert(
+            "owner/repo".into(),
+            RepositorySettings {
+                register: gitrun_core::RegisterPolicy {
+                    enabled: true,
+                    allow_workflow: true,
+                    allow_permanent: false,
+                    allowed_entries: vec!["*".into()],
+                },
+                ..RepositorySettings::default()
+            },
+        );
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+
+        let args = BTreeMap::from([
+            ("name".into(), "tool".into()),
+            ("entry".into(), "/opt/tool".into()),
+            ("permanent".into(), "true".into()),
+        ]);
+        let result = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            None,
+            args,
+            None,
+        );
+        assert!(matches!(result, Err(ApiGateError::PolicyDenied { .. })));
     }
 
     #[test]

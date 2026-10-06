@@ -988,7 +988,24 @@ fn resolve_docker_socket_gid() -> Result<String, Box<dyn std::error::Error>> {
 pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
     let client = build_github_client(&config)?;
-    let docker_socket_gid = resolve_docker_socket_gid()?;
+    let settings = gitrun_core::GitRunSettings::load_or_default(
+        gitrun_core::GitRunSettings::path_for_state_dir(&config.state_dir),
+    )?;
+    let socket_enabled_for_repo = |repo: &str| {
+        settings
+            .effective_for_repository(repo)
+            .docker
+            .direct_socket_enabled
+    };
+    let docker_socket_gid = if config
+        .repositories
+        .iter()
+        .any(|repo| socket_enabled_for_repo(repo))
+    {
+        resolve_docker_socket_gid()?
+    } else {
+        String::new()
+    };
     let gsr_policy_env = gsr_policy_env(&config);
     let gtuu_config = GtuuConfig {
         image: &config.runner_image,
@@ -1009,6 +1026,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
         gsr_policy_env: &gsr_policy_env,
+        docker_socket_enabled_for_repo: &socket_enabled_for_repo,
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }

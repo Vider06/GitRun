@@ -281,6 +281,9 @@ fn update_one(
         secret_env: &secret_env,
         gsr_policy_env: config.gsr_policy_env,
         is_windows: false,
+        workflow_job_name: None,
+        workflow_run_id: None,
+        dock_target: false,
         docker_socket_enabled,
         docker_socket_hardening: config.docker_socket_hardening,
     })?;

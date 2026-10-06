@@ -919,7 +919,7 @@ struct Cli {
     /// convention, e.g. `gcc -V`, `rustc -V`) and `-v` as a short form,
     /// since operators reach for either out of habit and there's no other
     /// use for `-v` on this top-level flag set to conflict with.
-    #[arg(short = 'V', long = "version", short_alias = 'v', long_alias = "v")]
+    #[arg(short = 'V', long = "version", short_alias = 'v', alias = "v")]
     version: bool,
     /// Show one crate version; omit it to show GitRun and every workspace crate.
     #[arg(long = "crate")]
@@ -988,6 +988,28 @@ enum Command {
     Rollback {
         /// Path to the backup to restore.
         backup_path: String,
+    },
+    /// Analyze configured GitHub Actions workflow files for compatibility and GitDockRun requirements.
+    CheckCompatibility {
+        /// Workflow file or directory to analyze. Defaults to .github/workflows.
+        workflow: Option<String>,
+    },
+    /// Print the current GitRun security/API settings as JSON.
+    Settings,
+    /// List the closed GitRun API surface.
+    #[command(name = "api-list")]
+    ApiList,
+    /// Inspect or describe a GitRun API policy entry.
+    #[command(name = "api-policy")]
+    ApiPolicy {
+        /// GitRun API name, e.g. GitDockRun.
+        api: String,
+        /// Optional API operation to inspect.
+        #[arg(long)]
+        operation: Option<String>,
+        /// Optional requested global enablement state.
+        #[arg(long)]
+        enabled: Option<bool>,
     },
 }
 

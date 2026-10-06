@@ -57,9 +57,8 @@ pub struct ExecutionAuthority {
 impl ExecutionAuthority {
     pub fn new() -> Result<Self, ApiGateError> {
         Ok(Self {
-            key: ChannelKey::generate().map_err(|error| {
-                ApiGateError::ExecutionAuthentication(error.to_string())
-            })?,
+            key: ChannelKey::generate()
+                .map_err(|error| ApiGateError::ExecutionAuthentication(error.to_string()))?,
             replay: Mutex::new(ReplayGuard::default()),
         })
     }
@@ -269,12 +268,7 @@ fn authorize_vault(
             | GitRunOperation::Exists
             | GitRunOperation::Delete
     ) {
-        let name = required_argument(
-            GitRunApi::GitVaultRun,
-            operation,
-            arguments,
-            "name",
-        )?;
+        let name = required_argument(GitRunApi::GitVaultRun, operation, arguments, "name")?;
         if !effective.vault.allows_name(name) {
             return Err(ApiGateError::ResourceDenied {
                 resource: name.to_owned(),
@@ -348,12 +342,18 @@ fn authorize_dock(
 
             if !logic.allows_operation(operation) {
                 return Err(ApiGateError::PolicyDenied {
-                    reason: format!("operation {} is disabled for logic container {container}", operation.as_str()),
+                    reason: format!(
+                        "operation {} is disabled for logic container {container}",
+                        operation.as_str()
+                    ),
                 });
             }
 
             if operation == GitRunOperation::Melt {
-                let target = arguments.get("target").map(String::as_str).unwrap_or("runner");
+                let target = arguments
+                    .get("target")
+                    .map(String::as_str)
+                    .unwrap_or("runner");
                 if !logic.allows_melt_target(target) {
                     return Err(ApiGateError::PolicyDenied {
                         reason: format!("melt target {target} is not allowed for {container}"),
@@ -399,21 +399,24 @@ fn required_argument<'a>(
         })
 }
 
-fn request_id(
-    caller: &VerifiedCaller,
-    api: GitRunApi,
-    operation: GitRunOperation,
-) -> String {
+fn request_id(caller: &VerifiedCaller, api: GitRunApi, operation: GitRunOperation) -> String {
     format!(
         "{}:{}:{}:{}:{}:{}",
-        caller.repository, caller.workflow, caller.job, caller.runner, api.as_str(), operation.as_str()
+        caller.repository,
+        caller.workflow,
+        caller.job,
+        caller.runner,
+        api.as_str(),
+        operation.as_str()
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gitrun_core::{ApiPolicy, DockerPolicy, GitRunOperation, LogicContainerPolicy, RepositorySettings};
+    use gitrun_core::{
+        ApiPolicy, DockerPolicy, GitRunOperation, LogicContainerPolicy, RepositorySettings,
+    };
 
     fn settings_for_dock() -> GitRunSettings {
         let mut settings = GitRunSettings::default();

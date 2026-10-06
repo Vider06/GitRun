@@ -6,8 +6,9 @@
 
 use crate::{
     api_policy::{GitRunApi, GitRunOperation},
+    scan,
     settings::EffectiveRepositorySettings,
-    scan, Finding as WorkflowFinding,
+    Finding as WorkflowFinding,
 };
 use serde::{Deserialize, Serialize};
 
@@ -68,11 +69,7 @@ pub fn analyze(
     }
 }
 
-fn add_workflow_findings(
-    findings: &mut Vec<CompatibilityFinding>,
-    workflow: &str,
-    content: &str,
-) {
+fn add_workflow_findings(findings: &mut Vec<CompatibilityFinding>, workflow: &str, content: &str) {
     for finding in scan(workflow, content) {
         findings.push(convert_workflow_finding(finding));
     }
@@ -265,10 +262,7 @@ mod tests {
         operations: &[GitRunOperation],
     ) -> EffectiveRepositorySettings {
         let mut matrix = PolicyMatrix::default();
-        matrix.set(
-            api,
-            ApiPolicy::enabled_with(operations.iter().copied()),
-        );
+        matrix.set(api, ApiPolicy::enabled_with(operations.iter().copied()));
         let repo = RepositorySettings::default();
         let settings = crate::GitRunSettings {
             schema_version: crate::SETTINGS_SCHEMA_VERSION,
@@ -280,8 +274,7 @@ mod tests {
 
     #[test]
     fn direct_package_install_gets_gitinstallrun_recommendation() {
-        let effective =
-            effective_with(GitRunApi::GitInstallRun, &[GitRunOperation::Install]);
+        let effective = effective_with(GitRunApi::GitInstallRun, &[GitRunOperation::Install]);
         let report = analyze(
             "ci.yml",
             "steps:\n  - run: apt-get install imagemagick\n",
@@ -309,10 +302,7 @@ mod tests {
 
     #[test]
     fn disabled_gitrun_api_is_rejected() {
-        let effective = effective_with(
-            GitRunApi::GitStatusRun,
-            &[GitRunOperation::Status],
-        );
+        let effective = effective_with(GitRunApi::GitStatusRun, &[GitRunOperation::Status]);
         let report = analyze("ci.yml", "run: GitVaultRun --read TOKEN\n", &effective);
         assert_eq!(report.status, CompatibilityStatus::Incompatible);
     }

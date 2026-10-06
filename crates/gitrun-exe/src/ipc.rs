@@ -26,8 +26,8 @@ pub enum WireResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use gitrun_core::{GitRunApi, GitRunOperation};
+    use std::collections::BTreeMap;
 
     #[test]
     fn wire_request_round_trips() {

@@ -162,7 +162,10 @@ pub fn validate_arguments(
         _ => &[],
     };
 
-    if let Some(unknown) = arguments.keys().find(|key| !allowed.contains(&key.as_str())) {
+    if let Some(unknown) = arguments
+        .keys()
+        .find(|key| !allowed.contains(&key.as_str()))
+    {
         return Err(format!("unknown argument: {unknown}"));
     }
 
@@ -370,11 +373,9 @@ mod tests {
             ("package".into(), "ImageMagick".into()),
             ("version".into(), "1.0.0".into()),
         ]);
-        assert!(validate_arguments(
-            GitRunApi::GitInstallRun,
-            GitRunOperation::Install,
-            &args,
-        ).is_ok());
+        assert!(
+            validate_arguments(GitRunApi::GitInstallRun, GitRunOperation::Install, &args,).is_ok()
+        );
     }
 
     #[test]
@@ -383,13 +384,10 @@ mod tests {
             GitRunApi::GitDockRun,
             GitRunOperation::Melt,
             &BTreeMap::new(),
-        ).is_ok());
+        )
+        .is_ok());
         let args = BTreeMap::from([("target".into(), "build".into())]);
-        assert!(validate_arguments(
-            GitRunApi::GitDockRun,
-            GitRunOperation::Melt,
-            &args,
-        ).is_ok());
+        assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Melt, &args,).is_ok());
     }
     #[test]
     fn api_names_are_stable() {

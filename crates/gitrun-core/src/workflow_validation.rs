@@ -117,17 +117,31 @@ pub fn scan_dock_requests(file_label: &str, content: &str) -> Vec<DockRequest> {
             if !line.is_empty() && indent <= block_indent {
                 run_block_indent = None;
             } else {
-                collect_dock_request_from_line(file_label, idx + 1, current_job.as_deref(), line, &mut requests);
+                collect_dock_request_from_line(
+                    file_label,
+                    idx + 1,
+                    current_job.as_deref(),
+                    line,
+                    &mut requests,
+                );
                 continue;
             }
         }
         let lower = line.to_ascii_lowercase();
         if lower.starts_with("run:") || lower.starts_with("- run:") || lower.starts_with("-run:") {
-            collect_dock_request_from_line(file_label, idx + 1, current_job.as_deref(), line, &mut requests);
-            let run_value = lower.strip_prefix("run:")
+            collect_dock_request_from_line(
+                file_label,
+                idx + 1,
+                current_job.as_deref(),
+                line,
+                &mut requests,
+            );
+            let run_value = lower
+                .strip_prefix("run:")
                 .or_else(|| lower.strip_prefix("- run:"))
                 .or_else(|| lower.strip_prefix("-run:"))
-                .unwrap_or_default().trim();
+                .unwrap_or_default()
+                .trim();
             if matches!(run_value, "|" | ">" | "|-" | "|+" | ">-" | ">+") {
                 run_block_indent = Some(indent);
             }
@@ -144,7 +158,9 @@ fn collect_dock_request_from_line(
     requests: &mut Vec<DockRequest>,
 ) {
     let lower = line.to_ascii_lowercase();
-    let Some(api_index) = lower.find("gitdockrun") else { return; };
+    let Some(api_index) = lower.find("gitdockrun") else {
+        return;
+    };
     let operation = if lower.contains("--connect") {
         DockOperation::Connect
     } else if lower.contains("--disconnect") {
@@ -162,11 +178,21 @@ fn collect_dock_request_from_line(
     };
     let tail = &line[api_index + "gitdockrun".len()..];
     let lower_tail = tail.to_ascii_lowercase();
-    let Some(job_index) = lower_tail.find("--job") else { return; };
+    let Some(job_index) = lower_tail.find("--job") else {
+        return;
+    };
     let mut value = tail[job_index + "--job".len()..].trim_start();
-    if let Some(rest) = value.strip_prefix('=') { value = rest.trim_start(); }
-    let token = value.split_whitespace().next().unwrap_or_default().trim_matches(|ch| ch == '"' || ch == '\'' || ch == '`');
-    if token.is_empty() { return; }
+    if let Some(rest) = value.strip_prefix('=') {
+        value = rest.trim_start();
+    }
+    let token = value
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|ch| ch == '"' || ch == '\'' || ch == '`');
+    if token.is_empty() {
+        return;
+    }
     requests.push(DockRequest {
         file: file_label.to_owned(),
         line: line_number,
@@ -307,7 +333,9 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
             .unwrap_or("<workflow>")
             .to_owned();
         report.findings.extend(scan(&label, &content));
-        report.dock_requests.extend(scan_dock_requests(&label, &content));
+        report
+            .dock_requests
+            .extend(scan_dock_requests(&label, &content));
     }
     Ok(report)
 }
@@ -463,7 +491,8 @@ mod tests {
 
     #[test]
     fn detects_gitdockrun_job_reference() {
-        let workflow = "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n";
+        let workflow =
+            "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n";
         let requests = scan_dock_requests("ci.yml", workflow);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].target_job, "build-cache");

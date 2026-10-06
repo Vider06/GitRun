@@ -28,16 +28,16 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let invocation_name = env::args()
-        .next()
-        .unwrap_or_else(|| "GitStatusRun".into());
+    let invocation_name = env::args().next().unwrap_or_else(|| "GitStatusRun".into());
     let api = api_from_invocation(&invocation_name)?;
     let args: Vec<String> = env::args().skip(1).collect();
     let (operation, resource, arguments) = parse_api(api, &args)?;
 
     let repository = required_env("GITHUB_REPOSITORY")?;
     let workflow = env::var("GITHUB_WORKFLOW").unwrap_or_else(|_| "unknown".into());
-    let run_id = env::var("GITHUB_RUN_ID").ok().and_then(|value| value.parse().ok());
+    let run_id = env::var("GITHUB_RUN_ID")
+        .ok()
+        .and_then(|value| value.parse().ok());
     let job = env::var("GITHUB_JOB").unwrap_or_else(|_| "unknown".into());
     let runner = required_env("RUNNER_NAME")?;
     let token = required_env("GITRUN_API_TOKEN")?;
@@ -63,8 +63,9 @@ fn run() -> Result<(), String> {
     {
         let socket_path =
             env::var("GITRUN_API_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET_PATH.into());
-        let mut stream = UnixStream::connect(&socket_path)
-            .map_err(|error| format!("cannot connect to GitRun API service at {socket_path}: {error}"))?;
+        let mut stream = UnixStream::connect(&socket_path).map_err(|error| {
+            format!("cannot connect to GitRun API service at {socket_path}: {error}")
+        })?;
         let encoded = serde_json::to_string(&request)
             .map_err(|error| format!("cannot encode API request: {error}"))?;
         stream
@@ -159,7 +160,11 @@ fn parse_api(
                 operation = Some(GitRunOperation::Read);
                 i += 1;
                 if i < args.len() {
-                    let key = if api == GitRunApi::GitVaultRun { "name" } else { "path" };
+                    let key = if api == GitRunApi::GitVaultRun {
+                        "name"
+                    } else {
+                        "path"
+                    };
                     values.insert(key.into(), args[i].clone());
                     i += 1;
                 }
@@ -168,7 +173,11 @@ fn parse_api(
                 operation = Some(GitRunOperation::Write);
                 i += 1;
                 if i < args.len() {
-                    let key = if api == GitRunApi::GitVaultRun { "name" } else { "path" };
+                    let key = if api == GitRunApi::GitVaultRun {
+                        "name"
+                    } else {
+                        "path"
+                    };
                     values.insert(key.into(), args[i].clone());
                     i += 1;
                 }

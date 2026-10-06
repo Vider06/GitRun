@@ -424,11 +424,7 @@ impl GitHubClient {
             let next_url = parse_next_link(response.headers());
             let parsed: JobsResponse = response.json()?;
 
-            if let Some(job) = parsed
-                .jobs
-                .into_iter()
-                .find(|job| job.name == job_name)
-            {
+            if let Some(job) = parsed.jobs.into_iter().find(|job| job.name == job_name) {
                 return Ok(Some(WorkflowJobInfo {
                     id: job.id,
                     name: job.name,

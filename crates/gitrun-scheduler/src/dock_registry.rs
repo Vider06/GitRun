@@ -79,13 +79,9 @@ impl DockRegistry {
     }
 
     pub fn binding(&self, repository: &str, run_id: u64, job: &str) -> Option<&DockBinding> {
-        self.bindings
-            .iter()
-            .find(|binding| {
-                binding.repository == repository
-                    && binding.run_id == run_id
-                    && binding.job == job
-            })
+        self.bindings.iter().find(|binding| {
+            binding.repository == repository && binding.run_id == run_id && binding.job == job
+        })
     }
 
     pub fn binding_for_container(&self, container: &str) -> Option<&DockBinding> {
@@ -113,10 +109,7 @@ impl DockRegistry {
         Some(self.bindings.remove(index))
     }
 
-    pub fn remove_missing_containers(
-        &mut self,
-        existing: impl Fn(&str) -> bool,
-    ) -> bool {
+    pub fn remove_missing_containers(&mut self, existing: impl Fn(&str) -> bool) -> bool {
         let original = self.bindings.len();
         self.bindings.retain(|binding| existing(&binding.container));
         original != self.bindings.len()
@@ -133,10 +126,8 @@ mod tests {
 
     #[test]
     fn registry_round_trips() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-dock-registry-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-dock-registry-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
 
         let mut registry = DockRegistry::default();

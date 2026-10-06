@@ -17,7 +17,7 @@ use gitrun_gsr::api_gate::{authorize, ExecutionAuthority, VerifiedCaller};
 use gitrun_vault::{Scope, Vault};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf, Component};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -38,8 +38,8 @@ pub fn spawn(
 ) -> Result<std::thread::JoinHandle<()>, String> {
     #[cfg(unix)]
     {
-        let socket_path = std::env::var("GITRUN_API_SOCKET")
-            .unwrap_or_else(|_| DEFAULT_SOCKET_PATH.to_owned());
+        let socket_path =
+            std::env::var("GITRUN_API_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET_PATH.to_owned());
         let path = PathBuf::from(&socket_path);
 
         if let Some(parent) = path.parent() {
@@ -126,8 +126,8 @@ pub(crate) fn reconcile_dock_bindings(
     state_dir: &Path,
     repository: &str,
 ) -> Result<(), String> {
-    let mut registry =
-        DockRegistry::load(state_dir).map_err(|error| format!("load GitDockRun registry: {error}"))?;
+    let mut registry = DockRegistry::load(state_dir)
+        .map_err(|error| format!("load GitDockRun registry: {error}"))?;
     let mut changed = false;
 
     for binding in registry
@@ -142,12 +142,15 @@ pub(crate) fn reconcile_dock_bindings(
             continue;
         };
 
-        let completed = job.status.eq_ignore_ascii_case("completed")
-            || job.conclusion.is_some();
+        let completed = job.status.eq_ignore_ascii_case("completed") || job.conclusion.is_some();
 
         if completed {
-            make_dock_only(&binding.container, state_dir)
-                .map_err(|error| format!("freeze GitRun Dock container {}: {error}", binding.container))?;
+            make_dock_only(&binding.container, state_dir).map_err(|error| {
+                format!(
+                    "freeze GitRun Dock container {}: {error}",
+                    binding.container
+                )
+            })?;
             binding.dock_only = true;
             changed = true;
         }
@@ -166,8 +169,8 @@ pub(crate) fn preserved_dock_containers(
     state_dir: &Path,
     repository: &str,
 ) -> Result<std::collections::BTreeSet<String>, String> {
-    let registry =
-        DockRegistry::load(state_dir).map_err(|error| format!("load GitDockRun registry: {error}"))?;
+    let registry = DockRegistry::load(state_dir)
+        .map_err(|error| format!("load GitDockRun registry: {error}"))?;
     Ok(registry
         .bindings
         .into_iter()
@@ -181,11 +184,12 @@ pub(crate) fn is_dock_bound(
     repository: &str,
     container: &str,
 ) -> Result<bool, String> {
-    let registry =
-        DockRegistry::load(state_dir).map_err(|error| format!("load GitDockRun registry: {error}"))?;
-    Ok(registry.bindings.iter().any(|binding| {
-        binding.repository == repository && binding.container == container
-    }))
+    let registry = DockRegistry::load(state_dir)
+        .map_err(|error| format!("load GitDockRun registry: {error}"))?;
+    Ok(registry
+        .bindings
+        .iter()
+        .any(|binding| binding.repository == repository && binding.container == container))
 }
 
 #[cfg(unix)]
@@ -230,7 +234,10 @@ fn handle_stream(
             return Ok(());
         }
         Err(error) => {
-            send_error(&mut stream, "runner API authentication could not be checked")?;
+            send_error(
+                &mut stream,
+                "runner API authentication could not be checked",
+            )?;
             return Err(error.to_string());
         }
     };
@@ -238,7 +245,10 @@ fn handle_stream(
     if identity.name != request.invocation.runner
         || identity.repository != request.invocation.repository
     {
-        send_error(&mut stream, "runner API identity does not match the managed container")?;
+        send_error(
+            &mut stream,
+            "runner API identity does not match the managed container",
+        )?;
         return Ok(());
     }
 
@@ -248,7 +258,10 @@ fn handle_stream(
             .find_workflow_job(&request.invocation.repository, run_id, &job)
             .map_err(|error| format!("verify current workflow job: {error}"))?;
         let Some(current_job) = current_job else {
-            send_error(&mut stream, "current GitHub workflow job could not be verified")?;
+            send_error(
+                &mut stream,
+                "current GitHub workflow job could not be verified",
+            )?;
             return Ok(());
         };
         if current_job.runner_name.as_deref() != Some(identity.name.as_str()) {
@@ -469,9 +482,9 @@ impl ApiExecutionBackend {
                 ensure_safe_file_name(name)?;
 
                 let size = docker_file_size(runner, source)?;
-                let policy = GitRunSettings::load_or_default(
-                    GitRunSettings::path_for_state_dir(&self.state_dir),
-                )
+                let policy = GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(
+                    &self.state_dir,
+                ))
                 .map_err(|e| failed(e.to_string()))?
                 .effective_for_repository(&request.repository)
                 .storage;
@@ -480,14 +493,7 @@ impl ApiExecutionBackend {
                     return Err(failed("GitSaveRun file exceeds repository storage limit"));
                 }
 
-                docker_exec_checked(
-                    runner,
-                    &[
-                        "mkdir",
-                        "-p",
-                        "/var/lib/gitrun/shared/files",
-                    ],
-                )?;
+                docker_exec_checked(runner, &["mkdir", "-p", "/var/lib/gitrun/shared/files"])?;
                 docker_exec_checked(
                     runner,
                     &[
@@ -506,13 +512,13 @@ impl ApiExecutionBackend {
                 let name = arg(request, "namefile")?;
                 ensure_safe_file_name(name)?;
 
-                let mut logs = docker::container_logs(runner)
-                    .map_err(|error| failed(error.to_string()))?;
+                let mut logs =
+                    docker::container_logs(runner).map_err(|error| failed(error.to_string()))?;
                 logs = redact_vault_values(&self.config, &request.repository, &logs);
 
-                let policy = GitRunSettings::load_or_default(
-                    GitRunSettings::path_for_state_dir(&self.state_dir),
-                )
+                let policy = GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(
+                    &self.state_dir,
+                ))
                 .map_err(|e| failed(e.to_string()))?
                 .effective_for_repository(&request.repository)
                 .storage;
@@ -630,7 +636,6 @@ impl ApiExecutionBackend {
         run_docker_command(&self.caller.runner, &args)
     }
 
-
     fn read(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
@@ -675,7 +680,10 @@ impl ApiExecutionBackend {
         }
     }
 
-    fn dock_connect(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+    fn dock_connect(
+        &self,
+        request: &AuthorizedOperation,
+    ) -> Result<ExecutionResult, ExecutionError> {
         let run_id = request_run_id(request);
         if run_id == 0 {
             return Err(failed("GitDockRun --connect requires GITHUB_RUN_ID"));
@@ -700,14 +708,17 @@ impl ApiExecutionBackend {
             .map_err(|error| failed(error.to_string()))?
             == false;
 
-        let completed = job_info.status.eq_ignore_ascii_case("completed")
-            || job_info.conclusion.is_some();
+        let completed =
+            job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
 
-        if dynamic && docker::container_status(&runner_name)
-            .map_err(|error| failed(error.to_string()))?
-            .is_none()
+        if dynamic
+            && docker::container_status(&runner_name)
+                .map_err(|error| failed(error.to_string()))?
+                .is_none()
         {
-            return Err(failed(format!("runner container {runner_name} disappeared during connect")));
+            return Err(failed(format!(
+                "runner container {runner_name} disappeared during connect"
+            )));
         }
 
         if dynamic && completed {
@@ -754,8 +765,8 @@ impl ApiExecutionBackend {
                 .find_workflow_job(&request.repository, run_id, job)
                 .map_err(|error| failed(error.to_string()))?
                 .ok_or_else(|| failed(format!("workflow job {job} could not be verified")))?;
-            let completed = job_info.status.eq_ignore_ascii_case("completed")
-                || job_info.conclusion.is_some();
+            let completed =
+                job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
             if !completed {
                 return Err(failed(
                     "GitDockRun --disconnect cannot remove a Dynamic container while its source job is running",
@@ -821,31 +832,27 @@ impl ApiExecutionBackend {
             .ok_or_else(|| failed("missing docked container"))?;
         let command = arg(request, "command")?;
 
-        docker::exec_container_stream(
-            container,
-            &["sh", "-c", command],
-            |is_stderr, bytes| {
-                let value = String::from_utf8_lossy(bytes).into_owned();
-                if is_stderr {
-                    sink(ExecutionEvent::Stderr(value));
-                } else {
-                    sink(ExecutionEvent::Stdout(value));
-                }
-            },
-        )
+        docker::exec_container_stream(container, &["sh", "-c", command], |is_stderr, bytes| {
+            let value = String::from_utf8_lossy(bytes).into_owned();
+            if is_stderr {
+                sink(ExecutionEvent::Stderr(value));
+            } else {
+                sink(ExecutionEvent::Stdout(value));
+            }
+        })
         .map_err(|error| failed(error.to_string()))
     }
 
-    fn dock_execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+    fn dock_execute(
+        &self,
+        request: &AuthorizedOperation,
+    ) -> Result<ExecutionResult, ExecutionError> {
         let container = request
             .resource
             .as_deref()
             .ok_or_else(|| failed("missing docked container"))?;
         let command = arg(request, "command")?;
-        run_docker_command(
-            container,
-            &["sh", "-c", command],
-        )
+        run_docker_command(container, &["sh", "-c", command])
     }
 
     fn dock_melt(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
@@ -862,13 +869,12 @@ impl ApiExecutionBackend {
             return Err(failed("GitDockRun --melt source and target are identical"));
         }
 
-        let source_repo = docker::container_repo_label_on(
-            &docker::DockerHost::Local,
-            source,
-        )
-        .map_err(|error| failed(error.to_string()))?;
+        let source_repo = docker::container_repo_label_on(&docker::DockerHost::Local, source)
+            .map_err(|error| failed(error.to_string()))?;
         if source_repo.is_none() {
-            return Err(failed("GitDockRun --melt source is not a GitRun-managed container"));
+            return Err(failed(
+                "GitDockRun --melt source is not a GitRun-managed container",
+            ));
         }
 
         let status = docker::container_status(source)
@@ -884,22 +890,27 @@ impl ApiExecutionBackend {
             .map_err(|error| failed(error.to_string()))?
             .is_none()
         {
-            return Err(failed(format!("melt target container {target} was not found")));
+            return Err(failed(format!(
+                "melt target container {target} was not found"
+            )));
         }
 
         let target_repo = docker::container_repo_label_on(&docker::DockerHost::Local, target)
             .map_err(|error| failed(error.to_string()))?;
         if target_repo.as_deref() != Some(request.repository.as_str()) {
-            return Err(failed("GitDockRun --melt target is not a GitRun runner for this repository"));
+            return Err(failed(
+                "GitDockRun --melt target is not a GitRun runner for this repository",
+            ));
         }
 
-        docker::melt_filesystem(source, target)
-            .map_err(|error| failed(error.to_string()))?;
+        docker::melt_filesystem(source, target).map_err(|error| failed(error.to_string()))?;
         let _ = docker::remove_container(source);
 
-        let mut registry = DockRegistry::load(&self.state_dir)
-            .map_err(|error| failed(error.to_string()))?;
-        registry.bindings.retain(|binding| binding.container != source);
+        let mut registry =
+            DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
+        registry
+            .bindings
+            .retain(|binding| binding.container != source);
         registry
             .save(&self.state_dir)
             .map_err(|error| failed(error.to_string()))?;
@@ -935,21 +946,15 @@ fn request_run_id(request: &AuthorizedOperation) -> u64 {
     request.run_id.unwrap_or(0)
 }
 
-fn docker_exec_checked(
-    container: &str,
-    args: &[&str],
-) -> Result<ExecutionResult, ExecutionError> {
-    let output = docker::exec_container(container, args)
-        .map_err(|error| failed(error.to_string()))?;
+fn docker_exec_checked(container: &str, args: &[&str]) -> Result<ExecutionResult, ExecutionError> {
+    let output =
+        docker::exec_container(container, args).map_err(|error| failed(error.to_string()))?;
     command_output(output)
 }
 
-fn run_docker_command(
-    container: &str,
-    args: &[&str],
-) -> Result<ExecutionResult, ExecutionError> {
-    let output = docker::exec_container(container, args)
-        .map_err(|error| failed(error.to_string()))?;
+fn run_docker_command(container: &str, args: &[&str]) -> Result<ExecutionResult, ExecutionError> {
+    let output =
+        docker::exec_container(container, args).map_err(|error| failed(error.to_string()))?;
     command_output(output)
 }
 
@@ -962,11 +967,8 @@ fn command_output(output: std::process::Output) -> Result<ExecutionResult, Execu
 }
 
 fn docker_file_size(container: &str, path: &str) -> Result<u64, ExecutionError> {
-    let output = docker::exec_container(
-        container,
-        &["stat", "-c", "%s", "--", path],
-    )
-    .map_err(|error| failed(error.to_string()))?;
+    let output = docker::exec_container(container, &["stat", "-c", "%s", "--", path])
+        .map_err(|error| failed(error.to_string()))?;
     if !output.status.success() {
         return Err(failed("GitSaveRun could not stat source file"));
     }
@@ -993,7 +995,9 @@ fn ensure_safe_runner_path(path: &str) -> Result<(), ExecutionError> {
         "/workspace/",
     ];
     if !allowed.iter().any(|prefix| path.starts_with(prefix)) {
-        return Err(failed("path is outside the GitRun workflow filesystem allowlist"));
+        return Err(failed(
+            "path is outside the GitRun workflow filesystem allowlist",
+        ));
     }
     Ok(())
 }
@@ -1003,7 +1007,9 @@ fn ensure_safe_file_name(name: &str) -> Result<(), ExecutionError> {
         || name == "."
         || name == ".."
         || name.len() > 255
-        || name.chars().any(|c| c.is_control() || c == '/' || c == '\\')
+        || name
+            .chars()
+            .any(|c| c.is_control() || c == '/' || c == '\\')
     {
         return Err(failed("file name is not safe"));
     }
@@ -1027,7 +1033,9 @@ fn ensure_safe_package(value: &str) -> Result<(), ExecutionError> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"._+:-".contains(&byte))
     {
-        return Err(failed("package name/version contains unsupported characters"));
+        return Err(failed(
+            "package name/version contains unsupported characters",
+        ));
     }
     Ok(())
 }
@@ -1071,27 +1079,15 @@ fn restore_runner(container: &str) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-fn make_dock_only(
-    container: &str,
-    state_dir: &Path,
-) -> Result<(), ExecutionError> {
+fn make_dock_only(container: &str, state_dir: &Path) -> Result<(), ExecutionError> {
     match docker::container_status(container).map_err(|error| failed(error.to_string()))? {
         Some(status) if status == "running" => {
-            docker_exec_checked(
-                container,
-                &["touch", "--", DOCK_ONLY_MARKER],
-            )?;
-            docker::stop_container(container)
-                .map_err(|error| failed(error.to_string()))?;
+            docker_exec_checked(container, &["touch", "--", DOCK_ONLY_MARKER])?;
+            docker::stop_container(container).map_err(|error| failed(error.to_string()))?;
         }
         Some(_) => {
-            let marker = state_dir.join(format!(
-                ".dock-marker-{}-{}",
-                std::process::id(),
-                now()
-            ));
-            fs::write(&marker, b"GitDockRun\n")
-                .map_err(|error| failed(error.to_string()))?;
+            let marker = state_dir.join(format!(".dock-marker-{}-{}", std::process::id(), now()));
+            fs::write(&marker, b"GitDockRun\n").map_err(|error| failed(error.to_string()))?;
             docker::copy_to_container(container, &marker, DOCK_ONLY_MARKER)
                 .map_err(|error| failed(error.to_string()))?;
             let _ = fs::remove_file(&marker);

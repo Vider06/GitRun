@@ -119,11 +119,9 @@ pub fn run() {
     // Only start background workers after every fatal startup check has passed
     // and this process owns the singleton PID file. Otherwise GTUU/GSR/API could
     // act briefly and concurrently while startup is about to abort.
-    if let Err(error) = api_service::spawn(
-        config.clone(),
-        Arc::clone(&client),
-        Arc::clone(&stopping),
-    ) {
+    if let Err(error) =
+        api_service::spawn(config.clone(), Arc::clone(&client), Arc::clone(&stopping))
+    {
         eprintln!("gitrun-autoscaler: GitRun API service failed to start: {error}");
         let _ = std::fs::remove_file(&pid_file);
         std::process::exit(2);
@@ -395,12 +393,11 @@ fn reconcile_repo(
     vm_registry: &VmResolutionRegistry,
     repo: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    api_service::reconcile_dock_bindings(client, state_dir, repo)
-        .map_err(std::io::Error::other)?;
+    api_service::reconcile_dock_bindings(client, state_dir, repo).map_err(std::io::Error::other)?;
 
     let containers = docker::managed_containers(repo)?;
-    let preserved_docks = api_service::preserved_dock_containers(state_dir, repo)
-        .map_err(std::io::Error::other)?;
+    let preserved_docks =
+        api_service::preserved_dock_containers(state_dir, repo).map_err(std::io::Error::other)?;
     let plan_containers: Vec<_> = containers
         .iter()
         .filter(|container| !preserved_docks.contains(&container.name))
@@ -550,9 +547,7 @@ fn execute(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         Action::RemoveExited { name } => {
-            if api_service::is_dock_bound(state_dir, repo, name)
-                .map_err(std::io::Error::other)?
-            {
+            if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
                 return Ok(());
             }
             deregister_and_remove(client, repo, name)?;
@@ -597,9 +592,7 @@ fn execute(
             docker::restart_container(name)?;
         }
         Action::RemoveIdle { name } => {
-            if api_service::is_dock_bound(state_dir, repo, name)
-                .map_err(std::io::Error::other)?
-            {
+            if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
                 return Ok(());
             }
             let _ = remove_if_still_idle(client, repo, name)?;

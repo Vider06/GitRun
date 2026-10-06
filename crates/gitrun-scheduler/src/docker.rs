@@ -562,7 +562,9 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let cache_key = cache_path_key(spec.repo);
     let api_token = gitrun_exe::protocol::ChannelKey::generate()
-        .map_err(|error| DockerError::Command(format!("unable to create runner API capability: {error}")))?
+        .map_err(|error| {
+            DockerError::Command(format!("unable to create runner API capability: {error}"))
+        })?
         .to_hex();
     let labels = ensure_label(spec.labels, "gitrun-ci");
 
@@ -647,7 +649,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
                 spec.docker_socket_gid.into(),
             ]);
         }
-        args.extend([ "--mount".into(),
+        args.extend([
+            "--mount".into(),
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",
                 spec.shared_cache_volume
@@ -834,9 +837,7 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         .take()
         .ok_or_else(|| DockerError::Command("docker exec did not expose stdin".into()))?;
 
-    let pipe = std::thread::spawn(move || {
-        std::io::copy(&mut export_stdout, &mut extract_stdin)
-    });
+    let pipe = std::thread::spawn(move || std::io::copy(&mut export_stdout, &mut extract_stdin));
 
     let extract_output = extract_child.wait_with_output()?;
     let export_status = export_child.wait()?;
@@ -851,7 +852,9 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         )));
     }
     if !extract_output.status.success() {
-        let stderr = String::from_utf8_lossy(&extract_output.stderr).trim().to_owned();
+        let stderr = String::from_utf8_lossy(&extract_output.stderr)
+            .trim()
+            .to_owned();
         return Err(DockerError::Command(if stderr.is_empty() {
             format!("filesystem melt into {target} failed")
         } else {
@@ -895,7 +898,11 @@ pub fn runner_for_api_token(token: &str) -> Result<Option<ApiRunnerIdentity>> {
         ],
     )?;
 
-    for name in output.lines().map(str::trim).filter(|value| !value.is_empty()) {
+    for name in output
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         let inspection = run_checked_on(
             &DockerHost::Local,
             &[
@@ -926,11 +933,7 @@ pub fn runner_for_api_token(token: &str) -> Result<Option<ApiRunnerIdentity>> {
 /// Executes an already-authorized container command while forwarding
 /// stdout/stderr chunks as they arrive. No command policy is evaluated here;
 /// GSR must have authorized the request before this function is reachable.
-pub fn exec_container_stream<F>(
-    container: &str,
-    args: &[&str],
-    mut on_output: F,
-) -> Result<i32>
+pub fn exec_container_stream<F>(container: &str, args: &[&str], mut on_output: F) -> Result<i32>
 where
     F: FnMut(bool, &[u8]),
 {
@@ -1000,24 +1003,17 @@ where
 /// is only used by Git*Run handlers after GSR authorization; workflow code
 /// never gets direct access to this primitive.
 pub fn exec_container(name: &str, args: &[&str]) -> Result<Output> {
-    run_on(
-        &DockerHost::Local,
-        &{
-            let mut command = vec!["exec", name];
-            command.extend_from_slice(args);
-            command
-        },
-    )
+    run_on(&DockerHost::Local, &{
+        let mut command = vec!["exec", name];
+        command.extend_from_slice(args);
+        command
+    })
 }
 
 /// Runs a command in a managed container and feeds a bounded byte payload to
 /// stdin. Intended for GitWriteRun where the actual operation is just writing
 /// the already-authorized value to a file.
-pub fn exec_container_with_stdin(
-    name: &str,
-    args: &[&str],
-    input: &[u8],
-) -> Result<Output> {
+pub fn exec_container_with_stdin(name: &str, args: &[&str], input: &[u8]) -> Result<Output> {
     let mut command = Command::new("docker");
     command
         .env_remove("DOCKER_CONTEXT")

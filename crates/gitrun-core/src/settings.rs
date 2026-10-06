@@ -54,7 +54,11 @@ impl Default for GitRunSettings {
 
 impl GitRunSettings {
     pub fn effective_for_repository(&self, repository: &str) -> EffectiveRepositorySettings {
-        let repo = self.repositories.get(repository).cloned().unwrap_or_default();
+        let repo = self
+            .repositories
+            .get(repository)
+            .cloned()
+            .unwrap_or_default();
         let api_policy = apply_repository_api_overrides(&self.global, &repo.api_overrides);
         EffectiveRepositorySettings {
             api_policy,
@@ -412,10 +416,12 @@ mod tests {
         assert!(!settings
             .global
             .allows(GitRunApi::GitDockRun, GitRunOperation::Connect));
-        assert!(!settings
-            .effective_for_repository("owner/repo")
-            .docker
-            .direct_socket_enabled);
+        assert!(
+            !settings
+                .effective_for_repository("owner/repo")
+                .docker
+                .direct_socket_enabled
+        );
     }
 
     #[test]
@@ -428,9 +434,7 @@ mod tests {
                     GitRunApi::GitDockRun,
                     ApiPolicyOverride {
                         enabled: Some(true),
-                        allowed_operations: Some(
-                            [GitRunOperation::Connect].into_iter().collect(),
-                        ),
+                        allowed_operations: Some([GitRunOperation::Connect].into_iter().collect()),
                     },
                 )]),
                 ..RepositorySettings::default()

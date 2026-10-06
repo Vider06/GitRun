@@ -396,12 +396,7 @@ impl Vault {
 
     /// Reports whether a secret name is available to a repository without
     /// decrypting unrelated secrets.
-    pub fn effective_contains_for_repo(
-        &self,
-        name: &str,
-        repo: &str,
-        groups: &[String],
-    ) -> bool {
+    pub fn effective_contains_for_repo(&self, name: &str, repo: &str, groups: &[String]) -> bool {
         self.get_effective_for_repo(name, repo, groups).is_ok()
     }
     /// Resolves every secret a given repo's runners should receive,

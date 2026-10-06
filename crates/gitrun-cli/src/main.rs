@@ -1,5 +1,5 @@
 use clap::Parser;
-use gitrun_core::{AppAuth, Config, GitHubAuth, Runner};
+use gitrun_core::{AppAuth, Config, GitHubAuth, Runner, GitRunApi};
 use gitrun_setup::{bootstrap_linux_with_auth, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
@@ -857,7 +857,7 @@ fn rollback_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn main() {
     let cli = Cli::parse();
     if cli.version {
-        println!("gitrun {}", current_version());
+        run_version(cli.crate_name.as_deref());
         std::process::exit(0);
     }
     let exit_code = match cli.command.unwrap_or(Command::Dashboard) {
@@ -899,6 +899,10 @@ fn main() {
         Command::RepairService => run_repair_service(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),
         Command::Rollback { backup_path } => run_rollback(&backup_path),
+        Command::CheckCompatibility { workflow } => run_check_compatibility(workflow.as_deref()),
+        Command::Settings => run_settings(),
+        Command::ApiList => run_api_list(),
+        Command::ApiPolicy { api, operation, enabled } => run_api_policy(&api, operation.as_deref(), enabled),
     };
     std::process::exit(exit_code);
 }
@@ -913,6 +917,9 @@ struct Cli {
     /// use for `-v` on this top-level flag set to conflict with.
     #[arg(short = 'V', long = "version", short_alias = 'v')]
     version: bool,
+    /// Show one crate version; omit it to show GitRun and every workspace crate.
+    #[arg(long = "crate")]
+    crate_name: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -977,6 +984,137 @@ enum Command {
     },
 }
 
+fn run_version(crate_name: Option<&str>) {
+    let version = current_version();
+    println!("gitrun {version}");
+    let lock = include_str!("../../../Cargo.lock");
+    let mut crates = Vec::new();
+    for block in lock.split("[[package]]").skip(1) {
+        let mut name = None;
+        let mut ver = None;
+        for line in block.lines() {
+            if let Some(value) = line.strip_prefix("name = \")") {
+                name = value.strip_suffix('"');
+            }
+            if let Some(value) = line.strip_prefix("version = \")") {
+                ver = value.strip_suffix('"');
+            }
+            if name.is_some() && ver.is_some() { break; }
+        }
+        if let (Some(name), Some(ver)) = (name, ver) {
+            if name.starts_with("gitrun-") && !crates.iter().any(|(n, _): &(String, String)| n == name) {
+                crates.push((name.to_owned(), ver.to_owned()));
+            }
+        }
+    }
+    crates.sort();
+    if let Some(name) = crate_name {
+        let wanted = if name == "gitrun" { "gitrun".into() } else if name.starts_with("gitrun-") { name.to_owned() } else { format!("gitrun-{name}") };
+        if wanted == "gitrun" {
+            println!("gitrun {version}");
+        } else if let Some((_, ver)) = crates.iter().find(|(n, _)| n == &wanted) {
+            println!("{wanted} {ver}");
+        } else {
+            eprintln!("unknown GitRun crate: {name}");
+            std::process::exit(2);
+        }
+    } else {
+        println!("gitrun {version}");
+        for (name, ver) in crates {
+            println!("{name} {ver}");
+        }
+    }
+}
+
+fn run_api_list() -> i32 {
+    for api in GitRunApi::ALL {
+        println!("{}", api.as_str());
+    }
+    0
+}
+
+fn run_settings() -> i32 {
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(error) => { eprintln!("configuration error: {error}"); return 2; }
+    };
+    let settings = match gitrun_core::GitRunSettings::load_or_default(
+        gitrun_core::GitRunSettings::path_for_state_dir(&config.state_dir),
+    ) {
+        Ok(settings) => settings,
+        Err(error) => { eprintln!("settings error: {error}"); return 2; }
+    };
+    match serde_json::to_string_pretty(&settings) {
+        Ok(value) => { println!("{value}"); 0 }
+        Err(error) => { eprintln!("settings serialization error: {error}"); 2 }
+    }
+}
+
+fn run_api_policy(api_name: &str, operation: Option<&str>, enabled: Option<bool>) -> i32 {
+    let api = GitRunApi::ALL.into_iter().find(|api| api.as_str().eq_ignore_ascii_case(api_name));
+    let Some(api) = api else { eprintln!("unknown GitRun API: {api_name}"); return 2; };
+    if let Some(operation) = operation {
+        let op = [
+            gitrun_core::GitRunOperation::Read, gitrun_core::GitRunOperation::Write, gitrun_core::GitRunOperation::Exists,
+            gitrun_core::GitRunOperation::Delete, gitrun_core::GitRunOperation::List, gitrun_core::GitRunOperation::Connect,
+            gitrun_core::GitRunOperation::Disconnect, gitrun_core::GitRunOperation::Execute, gitrun_core::GitRunOperation::Melt,
+            gitrun_core::GitRunOperation::File, gitrun_core::GitRunOperation::Logs, gitrun_core::GitRunOperation::Register,
+            gitrun_core::GitRunOperation::Install, gitrun_core::GitRunOperation::Remove, gitrun_core::GitRunOperation::Update,
+            gitrun_core::GitRunOperation::Verify, gitrun_core::GitRunOperation::Status,
+        ].into_iter().find(|op| op.as_str().eq_ignore_ascii_case(operation));
+        let Some(op) = op else { eprintln!("unknown GitRun operation: {operation}"); return 2; };
+        if !api.supports_operation(op) { eprintln!("{operation} is not part of {}", api.as_str()); return 2; }
+        println!("{} {} supported", api.as_str(), op.as_str());
+        return 0;
+    }
+    println!("{}", api.as_str());
+    if let Some(enabled) = enabled { println!("requested global enablement: {enabled}"); }
+    0
+}
+
+fn run_check_compatibility(workflow: Option<&str>) -> i32 {
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(error) => { eprintln!("configuration error: {error}"); return 2; }
+    };
+    let settings_path = gitrun_core::GitRunSettings::path_for_state_dir(&config.state_dir);
+    let settings = match gitrun_core::GitRunSettings::load_or_default(&settings_path) {
+        Ok(settings) => settings,
+        Err(error) => { eprintln!("settings error: {error}"); return 2; }
+    };
+    let repo = match config.repositories.first() {
+        Some(repo) => repo,
+        None => { eprintln!("no repository configured"); return 2; }
+    };
+    let effective = settings.effective_for_repository(repo);
+    let root = workflow.map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".github/workflows"));
+    let files = if root.is_file() {
+        match std::fs::read_to_string(&root) {
+            Ok(content) => vec![(root.display().to_string(), content)],
+            Err(error) => { eprintln!("cannot read workflow: {error}"); return 2; }
+        }
+    } else {
+        match std::fs::read_dir(&root) {
+            Ok(entries) => entries.filter_map(Result::ok).filter_map(|entry| {
+                let p=entry.path();
+                if !matches!(p.extension().and_then(|e|e.to_str()), Some("yml")|Some("yaml")) { return None; }
+                std::fs::read_to_string(&p).ok().map(|content| (p.display().to_string(), content))
+            }).collect::<Vec<_>>(),
+            Err(error) => { eprintln!("cannot read workflow directory: {error}"); return 2; }
+        }
+    };
+    let mut exit_code=0;
+    for (name, content) in files {
+        let report=gitrun_core::analyze_compatibility(&name,&content,&effective);
+        println!("{}: {:?}", report.workflow, report.status);
+        for finding in report.findings {
+            println!("  [{:?}] {} — {}", finding.status, finding.code, finding.message);
+            if let Some(recommendation)=finding.recommendation { println!("    → {recommendation}"); }
+        }
+        if report.status == gitrun_core::CompatibilityStatus::Incompatible { exit_code=1; }
+    }
+    exit_code
+}
 fn run_config() -> i32 {
     match load_config() {
         Ok(config) => {

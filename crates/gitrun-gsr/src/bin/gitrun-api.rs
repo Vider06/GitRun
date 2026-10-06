@@ -153,11 +153,12 @@ fn parse_api(
 
     while i < args.len() {
         match args[i].as_str() {
-            "--read" => {
+            "--read" | "--get" => {
                 operation = Some(GitRunOperation::Read);
                 i += 1;
                 if i < args.len() {
-                    values.insert("path".into(), args[i].clone());
+                    let key = if api == GitRunApi::GitVaultRun { "name" } else { "path" };
+                    values.insert(key.into(), args[i].clone());
                     i += 1;
                 }
             }
@@ -173,7 +174,8 @@ fn parse_api(
                 operation = Some(GitRunOperation::Write);
                 i += 1;
                 if i < args.len() {
-                    values.insert("path".into(), args[i].clone());
+                    let key = if api == GitRunApi::GitVaultRun { "name" } else { "path" };
+                    values.insert(key.into(), args[i].clone());
                     i += 1;
                 }
                 if i < args.len() {
@@ -298,7 +300,10 @@ fn parse_api(
         }
     }
 
-    if api == GitRunApi::GitRegisterRun && values.contains_key("entry") {
+    if api == GitRunApi::GitRegisterRun {
+        if !values.contains_key("name") || !values.contains_key("entry") {
+            return Err("GitRegisterRun requires --name <name> --entry <path>".into());
+        }
         operation = Some(GitRunOperation::Register);
         values
             .entry("permanent".into())

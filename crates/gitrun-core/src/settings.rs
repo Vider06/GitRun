@@ -150,22 +150,13 @@ fn apply_repository_api_overrides(
     effective
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiPolicyOverride {
     /// None means inherit global enablement; Some(false) can only disable.
     pub enabled: Option<bool>,
     /// None means inherit all globally-allowed operations; Some(...) can only
     /// remove operations through intersection.
     pub allowed_operations: Option<BTreeSet<GitRunOperation>>,
-}
-
-impl Default for ApiPolicyOverride {
-    fn default() -> Self {
-        Self {
-            enabled: None,
-            allowed_operations: None,
-        }
-    }
 }
 
 impl ApiPolicyOverride {
@@ -180,7 +171,7 @@ impl ApiPolicyOverride {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepositorySettings {
     pub api_overrides: BTreeMap<GitRunApi, ApiPolicyOverride>,
     pub docker: DockerPolicy,
@@ -189,19 +180,7 @@ pub struct RepositorySettings {
     pub register: RegisterPolicy,
 }
 
-impl Default for RepositorySettings {
-    fn default() -> Self {
-        Self {
-            api_overrides: BTreeMap::new(),
-            docker: DockerPolicy::default(),
-            vault: VaultPolicy::default(),
-            storage: SharedStoragePolicy::default(),
-            register: RegisterPolicy::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DockerPolicy {
     /// Direct Docker socket exposure to workflow containers. This is the
     /// compatibility opt-out and remains disabled unless explicitly enabled
@@ -218,18 +197,6 @@ pub struct DockerPolicy {
     /// particular container or one of its operations.
     pub logic_containers: BTreeMap<String, LogicContainerPolicy>,
     pub allowed_mounts: MountPolicy,
-}
-
-impl Default for DockerPolicy {
-    fn default() -> Self {
-        Self {
-            direct_socket_enabled: false,
-            allowed_job_names: Vec::new(),
-            allowed_container_names: Vec::new(),
-            logic_containers: BTreeMap::new(),
-            allowed_mounts: MountPolicy::default(),
-        }
-    }
 }
 
 impl DockerPolicy {
@@ -249,7 +216,7 @@ impl DockerPolicy {
 /// Per logic-container capability policy. This is deliberately named and
 /// stable; the actual Docker ID is resolved by GitRun at runtime and is not
 /// a durable security identity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogicContainerPolicy {
     pub connect: bool,
     pub read: bool,
@@ -261,20 +228,6 @@ pub struct LogicContainerPolicy {
     /// value "runner" means the requesting runner's container. Empty means
     /// no target is permitted; * explicitly allows every configured target.
     pub allowed_melt_targets: Vec<String>,
-}
-
-impl Default for LogicContainerPolicy {
-    fn default() -> Self {
-        Self {
-            connect: false,
-            read: false,
-            write: false,
-            execute: false,
-            melt: false,
-            mountable: false,
-            allowed_melt_targets: Vec::new(),
-        }
-    }
 }
 
 impl LogicContainerPolicy {
@@ -294,22 +247,13 @@ impl LogicContainerPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MountPolicy {
     /// Explicit deny-by-default mount policy. A rule may then permit a host
     /// file, directory, filesystem, volume, or other source according to the
     /// resource identity resolved by GitRun.
     pub enabled: bool,
     pub rules: Vec<MountRule>,
-}
-
-impl Default for MountPolicy {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            rules: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -322,7 +266,7 @@ pub struct MountRule {
     pub allow: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultPolicy {
     pub read: bool,
     pub write: bool,
@@ -333,26 +277,13 @@ pub struct VaultPolicy {
     pub allowed_names: Vec<String>,
 }
 
-impl Default for VaultPolicy {
-    fn default() -> Self {
-        Self {
-            read: false,
-            write: false,
-            exists: false,
-            delete: false,
-            list_metadata: false,
-            allowed_names: Vec::new(),
-        }
-    }
-}
-
 impl VaultPolicy {
     pub fn allows_name(&self, name: &str) -> bool {
         logical_name_allowed(&self.allowed_names, name)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SharedStoragePolicy {
     pub enabled: bool,
     pub allow_files: bool,
@@ -360,34 +291,12 @@ pub struct SharedStoragePolicy {
     pub max_file_size_bytes: u64,
 }
 
-impl Default for SharedStoragePolicy {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            allow_files: false,
-            allow_logs: false,
-            max_file_size_bytes: 64 * 1024 * 1024,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisterPolicy {
     pub enabled: bool,
     pub allow_workflow: bool,
     pub allow_permanent: bool,
     pub allowed_entries: Vec<String>,
-}
-
-impl Default for RegisterPolicy {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            allow_workflow: false,
-            allow_permanent: false,
-            allowed_entries: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -24,6 +24,7 @@
 //! events.rs remains the shared integration point for durable security events.
 
 pub mod agent;
+pub mod api_gate;
 pub mod events;
 pub mod exec_supervisor;
 pub mod watchdog;

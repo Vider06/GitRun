@@ -198,7 +198,7 @@ fn contains_readable_message(lines: &[String]) -> bool {
         let trimmed = line.trim();
         trimmed.contains("~purr~")
             || trimmed.contains("<3")
-            || trimmed.contains("Thanks for using GitRun!")
+            || trimmed.contains("Thanks for using GitRun! May the same love I have for this project spread to everyone :3")
             || trimmed.contains("-Vider06")
     })
 }

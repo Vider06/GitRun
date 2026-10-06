@@ -136,6 +136,8 @@ mod tests {
             run_id: 42,
             job: "cache".into(),
             container: "runner-cache".into(),
+            dynamic: true,
+            dock_only: false,
             requester_runner: "runner-main".into(),
             connected_at: 100,
         });
@@ -155,6 +157,8 @@ mod tests {
             run_id: 1,
             job: "cache".into(),
             container: "a".into(),
+            dynamic: true,
+            dock_only: false,
             requester_runner: "r1".into(),
             connected_at: 1,
         });
@@ -163,6 +167,8 @@ mod tests {
             run_id: 1,
             job: "cache".into(),
             container: "b".into(),
+            dynamic: false,
+            dock_only: true,
             requester_runner: "r2".into(),
             connected_at: 2,
         });

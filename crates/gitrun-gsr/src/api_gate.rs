@@ -11,8 +11,12 @@ use gitrun_core::{
     settings::EffectiveRepositorySettings,
     GitRunSettings,
 };
-use gitrun_exe::AuthorizedOperation;
+use gitrun_exe::{
+    protocol::{ChannelKey, ReplayGuard, SignedRequest},
+    AuthorizedOperation,
+};
 use std::collections::BTreeMap;
+use std::sync::{Mutex, MutexGuard};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -36,6 +40,52 @@ pub enum ApiGateError {
     PolicyDenied { reason: String },
     #[error("command denied by GSR command policy: {reason}")]
     CommandDenied { reason: String },
+    #[error("GSR-to-executor authentication failed: {0}")]
+    ExecutionAuthentication(String),
+}
+
+/// Authenticated authority used for the private GSR -> GitExecuteRun handoff.
+///
+/// The key never leaves this process. If the executor is later moved to a
+/// separate service, the same signed envelope can be verified there without
+/// changing the public Git*Run contract.
+pub struct ExecutionAuthority {
+    key: ChannelKey,
+    replay: Mutex<ReplayGuard>,
+}
+
+impl ExecutionAuthority {
+    pub fn new() -> Result<Self, ApiGateError> {
+        Ok(Self {
+            key: ChannelKey::generate().map_err(|error| {
+                ApiGateError::ExecutionAuthentication(error.to_string())
+            })?,
+            replay: Mutex::new(ReplayGuard::default()),
+        })
+    }
+
+    pub fn handoff_to_executor(
+        &self,
+        operation: AuthorizedOperation,
+    ) -> Result<AuthorizedOperation, ApiGateError> {
+        let signed = SignedRequest::sign(operation, &self.key)
+            .map_err(|error| ApiGateError::ExecutionAuthentication(error.to_string()))?;
+        let mut replay = lock_replay(&self.replay)?;
+        signed
+            .verify(
+                &self.key,
+                gitrun_exe::protocol::DEFAULT_MAX_CLOCK_SKEW_SECS,
+                &mut replay,
+            )
+            .map_err(|error| ApiGateError::ExecutionAuthentication(error.to_string()))?;
+        Ok(signed.request)
+    }
+}
+
+fn lock_replay(mutex: &Mutex<ReplayGuard>) -> Result<MutexGuard<'_, ReplayGuard>, ApiGateError> {
+    mutex
+        .lock()
+        .map_err(|_| ApiGateError::ExecutionAuthentication("GSR replay guard is poisoned".into()))
 }
 
 /// Identity already established by the GitRun/GSR transport layer.

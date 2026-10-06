@@ -13,7 +13,7 @@ use gitrun_exe::{
     ipc::{WireRequest, WireResponse, DEFAULT_SOCKET_PATH},
     AuthorizedOperation, ExecutionBackend, ExecutionError, ExecutionEvent, ExecutionResult,
 };
-use gitrun_gsr::api_gate::{authorize, VerifiedCaller};
+use gitrun_gsr::api_gate::{authorize, ExecutionAuthority, VerifiedCaller};
 use gitrun_vault::{Scope, Vault};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -65,6 +65,10 @@ pub fn spawn(
             .map_err(|e| format!("set API socket permissions: {e}"))?;
 
         let state_dir = Path::new(&config.state_dir).to_path_buf();
+        let execution_authority = Arc::new(
+            ExecutionAuthority::new()
+                .map_err(|error| format!("initialize GSR execution authority: {error}"))?,
+        );
         let thread_stopping = stopping.clone();
 
         let handle = std::thread::Builder::new()
@@ -76,6 +80,7 @@ pub fn spawn(
                             let service_config = config.clone();
                             let service_github = Arc::clone(&github);
                             let service_state = state_dir.clone();
+                            let service_authority = Arc::clone(&execution_authority);
                             std::thread::Builder::new()
                                 .name("gitrun-api-request".into())
                                 .spawn(move || {
@@ -84,6 +89,7 @@ pub fn spawn(
                                         service_config,
                                         service_github,
                                         service_state,
+                                        service_authority,
                                     ) {
                                         eprintln!("gitrun-api: request failed: {error}");
                                     }
@@ -121,6 +127,7 @@ fn handle_stream(
     config: Config,
     github: Arc<GitHubClient>,
     state_dir: std::path::PathBuf,
+    execution_authority: Arc<ExecutionAuthority>,
 ) -> Result<(), String> {
     let mut reader = BufReader::new(
         stream
@@ -213,6 +220,10 @@ fn handle_stream(
             return Ok(());
         }
     };
+
+    let authorized = execution_authority
+        .handoff_to_executor(authorized)
+        .map_err(|error| format!("GSR executor handoff failed: {error}"))?;
 
     send_response(&mut stream, WireResponse::Accepted)?;
 

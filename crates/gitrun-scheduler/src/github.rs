@@ -82,6 +82,14 @@ struct WorkflowRun {
     id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedJobInfo {
+    pub run_id: u64,
+    pub job_id: u64,
+    pub name: String,
+    pub labels: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct JobsResponse {
     #[serde(default)]
@@ -450,46 +458,67 @@ impl GitHubClient {
     /// to decide which backend/image a given queued job should get (see
     /// `logic_containers::resolve`), which a bare count can't support.
     pub fn queued_self_hosted_jobs_with_labels(&self, repo: &str) -> Result<Vec<Vec<String>>> {
+        Ok(self
+            .queued_self_hosted_jobs_with_info(repo)?
+            .into_iter()
+            .map(|job| job.labels)
+            .collect())
+    }
+
+    /// Returns each queued self-hosted job with its workflow run, job ID,
+    /// logical job name and labels. The run/job identity is what lets
+    /// GitDockRun reserve the exact runner container rather than relying on
+    /// positional label matching alone.
+    pub fn queued_self_hosted_jobs_with_info(
+        &self,
+        repo: &str,
+    ) -> Result<Vec<QueuedJobInfo>> {
         let (owner, name) = split_repo(repo)?;
-        let mut all_labels = Vec::new();
+        let mut jobs = Vec::new();
         let runs_path = format!(
             "/repos/{}/{}/actions/runs",
             encode_path_segment(owner),
             encode_path_segment(name)
         );
         let mut url = format!("{API_BASE}{runs_path}?status=queued&per_page=100");
+
         loop {
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: WorkflowRunsResponse = response.json()?;
+
             for run in parsed.workflow_runs {
-                all_labels.extend(self.queued_self_hosted_job_labels_for_run(owner, name, run.id)?);
+                jobs.extend(self.queued_self_hosted_job_info_for_run(owner, name, run.id)?);
             }
+
             match next_url {
                 Some(next) => url = next,
                 None => break,
             }
         }
-        Ok(all_labels)
+
+        Ok(jobs)
     }
 
-    fn queued_self_hosted_job_labels_for_run(
+    fn queued_self_hosted_job_info_for_run(
         &self,
         owner: &str,
         name: &str,
         run_id: u64,
-    ) -> Result<Vec<Vec<String>>> {
-        let mut labels = Vec::new();
+    ) -> Result<Vec<QueuedJobInfo>> {
+        let mut jobs = Vec::new();
         let mut url = format!(
             "{API_BASE}/repos/{}/{}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
             encode_path_segment(owner),
             encode_path_segment(name)
         );
+
         loop {
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: JobsResponse = response.json()?;
-            labels.extend(
+
+            jobs.extend(
                 parsed
                     .jobs
                     .into_iter()
@@ -500,14 +529,21 @@ impl GitHubClient {
                                 .iter()
                                 .any(|label| label.eq_ignore_ascii_case("self-hosted"))
                     })
-                    .map(|job| job.labels),
+                    .map(|job| QueuedJobInfo {
+                        run_id,
+                        job_id: job.id,
+                        name: job.name,
+                        labels: job.labels,
+                    }),
             );
+
             match next_url {
                 Some(next) => url = next,
                 None => break,
             }
         }
-        Ok(labels)
+
+        Ok(jobs)
     }
 
     /// Fetches every `.yml`/`.yaml` file directly under

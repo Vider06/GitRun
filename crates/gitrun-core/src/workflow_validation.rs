@@ -48,6 +48,40 @@ pub struct Finding {
 #[derive(Debug, Clone, Default)]
 pub struct ValidationReport {
     pub findings: Vec<Finding>,
+    pub dock_requests: Vec<DockRequest>,
+}
+
+/// One statically detected GitDockRun job reference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DockRequest {
+    pub file: String,
+    pub line: usize,
+    pub calling_job: Option<String>,
+    pub target_job: String,
+    pub operation: DockOperation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum DockOperation {
+    Connect,
+    Disconnect,
+    Melt,
+    Read,
+    Write,
+    Execute,
+}
+
+impl DockOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Connect => "connect",
+            Self::Disconnect => "disconnect",
+            Self::Melt => "melt",
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Execute => "execute",
+        }
+    }
 }
 
 impl ValidationReport {
@@ -56,6 +90,91 @@ impl ValidationReport {
     }
 }
 
+/// Finds workflow calls to the closed GitDockRun API and extracts the
+/// logical job name. This never talks to Docker and never executes a job.
+pub fn scan_dock_requests(file_label: &str, content: &str) -> Vec<DockRequest> {
+    let mut requests = Vec::new();
+    let mut in_jobs = false;
+    let mut current_job: Option<String> = None;
+    let mut run_block_indent: Option<usize> = None;
+
+    for (idx, raw_line) in content.lines().enumerate() {
+        let indent = raw_line.chars().take_while(|c| c.is_whitespace()).count();
+        let line = raw_line.trim_start();
+        if line == "jobs:" {
+            in_jobs = true;
+            current_job = None;
+            continue;
+        }
+        if in_jobs && !line.is_empty() && indent == 0 && !line.starts_with('#') {
+            in_jobs = false;
+            current_job = None;
+        }
+        if in_jobs && indent == 2 && line.ends_with(':') && !line.starts_with('-') {
+            current_job = Some(line[..line.len() - 1].trim().to_owned());
+        }
+        if let Some(block_indent) = run_block_indent {
+            if !line.is_empty() && indent <= block_indent {
+                run_block_indent = None;
+            } else {
+                collect_dock_request_from_line(file_label, idx + 1, current_job.as_deref(), line, &mut requests);
+                continue;
+            }
+        }
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("run:") || lower.starts_with("- run:") || lower.starts_with("-run:") {
+            collect_dock_request_from_line(file_label, idx + 1, current_job.as_deref(), line, &mut requests);
+            let run_value = lower.strip_prefix("run:")
+                .or_else(|| lower.strip_prefix("- run:"))
+                .or_else(|| lower.strip_prefix("-run:"))
+                .unwrap_or_default().trim();
+            if matches!(run_value, "|" | ">" | "|-" | "|+" | ">-" | ">+") {
+                run_block_indent = Some(indent);
+            }
+        }
+    }
+    requests
+}
+
+fn collect_dock_request_from_line(
+    file_label: &str,
+    line_number: usize,
+    calling_job: Option<&str>,
+    line: &str,
+    requests: &mut Vec<DockRequest>,
+) {
+    let lower = line.to_ascii_lowercase();
+    let Some(api_index) = lower.find("gitdockrun") else { return; };
+    let operation = if lower.contains("--connect") {
+        DockOperation::Connect
+    } else if lower.contains("--disconnect") {
+        DockOperation::Disconnect
+    } else if lower.contains("--melt") {
+        DockOperation::Melt
+    } else if lower.contains("--execute") {
+        DockOperation::Execute
+    } else if lower.contains("--write") {
+        DockOperation::Write
+    } else if lower.contains("--read") || lower.contains("--get") {
+        DockOperation::Read
+    } else {
+        return;
+    };
+    let tail = &line[api_index + "gitdockrun".len()..];
+    let lower_tail = tail.to_ascii_lowercase();
+    let Some(job_index) = lower_tail.find("--job") else { return; };
+    let mut value = tail[job_index + "--job".len()..].trim_start();
+    if let Some(rest) = value.strip_prefix('=') { value = rest.trim_start(); }
+    let token = value.split_whitespace().next().unwrap_or_default().trim_matches(|ch| ch == '"' || ch == '\'' || ch == '`');
+    if token.is_empty() { return; }
+    requests.push(DockRequest {
+        file: file_label.to_owned(),
+        line: line_number,
+        calling_job: calling_job.map(str::to_owned),
+        target_job: token.to_owned(),
+        operation,
+    });
+}
 /// Built-in line-pattern checks against one workflow file's raw text.
 /// `file_label` is used only for the `Finding::file` field (typically the
 /// path relative to the repo root, e.g. `.github/workflows/ci.yml`).
@@ -188,6 +307,7 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
             .unwrap_or("<workflow>")
             .to_owned();
         report.findings.extend(scan(&label, &content));
+        report.dock_requests.extend(scan_dock_requests(&label, &content));
     }
     Ok(report)
 }
@@ -341,6 +461,15 @@ pub enum InstallOutcome {
 mod tests {
     use super::*;
 
+    #[test]
+    fn detects_gitdockrun_job_reference() {
+        let workflow = "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n";
+        let requests = scan_dock_requests("ci.yml", workflow);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].target_job, "build-cache");
+        assert_eq!(requests[0].calling_job.as_deref(), Some("build"));
+        assert_eq!(requests[0].operation, DockOperation::Connect);
+    }
     #[test]
     fn flags_pull_request_target_with_head_checkout() {
         let workflow = "on: pull_request_target\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n";

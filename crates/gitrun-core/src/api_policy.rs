@@ -90,6 +90,87 @@ impl GitRunApi {
     }
 }
 
+/// Validates the argument shape of one public Git*Run operation.
+///
+/// The internal request representation uses a string map, but the public
+/// surface is still closed: unknown keys and missing required values are
+/// rejected here before a request can be authorized or executed.
+pub fn validate_arguments(
+    api: GitRunApi,
+    operation: GitRunOperation,
+    arguments: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    if !api.supports_operation(operation) {
+        return Err("operation is not part of this API".into());
+    }
+
+    let required: &[&str] = match (api, operation) {
+        (GitRunApi::GitVaultRun, GitRunOperation::Read)
+        | (GitRunApi::GitVaultRun, GitRunOperation::Write)
+        | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
+        | (GitRunApi::GitVaultRun, GitRunOperation::Delete) => &["name"],
+        (GitRunApi::GitVaultRun, GitRunOperation::List) => &[],
+        (GitRunApi::GitDockRun, GitRunOperation::Connect)
+        | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => &["job"],
+        (GitRunApi::GitDockRun, GitRunOperation::Read)
+        | (GitRunApi::GitDockRun, GitRunOperation::Write)
+        | (GitRunApi::GitDockRun, GitRunOperation::Execute)
+        | (GitRunApi::GitDockRun, GitRunOperation::Melt) => &[],
+        (GitRunApi::GitSaveRun, GitRunOperation::File) => &["path"],
+        (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &["namefile"],
+        (GitRunApi::GitRegisterRun, GitRunOperation::Register)
+        | (GitRunApi::GitRegisterRun, GitRunOperation::Permanent) => &["name", "entry"],
+        (GitRunApi::GitInstallRun, GitRunOperation::Install)
+        | (GitRunApi::GitInstallRun, GitRunOperation::Remove) => &["package"],
+        (GitRunApi::GitInstallRun, GitRunOperation::Update) => &[],
+        (GitRunApi::GitReadRun, GitRunOperation::Read) => &["path"],
+        (GitRunApi::GitWriteRun, GitRunOperation::Write) => &["path", "value"],
+        (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => &["path"],
+        (GitRunApi::GitStatusRun, GitRunOperation::Status) => &[],
+        _ => &[],
+    };
+
+    for key in required {
+        if !arguments
+            .get(*key)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err(format!("missing argument: {key}"));
+        }
+    }
+
+    let allowed: &[&str] = match (api, operation) {
+        (GitRunApi::GitVaultRun, GitRunOperation::Read)
+        | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
+        | (GitRunApi::GitVaultRun, GitRunOperation::Delete) => &["name"],
+        (GitRunApi::GitVaultRun, GitRunOperation::Write) => &["name", "value"],
+        (GitRunApi::GitVaultRun, GitRunOperation::List) => &[],
+        (GitRunApi::GitDockRun, GitRunOperation::Connect)
+        | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => &["job"],
+        (GitRunApi::GitDockRun, GitRunOperation::Read) => &["path"],
+        (GitRunApi::GitDockRun, GitRunOperation::Write) => &["path", "value"],
+        (GitRunApi::GitDockRun, GitRunOperation::Execute) => &["command"],
+        (GitRunApi::GitDockRun, GitRunOperation::Melt) => &["target"],
+        (GitRunApi::GitSaveRun, GitRunOperation::File) => &["path"],
+        (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &["namefile"],
+        (GitRunApi::GitRegisterRun, GitRunOperation::Register)
+        | (GitRunApi::GitRegisterRun, GitRunOperation::Permanent) => &["name", "entry"],
+        (GitRunApi::GitInstallRun, GitRunOperation::Install) => &["package", "version"],
+        (GitRunApi::GitInstallRun, GitRunOperation::Remove) => &["package"],
+        (GitRunApi::GitInstallRun, GitRunOperation::Update) => &["package"],
+        (GitRunApi::GitReadRun, GitRunOperation::Read)
+        | (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => &["path"],
+        (GitRunApi::GitWriteRun, GitRunOperation::Write) => &["path", "value"],
+        (GitRunApi::GitStatusRun, GitRunOperation::Status) => &[],
+        _ => &[],
+    };
+
+    if let Some(unknown) = arguments.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(format!("unknown argument: {unknown}"));
+    }
+
+    Ok(())
+}
 /// Closed set of operation verbs understood by the GitRun APIs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum GitRunOperation {
@@ -264,6 +345,57 @@ mod tests {
         assert!(!effective.allows(GitRunOperation::Melt));
     }
 
+    #[test]
+    fn argument_contract_rejects_unknown_arguments() {
+        let args = BTreeMap::from([
+            ("job".into(), "cache".into()),
+            ("socket".into(), "docker.sock".into()),
+        ]);
+        assert_eq!(
+            validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Connect, &args),
+            Err("unknown argument: socket".into())
+        );
+    }
+
+    #[test]
+    fn argument_contract_requires_vault_name() {
+        assert_eq!(
+            validate_arguments(
+                GitRunApi::GitVaultRun,
+                GitRunOperation::Read,
+                &BTreeMap::new(),
+            ),
+            Err("missing argument: name".into())
+        );
+    }
+
+    #[test]
+    fn argument_contract_allows_optional_install_version() {
+        let args = BTreeMap::from([
+            ("package".into(), "ImageMagick".into()),
+            ("version".into(), "1.0.0".into()),
+        ]);
+        assert!(validate_arguments(
+            GitRunApi::GitInstallRun,
+            GitRunOperation::Install,
+            &args,
+        ).is_ok());
+    }
+
+    #[test]
+    fn argument_contract_melt_target_is_optional() {
+        assert!(validate_arguments(
+            GitRunApi::GitDockRun,
+            GitRunOperation::Melt,
+            &BTreeMap::new(),
+        ).is_ok());
+        let args = BTreeMap::from([("target".into(), "build".into())]);
+        assert!(validate_arguments(
+            GitRunApi::GitDockRun,
+            GitRunOperation::Melt,
+            &args,
+        ).is_ok());
+    }
     #[test]
     fn api_names_are_stable() {
         assert_eq!(GitRunApi::GitDockRun.as_str(), "GitDockRun");

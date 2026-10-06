@@ -21,10 +21,12 @@ COPY crates ./crates
 RUN --mount=type=cache,id=gitrun-runner-cargo-registry-v11,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=gitrun-runner-cargo-git-v11,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=gitrun-runner-target-v11,target=/usr/src/gitrun/target,sharing=locked \
-    cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent \
+    cargo build --locked --release -p gitrun-gsr --bin gitrun-gsr-agent --bin gitrun-api \
     && cp /usr/src/gitrun/target/release/gitrun-gsr-agent /usr/src/gitrun/gitrun-gsr-agent \
-    && strip --strip-unneeded /usr/src/gitrun/gitrun-gsr-agent \
-    && test -x /usr/src/gitrun/gitrun-gsr-agent
+    && cp /usr/src/gitrun/target/release/gitrun-api /usr/src/gitrun/gitrun-api \
+    && strip --strip-unneeded /usr/src/gitrun/gitrun-gsr-agent /usr/src/gitrun/gitrun-api \
+    && test -x /usr/src/gitrun/gitrun-gsr-agent \
+    && test -x /usr/src/gitrun/gitrun-api
 
 FROM node:26.10.0-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6
 
@@ -103,7 +105,11 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
     && chown -R runner:runner /home/runner/actions-runner
 
 COPY --from=gsr-builder /usr/src/gitrun/gitrun-gsr-agent /usr/local/bin/gitrun-gsr-agent
-RUN chmod 0755 /usr/local/bin/gitrun-gsr-agent
+COPY --from=gsr-builder /usr/src/gitrun/gitrun-api /usr/local/bin/gitrun-api
+RUN chmod 0755 /usr/local/bin/gitrun-gsr-agent /usr/local/bin/gitrun-api \
+    && for api in GitVaultRun GitDockRun GitSaveRun GitRegisterRun GitInstallRun GitReadRun GitWriteRun GitVerifyRun GitStatusRun; do \
+         ln -s /usr/local/bin/gitrun-api "/usr/local/bin/$api"; \
+       done
 
 COPY --chown=root:root docker/runner/entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh \

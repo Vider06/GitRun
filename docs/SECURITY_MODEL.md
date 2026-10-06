@@ -6,7 +6,9 @@ properties that exist today and the important limits that remain.
 
 ## Docker socket access is host-level privilege
 
-Every GitRun-managed **Linux** runner container is currently started with:
+Direct Docker-socket access for workflow runners is **disabled by default**. It is a repository-specific compatibility opt-in controlled by `DockerPolicy::direct_socket_enabled`.
+
+For a repository that explicitly enables it, a Linux runner container is started with:
 
 ```
 --volume /var/run/docker.sock:/var/run/docker.sock
@@ -26,9 +28,10 @@ a Linux runner that holds the Docker socket can, at minimum:
   the host, including other GitRun runners' registration tokens while they're
   briefly live.
 
-This is intentional: GitRun's Linux runners need Docker access because CI
-workflows commonly build images, run service containers, or invoke Docker
-actions.
+This compatibility mode is intentional for workflows that genuinely need
+direct Docker daemon access, such as image builds, service containers, or
+Docker actions. It is not required for GitDockRun, the Git*Run API, or normal
+runner operation.
 
 GitRun also applies Docker-level hardening to Linux runners by default:
 all Linux capabilities are dropped and only `CHOWN`, `SETUID`,
@@ -47,10 +50,12 @@ hardening remains weaker and is an explicit follow-up area.
 
 Practical implications for an operator:
 
-- Only point GitRun at repositories where you trust everyone who can trigger
-  a workflow run. If workflows execute untrusted pull-request code on
-  self-hosted runners, that code must be treated as having runner/host-level
-  consequences because of the Docker socket.
+- Keep direct Docker-socket access disabled unless the repository genuinely
+  requires it.
+- Only enable it for repositories where you trust everyone who can trigger
+  a workflow run. If workflows execute untrusted pull-request code on a
+  socket-enabled self-hosted runner, that code must be treated as having
+  runner/host-level consequences because of the Docker socket.
 - Runners should not share a host with anything sensitive unless that
   sensitive material is protected by other means.
 - The registration token passed to a Linux runner container
@@ -73,7 +78,8 @@ instead provided by:
 
 This limits persistent runner state and keeps temporary/runtime data separate,
 but it is **not a read-only-root sandbox**. It does not protect the host
-filesystem from a process that can use the Docker socket.
+filesystem from a process that can use the Docker socket when direct socket
+compatibility has been explicitly enabled.
 
 Windows runners currently do not receive the Linux `--read-only`/tmpfs/PID
 hardening, so this isolation model should **not** be assumed to apply to

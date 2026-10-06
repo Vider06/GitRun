@@ -118,8 +118,7 @@ pub fn validate_arguments(
         | (GitRunApi::GitDockRun, GitRunOperation::Melt) => &[],
         (GitRunApi::GitSaveRun, GitRunOperation::File) => &["path"],
         (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &["namefile"],
-        (GitRunApi::GitRegisterRun, GitRunOperation::Register)
-        | (GitRunApi::GitRegisterRun, GitRunOperation::Permanent) => &["name", "entry"],
+        (GitRunApi::GitRegisterRun, GitRunOperation::Register) => &["name", "entry", "permanent"],
         (GitRunApi::GitInstallRun, GitRunOperation::Install)
         | (GitRunApi::GitInstallRun, GitRunOperation::Remove) => &["package"],
         (GitRunApi::GitInstallRun, GitRunOperation::Update) => &[],
@@ -186,7 +185,6 @@ pub enum GitRunOperation {
     File,
     Logs,
     Register,
-    Permanent,
     Install,
     Remove,
     Update,
@@ -209,7 +207,6 @@ impl GitRunOperation {
             Self::File => "file",
             Self::Logs => "logs",
             Self::Register => "register",
-            Self::Permanent => "permanent",
             Self::Install => "install",
             Self::Remove => "remove",
             Self::Update => "update",

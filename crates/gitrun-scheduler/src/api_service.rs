@@ -301,25 +301,31 @@ fn handle_stream(
         return Ok(());
     }
 
-    if let Some(run_id) = request.invocation.run_id {
-        let job = request.invocation.job.clone();
-        let current_job = github
-            .find_workflow_job(&request.invocation.repository, run_id, &job)
-            .map_err(|error| format!("verify current workflow job: {error}"))?;
-        let Some(current_job) = current_job else {
-            send_error(
-                &mut stream,
-                "current GitHub workflow job could not be verified",
-            )?;
-            return Ok(());
-        };
-        if current_job.runner_name.as_deref() != Some(identity.name.as_str()) {
-            send_error(
-                &mut stream,
-                "GitRun API request is not being made by the runner assigned to this workflow job",
-            )?;
-            return Ok(());
-        }
+    let Some(run_id) = request.invocation.run_id else {
+        send_error(
+            &mut stream,
+            "GITHUB_RUN_ID is required for every GitRun API invocation",
+        )?;
+        return Ok(());
+    };
+
+    let job = request.invocation.job.clone();
+    let current_job = github
+        .find_workflow_job(&request.invocation.repository, run_id, &job)
+        .map_err(|error| format!("verify current workflow job: {error}"))?;
+    let Some(current_job) = current_job else {
+        send_error(
+            &mut stream,
+            "current GitHub workflow job could not be verified",
+        )?;
+        return Ok(());
+    };
+    if current_job.runner_name.as_deref() != Some(identity.name.as_str()) {
+        send_error(
+            &mut stream,
+            "GitRun API request is not being made by the runner assigned to this workflow job",
+        )?;
+        return Ok(());
     }
 
     let caller = VerifiedCaller::new(

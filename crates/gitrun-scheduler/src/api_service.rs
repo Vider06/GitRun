@@ -793,9 +793,8 @@ impl ApiExecutionBackend {
             .map_err(|error| failed(error.to_string()))?
             .ok_or_else(|| failed(format!("runner container {runner_name} was not found")))?;
 
-        let dynamic = docker::container_is_permanent(&runner_name)
-            .map_err(|error| failed(error.to_string()))?
-            == false;
+        let dynamic = !docker::container_is_permanent(&runner_name)
+            .map_err(|error| failed(error.to_string()))?;
 
         let completed =
             job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
@@ -1194,10 +1193,6 @@ fn make_dock_only(container: &str, state_dir: &Path) -> Result<(), ExecutionErro
 
     docker::start_container(container).map_err(|error| failed(error.to_string()))?;
     Ok(())
-}
-
-fn request_has_marker(container: &str) -> Result<bool, ExecutionError> {
-    docker_container_has_marker(container)
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

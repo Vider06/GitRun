@@ -73,7 +73,7 @@ pub fn run() {
     }
 
     let client = match build_github_client(&config) {
-        Ok(client) => client,
+        Ok(client) => Arc::new(client),
         Err(error) => {
             eprintln!("gitrun-autoscaler: {error}");
             std::process::exit(2);
@@ -117,8 +117,17 @@ pub fn run() {
     }
 
     // Only start background workers after every fatal startup check has passed
-    // and this process owns the singleton PID file. Otherwise GTUU/GSR could
+    // and this process owns the singleton PID file. Otherwise GTUU/GSR/API could
     // act briefly and concurrently while startup is about to abort.
+    if let Err(error) = api_service::spawn(
+        config.clone(),
+        Arc::clone(&client),
+        Arc::clone(&stopping),
+    ) {
+        eprintln!("gitrun-autoscaler: GitRun API service failed to start: {error}");
+        let _ = std::fs::remove_file(&pid_file);
+        std::process::exit(2);
+    }
     spawn_gtuu_thread(&config, &stopping);
     spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
 

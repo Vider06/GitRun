@@ -17,7 +17,7 @@ use gitrun_gsr::api_gate::{authorize, VerifiedCaller};
 use gitrun_vault::{Scope, Vault};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Component, Path};
+use std::path::{Path, PathBuf, Component};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -40,17 +40,17 @@ pub fn spawn(
     {
         let socket_path = std::env::var("GITRUN_API_SOCKET")
             .unwrap_or_else(|_| DEFAULT_SOCKET_PATH.to_owned());
-        let path = Path::new(&socket_path);
+        let path = PathBuf::from(&socket_path);
 
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("create API socket directory: {e}"))?;
         }
         if path.exists() {
-            fs::remove_file(path)
+            fs::remove_file(&path)
                 .map_err(|e| format!("remove stale API socket {}: {e}", path.display()))?;
         }
 
-        let listener = UnixListener::bind(path)
+        let listener = UnixListener::bind(&path)
             .map_err(|e| format!("bind GitRun API socket {}: {e}", path.display()))?;
         listener
             .set_nonblocking(true)
@@ -61,7 +61,7 @@ pub fn spawn(
         // unprivileged runner user inside each bind-mounted container can
         // connect; the random token and container identity checks remain the
         // gate.
-        fs::set_permissions(path, fs::Permissions::from_mode(0o666))
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o666))
             .map_err(|e| format!("set API socket permissions: {e}"))?;
 
         let state_dir = Path::new(&config.state_dir).to_path_buf();
@@ -101,7 +101,7 @@ pub fn spawn(
                     }
                 }
 
-                let _ = fs::remove_file(path);
+                let _ = fs::remove_file(&path);
             })
             .map_err(|e| format!("spawn GitRun API service: {e}"))?;
 

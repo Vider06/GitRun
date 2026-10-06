@@ -211,8 +211,20 @@ fn authorize_vault(
     operation: GitRunOperation,
     arguments: &BTreeMap<String, String>,
 ) -> Result<(), ApiGateError> {
-    let name = required_argument(GitRunApi::GitVaultRun, operation, arguments, "name")?;
-    if !effective.vault.allows_name(name) {
+    if matches!(
+        operation,
+        GitRunOperation::Read
+            | GitRunOperation::Write
+            | GitRunOperation::Exists
+            | GitRunOperation::Delete
+    ) {
+        let name = required_argument(
+            GitRunApi::GitVaultRun,
+            operation,
+            arguments,
+            "name",
+        )?;
+        if !effective.vault.allows_name(name) {
         return Err(ApiGateError::ResourceDenied {
             resource: name.to_owned(),
         });

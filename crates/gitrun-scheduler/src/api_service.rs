@@ -56,11 +56,11 @@ pub fn spawn(
             .set_nonblocking(true)
             .map_err(|e| format!("set GitRun API socket nonblocking: {e}"))?;
 
-        // The socket itself is not the authorization boundary: every request
-        // still needs a random runner capability. 0666 is required so the
-        // unprivileged runner user inside each bind-mounted container can
-        // connect; the random token and container identity checks remain the
-        // gate.
+        // The socket itself is not the authorization boundary. 0666 is
+        // intentional so the unprivileged runner user inside each
+        // bind-mounted container can connect; the host service then verifies
+        // the peer process belongs to a GitRun-managed runner before GSR sees
+        // the request.
         fs::set_permissions(&path, fs::Permissions::from_mode(0o666))
             .map_err(|e| format!("set API socket permissions: {e}"))?;
 

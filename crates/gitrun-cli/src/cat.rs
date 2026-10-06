@@ -280,6 +280,24 @@ mod tests {
     }
 
     #[test]
+    fn actual_animation_compacts_to_24_rows_or_less() {
+        let animation = serde_json::from_str::<CatAnimation>(ANIMATION).unwrap();
+        let max_rows = animation
+            .frames
+            .iter()
+            .map(|frame| {
+                compact_half_block(
+                    &normalize_lines(&frame.lines, animation.width),
+                    animation.width,
+                )
+                .len()
+            })
+            .max()
+            .unwrap();
+        assert!(max_rows <= 24);
+    }
+
+    #[test]
     fn fit_page_uses_full_when_it_fits() {
         let lines = vec!["##".to_owned(), "##".to_owned(), "[1/8] stage".to_owned()];
         let normalized = normalize_lines(&lines, 12);

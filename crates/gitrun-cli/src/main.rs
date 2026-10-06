@@ -1784,10 +1784,7 @@ fn run_install_root(token_path: &str) -> i32 {
     }
 }
 
-fn run_rollback(
-    backup_path: &str,
-    presenter: &mut cat::presenter::CatPresenter,
-) -> i32 {
+fn run_rollback(backup_path: &str, presenter: &mut cat::presenter::CatPresenter) -> i32 {
     match rollback_command(backup_path, presenter) {
         Ok(()) => 0,
         Err(error) => {

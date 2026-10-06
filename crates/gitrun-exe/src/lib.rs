@@ -13,6 +13,33 @@ use thiserror::Error;
 pub mod protocol;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiInvocation {
+    pub api: GitRunApi,
+    pub operation: GitRunOperation,
+    pub repository: String,
+    pub workflow: String,
+    pub job: String,
+    pub runner: String,
+    pub resource: Option<String>,
+    pub arguments: BTreeMap<String, String>,
+}
+
+impl ApiInvocation {
+    pub fn into_authorized(self, request_id: String) -> AuthorizedOperation {
+        AuthorizedOperation {
+            request_id,
+            api: self.api,
+            operation: self.operation,
+            repository: self.repository,
+            workflow: self.workflow,
+            job: self.job,
+            resource: self.resource,
+            arguments: self.arguments,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorizedOperation {
     pub request_id: String,
     pub api: GitRunApi,
@@ -26,6 +53,14 @@ pub struct AuthorizedOperation {
     /// creating this request; handlers must still validate resource-specific
     /// invariants before doing privileged work.
     pub arguments: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionEvent {
+    Started,
+    Stdout(String),
+    Stderr(String),
+    Finished { exit_code: i32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

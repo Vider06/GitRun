@@ -1454,6 +1454,7 @@ name = "gitrun-gsr"
 version = "0.1.0"
 dependencies = [
  "gitrun-core",
+ "gitrun-exe",
  "libc",
  "serde",
  "serde_json",

@@ -716,6 +716,158 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     Ok(())
 }
 
+pub fn container_status(name: &str) -> Result<Option<String>> {
+    container_status_string(&DockerHost::Local, name)
+}
+
+pub fn start_container(name: &str) -> Result<()> {
+    run_checked(&["start", name])?;
+    Ok(())
+}
+
+pub fn stop_container(name: &str) -> Result<()> {
+    run_checked(&["stop", "--time", "10", name])?;
+    Ok(())
+}
+
+pub fn container_id(name: &str) -> Result<Option<String>> {
+    let output = run_on(&DockerHost::Local, &["inspect", "-f", "{{.Id}}", name])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if is_missing_container_error(&stderr) {
+            return Ok(None);
+        }
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker inspect {name} failed")
+        } else {
+            stderr
+        }));
+    }
+
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((!value.is_empty()).then_some(value))
+}
+
+pub fn copy_to_container(
+    container: &str,
+    local_file: &std::path::Path,
+    destination: &str,
+) -> Result<()> {
+    let source = local_file.to_string_lossy();
+    run_checked(&["cp", source.as_ref(), &format!("{container}:{destination}")])?;
+    Ok(())
+}
+
+pub fn remove_file_in_container(container: &str, path: &str) -> Result<()> {
+    let output = exec_container(container, &["rm", "-f", "--", path])?;
+    if !output.status.success() {
+        return Err(DockerError::Command(if output.stderr.is_empty() {
+            format!("unable to remove {path} from container {container}")
+        } else {
+            String::from_utf8_lossy(&output.stderr).trim().to_owned()
+        }));
+    }
+    Ok(())
+}
+
+pub fn container_logs(name: &str) -> Result<String> {
+    run_checked(&["logs", "--timestamps", name])
+}
+
+pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
+    // Docker does not provide a literal "merge two container namespaces"
+    // primitive. GitDockRun melt therefore merges the source container's
+    // exported filesystem into the target container's writable filesystem.
+    // Runtime/pseudo filesystems and the Actions runner installation are
+    // deliberately excluded: the target remains the runner container.
+    let mut export = Command::new("docker");
+    export
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .args(["export", source])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut extract = Command::new("docker");
+    extract
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .args([
+            "exec",
+            "-i",
+            target,
+            "tar",
+            "-xpf",
+            "-",
+            "-C",
+            "/",
+            "--no-same-owner",
+            "--exclude=./proc",
+            "--exclude=./proc/*",
+            "--exclude=./sys",
+            "--exclude=./sys/*",
+            "--exclude=./dev",
+            "--exclude=./dev/*",
+            "--exclude=./run",
+            "--exclude=./run/*",
+            "--exclude=./var/run",
+            "--exclude=./var/run/*",
+            "--exclude=./home/runner/actions-runner",
+            "--exclude=./home/runner/actions-runner/*",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut export_child = export.spawn()?;
+    let mut extract_child = extract.spawn()?;
+    let mut export_stdout = export_child
+        .stdout
+        .take()
+        .ok_or_else(|| DockerError::Command("docker export did not expose stdout".into()))?;
+    let mut extract_stdin = extract_child
+        .stdin
+        .take()
+        .ok_or_else(|| DockerError::Command("docker exec did not expose stdin".into()))?;
+
+    let pipe = std::thread::spawn(move || {
+        std::io::copy(&mut export_stdout, &mut extract_stdin)
+    });
+
+    let extract_output = extract_child.wait_with_output()?;
+    let export_status = export_child.wait()?;
+    let copied = pipe
+        .join()
+        .map_err(|_| DockerError::Command("melt pipe thread panicked".into()))?
+        .map_err(DockerError::Spawn)?;
+
+    if !export_status.success() {
+        return Err(DockerError::Command(format!(
+            "docker export {source} failed"
+        )));
+    }
+    if !extract_output.status.success() {
+        let stderr = String::from_utf8_lossy(&extract_output.stderr).trim().to_owned();
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("filesystem melt into {target} failed")
+        } else {
+            stderr
+        }));
+    }
+
+    if copied == 0 {
+        return Err(DockerError::Command(
+            "filesystem melt copied no data from source container".into(),
+        ));
+    }
+
+    Ok(())
+}
+
 /// Identity discovered from a GitRun-managed runner container.
 /// The API token itself is never returned from this helper; it is only used
 /// for equality matching against the inspected environment.

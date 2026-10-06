@@ -26,7 +26,7 @@ pub use config::{Config, ConfigError};
 pub use github_auth::{GitHubAuth, GitHubAuthError};
 pub use runner::{Runner, RunnerPool, RunnerState};
 pub use settings::{
-    ApiPolicyOverride, DockerPolicy, EffectiveRepositorySettings, GitRunSettings, MountPolicy,
+    ApiPolicyOverride, DockerPolicy, EffectiveRepositorySettings, GitRunSettings, LogicContainerPolicy, MountPolicy,
     MountRule, RegisterPolicy, RepositorySettings, SharedStoragePolicy, VaultPolicy,
     SETTINGS_SCHEMA_VERSION,
 };

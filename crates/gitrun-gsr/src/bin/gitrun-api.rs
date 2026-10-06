@@ -55,7 +55,10 @@ fn run() -> Result<(), String> {
         },
     };
 
-    println!("GITRUN {}", api.as_str());
+    let secret_read = api == GitRunApi::GitVaultRun && operation == GitRunOperation::Read;
+    if !secret_read {
+        println!("GITRUN {}", api.as_str());
+    }
 
     #[cfg(unix)]
     {
@@ -82,7 +85,13 @@ fn run() -> Result<(), String> {
             let response: WireResponse = serde_json::from_str(&line)
                 .map_err(|error| format!("invalid GitRun API response: {error}"))?;
             match response {
-                WireResponse::Accepted => println!("GSR VALIDATE: PASS"),
+                WireResponse::Accepted => {
+                    if secret_read {
+                        eprintln!("GSR VALIDATE: PASS");
+                    } else {
+                        println!("GSR VALIDATE: PASS");
+                    }
+                }
                 WireResponse::Error { message } => return Err(message),
                 WireResponse::Event(ExecutionEvent::Started) => {
                     println!("GITEXECRUN: START")
@@ -90,13 +99,19 @@ fn run() -> Result<(), String> {
                 WireResponse::Event(ExecutionEvent::Stdout(value)) => print!("{value}"),
                 WireResponse::Event(ExecutionEvent::Stderr(value)) => eprint!("{value}"),
                 WireResponse::Event(ExecutionEvent::Finished { exit_code }) => {
-                    println!("GITEXECRUN RESULT: {exit_code}");
+                    if secret_read {
+                        eprintln!("GITEXECRUN RESULT: {exit_code}");
+                    } else {
+                        println!("GITEXECRUN RESULT: {exit_code}");
+                    }
                     if exit_code != 0 {
                         return Err(format!(
                             "GitRun API operation failed with exit code {exit_code}"
                         ));
                     }
-                    println!("GITEXECRUN EXEC DONE");
+                    if !secret_read {
+                        println!("GITEXECRUN EXEC DONE");
+                    }
                     break;
                 }
             }

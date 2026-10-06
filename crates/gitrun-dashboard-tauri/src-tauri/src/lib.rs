@@ -871,61 +871,104 @@ fn get_gitrun_settings() -> Result<GitRunSettings, String> {
 }
 
 #[tauri::command]
-fn save_gitrun_settings(settings: GitRunSettings, confirm_socket_opt_out: bool) -> Result<(), String> {
+fn save_gitrun_settings(
+    settings: GitRunSettings,
+    confirm_socket_opt_out: bool,
+) -> Result<(), String> {
     let config = load_config()?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
-        return Err(format!("unsupported GitRun settings schema version {}", settings.schema_version));
+        return Err(format!(
+            "unsupported GitRun settings schema version {}",
+            settings.schema_version
+        ));
     }
-    if settings.repositories.keys().any(|repo| !config.repositories.iter().any(|configured| configured == repo)) {
+    if settings.repositories.keys().any(|repo| {
+        !config
+            .repositories
+            .iter()
+            .any(|configured| configured == repo)
+    }) {
         return Err("GitRun settings contain a repository that is not configured in GitRun".into());
     }
-    let socket_opt_out = settings.repositories.values().any(|repo| repo.docker.direct_socket_enabled);
+    let socket_opt_out = settings
+        .repositories
+        .values()
+        .any(|repo| repo.docker.direct_socket_enabled);
     if socket_opt_out && !confirm_socket_opt_out {
-        return Err("enabling direct Docker socket access requires explicit danger-gate confirmation".into());
+        return Err(
+            "enabling direct Docker socket access requires explicit danger-gate confirmation"
+                .into(),
+        );
     }
-    settings.save(gitrun_settings_path(&config)).map_err(|e| e.to_string())
+    settings
+        .save(gitrun_settings_path(&config))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> {
     let config = load_config()?;
-    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config)).map_err(|e| e.to_string())?;
-    if !config.repositories.iter().any(|configured| configured == &repo) {
+    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
+        .map_err(|e| e.to_string())?;
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repo)
+    {
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
     let effective = settings.effective_for_repository(&repo);
-    Ok(GitRunApi::ALL.into_iter().map(|api| {
-        let policy = effective.api_policy.get(api);
-        ApiPolicySummary {
-            api: api.as_str().into(),
-            enabled: policy.enabled,
-            operations: policy.allowed_operations.into_iter().map(|op| op.as_str().into()).collect(),
-        }
-    }).collect())
+    Ok(GitRunApi::ALL
+        .into_iter()
+        .map(|api| {
+            let policy = effective.api_policy.get(api);
+            ApiPolicySummary {
+                api: api.as_str().into(),
+                enabled: policy.enabled,
+                operations: policy
+                    .allowed_operations
+                    .into_iter()
+                    .map(|op| op.as_str().into())
+                    .collect(),
+            }
+        })
+        .collect())
 }
 
 #[tauri::command]
 fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
     let config = load_config()?;
-    if !config.repositories.iter().any(|configured| configured == &repo) {
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repo)
+    {
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
     let path = PathBuf::from(&config.state_dir)
         .join("workflow-dock-requirements")
-        .join(format!("{}.json", gitrun_scheduler::docker::sanitize(&repo, '_')));
+        .join(format!(
+            "{}.json",
+            gitrun_scheduler::docker::sanitize(&repo, '_')
+        ));
     let raw = match std::fs::read_to_string(&path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.to_string()),
     };
     serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw)
-        .map(|requests| requests.into_iter().map(|request| DockRequirementSummary {
-            file: request.file,
-            line: request.line,
-            calling_job: request.calling_job,
-            target_job: request.target_job,
-            operation: request.operation.as_str().into(),
-        }).collect())
+        .map(|requests| {
+            requests
+                .into_iter()
+                .map(|request| DockRequirementSummary {
+                    file: request.file,
+                    line: request.line,
+                    calling_job: request.calling_job,
+                    target_job: request.target_job,
+                    operation: request.operation.as_str().into(),
+                })
+                .collect()
+        })
         .map_err(|e| format!("decode Dock requirements: {e}"))
 }
 

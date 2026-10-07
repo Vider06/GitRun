@@ -748,6 +748,20 @@ fn split_csv(raw: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
+fn value_u8(
+    value: &Option<String>,
+    key: &str,
+    default: u8,
+) -> Result<u8, ConfigError> {
+    match value {
+        Some(raw) => raw.trim().parse::<u8>().map_err(|_| ConfigError::Integer {
+            key: key.to_owned(),
+            value: raw.clone(),
+        }),
+        None => Ok(default),
+    }
+}
+
 fn is_positive_u64(value: &str) -> bool {
     value.trim().parse::<u64>().map(|n| n > 0).unwrap_or(false)
 }

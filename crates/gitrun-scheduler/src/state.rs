@@ -212,9 +212,16 @@ impl SchedulerState {
 
     pub fn quarantine_entries(&self) -> Vec<(String, Duration)> {
         let now = Self::now();
-        self.data.quarantined_since.iter().map(|(name, since)| {
-            (name.clone(), Duration::from_secs(now.saturating_sub(*since)))
-        }).collect()
+        self.data
+            .quarantined_since
+            .iter()
+            .map(|(name, since)| {
+                (
+                    name.clone(),
+                    Duration::from_secs(now.saturating_sub(*since)),
+                )
+            })
+            .collect()
     }
 
     pub fn recovery_ages(&self) -> Vec<(String, Duration)> {

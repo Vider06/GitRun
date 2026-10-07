@@ -296,7 +296,10 @@ impl PolicyMatrix {
                 if !api.supports_operation(*operation) {
                     issues.push(PolicyLintIssue {
                         path: api.as_str().into(),
-                        message: format!("operation {} is not supported by this API", operation.as_str()),
+                        message: format!(
+                            "operation {} is not supported by this API",
+                            operation.as_str()
+                        ),
                     });
                 }
             }

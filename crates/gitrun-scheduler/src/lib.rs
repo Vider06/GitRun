@@ -79,9 +79,7 @@ pub fn run() {
             for issue in settings.lint() {
                 eprintln!(
                     "gitrun-autoscaler: security policy lint [{}] {}: {}",
-                    issue.path,
-                    "warning",
-                    issue.message
+                    issue.path, "warning", issue.message
                 );
             }
         }

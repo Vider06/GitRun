@@ -306,22 +306,44 @@ impl Config {
             c.host_profile = v.trim().to_ascii_lowercase();
         }
         if c.host_profile == "small" {
-            if !lookup.contains_key("GITRUN_MIN_RUNNERS") { c.min_runners = 1; }
-            if !lookup.contains_key("GITRUN_MAX_RUNNERS") { c.max_runners = 2; }
-            if !lookup.contains_key("GITRUN_CONTAINER_CPUS") { c.container_cpus = "0.5".into(); }
-            if !lookup.contains_key("GITRUN_CONTAINER_MEMORY") { c.container_memory = "768m".into(); }
-            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_CPU_PERCENT") { c.resource_pressure_cpu_percent = 80; }
-            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT") { c.resource_pressure_memory_percent = 85; }
-            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT") { c.resource_pressure_disk_percent = 90; }
+            if !lookup.contains_key("GITRUN_MIN_RUNNERS") {
+                c.min_runners = 1;
+            }
+            if !lookup.contains_key("GITRUN_MAX_RUNNERS") {
+                c.max_runners = 2;
+            }
+            if !lookup.contains_key("GITRUN_CONTAINER_CPUS") {
+                c.container_cpus = "0.5".into();
+            }
+            if !lookup.contains_key("GITRUN_CONTAINER_MEMORY") {
+                c.container_memory = "768m".into();
+            }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_CPU_PERCENT") {
+                c.resource_pressure_cpu_percent = 80;
+            }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT") {
+                c.resource_pressure_memory_percent = 85;
+            }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT") {
+                c.resource_pressure_disk_percent = 90;
+            }
         } else if c.host_profile == "large" {
-            if !lookup.contains_key("GITRUN_MAX_RUNNERS") { c.max_runners = 16; }
+            if !lookup.contains_key("GITRUN_MAX_RUNNERS") {
+                c.max_runners = 16;
+            }
         }
         if let Some(v) = get("GITRUN_RUNNER_IMAGE") {
             c.runner_image = v;
         }
-        if let Some(v) = get("GITRUN_RUNNER_NETWORK") { c.runner_network = v.trim().to_owned(); }
-        if let Some(v) = get("GITRUN_RUNNER_SECCOMP_PROFILE") { c.runner_seccomp_profile = v.trim().to_owned(); }
-        if let Some(v) = get("GITRUN_RUNNER_APPARMOR_PROFILE") { c.runner_apparmor_profile = v.trim().to_owned(); }
+        if let Some(v) = get("GITRUN_RUNNER_NETWORK") {
+            c.runner_network = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_RUNNER_SECCOMP_PROFILE") {
+            c.runner_seccomp_profile = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_RUNNER_APPARMOR_PROFILE") {
+            c.runner_apparmor_profile = v.trim().to_owned();
+        }
         if let Some(v) = get("GITRUN_RUNNER_LABELS") {
             c.runner_labels = v;
         }
@@ -521,8 +543,14 @@ impl Config {
                 self.container_pids_limit
             )));
         }
-        if !matches!(self.shared_cache_scope.as_str(), "global" | "repository" | "runner") {
-            return Err(ConfigError::Invalid(format!("shared cache scope must be global, repository, or runner, got {:?}", self.shared_cache_scope)));
+        if !matches!(
+            self.shared_cache_scope.as_str(),
+            "global" | "repository" | "runner"
+        ) {
+            return Err(ConfigError::Invalid(format!(
+                "shared cache scope must be global, repository, or runner, got {:?}",
+                self.shared_cache_scope
+            )));
         }
         if !is_valid_docker_name(&self.shared_cache_volume) {
             return Err(ConfigError::Invalid(format!(
@@ -543,16 +571,36 @@ impl Config {
             )));
         }
         if !matches!(self.host_profile.as_str(), "small" | "standard" | "large") {
-            return Err(ConfigError::Invalid(format!("host profile must be small, standard, or large, got {:?}", self.host_profile)));
+            return Err(ConfigError::Invalid(format!(
+                "host profile must be small, standard, or large, got {:?}",
+                self.host_profile
+            )));
         }
-        if self.runner_network.trim().is_empty() || self.runner_network.chars().any(char::is_control) || self.runner_network.chars().any(char::is_whitespace) {
-            return Err(ConfigError::Invalid("runner network must be a non-empty Docker network name".into()));
+        if self.runner_network.trim().is_empty()
+            || self.runner_network.chars().any(char::is_control)
+            || self.runner_network.chars().any(char::is_whitespace)
+        {
+            return Err(ConfigError::Invalid(
+                "runner network must be a non-empty Docker network name".into(),
+            ));
         }
-        if self.runner_seccomp_profile.trim().is_empty() || self.runner_seccomp_profile.chars().any(char::is_control) || self.runner_seccomp_profile.chars().any(char::is_whitespace) {
-            return Err(ConfigError::Invalid("runner seccomp profile must be a non-empty value without whitespace".into()));
+        if self.runner_seccomp_profile.trim().is_empty()
+            || self.runner_seccomp_profile.chars().any(char::is_control)
+            || self.runner_seccomp_profile.chars().any(char::is_whitespace)
+        {
+            return Err(ConfigError::Invalid(
+                "runner seccomp profile must be a non-empty value without whitespace".into(),
+            ));
         }
-        if self.runner_apparmor_profile.chars().any(char::is_control) || self.runner_apparmor_profile.chars().any(char::is_whitespace) {
-            return Err(ConfigError::Invalid("runner AppArmor profile must not contain whitespace or control characters".into()));
+        if self.runner_apparmor_profile.chars().any(char::is_control)
+            || self
+                .runner_apparmor_profile
+                .chars()
+                .any(char::is_whitespace)
+        {
+            return Err(ConfigError::Invalid(
+                "runner AppArmor profile must not contain whitespace or control characters".into(),
+            ));
         }
         if !matches!(self.gtuu_schedule_timezone.as_str(), "utc" | "local") {
             return Err(ConfigError::Invalid(format!(
@@ -748,11 +796,7 @@ fn split_csv(raw: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
-fn value_u8(
-    value: &Option<String>,
-    key: &str,
-    default: u8,
-) -> Result<u8, ConfigError> {
+fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, ConfigError> {
     match value {
         Some(raw) => raw.trim().parse::<u8>().map_err(|_| ConfigError::Integer {
             key: key.to_owned(),

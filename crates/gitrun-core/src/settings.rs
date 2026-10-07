@@ -82,7 +82,10 @@ impl GitRunSettings {
                     message: issue.message,
                 });
             }
-            if settings.docker.allowed_container_names.contains(&"*".to_owned())
+            if settings
+                .docker
+                .allowed_container_names
+                .contains(&"*".to_owned())
                 && settings.docker.logic_containers.is_empty()
             {
                 issues.push(crate::api_policy::PolicyLintIssue {

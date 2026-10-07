@@ -766,9 +766,15 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
 
     if !spec.is_windows {
-        args.extend(["--security-opt".into(), format!("seccomp={}", spec.seccomp_profile)]);
+        args.extend([
+            "--security-opt".into(),
+            format!("seccomp={}", spec.seccomp_profile),
+        ]);
         if !spec.apparmor_profile.trim().is_empty() {
-            args.extend(["--security-opt".into(), format!("apparmor={}", spec.apparmor_profile)]);
+            args.extend([
+                "--security-opt".into(),
+                format!("apparmor={}", spec.apparmor_profile),
+            ]);
         }
     }
 
@@ -814,7 +820,11 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
 pub fn attest_host(host: &DockerHost) -> Result<String> {
     let output = run_checked_on(
         host,
-        &["version", "--format", "{{.Server.Version}}|{{.Server.APIVersion}}"],
+        &[
+            "version",
+            "--format",
+            "{{.Server.Version}}|{{.Server.APIVersion}}",
+        ],
     )?;
     let value = output.trim();
     if value.is_empty() {

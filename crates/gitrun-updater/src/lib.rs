@@ -172,13 +172,21 @@ impl ReleaseManifest {
         match (&self.signature, &self.signature_key_id) {
             (Some(signature), key_id) => {
                 if signature.len() != 128 || !signature.chars().all(|c| c.is_ascii_hexdigit()) {
-                    return Err(UpdateError::InvalidManifest("manifest signature must be 64-byte hex".into()));
+                    return Err(UpdateError::InvalidManifest(
+                        "manifest signature must be 64-byte hex".into(),
+                    ));
                 }
                 if key_id.as_ref().is_some_and(|id| id.trim().is_empty()) {
-                    return Err(UpdateError::InvalidManifest("manifest signature key id cannot be empty".into()));
+                    return Err(UpdateError::InvalidManifest(
+                        "manifest signature key id cannot be empty".into(),
+                    ));
                 }
             }
-            (None, Some(_)) => return Err(UpdateError::InvalidManifest("signature key id requires a signature".into())),
+            (None, Some(_)) => {
+                return Err(UpdateError::InvalidManifest(
+                    "signature key id requires a signature".into(),
+                ))
+            }
             (None, None) => {}
         }
         Ok(())
@@ -201,24 +209,40 @@ impl ReleaseManifest {
             .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1");
         let key = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_HEX").ok();
         match (self.signature.as_deref(), key.as_deref()) {
-            (None, _) if required => Err(UpdateError::InvalidManifest("update manifest signature is required".into())),
+            (None, _) if required => Err(UpdateError::InvalidManifest(
+                "update manifest signature is required".into(),
+            )),
             (None, _) => Ok(()),
-            (Some(_), None) => Err(UpdateError::InvalidManifest("manifest is signed but no public key is configured".into())),
+            (Some(_), None) => Err(UpdateError::InvalidManifest(
+                "manifest is signed but no public key is configured".into(),
+            )),
             (Some(signature), Some(public_key)) => {
                 if let Ok(expected_id) = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_ID") {
                     if self.signature_key_id.as_deref() != Some(expected_id.trim()) {
-                        return Err(UpdateError::InvalidManifest("update manifest signing key id does not match configured key".into()));
+                        return Err(UpdateError::InvalidManifest(
+                            "update manifest signing key id does not match configured key".into(),
+                        ));
                     }
                 }
-                let public = decode_hex(public_key).ok_or_else(|| UpdateError::InvalidManifest("update public key must be 32-byte hex".into()))?;
-                let sig = decode_hex(signature).ok_or_else(|| UpdateError::InvalidManifest("update signature must be hex".into()))?;
+                let public = decode_hex(public_key).ok_or_else(|| {
+                    UpdateError::InvalidManifest("update public key must be 32-byte hex".into())
+                })?;
+                let sig = decode_hex(signature).ok_or_else(|| {
+                    UpdateError::InvalidManifest("update signature must be hex".into())
+                })?;
                 if public.len() != 32 || sig.len() != 64 {
-                    return Err(UpdateError::InvalidManifest("invalid Ed25519 key or signature length".into()));
+                    return Err(UpdateError::InvalidManifest(
+                        "invalid Ed25519 key or signature length".into(),
+                    ));
                 }
                 let payload = self.signing_payload()?;
                 UnparsedPublicKey::new(&ED25519, &public)
                     .verify(&payload, &sig)
-                    .map_err(|_| UpdateError::InvalidManifest("update manifest signature verification failed".into()))
+                    .map_err(|_| {
+                        UpdateError::InvalidManifest(
+                            "update manifest signature verification failed".into(),
+                        )
+                    })
             }
         }
     }

@@ -672,7 +672,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn cat_is_allowed_only_for_an_interactive_terminal() {
         assert!(cat_allowed_with(true, true, false, false, Some("xterm")));

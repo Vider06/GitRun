@@ -1,12 +1,12 @@
 use crossterm::terminal;
 use ratatui::{
-    backend::CrosstermBackend, layout::Position, widgets::Paragraph, Terminal, TerminalOptions,
+    backend::CrosstermBackend, layout::Position, widgets::{Paragraph, Widget}, Terminal, TerminalOptions,
     Viewport,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -432,68 +432,6 @@ fn live_state_name(state: ValidationState, tick: usize) -> &'static str {
         ValidationState::Unknown => &["seated", "unknown", "curious"],
     };
     sequence[tick % sequence.len()]
-}
-
-fn render_live_frame(
-    writer: &Arc<Mutex<Box<dyn Write + Send>>>,
-    states: &CatStates,
-    selection: &LiveSelection,
-    tick: usize,
-) {
-    let Ok((_, rows)) = terminal::size() else {
-        return;
-    };
-    if rows < LIVE_MIN_ROWS {
-        return;
-    }
-
-    let state_name = match selection {
-        LiveSelection::Validation(state) => live_state_name(*state, tick),
-        LiveSelection::Named(name) => name.as_str(),
-    };
-    let state_name = if states.states.contains_key(state_name) {
-        state_name
-    } else {
-        &states.default_state
-    };
-    let Some(sprite) = states.states.get(state_name) else {
-        return;
-    };
-
-    // Reserve one blank row between normal command output and the live cat.
-    // The scrolling region ends above that gap, so terminal output can never
-    // overwrite the cat or use its row as part of the normal output stream.
-    let scroll_bottom = rows.saturating_sub(LIVE_PANEL_HEIGHT);
-    let panel_top = scroll_bottom.saturating_add(2);
-    let mut output = format!("\x1b[s\x1b[1;{}r", scroll_bottom);
-    for (offset, line) in (0u16..).zip(sprite.lines.iter()).take(3) {
-        let row = panel_top.saturating_add(offset);
-        output.push_str(&format!("\x1b[{};1H\x1b[2K{}", row, line));
-    }
-    output.push_str(&format!("\x1b[{};1H\x1b[2K\x1b[u", rows));
-
-    if let Ok(mut writer) = writer.lock() {
-        let _ = writer.write_all(output.as_bytes());
-        let _ = writer.flush();
-    }
-}
-
-fn clear_live_panel(writer: &Arc<Mutex<Box<dyn Write + Send>>>) {
-    let Ok((_, rows)) = terminal::size() else {
-        return;
-    };
-
-    let first = rows.saturating_sub(LIVE_PANEL_HEIGHT) + 1;
-    let mut output = String::from("\x1b[s\x1b[r");
-    for row in first..=rows {
-        output.push_str(&format!("\x1b[{};1H\x1b[2K", row));
-    }
-    output.push_str("\x1b[u");
-
-    if let Ok(mut writer) = writer.lock() {
-        let _ = writer.write_all(output.as_bytes());
-        let _ = writer.flush();
-    }
 }
 
 fn render_live_frame(

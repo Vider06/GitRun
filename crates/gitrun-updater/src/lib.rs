@@ -222,7 +222,7 @@ impl ReleaseManifest {
         let mut unsigned = self.clone();
         unsigned.signature = None;
         unsigned.signature_key_id = None;
-        serde_json::to_vec(&unsigned).map_err(UpdateError::Json)
+        serde_json::to_vec(&unsigned).map_err(|error| UpdateError::InvalidManifest(error.to_string()))
     }
 }
 
@@ -1322,6 +1322,20 @@ fn is_version(value: &str) -> bool {
 
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if value.len() % 2 != 0 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len() / 2);
+    for index in (0..bytes.len()).step_by(2) {
+        let high = (bytes[index] as char).to_digit(16)? as u8;
+        let low = (bytes[index + 1] as char).to_digit(16)? as u8;
+        output.push((high << 4) | low);
+    }
+    Some(output)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

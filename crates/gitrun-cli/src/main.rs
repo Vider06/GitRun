@@ -147,10 +147,8 @@ fn elevate_system_update(
     if let Some(url) = manifest_url {
         command.arg(url);
     }
-    // The parent process owns the terminal presenter. Do not let the elevated
-    // child create a second cat presenter, otherwise a single command can
-    // render the final state twice.
-    command.env("GITRUN_NO_CAT", "1");
+    // Use an explicit CLI flag instead of an environment variable because
+    // sudo may filter custom environment variables.
     let status = command.status()?;
     Ok(status.code().unwrap_or(1))
 }

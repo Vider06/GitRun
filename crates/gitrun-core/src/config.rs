@@ -44,6 +44,10 @@ pub struct Config {
     /// Name of the Docker volume shared across runner containers for
     /// package-manager caches (Cargo/pip/npm) — the embryonic GitVault.
     pub shared_cache_volume: String,
+    /// Cache isolation scope: `repository` (default), `runner`, or `global`.
+    /// Repository and runner scopes prevent one workflow trust domain from
+    /// reading another domain's package cache through a shared Docker volume.
+    pub shared_cache_scope: String,
     /// Size of the runner's home directory (registration state, diagnostics,
     /// job checkouts), applied whether it's backed by tmpfs or a disk volume
     /// — see `runner_home_backend`. Needs headroom for a real checkout +
@@ -180,6 +184,7 @@ impl Default for Config {
             container_pids_limit: "1024".into(),
             runner_disable_update: false,
             shared_cache_volume: "gitrun-runner-shared".into(),
+            shared_cache_scope: "repository".into(),
             runner_home_size: "8g".into(),
             runner_home_backend: "tmpfs".into(),
             github_connect_timeout: 5,
@@ -330,6 +335,9 @@ impl Config {
             if !trimmed.is_empty() {
                 c.shared_cache_volume = trimmed.to_owned();
             }
+        }
+        if let Some(v) = get("GITRUN_SHARED_CACHE_SCOPE") {
+            c.shared_cache_scope = v.trim().to_ascii_lowercase();
         }
         if let Some(v) = get("GITRUN_RUNNER_HOME_SIZE") {
             let trimmed = v.trim();
@@ -482,6 +490,9 @@ impl Config {
                 "container pids limit must be a positive integer, got {:?}",
                 self.container_pids_limit
             )));
+        }
+        if !matches!(self.shared_cache_scope.as_str(), "global" | "repository" | "runner") {
+            return Err(ConfigError::Invalid(format!("shared cache scope must be global, repository, or runner, got {:?}", self.shared_cache_scope)));
         }
         if !is_valid_docker_name(&self.shared_cache_volume) {
             return Err(ConfigError::Invalid(format!(

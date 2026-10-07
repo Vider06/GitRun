@@ -1,7 +1,9 @@
 use crossterm::terminal;
 use ratatui::{
-    backend::CrosstermBackend, layout::Position, widgets::{Paragraph, Widget}, Terminal, TerminalOptions,
-    Viewport,
+    backend::CrosstermBackend,
+    layout::Position,
+    widgets::{Paragraph, Widget},
+    Terminal, TerminalOptions, Viewport,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;

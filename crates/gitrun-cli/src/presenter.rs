@@ -95,8 +95,8 @@ impl Drop for CatPresenter {
 }
 
 impl CatPresenter {
-    pub(crate) fn new() -> Self {
-        if !cat_allowed() {
+    pub(crate) fn new(no_cat_override: bool) -> Self {
+        if no_cat_override || !cat_allowed() {
             return Self {
                 states: None,
                 last_state: None,
@@ -308,19 +308,15 @@ impl CatPresenter {
             let _ = terminal.draw(|frame| {
                 let area = frame.area();
                 frame.render_widget(Clear, area);
-                cursor = Some(Position::new(
-                    area.x,
-                    area.y + area.height.saturating_sub(1),
-                ));
+                // The external process should start where the inline viewport
+                // started, reusing those rows instead of adding blank rows
+                // below the cleared cat.
+                cursor = Some(Position::new(area.x, area.y));
             });
 
             if let Some(cursor) = cursor {
                 let _ = terminal.set_cursor_position(cursor);
                 let _ = terminal.show_cursor();
-                let _ = execute!(terminal.backend_mut(), MoveToNextLine(1));
-                if let Ok(position) = terminal.get_cursor_position() {
-                    let _ = terminal.set_cursor_position(position);
-                }
                 let _ = terminal.backend_mut().flush();
             }
         }

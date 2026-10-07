@@ -981,7 +981,7 @@ fn main() {
             // graphical dashboard owns the process and terminal.
             presenter.prepare_for_external_process();
             run_dashboard()
-        },
+        }
         Command::RecoveryGtuu => run_recovery_gtuu(&mut presenter),
         Command::RepairService => run_repair_service(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),

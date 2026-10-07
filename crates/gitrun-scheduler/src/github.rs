@@ -412,7 +412,7 @@ impl GitHubClient {
     /// bounded per-run by GitHub's own per-run job count (jobs are paginated
     /// too, followed the same way).
     /// Finds a named job inside one GitHub Actions workflow run. The
-    /// caller uses this to map GitDockRun --job <name> to the runner that
+    /// caller uses this to map GitDockRun --job &lt;name&gt; to the runner that
     /// executed that job.
     pub fn find_workflow_job(
         &self,

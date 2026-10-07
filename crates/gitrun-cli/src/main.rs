@@ -143,7 +143,7 @@ fn elevate_system_update(
 
     let executable = std::env::current_exe()?;
     let mut command = std::process::Command::new("sudo");
-    command.arg(executable).arg("update");
+    command.arg(executable).arg("--no-cat").arg("update");
     if let Some(url) = manifest_url {
         command.arg(url);
     }

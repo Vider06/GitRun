@@ -192,9 +192,44 @@ impl ReleaseManifest {
     }
 }
 
+impl ReleaseManifest {
+    /// Verifies an Ed25519 signature when a public key is configured.
+    /// GITRUN_UPDATE_SIGNATURE_REQUIRED=true makes an unsigned manifest invalid.
+    pub fn verify_signature_from_env(&self) -> Result<(), UpdateError> {
+        let required = std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED")
+            .ok()
+            .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1");
+        let key = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_HEX").ok();
+        match (self.signature.as_deref(), key.as_deref()) {
+            (None, _) if required => Err(UpdateError::InvalidManifest("update manifest signature is required".into())),
+            (None, _) => Ok(()),
+            (Some(_), None) => Err(UpdateError::InvalidManifest("manifest is signed but no public key is configured".into())),
+            (Some(signature), Some(public_key)) => {
+                let public = decode_hex(public_key).ok_or_else(|| UpdateError::InvalidManifest("update public key must be 32-byte hex".into()))?;
+                let sig = decode_hex(signature).ok_or_else(|| UpdateError::InvalidManifest("update signature must be hex".into()))?;
+                if public.len() != 32 || sig.len() != 64 {
+                    return Err(UpdateError::InvalidManifest("invalid Ed25519 key or signature length".into()));
+                }
+                let payload = self.signing_payload()?;
+                UnparsedPublicKey::new(&ED25519, &public)
+                    .verify(&payload, &sig)
+                    .map_err(|_| UpdateError::InvalidManifest("update manifest signature verification failed".into()))
+            }
+        }
+    }
+
+    fn signing_payload(&self) -> Result<Vec<u8>, UpdateError> {
+        let mut unsigned = self.clone();
+        unsigned.signature = None;
+        unsigned.signature_key_id = None;
+        serde_json::to_vec(&unsigned).map_err(UpdateError::Json)
+    }
+}
+
 pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateError> {
     let manifest: ReleaseManifest = serde_json::from_slice(&fs::read(path)?)?;
     manifest.validate()?;
+    manifest.verify_signature_from_env()?;
     Ok(manifest)
 }
 
@@ -203,6 +238,7 @@ pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
     let client = http_client()?;
     let manifest: ReleaseManifest = client.get(url).send()?.error_for_status()?.json()?;
     manifest.validate()?;
+    manifest.verify_signature_from_env()?;
     Ok(manifest)
 }
 

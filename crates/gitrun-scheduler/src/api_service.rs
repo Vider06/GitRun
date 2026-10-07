@@ -56,13 +56,17 @@ pub fn spawn(
             .set_nonblocking(true)
             .map_err(|e| format!("set GitRun API socket nonblocking: {e}"))?;
 
-        // The socket itself is not the authorization boundary. 0666 is
-        // intentional so the unprivileged runner user inside each
-        // bind-mounted container can connect; the host service then verifies
-        // the peer process belongs to a GitRun-managed runner before GSR sees
-        // the request.
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o666))
+        // The socket is a defense-in-depth filesystem boundary in addition to
+        // SO_PEERCRED/cgroup verification. The runner image joins this numeric
+        // group at startup; unrelated host users are excluded by the mode bits.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o660))
             .map_err(|e| format!("set API socket permissions: {e}"))?;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::chown;
+            chown(&path, Some(0), Some(10000))
+                .map_err(|e| format!("set API socket group: {e}"))?;
+        }
 
         let state_dir = Path::new(&config.state_dir).to_path_buf();
         let execution_authority = Arc::new(
@@ -328,13 +332,27 @@ fn handle_stream(
         return Ok(());
     }
 
+    let workflow_run = github
+        .find_workflow_run(&request.invocation.repository, run_id)
+        .map_err(|error| format!("verify authoritative workflow run: {error}"))?;
+    let Some(workflow_run) = workflow_run else {
+        send_error(&mut stream, "authoritative GitHub workflow run could not be verified")?;
+        return Ok(());
+    };
+    if !request.invocation.workflow.is_empty()
+        && request.invocation.workflow != workflow_run.name
+    {
+        send_error(&mut stream, "workflow identity claim does not match GitHub")?;
+        return Ok(());
+    }
+
     let caller = VerifiedCaller::new(
         &request.invocation.repository,
-        &request.invocation.workflow,
+        &workflow_run.name,
         &request.invocation.job,
         &identity.name,
     )
-    .with_run_id(request.invocation.run_id);
+    .with_run_id(Some(workflow_run.id));
 
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
     let settings = GitRunSettings::load_or_default(&settings_path)

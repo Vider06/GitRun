@@ -460,6 +460,7 @@ fn render_live_frame(
         return;
     };
 
+    let mut final_cursor = None;
     let _ = terminal.draw(|frame| {
         let area = frame.area();
         let lines = sprite
@@ -471,14 +472,27 @@ fn render_live_frame(
         frame.render_widget(Paragraph::new(lines.join("\n")), area);
 
         if show_cursor {
-            frame.set_cursor_position(Position::new(0, area.height.saturating_sub(1)));
+            // Frame cursor coordinates are terminal-absolute. Using just the
+            // viewport height here would place the shell prompt near the top
+            // of the terminal instead of below the inline cat viewport.
+            final_cursor = Some(Position::new(
+                area.x,
+                area.y + area.height.saturating_sub(1),
+            ));
         }
     });
 
     if show_cursor {
-        let _ = terminal.show_cursor();
-        // The shell prompt must resume below the inline viewport, not inside the final cat frame.
-        let _ = execute!(terminal.backend_mut(), MoveToNextLine(1));
+        if let Some(cursor) = final_cursor {
+            // Put the cursor on the last cat row, advance exactly one row, and
+            // then resync Ratatui's cursor tracker with the terminal backend.
+            let _ = terminal.set_cursor_position(cursor);
+            let _ = terminal.show_cursor();
+            let _ = execute!(terminal.backend_mut(), MoveToNextLine(1));
+            if let Ok(position) = terminal.get_cursor_position() {
+                let _ = terminal.set_cursor_position(position);
+            }
+        }
     } else {
         let _ = terminal.hide_cursor();
     }

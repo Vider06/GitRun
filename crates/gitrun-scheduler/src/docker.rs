@@ -503,7 +503,7 @@ pub fn rename_container(from: &str, to: &str) -> Result<()> {
 }
 
 pub fn remove_container_on(host: &DockerHost, name: &str) -> Result<()> {
-    let output = run_on(host, &["rm", "-f", name])?;
+    let output = run_on(host, &["rm", "-f", "-v", name])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if !is_missing_container_error(&stderr) {

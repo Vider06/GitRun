@@ -1245,6 +1245,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn setup_progress_marker_is_parsed() {
+        let parsed = parse_setup_progress_line(
+            "[GitRun setup] [5/8] Building gitrun-runner:latest",
+        );
+        assert_eq!(parsed, Some((5, "Building gitrun-runner:latest".to_owned())));
+        assert!(parse_setup_progress_line("[GitRun setup] [5/7] invalid").is_none());
+    }
+
+    #[test]
     fn trusted_executable_mode_accepts_setuid_root_binary_with_owner_write() {
         assert!(trusted_executable_mode(0o4755));
     }

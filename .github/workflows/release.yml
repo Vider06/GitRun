@@ -149,6 +149,7 @@ jobs:
       - name: Build unified GitRun executable
         env:
           VERSION: ${{ steps.version.outputs.version_number }}
+          GITRUN_NO_CAT: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -256,6 +257,7 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          GITRUN_NO_CAT: "1"
           ROOT: ${{ steps.artifacts.outputs.root }}
           DEB: ${{ steps.artifacts.outputs.deb }}
           SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}

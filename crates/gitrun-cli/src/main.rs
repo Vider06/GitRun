@@ -1002,7 +1002,8 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         Command::Doctor => ValidationState::Validating,
         // Update validates the release plan before entering the updating state.
         // Keeping the initial state neutral avoids showing "updating" when the
-        // requested release is already installed or otherwise rejected.\n        Command::Update { .. } => ValidationState::Ready,
+        // requested release is already installed or otherwise rejected.
+        Command::Update { .. } => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering

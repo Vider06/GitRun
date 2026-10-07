@@ -134,6 +134,7 @@ pub fn bootstrap_linux_with_auth(
     }
     validate_bootstrap_auth(&auth)?;
 
+    setup_progress(1, "Checking Docker and system prerequisites");
     ensure_docker()?;
 
     let config_dir = PathBuf::from("/etc/gitrun");
@@ -141,6 +142,7 @@ pub fn bootstrap_linux_with_auth(
     let log_dir = PathBuf::from("/var/log/gitrun");
     let root = PathBuf::from("/opt/gitrun");
 
+    setup_progress(2, "Preparing GitRun system directories");
     ensure_directory(&config_dir, 0o755)?;
     ensure_directory(&state_dir, 0o750)?;
     ensure_directory(&log_dir, 0o750)?;
@@ -153,6 +155,7 @@ pub fn bootstrap_linux_with_auth(
             .map_err(|error| SetupError::Io(std::io::Error::other(error.to_string())))?;
     }
 
+    setup_progress(3, "Installing runner, recovery, and service resources");
     let runner_dockerfile = resources::runner_dockerfile_for_bootstrap();
     write_resource(
         &root.join("docker/runner/Dockerfile"),
@@ -184,6 +187,7 @@ pub fn bootstrap_linux_with_auth(
         0o644,
     )?;
 
+    setup_progress(4, "Writing GitRun configuration");
     let config_path = config_dir.join("gitrun.env");
     let auth_lines = match &auth {
         BootstrapAuth::Pat(token) => format!("GITHUB_TOKEN={}\n", token.trim()),
@@ -212,20 +216,24 @@ pub fn bootstrap_linux_with_auth(
         add_user_to_docker_group(uid)?;
     }
 
+    setup_progress(5, "Building gitrun-runner:latest");
     build_image(
         "gitrun-runner:latest",
         &root,
         &root.join("docker/runner/Dockerfile"),
     )?;
 
+    setup_progress(6, "Installing GitRun binaries");
     let installed = PathBuf::from("/usr/local/bin/gitrun");
     install_binary(app_binary, &installed, owner_uid)?;
 
+    setup_progress(7, "Enabling and starting the GitRun service");
     run_command(Command::new("systemctl").args(["daemon-reload"]))?;
     run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
 
+    setup_progress(8, "Finalizing desktop integration");
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),
         "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun dashboard\nTerminal=false\nCategories=Development;System;\n",
@@ -238,6 +246,13 @@ pub fn bootstrap_linux_with_auth(
         state_dir,
         log_dir,
     })
+}
+
+const SETUP_PROGRESS_TOTAL: u8 = 8;
+
+fn setup_progress(step: u8, message: &str) {
+    println!("[GitRun setup] [{step}/{SETUP_PROGRESS_TOTAL}] {message}");
+    let _ = std::io::stdout().flush();
 }
 
 fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {

@@ -365,11 +365,7 @@ fn cat_allowed_with(
     ci: bool,
     term: Option<&str>,
 ) -> bool {
-    !no_cat
-        && !ci
-        && term != Some("dumb")
-        && stdout_is_terminal
-        && stderr_is_terminal
+    !no_cat && !ci && term != Some("dumb") && stdout_is_terminal && stderr_is_terminal
 }
 #[cfg(unix)]
 fn spawn_signal_watcher(

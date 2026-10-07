@@ -386,6 +386,15 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
         vm::start(kind, &config.name)?;
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
+    if config.is_windows
+        && matches!(kind, HypervisorKind::Kvm)
+        && !is_private_guest_ipv4(&ip)
+    {
+        return Err(vm::VmError::InvalidConfig(format!(
+            "Windows KVM VM '{}' reported non-private guest address {}; refusing remote Docker endpoint",
+            config.name, ip
+        )));
+    }
     let endpoint = vm::docker_host_address(kind, &ip, config.docker_port);
     let host = if config.is_windows {
         if config.docker_tls_cert_dir.trim().is_empty() {
@@ -502,4 +511,14 @@ mod tests {
         drop(guard);
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+fn is_private_guest_ipv4(value: &str) -> bool {
+    let Ok(ip) = value.parse::<std::net::Ipv4Addr>() else {
+        return false;
+    };
+    let octets = ip.octets();
+    (octets[0] == 10)
+        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+        || (octets[0] == 192 && octets[1] == 168)
 }

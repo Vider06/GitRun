@@ -12,6 +12,7 @@ pub mod reconcile;
 pub mod state;
 pub mod vm;
 pub mod vm_resolution;
+pub mod resource_pressure;
 
 pub use backoff::RateLimitTracker;
 pub use github::{GitHubClient, GitHubError, Runner};
@@ -134,6 +135,17 @@ pub fn run() {
         config.poll_interval
     );
     while !stopping.load(Ordering::Relaxed) {
+        if config.resource_pressure_enabled {
+            match resource_pressure::sample(&config) {
+                Ok(snapshot) if snapshot.is_pressured(&config) => {
+                    eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), holding new runner creation until pressure falls", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
+                    sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!("gitrun-autoscaler: resource pressure check unavailable: {error}; continuing for availability"),
+            }
+        }
         for repo in &config.repositories {
             if let Some(remaining) = rate_limits.remaining_cooldown(repo) {
                 // Skip this repo entirely for this tick rather than making

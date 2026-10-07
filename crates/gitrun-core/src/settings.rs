@@ -69,7 +69,31 @@ impl GitRunSettings {
         }
     }
 
-    pub fn path_for_state_dir(state_dir: impl AsRef<Path>) -> PathBuf {
+    /// Lints global and repository policy without changing it. Repository
+    /// policies are intentionally interpreted through the same intersection
+    /// logic used at runtime, so the report describes the effective surface.
+    pub fn lint(&self) -> Vec<crate::api_policy::PolicyLintIssue> {
+        let mut issues = self.global.lint();
+        for (repository, settings) in &self.repositories {
+            let effective = self.effective_for_repository(repository);
+            for issue in effective.api_policy.lint() {
+                issues.push(crate::api_policy::PolicyLintIssue {
+                    path: format!("{repository}.{}", issue.path),
+                    message: issue.message,
+                });
+            }
+            if settings.docker.allowed_container_names.contains(&"*".to_owned())
+                && settings.docker.logic_containers.is_empty()
+            {
+                issues.push(crate::api_policy::PolicyLintIssue {
+                    path: format!("{repository}.docker.allowed_container_names"),
+                    message: "wildcard container access is enabled without any named logic-container policy".into(),
+                });
+            }
+        }
+        issues
+    }
+
         state_dir.as_ref().join(SETTINGS_FILE_NAME)
     }
 

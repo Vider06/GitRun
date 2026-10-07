@@ -1154,12 +1154,6 @@ function setupSetStatus(message, phase) {
   fill.classList.toggle("setup-progress-waiting", safePhase === 0);
   fill.style.width = safePhase === 0 ? "18%" : `${value}%`;
   track.setAttribute("aria-valuenow", String(safePhase));
-
-  document.querySelectorAll("[data-setup-phase]").forEach((item) => {
-    const step = Number(item.dataset.setupPhase);
-    item.classList.toggle("active", step === safePhase && safePhase > 0 && !document.getElementById("setup-terminal-status")?.textContent?.match(/Complete|Failed/));
-    item.classList.toggle("complete", step < safePhase);
-  });
 }
 
 function applySetupEvent(event) {
@@ -1298,7 +1292,7 @@ function renderFirstRun() {
     const token = tokenEl.value.trim();
     const appId = appIdEl.value.trim();
     const installationId = installationIdEl.value.trim();
-    const privateKeyPath = privateKeyPathEl.value.trim();
+    let setupPrivateKeyPath = privateKeyPathEl.value.trim();
     const repositories = reposEl.value.trim();
 
     if (authMode === "pat" && !token) {
@@ -1342,11 +1336,9 @@ function renderFirstRun() {
 
       if (authMode === "app") {
         setupAppendLog("Securing the GitHub App private key to mode 0600…");
-        const securedPath = await invoke("secure_private_key", { privateKeyPath });
+        const securedPath = await invoke("secure_private_key", { privateKeyPath: setupPrivateKeyPath });
         setupAppendLog("Private key security check completed.");
-        // run_first_setup validates the path again; keep the secured path as
-        // the value passed to the privileged request.
-        privateKeyPathEl.value = securedPath;
+        setupPrivateKeyPath = securedPath;
       }
 
       await invoke("run_first_setup", {
@@ -1355,7 +1347,7 @@ function renderFirstRun() {
         repositories,
         appId,
         installationId,
-        privateKeyPath: privateKeyPathEl.value.trim(),
+        privateKeyPath: setupPrivateKeyPath,
       });
 
       state.firstRun = false;

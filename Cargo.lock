@@ -1595,6 +1595,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "signal-hook 0.4.5",
 ]
 
 [[package]]

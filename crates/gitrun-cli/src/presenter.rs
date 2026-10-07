@@ -2,13 +2,13 @@ use crossterm::{cursor::MoveToNextLine, execute, terminal};
 use ratatui::{
     backend::CrosstermBackend,
     layout::Position,
-    widgets::{Paragraph, Widget},
+    widgets::{Paragraph, Widget, Wrap},
     Terminal, TerminalOptions, Viewport,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -79,6 +79,7 @@ struct LiveHandle {
     selection: Arc<Mutex<LiveSelection>>,
     terminal: SharedTerminal,
     join: Option<JoinHandle<()>>,
+    signal_join: Option<JoinHandle<()>>,
 }
 
 pub(crate) struct CatPresenter {
@@ -95,7 +96,7 @@ impl Drop for CatPresenter {
 
 impl CatPresenter {
     pub(crate) fn new() -> Self {
-        if std::env::var_os("GITRUN_NO_CAT").is_some() {
+        if !cat_allowed() {
             return Self {
                 states: None,
                 last_state: None,
@@ -140,14 +141,23 @@ impl CatPresenter {
             Err(_) => return false,
         };
 
+        let stop = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(Condvar::new());
+        let wake_guard = Arc::new(Mutex::new(()));
+
+        #[cfg(unix)]
+        let signal_join = match spawn_signal_watcher(Arc::clone(&terminal), Arc::clone(&stop)) {
+            Ok(join) => Some(join),
+            Err(_) => return false,
+        };
+        #[cfg(not(unix))]
+        let signal_join = None;
+
         let selection = Arc::new(Mutex::new(
             self.last_state
                 .map(LiveSelection::Validation)
                 .unwrap_or_else(|| LiveSelection::Named(states.default_state.clone())),
         ));
-        let stop = Arc::new(AtomicBool::new(false));
-        let wake = Arc::new(Condvar::new());
-        let wake_guard = Arc::new(Mutex::new(()));
 
         activate_terminal(Arc::clone(&terminal));
 
@@ -186,6 +196,7 @@ impl CatPresenter {
             selection,
             terminal,
             join: Some(join),
+            signal_join,
         });
 
         true
@@ -267,6 +278,9 @@ impl CatPresenter {
                 0,
                 true,
             );
+            if let Some(join) = live.signal_join {
+                let _ = join.join();
+            }
             deactivate_terminal(&live.terminal);
         } else {
             self.show_named(final_name);
@@ -297,6 +311,9 @@ impl CatPresenter {
         if let Some(join) = live.join.take() {
             let _ = join.join();
         }
+        if let Some(join) = live.signal_join.take() {
+            let _ = join.join();
+        }
 
         deactivate_terminal(&live.terminal);
     }
@@ -309,11 +326,12 @@ pub(crate) fn terminal_print(args: fmt::Arguments<'_>, stderr: bool, newline: bo
     }
 
     if let Some(terminal) = active_terminal() {
-        let height = text.lines().count().max(1).min(u16::MAX as usize) as u16;
         let _ = terminal.lock().map(|mut terminal| {
-            let text = text.as_str();
+            let width = terminal.size().map(|area| area.width).unwrap_or(1).max(1);
+            let paragraph = Paragraph::new(text.as_str()).wrap(Wrap { trim: false });
+            let height = paragraph.line_count(width).max(1).min(u16::MAX as usize) as u16;
             terminal.insert_before(height, |buffer| {
-                Paragraph::new(text).render(buffer.area, buffer);
+                paragraph.render(buffer.area, buffer);
             })
         });
         return;
@@ -330,6 +348,68 @@ pub(crate) fn terminal_print(args: fmt::Arguments<'_>, stderr: bool, newline: bo
     }
 }
 
+fn cat_allowed() -> bool {
+    cat_allowed_with(
+        io::stdout().is_terminal(),
+        io::stderr().is_terminal(),
+        std::env::var_os("GITRUN_NO_CAT").is_some(),
+        std::env::var_os("CI").is_some(),
+        std::env::var("TERM").ok().as_deref(),
+    )
+}
+
+fn cat_allowed_with(
+    stdout_is_terminal: bool,
+    stderr_is_terminal: bool,
+    no_cat: bool,
+    ci: bool,
+    term: Option<&str>,
+) -> bool {
+    !no_cat && !ci && term != Some("dumb") && stdout_is_terminal && stderr_is_terminal
+}
+#[cfg(unix)]
+fn spawn_signal_watcher(
+    terminal: SharedTerminal,
+    stop: Arc<AtomicBool>,
+) -> io::Result<JoinHandle<()>> {
+    use signal_hook::consts::{SIGINT, SIGTERM};
+    use signal_hook::flag::register;
+    use signal_hook::low_level::unregister;
+
+    let sigint = Arc::new(AtomicBool::new(false));
+    let sigterm = Arc::new(AtomicBool::new(false));
+    let sigint_id = register(SIGINT, Arc::clone(&sigint))?;
+    let sigterm_id = match register(SIGTERM, Arc::clone(&sigterm)) {
+        Ok(id) => id,
+        Err(error) => {
+            unregister(sigint_id);
+            return Err(error);
+        }
+    };
+
+    Ok(thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            if sigint.load(Ordering::Relaxed) {
+                restore_terminal_cursor(&terminal);
+                std::process::exit(130);
+            }
+            if sigterm.load(Ordering::Relaxed) {
+                restore_terminal_cursor(&terminal);
+                std::process::exit(143);
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        unregister(sigint_id);
+        unregister(sigterm_id);
+    }))
+}
+
+fn restore_terminal_cursor(terminal: &SharedTerminal) {
+    if let Ok(mut terminal) = terminal.lock() {
+        let _ = terminal.show_cursor();
+        let _ = terminal.backend_mut().flush();
+    }
+}
 fn active_terminal() -> Option<SharedTerminal> {
     ACTIVE_TERMINAL
         .get()
@@ -586,6 +666,23 @@ mod tests {
                 assert!(states.states.contains_key(live_state_name(state, tick)));
             }
         }
+    }
+
+    #[test]
+    fn cat_is_allowed_only_for_an_interactive_terminal() {
+        assert!(cat_allowed_with(true, true, false, false, Some("xterm")));
+        assert!(!cat_allowed_with(false, true, false, false, Some("xterm")));
+        assert!(!cat_allowed_with(true, false, false, false, Some("xterm")));
+        assert!(!cat_allowed_with(true, true, true, false, Some("xterm")));
+        assert!(!cat_allowed_with(true, true, false, true, Some("xterm")));
+        assert!(!cat_allowed_with(true, true, false, false, Some("dumb")));
+        assert!(cat_allowed_with(true, true, false, false, None));
+    }
+
+    #[test]
+    fn wrapped_terminal_output_height_matches_rendered_paragraph() {
+        let paragraph = Paragraph::new("1234567890 1234567890").wrap(Wrap { trim: false });
+        assert_eq!(paragraph.line_count(10), 2);
     }
 
     #[test]

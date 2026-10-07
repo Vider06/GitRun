@@ -74,3 +74,15 @@ The API socket is therefore an authorization boundary, not a sandbox. A Linux ru
 ## VM-backed runners
 
 VM-backed Logic Containers can route jobs to Docker daemons inside KVM/libvirt or VirtualBox guests. Protect the guest Docker endpoint and base disk image as trusted infrastructure. VM configuration does not remove the need to review repository trust, workflow permissions or guest credentials.
+
+## Hardening controls
+
+GitRun now exposes explicit host-pressure thresholds. With resource-pressure protection enabled, the scheduler leaves existing workloads untouched but stops creating new runners or placing additional queued work while CPU, memory, or state-filesystem usage is above the configured limits.
+
+Runner package caches default to repository isolation. Global cache sharing is an explicit configuration choice.
+
+Windows VM-backed runners require Docker TLS credentials, and dynamic Windows runners are ephemeral. Linux runners can additionally select a Docker network, seccomp profile, and AppArmor profile.
+
+Unexpected runner exits are security events: the container is quarantined and removed rather than restarted in place. GitDockRun resource operations also require an exact repository/run/job/requester binding.
+
+Release updates support signed manifests through Ed25519 and can require signature verification. Release artifacts include dependency metadata, SPDX SBOM, and provenance.

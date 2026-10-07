@@ -202,6 +202,10 @@ impl Default for Config {
             gsr_workflow_validation_enabled: true,
             gsr_zizmor_enabled: false,
             gsr_zizmor_license_accepted: false,
+            resource_pressure_enabled: true,
+            resource_pressure_cpu_percent: 90,
+            resource_pressure_memory_percent: 90,
+            resource_pressure_disk_percent: 90,
         }
     }
 }
@@ -407,6 +411,12 @@ impl Config {
         if let Some(v) = get("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED") {
             c.gsr_zizmor_license_accepted = parse_bool("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED", &v)?;
         }
+        if let Some(v) = get("GITRUN_RESOURCE_PRESSURE_ENABLED") {
+            c.resource_pressure_enabled = parse_bool("GITRUN_RESOURCE_PRESSURE_ENABLED", &v)?;
+        }
+        c.resource_pressure_cpu_percent = value_u8(&get("GITRUN_RESOURCE_PRESSURE_CPU_PERCENT"), "GITRUN_RESOURCE_PRESSURE_CPU_PERCENT", c.resource_pressure_cpu_percent)?;
+        c.resource_pressure_memory_percent = value_u8(&get("GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT"), "GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT", c.resource_pressure_memory_percent)?;
+        c.resource_pressure_disk_percent = value_u8(&get("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT"), "GITRUN_RESOURCE_PRESSURE_DISK_PERCENT", c.resource_pressure_disk_percent)?;
         c.validate()?;
         Ok(c)
     }
@@ -548,6 +558,11 @@ impl Config {
             return Err(ConfigError::Invalid(
                 "GITRUN_GSR_ZIZMOR_ENABLED=true requires the zizmor license/terms to have been accepted first (GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED=true) — this is normally set by the dashboard's consent dialog, not by hand".into(),
             ));
+        }
+        for (name, value) in [("CPU", self.resource_pressure_cpu_percent), ("memory", self.resource_pressure_memory_percent), ("disk", self.resource_pressure_disk_percent)] {
+            if !(1..=100).contains(&value) {
+                return Err(ConfigError::Invalid(format!("resource pressure {name} threshold must be between 1 and 100%, got {value}")));
+            }
         }
         Ok(())
     }

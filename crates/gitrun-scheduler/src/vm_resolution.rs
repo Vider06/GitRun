@@ -385,11 +385,21 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
         vm::start(kind, &config.name)?;
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
-    Ok(DockerHost::Remote(vm::docker_host_address(
-        kind,
-        &ip,
-        config.docker_port,
-    )))
+    let endpoint = vm::docker_host_address(kind, &ip, config.docker_port);
+    if config.is_windows {
+        if config.docker_tls_cert_dir.trim().is_empty() {
+            return Err(vm::VmError::InvalidConfig(format!(
+                "Windows VM '{}' has no Docker TLS credential directory configured",
+                config.name
+            )));
+        }
+        Ok(DockerHost::RemoteTls {
+            endpoint,
+            cert_dir: config.docker_tls_cert_dir.clone(),
+        })
+    } else {
+        Ok(DockerHost::Remote(endpoint))
+    }
 }
 
 /// Loads VM definitions from `{state_dir}/vm-configs.json` at startup —
@@ -417,6 +427,7 @@ mod tests {
             docker_port: 2376,
             activation: vm::ActivationMode::Standard,
             is_windows: false,
+            docker_tls_cert_dir: String::new(),
         }
     }
 

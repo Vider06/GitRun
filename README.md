@@ -62,7 +62,7 @@ See:
 
 ## Security boundary
 
-GitRun-managed Linux runners currently receive the host Docker socket for Docker-backed CI compatibility. This is host-level Docker authority, not a normal unprivileged container capability.
+GitRun-managed Linux runners do **not** receive the host Docker socket by default. Direct Docker-socket access is a per-repository compatibility opt-in. When enabled, it grants workflow code host-level Docker authority, not a normal unprivileged container capability.
 
 GSR adds defense-in-depth: container hardening, command-policy enforcement and external process supervision. The Git*Run API is additionally constrained by an explicit API/operation matrix and repository policy.
 

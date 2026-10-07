@@ -250,7 +250,7 @@ fn preserve_text_line(line: &str) -> bool {
         || trimmed.contains("~purr~")
         || trimmed.contains("<3")
         || trimmed.contains("Thanks for using GitRun!")
-        || trimmed.starts_with("I have for this project spread to everyone")
+        || trimmed.contains("I have for this project spread to everyone")
         || trimmed.contains("-Vider06")
 }
 

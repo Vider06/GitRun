@@ -143,14 +143,12 @@ fn elevate_system_update(
 
     let executable = std::env::current_exe()?;
     let mut command = std::process::Command::new("sudo");
-    command.arg(executable).arg("update");
+    command.arg(executable).arg("--no-cat").arg("update");
     if let Some(url) = manifest_url {
         command.arg(url);
     }
-    // The parent process owns the terminal presenter. Do not let the elevated
-    // child create a second cat presenter, otherwise a single command can
-    // render the final state twice.
-    command.env("GITRUN_NO_CAT", "1");
+    // Use an explicit CLI flag instead of an environment variable because
+    // sudo may filter custom environment variables.
     let status = command.status()?;
     Ok(status.code().unwrap_or(1))
 }
@@ -912,7 +910,7 @@ fn rollback_command(
 
 fn main() {
     let cli = Cli::parse();
-    let mut presenter = presenter::CatPresenter::new();
+    let mut presenter = presenter::CatPresenter::new(cli.no_cat);
 
     if cli.gitrun {
         presenter.start_live();
@@ -1027,6 +1025,11 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
 #[derive(clap::Parser)]
 #[command(name = "gitrun", about, long_about = None, disable_version_flag = true)]
 struct Cli {
+    /// Disable all cat rendering for this process. Internal use for
+    /// delegated processes that must own the TTY without Ratatui output.
+    #[arg(long = "no-cat", hide = true)]
+    no_cat: bool,
+
     /// Print the GitRun version and exit. Accepts both `-V` (Unix
     /// convention, e.g. `gcc -V`, `rustc -V`) and `-v` as a short form,
     /// since operators reach for either out of habit and there's no other

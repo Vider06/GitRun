@@ -539,6 +539,9 @@ pub struct RunnerSpec<'a> {
     pub shared_cache_volume: &'a str,
     /// Cache isolation scope: global, repository, or runner.
     pub cache_scope: &'a str,
+    pub network: &'a str,
+    pub seccomp_profile: &'a str,
+    pub apparmor_profile: &'a str,
     pub docker_socket_gid: &'a str,
     /// Size string (e.g. "8g") for the runner's home directory, whether
     /// backed by tmpfs or a disk volume (see `home_backend`).
@@ -628,6 +631,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let labels = ensure_label(spec.labels, "gitrun-ci");
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
+    args.extend(["--network".into(), spec.network.into()]);
     args.extend([
         "--label".into(),
         "gitrun.runner=true".into(),
@@ -751,6 +755,13 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             // operator explicitly allows the broader unsafe-runner posture.
             // This does not claim the rest of Docker hardening is enabled.
             args.extend(gsr_supervisor_capability_args());
+        }
+    }
+
+    if !spec.is_windows {
+        args.extend(["--security-opt".into(), format!("seccomp={}", spec.seccomp_profile)]);
+        if !spec.apparmor_profile.trim().is_empty() {
+            args.extend(["--security-opt".into(), format!("apparmor={}", spec.apparmor_profile)]);
         }
     }
 

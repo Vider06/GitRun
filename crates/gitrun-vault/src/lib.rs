@@ -123,6 +123,18 @@ pub trait VaultEventSink: Send + Sync {
     fn on_randomness_failure(&self, operation: &str) {
         let _ = operation;
     }
+
+    fn on_secret_read(&self, secret_name: &str, scope: &Scope) {
+        let _ = (secret_name, scope);
+    }
+
+    fn on_secret_write(&self, secret_name: &str, scope: &Scope) {
+        let _ = (secret_name, scope);
+    }
+
+    fn on_secret_delete(&self, secret_name: &str, scope: &Scope) {
+        let _ = (secret_name, scope);
+    }
 }
 
 /// Default sink used when no observer is configured: does nothing. Kept
@@ -271,7 +283,9 @@ impl Vault {
                 key_version: DATA_KEY_VERSION,
             },
         );
-        self.persist()
+        self.persist()?;
+        self.events.on_secret_write(name, &scope);
+        Ok(())
     }
 
     /// Decrypts and returns the secret stored under `name` in `Scope::Global`.
@@ -320,10 +334,12 @@ impl Vault {
             VaultError::DecryptionFailed(name.to_owned())
         })?;
 
-        String::from_utf8(plaintext).map_err(|_| {
+        let value = String::from_utf8(plaintext).map_err(|_| {
             self.events.on_decryption_failure(name);
             VaultError::DecryptionFailed(name.to_owned())
-        })
+        })?;
+        self.events.on_secret_read(name, &entry.scope);
+        Ok(value)
     }
 
     pub fn delete(&mut self, name: &str) -> Result<()> {
@@ -335,7 +351,9 @@ impl Vault {
         if self.data.secrets.remove(&key).is_none() {
             return Err(VaultError::NotFound(name.to_owned()));
         }
-        self.persist()
+        self.persist()?;
+        self.events.on_secret_delete(name, scope);
+        Ok(())
     }
 
     /// Lists every secret's name, scope, and last-updated time, without

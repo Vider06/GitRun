@@ -79,6 +79,7 @@ struct LiveHandle {
     selection: Arc<Mutex<LiveSelection>>,
     terminal: SharedTerminal,
     join: Option<JoinHandle<()>>,
+    signal_join: Option<JoinHandle<()>>,
 }
 
 pub(crate) struct CatPresenter {
@@ -140,8 +141,15 @@ impl CatPresenter {
             Err(_) => return false,
         };
 
-        let selection = Arc::new(Mutex::new(
-            self.last_state
+        #[cfg(unix)]
+        let signal_join = match spawn_signal_watcher(Arc::clone(&terminal), Arc::clone(&stop)) {
+            Ok(join) => Some(join),
+            Err(_) => return false,
+        };
+        #[cfg(not(unix))]
+        let signal_join = None;
+
+        let selection = Arc::new(Mutex::new(            self.last_state
                 .map(LiveSelection::Validation)
                 .unwrap_or_else(|| LiveSelection::Named(states.default_state.clone())),
         ));
@@ -186,6 +194,7 @@ impl CatPresenter {
             selection,
             terminal,
             join: Some(join),
+            signal_join,
         });
 
         true
@@ -267,6 +276,9 @@ impl CatPresenter {
                 0,
                 true,
             );
+            if let Some(join) = live.signal_join {
+                let _ = join.join();
+            }
             deactivate_terminal(&live.terminal);
         } else {
             self.show_named(final_name);
@@ -295,6 +307,9 @@ impl CatPresenter {
         live.wake.notify_one();
 
         if let Some(join) = live.join.take() {
+            let _ = join.join();
+        }
+        if let Some(join) = live.signal_join.take() {
             let _ = join.join();
         }
 
@@ -353,6 +368,49 @@ fn cat_allowed_with(
         && term.map_or(true, |value| value != "dumb")
         && stdout_is_terminal
         && stderr_is_terminal
+}
+#[cfg(unix)]
+fn spawn_signal_watcher(
+    terminal: SharedTerminal,
+    stop: Arc<AtomicBool>,
+) -> io::Result<JoinHandle<()>> {
+    use signal_hook::consts::{SIGINT, SIGTERM};
+    use signal_hook::flag::register;
+    use signal_hook::low_level::unregister;
+
+    let sigint = Arc::new(AtomicBool::new(false));
+    let sigterm = Arc::new(AtomicBool::new(false));
+    let sigint_id = register(SIGINT, Arc::clone(&sigint))?;
+    let sigterm_id = match register(SIGTERM, Arc::clone(&sigterm)) {
+        Ok(id) => id,
+        Err(error) => {
+            unregister(sigint_id);
+            return Err(error);
+        }
+    };
+
+    Ok(thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            if sigint.load(Ordering::Relaxed) {
+                restore_terminal_cursor(&terminal);
+                std::process::exit(130);
+            }
+            if sigterm.load(Ordering::Relaxed) {
+                restore_terminal_cursor(&terminal);
+                std::process::exit(143);
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        unregister(sigint_id);
+        unregister(sigterm_id);
+    }))
+}
+
+fn restore_terminal_cursor(terminal: &SharedTerminal) {
+    if let Ok(mut terminal) = terminal.lock() {
+        let _ = terminal.show_cursor();
+        let _ = terminal.backend_mut().flush();
+    }
 }
 fn active_terminal() -> Option<SharedTerminal> {
     ACTIVE_TERMINAL

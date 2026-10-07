@@ -905,10 +905,7 @@ impl ApiExecutionBackend {
     }
 
     fn dock_read(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        let container = request
-            .resource
-            .as_deref()
-            .ok_or_else(|| failed("missing docked container"))?;
+        let container = self.require_dock_binding(request)?;
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
@@ -918,10 +915,7 @@ impl ApiExecutionBackend {
     }
 
     fn dock_write(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        let container = request
-            .resource
-            .as_deref()
-            .ok_or_else(|| failed("missing docked container"))?;
+        let container = self.require_dock_binding(request)?;
         let path = arg(request, "path")?;
         let value = arg(request, "value")?;
         ensure_safe_runner_path(path)?;
@@ -940,10 +934,7 @@ impl ApiExecutionBackend {
         request: &AuthorizedOperation,
         sink: &mut dyn FnMut(ExecutionEvent),
     ) -> Result<i32, ExecutionError> {
-        let container = request
-            .resource
-            .as_deref()
-            .ok_or_else(|| failed("missing docked container"))?;
+        let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
 
         docker::exec_container_stream(container, &["sh", "-c", command], |is_stderr, bytes| {
@@ -961,19 +952,41 @@ impl ApiExecutionBackend {
         &self,
         request: &AuthorizedOperation,
     ) -> Result<ExecutionResult, ExecutionError> {
-        let container = request
-            .resource
-            .as_deref()
-            .ok_or_else(|| failed("missing docked container"))?;
+        let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
         run_docker_command(container, &["sh", "-c", command])
     }
 
-    fn dock_melt(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        let source = request
+    fn require_dock_binding<'a>(
+        &'a self,
+        request: &AuthorizedOperation,
+    ) -> Result<&'a str, ExecutionError> {
+        let container = request
             .resource
             .as_deref()
-            .ok_or_else(|| failed("missing docked source container"))?;
+            .ok_or_else(|| failed("missing docked container"))?;
+        let run_id = request_run_id(request);
+        if run_id == 0 {
+            return Err(failed("GitDockRun requires an authoritative workflow run"));
+        }
+        let registry = DockRegistry::load(&self.state_dir)
+            .map_err(|error| failed(error.to_string()))?;
+        if registry.binding_for_authorized_container(
+            &request.repository,
+            run_id,
+            &request.job,
+            &self.caller.runner,
+            container,
+        ).is_none() {
+            return Err(failed(
+                "GitDockRun resource is not bound to this runner/workflow/job",
+            ));
+        }
+        Ok(container)
+    }
+
+    fn dock_melt(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        let source = self.require_dock_binding(request)?;
         let target = match request.arguments.get("target").map(String::as_str) {
             None | Some("runner") => self.caller.runner.as_str(),
             Some(value) => value,

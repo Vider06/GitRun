@@ -1,6 +1,7 @@
 pub mod ui;
 
 use gitrun_core::{Config, StateStore};
+use gitrun_setup::InstallationState;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -86,6 +87,19 @@ pub fn inspect() -> RecoveryReport {
             severity: Severity::Warning,
             title: "GitRun is not configured yet".into(),
             detail: "No persistent gitrun.env was found.".into(),
+            repairable: true,
+        });
+    }
+
+    if matches!(
+        gitrun_setup::installation_state(),
+        InstallationState::Incomplete
+    ) {
+        issues.push(RecoveryIssue {
+            code: "setup-incomplete".into(),
+            severity: Severity::Critical,
+            title: "GitRun setup is incomplete".into(),
+            detail: "The setup completion flag does not match the installed configuration. Recovery is required before GitRun can start normally.".into(),
             repairable: true,
         });
     }

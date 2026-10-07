@@ -104,6 +104,72 @@ pub fn config_file_path(config_dir: &Path) -> PathBuf {
     config_dir.join("gitrun.env")
 }
 
+pub const SETUP_FLAG_PATH: &str = "/etc/gitrun/setup.flag";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallationState {
+    FirstRun,
+    Incomplete,
+    Complete,
+}
+
+pub fn installation_state() -> InstallationState {
+    let config_present = Path::new("/etc/gitrun/gitrun.env").is_file();
+    let flag_valid = setup_flag_is_valid();
+
+    match (config_present, flag_valid) {
+        (false, false) => InstallationState::FirstRun,
+        (true, true) => InstallationState::Complete,
+        _ => InstallationState::Incomplete,
+    }
+}
+
+pub fn setup_flag_path() -> PathBuf {
+    PathBuf::from(SETUP_FLAG_PATH)
+}
+
+pub fn setup_flag_is_valid() -> bool {
+    let path = setup_flag_path();
+    let Ok(metadata) = fs::symlink_metadata(&path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        if metadata.uid() != 0 || (metadata.permissions().mode() & 0o777) != 0o600 {
+            return false;
+        }
+    }
+
+    fs::read_to_string(path)
+        .ok()
+        .is_some_and(|content| parse_setup_flag(&content))
+}
+
+fn parse_setup_flag(content: &str) -> bool {
+    let Some(value) = content.trim().strip_prefix("GITRUN_SETUP_COMPLETE=") else {
+        return false;
+    };
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn generate_setup_nonce() -> Result<String, SetupError> {
+    use std::io::Read;
+    let mut bytes = [0u8; 16];
+    let mut random = fs::File::open("/dev/urandom")?;
+    random.read_exact(&mut bytes)?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn write_setup_flag() -> Result<(), SetupError> {
+    let nonce = generate_setup_nonce()?;
+    let content = format!("GITRUN_SETUP_COMPLETE={nonce}\n");
+    write_resource(&setup_flag_path(), &content, 0o600)
+}
+
 pub fn bootstrap_linux_with_auth(
     auth: BootstrapAuth,
     repositories: &str,
@@ -237,9 +303,17 @@ pub fn bootstrap_linux_with_auth(
     setup_progress(8, "Finalizing desktop integration");
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),
-        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/local/bin/gitrun dashboard\nTerminal=false\nCategories=Development;System;\n",
+        "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/bin/gitrun dashboard\nTerminal=false\nCategories=Development;System;\n",
         0o644,
     )?;
+
+    setup_progress(9, "Recording completed setup state");
+    write_setup_flag()?;
+    if !setup_flag_is_valid() {
+        return Err(SetupError::Command(
+            "setup completion flag was written but could not be verified".into(),
+        ));
+    }
 
     Ok(SetupReport {
         dependencies: check_dependencies(),
@@ -249,7 +323,7 @@ pub fn bootstrap_linux_with_auth(
     })
 }
 
-const SETUP_PROGRESS_TOTAL: u8 = 8;
+const SETUP_PROGRESS_TOTAL: u8 = 9;
 
 fn setup_progress(step: u8, message: &str) {
     println!("[GitRun setup] [{step}/{SETUP_PROGRESS_TOTAL}] {message}");
@@ -873,6 +947,18 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn setup_flag_parser_accepts_only_the_expected_marker() {
+        assert!(parse_setup_flag(
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\n"
+        ));
+        assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=not-hex\n"));
+        assert!(!parse_setup_flag("OTHER=value\n"));
+        assert!(!parse_setup_flag(
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcde\n"
+        ));
+    }
 
     #[test]
     fn config_path_is_inside_config_dir() {

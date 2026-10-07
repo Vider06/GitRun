@@ -1089,7 +1089,7 @@ function renderSetupProgress() {
       <aside class="card setup-progress-panel">
         <div class="setup-panel-title">Setup progress</div>
         <div class="setup-progress-track" role="progressbar" aria-label="GitRun setup progress"
-             aria-valuemin="0" aria-valuemax="8" aria-valuenow="0">
+             aria-valuemin="0" aria-valuemax="9" aria-valuenow="0">
           <div id="setup-progress-fill" class="setup-progress-fill setup-progress-waiting"></div>
         </div>
         <div class="setup-progress-summary">
@@ -1105,6 +1105,7 @@ function renderSetupProgress() {
           <li data-setup-phase="6">Install GitRun binaries</li>
           <li data-setup-phase="7">Enable and start GitRun service</li>
           <li data-setup-phase="8">Finalize desktop integration</li>
+          <li data-setup-phase="9">Record completed setup state</li>
         </ol>
         <button class="btn" id="setup-retry" hidden>Back to setup</button>
       </aside>
@@ -1146,11 +1147,11 @@ function setupSetStatus(message, phase) {
 
   const marker = /^\[GitRun setup\] \[(\d+)\/8\] (.*)$/.exec(message);
   const displayMessage = marker ? marker[2] : message;
-  const safePhase = Math.max(0, Math.min(8, Number(phase) || 0));
-  const value = Math.round((safePhase / 8) * 100);
+  const safePhase = Math.max(0, Math.min(9, Number(phase) || 0));
+  const value = Math.round((safePhase / 9) * 100);
 
   status.textContent = displayMessage;
-  percent.textContent = safePhase === 0 ? "Waiting…" : `${value}% • Step ${safePhase}/8`;
+  percent.textContent = safePhase === 0 ? "Waiting…" : `${value}% • Step ${safePhase}/9`;
   fill.classList.toggle("setup-progress-waiting", safePhase === 0);
   fill.style.width = safePhase === 0 ? "18%" : `${value}%`;
   track.setAttribute("aria-valuenow", String(safePhase));
@@ -1176,7 +1177,7 @@ function applySetupEvent(event) {
 
   const terminalStatus = document.getElementById("setup-terminal-status");
   if (terminalStatus) {
-    terminalStatus.textContent = done ? (success ? "Complete" : "Failed") : (phase === 0 ? "Waiting" : `Step ${phase}/8`);
+    terminalStatus.textContent = done ? (success ? "Complete" : "Failed") : (phase === 0 ? "Waiting" : `Step ${phase}/9`);
     terminalStatus.className = `pill ${done ? (success ? "pill-success" : "pill-danger") : "pill-info"}`;
     terminalStatus.title = displayMessage;
   }
@@ -1359,7 +1360,7 @@ function renderFirstRun() {
       if (!setupEventDone) {
         applySetupEvent({
           phase: 0,
-          total: 8,
+          total: 9,
           message: "Setup failed: " + String(error),
           stream: "system",
           done: true,

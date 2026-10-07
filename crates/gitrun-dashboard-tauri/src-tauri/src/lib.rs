@@ -44,7 +44,10 @@ fn configured_config_path() -> Option<PathBuf> {
 
 #[tauri::command]
 fn is_first_run() -> bool {
-    configured_config_path().is_none()
+    matches!(
+        gitrun_setup::installation_state(),
+        gitrun_setup::InstallationState::FirstRun
+    )
 }
 
 fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {

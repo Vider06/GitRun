@@ -90,6 +90,26 @@ impl DockRegistry {
             .find(|binding| binding.container == container)
     }
 
+    /// Returns a binding only when the container belongs to the exact
+    /// workflow-run/job trust domain and was connected by this runner.
+    /// Container names and IDs are not authorization credentials on their own.
+    pub fn binding_for_authorized_container(
+        &self,
+        repository: &str,
+        run_id: u64,
+        job: &str,
+        requester_runner: &str,
+        container: &str,
+    ) -> Option<&DockBinding> {
+        self.bindings.iter().find(|binding| {
+            binding.repository == repository
+                && binding.run_id == run_id
+                && binding.job == job
+                && binding.requester_runner == requester_runner
+                && binding.container == container
+        })
+    }
+
     pub fn upsert(&mut self, binding: DockBinding) {
         self.bindings.retain(|existing| {
             !(existing.repository == binding.repository

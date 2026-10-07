@@ -1,4 +1,4 @@
-use crossterm::terminal;
+use crossterm::{cursor::MoveToNextLine, execute, terminal};
 use ratatui::{
     backend::CrosstermBackend,
     layout::Position,
@@ -477,6 +477,8 @@ fn render_live_frame(
 
     if show_cursor {
         let _ = terminal.show_cursor();
+        // The shell prompt must resume below the inline viewport, not inside the final cat frame.
+        let _ = execute!(terminal.backend_mut(), MoveToNextLine(1));
     } else {
         let _ = terminal.hide_cursor();
     }

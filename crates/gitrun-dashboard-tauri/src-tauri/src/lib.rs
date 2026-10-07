@@ -610,7 +610,7 @@ async fn run_first_setup(
     write_setup_request(&path, &payload)?;
 
     let app_for_setup = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let result = stream_privileged_setup(&app_for_setup, &pkexec, &cli, &path);
 
         let _ = std::fs::remove_file(&path);
@@ -652,8 +652,9 @@ async fn run_first_setup(
         }
     })
     .await
-    .map_err(|error| format!("privileged GitRun setup task failed: {error}"))?
-}
+    .map_err(|error| format!("privileged GitRun setup task failed: {error}"))??;
+
+    Ok(())
 
 // ---------------------------------------------------------------------
 // Overview

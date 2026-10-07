@@ -94,6 +94,7 @@ impl GitRunSettings {
         issues
     }
 
+    pub fn path_for_state_dir(state_dir: impl AsRef<Path>) -> PathBuf {
         state_dir.as_ref().join(SETTINGS_FILE_NAME)
     }
 

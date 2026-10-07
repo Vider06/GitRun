@@ -802,6 +802,18 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     Ok(())
 }
 
+/// Verifies that the selected Docker daemon is reachable and returns
+/// a small attestation string describing the server endpoint/version. The
+/// caller must still bind the daemon to the intended VM configuration.
+pub fn attest_host(host: &DockerHost) -> Result<String> {
+    let output = run_checked_on(host, &["version", "--format", "{{.Server.Version}}|{{.Server.APIVersion}}"])?;
+    let value = output.trim();
+    if value.is_empty() {
+        return Err(DockerError::Command("Docker daemon returned an empty health attestation".into()));
+    }
+    Ok(value.to_owned())
+}
+
 pub fn container_status(name: &str) -> Result<Option<String>> {
     container_status_string(&DockerHost::Local, name)
 }

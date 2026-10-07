@@ -286,6 +286,29 @@ jobs:
             echo "deb=$deb"
             echo "server_archive=$server_archive"
           } >> "$GITHUB_OUTPUT"
+      - name: Sign release manifest
+        if: ${{ env.GITRUN_UPDATE_SIGNING_KEY_PEM != '' }}
+        env:
+          GITRUN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.GITRUN_UPDATE_SIGNING_KEY_PEM }}
+          GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
+          ROOT: ${{ steps.artifacts.outputs.root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/gitrun-update-signing-key.pem"
+          payload="$RUNNER_TEMP/gitrun-manifest-signing-payload.json"
+          signature="$RUNNER_TEMP/gitrun-manifest.sig"
+          umask 077
+          printf "%s" "$GITRUN_UPDATE_SIGNING_KEY_PEM" > "$key"
+          jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" > "$payload"
+          openssl pkeyutl -sign -rawin -inkey "$key" -in "$payload" -out "$signature"
+          sig_hex="$(od -An -v -tx1 "$signature" | tr -d "[:space:]")"
+          test "${#sig_hex}" -eq 128
+          jq --arg sig "$sig_hex" --arg key_id "$GITRUN_UPDATE_SIGNING_KEY_ID" '. + {signature:$sig, signature_key_id:$key_id}' "$ROOT/release-manifest.json" > "$ROOT/release-manifest.json.tmp"
+          mv "$ROOT/release-manifest.json.tmp" "$ROOT/release-manifest.json"
+          rm -f "$key" "$payload" "$signature"
+          echo 'Release manifest signature: PASS'
+
       - name: Verify release artifacts
         shell: bash
         env:

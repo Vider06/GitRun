@@ -46,6 +46,9 @@ pub enum DockerHost {
     /// this struct doesn't currently carry cert paths; add them here before
     /// pointing at anything outside a trusted, isolated network.
     Remote(String),
+    /// Remote Docker daemon with TLS/mTLS credentials supplied through
+    /// Docker's standard DOCKER_CERT_PATH interface.
+    RemoteTls { endpoint: String, cert_dir: String },
 }
 
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
@@ -65,8 +68,15 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
                 .env("DOCKER_HOST", "unix:///var/run/docker.sock");
         }
         DockerHost::Remote(addr) => {
-            // Keep operator-provided TLS variables for the remote daemon.
+            // Legacy remote mode remains available for existing non-Windows
+            // Linux VM configurations. Windows VM resolution uses RemoteTls.
             command.env("DOCKER_HOST", addr);
+        }
+        DockerHost::RemoteTls { endpoint, cert_dir } => {
+            command
+                .env("DOCKER_HOST", endpoint)
+                .env("DOCKER_TLS_VERIFY", "1")
+                .env("DOCKER_CERT_PATH", cert_dir);
         }
     }
 

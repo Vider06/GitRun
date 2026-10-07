@@ -259,34 +259,18 @@ impl CatPresenter {
 }
 
 fn terminal_writer() -> Option<Box<dyn Write + Send>> {
-    if !io::stderr().is_terminal() && !io::stdout().is_terminal() {
-        return None;
+    // Keep the live renderer on the same standard stream the application uses.
+    // Opening /dev/tty (or CONOUT$) creates a second file descriptor for the
+    // same terminal cursor. The background renderer can then race normal
+    // println!/print! writes while it saves/restores the cursor and scroll
+    // region, which can erase command input or normal command output.
+    if io::stdout().is_terminal() {
+        return Some(Box::new(io::stdout()));
     }
-
-    #[cfg(unix)]
-    {
-        use std::fs::OpenOptions;
-        OpenOptions::new()
-            .write(true)
-            .open("/dev/tty")
-            .ok()
-            .map(|file| Box::new(file) as Box<dyn Write + Send>)
+    if io::stderr().is_terminal() {
+        return Some(Box::new(io::stderr()));
     }
-
-    #[cfg(windows)]
-    {
-        use std::fs::OpenOptions;
-        OpenOptions::new()
-            .write(true)
-            .open("CONOUT$")
-            .ok()
-            .map(|file| Box::new(file) as Box<dyn Write + Send>)
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        None
-    }
+    None
 }
 
 fn validate_states(states: &CatStates) -> bool {

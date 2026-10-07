@@ -779,6 +779,7 @@ fn create_runner(
             memory: &config.container_memory,
             pids_limit: &config.container_pids_limit,
             shared_cache_volume: &config.shared_cache_volume,
+            cache_scope: &config.shared_cache_scope,
             docker_socket_gid: &docker_socket_gid,
             docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
             runner_home_size: &config.runner_home_size,

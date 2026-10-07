@@ -1468,10 +1468,7 @@ fn run_api_policy(api_name: &str, operation: Option<&str>, enabled: Option<bool>
     0
 }
 
-fn run_check_compatibility(
-    workflow: Option<&str>,
-    presenter: &mut presenter::CatPresenter,
-) -> i32 {
+fn run_check_compatibility(workflow: Option<&str>, presenter: &mut presenter::CatPresenter) -> i32 {
     let config = match load_config() {
         Ok(config) => config,
         Err(error) => {

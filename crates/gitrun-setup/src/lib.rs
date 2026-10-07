@@ -139,7 +139,6 @@ pub fn setup_flag_is_valid() -> bool {
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         if metadata.uid() != 0 || (metadata.permissions().mode() & 0o777) != 0o600 {
             return false;
         }
@@ -310,6 +309,11 @@ pub fn bootstrap_linux_with_auth(
 
     setup_progress(9, "Recording completed setup state");
     write_setup_flag()?;
+    if !setup_flag_is_valid() {
+        return Err(SetupError::Command(
+            "setup completion flag was written but could not be verified".into(),
+        ));
+    }
 
     Ok(SetupReport {
         dependencies: check_dependencies(),

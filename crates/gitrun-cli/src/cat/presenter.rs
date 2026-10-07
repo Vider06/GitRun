@@ -1,9 +1,16 @@
 use crossterm::terminal;
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::Position,
+    widgets::{Paragraph, Widget},
+    Terminal, TerminalOptions, Viewport,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::io::{self, IsTerminal, Write};
+use std::fmt;
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -16,6 +23,11 @@ const LIVE_PANEL_HEIGHT: u16 = 4;
 const LIVE_MIN_ROWS: u16 = LIVE_PANEL_HEIGHT + 4;
 
 static ROLL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+type LiveTerminal = Terminal<CrosstermBackend<io::Stdout>>;
+type SharedTerminal = Arc<Mutex<LiveTerminal>>;
+
+static ACTIVE_TERMINAL: OnceLock<Mutex<Option<SharedTerminal>>> = OnceLock::new();
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,11 +77,11 @@ struct LiveHandle {
     stop: Arc<AtomicBool>,
     wake: Arc<Condvar>,
     selection: Arc<Mutex<LiveSelection>>,
+    terminal: SharedTerminal,
     join: Option<JoinHandle<()>>,
 }
 
 pub(crate) struct CatPresenter {
-    writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
     states: Option<Arc<CatStates>>,
     last_state: Option<ValidationState>,
     live: Option<LiveHandle>,
@@ -85,7 +97,6 @@ impl CatPresenter {
     pub(crate) fn new() -> Self {
         if std::env::var_os("GITRUN_NO_CAT").is_some() {
             return Self {
-                writer: None,
                 states: None,
                 last_state: None,
                 live: None,
@@ -96,13 +107,8 @@ impl CatPresenter {
             .ok()
             .filter(validate_states)
             .map(Arc::new);
-        let writer = states
-            .as_ref()
-            .and_then(|_| terminal_writer())
-            .map(|writer| Arc::new(Mutex::new(writer)));
 
         Self {
-            writer,
             states,
             last_state: None,
             live: None,
@@ -114,7 +120,7 @@ impl CatPresenter {
             return true;
         }
 
-        let (Some(writer), Some(states)) = (self.writer.as_ref(), self.states.as_ref()) else {
+        let Some(states) = self.states.as_ref() else {
             return false;
         };
         let Ok((_, rows)) = terminal::size() else {
@@ -123,6 +129,16 @@ impl CatPresenter {
         if rows < LIVE_MIN_ROWS {
             return false;
         }
+
+        let terminal = match Terminal::with_options(
+            CrosstermBackend::new(io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Inline(LIVE_PANEL_HEIGHT),
+            },
+        ) {
+            Ok(terminal) => Arc::new(Mutex::new(terminal)),
+            Err(_) => return false,
+        };
 
         let selection = Arc::new(Mutex::new(
             self.last_state
@@ -133,7 +149,9 @@ impl CatPresenter {
         let wake = Arc::new(Condvar::new());
         let wake_guard = Arc::new(Mutex::new(()));
 
-        let thread_writer = Arc::clone(writer);
+        activate_terminal(Arc::clone(&terminal));
+
+        let thread_terminal = Arc::clone(&terminal);
         let thread_states = Arc::clone(states);
         let thread_selection = Arc::clone(&selection);
         let thread_stop = Arc::clone(&stop);
@@ -152,7 +170,7 @@ impl CatPresenter {
                     .map(|selection| selection.clone())
                     .unwrap_or_else(|_| LiveSelection::Named(thread_states.default_state.clone()));
 
-                render_live_frame(&thread_writer, &thread_states, &current, tick);
+                render_live_frame(&thread_terminal, &thread_states, &current, tick, false);
                 tick = tick.wrapping_add(1);
 
                 let Ok(guard) = thread_guard.lock() else {
@@ -166,6 +184,7 @@ impl CatPresenter {
             stop,
             wake,
             selection,
+            terminal,
             join: Some(join),
         });
 
@@ -201,32 +220,59 @@ impl CatPresenter {
             return;
         }
 
-        let Some(writer) = self.writer.as_ref() else {
-            return;
-        };
         let Some(sprite) = states.states.get(state_name) else {
             return;
         };
-        let Ok(mut writer) = writer.lock() else {
-            return;
-        };
 
-        let _ = writer.write_all(b"\r\n");
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(
+            b"
+",
+        );
         for line in &sprite.lines {
-            let _ = writer.write_all(line.as_bytes());
-            let _ = writer.write_all(b"\r\n");
+            let _ = stdout.write_all(line.as_bytes());
+            let _ = stdout.write_all(
+                b"
+",
+            );
         }
-        let _ = writer.write_all(b"\r\n");
-        let _ = writer.flush();
+        let _ = stdout.write_all(
+            b"
+",
+        );
+        let _ = stdout.flush();
     }
 
     pub(crate) fn finish(&mut self, exit_code: i32) {
-        self.stop_live();
-        self.transition(if exit_code == 0 {
+        let final_state = if exit_code == 0 {
             ValidationState::Success
         } else {
             ValidationState::Failure
-        });
+        };
+        let final_name = choose_cat_state(final_state);
+
+        if let Some(mut live) = self.live.take() {
+            live.stop.store(true, Ordering::Relaxed);
+            live.wake.notify_one();
+
+            if let Some(join) = live.join.take() {
+                let _ = join.join();
+            }
+
+            let selection = LiveSelection::Named(final_name.to_owned());
+            render_live_frame(
+                &live.terminal,
+                self.states.as_deref().unwrap(),
+                &selection,
+                0,
+                true,
+            );
+            deactivate_terminal(&live.terminal);
+        } else {
+            self.show_named(final_name);
+        }
+
+        self.last_state = Some(final_state);
     }
 
     fn set_live_selection(&self, selection: LiveSelection) {
@@ -235,7 +281,7 @@ impl CatPresenter {
         };
 
         if let Ok(mut current) = live.selection.lock() {
-            *current = selection.clone();
+            *current = selection;
         }
         live.wake.notify_one();
     }
@@ -252,40 +298,64 @@ impl CatPresenter {
             let _ = join.join();
         }
 
-        if let Some(writer) = self.writer.as_ref() {
-            clear_live_panel(writer);
-        }
+        deactivate_terminal(&live.terminal);
     }
 }
 
-fn terminal_writer() -> Option<Box<dyn Write + Send>> {
-    if !io::stderr().is_terminal() && !io::stdout().is_terminal() {
-        return None;
+pub(crate) fn terminal_print(args: fmt::Arguments<'_>, stderr: bool, newline: bool) {
+    let mut text = args.to_string();
+    if newline {
+        text.push('\n');
     }
 
-    #[cfg(unix)]
-    {
-        use std::fs::OpenOptions;
-        OpenOptions::new()
-            .write(true)
-            .open("/dev/tty")
-            .ok()
-            .map(|file| Box::new(file) as Box<dyn Write + Send>)
+    if let Some(terminal) = active_terminal() {
+        let height = text.lines().count().max(1).min(u16::MAX as usize) as u16;
+        let _ = terminal.lock().map(|mut terminal| {
+            let text = text.as_str();
+            terminal.insert_before(height, |buffer| {
+                Paragraph::new(text).render(buffer.area, buffer);
+            })
+        });
+        return;
     }
 
-    #[cfg(windows)]
-    {
-        use std::fs::OpenOptions;
-        OpenOptions::new()
-            .write(true)
-            .open("CONOUT$")
-            .ok()
-            .map(|file| Box::new(file) as Box<dyn Write + Send>)
+    if stderr {
+        let mut stream = io::stderr().lock();
+        let _ = stream.write_all(text.as_bytes());
+        let _ = stream.flush();
+    } else {
+        let mut stream = io::stdout().lock();
+        let _ = stream.write_all(text.as_bytes());
+        let _ = stream.flush();
     }
+}
 
-    #[cfg(not(any(unix, windows)))]
+fn active_terminal() -> Option<SharedTerminal> {
+    ACTIVE_TERMINAL
+        .get()
+        .and_then(|slot| slot.lock().ok().and_then(|active| active.clone()))
+}
+
+fn activate_terminal(terminal: SharedTerminal) {
+    let slot = ACTIVE_TERMINAL.get_or_init(|| Mutex::new(None));
+    if let Ok(mut active) = slot.lock() {
+        *active = Some(terminal);
+    }
+}
+
+fn deactivate_terminal(terminal: &SharedTerminal) {
+    let Some(slot) = ACTIVE_TERMINAL.get() else {
+        return;
+    };
+    let Ok(mut active) = slot.lock() else {
+        return;
+    };
+
+    if active
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, terminal))
     {
-        None
+        *active = None;
     }
 }
 
@@ -367,18 +437,12 @@ fn live_state_name(state: ValidationState, tick: usize) -> &'static str {
 }
 
 fn render_live_frame(
-    writer: &Arc<Mutex<Box<dyn Write + Send>>>,
+    terminal: &SharedTerminal,
     states: &CatStates,
     selection: &LiveSelection,
     tick: usize,
+    show_cursor: bool,
 ) {
-    let Ok((_, rows)) = terminal::size() else {
-        return;
-    };
-    if rows < LIVE_MIN_ROWS {
-        return;
-    }
-
     let state_name = match selection {
         LiveSelection::Validation(state) => live_state_name(*state, tick),
         LiveSelection::Named(name) => name.as_str(),
@@ -392,39 +456,29 @@ fn render_live_frame(
         return;
     };
 
-    // Reserve one blank row between normal command output and the live cat.
-    // The scrolling region ends above that gap, so terminal output can never
-    // overwrite the cat or use its row as part of the normal output stream.
-    let scroll_bottom = rows.saturating_sub(LIVE_PANEL_HEIGHT);
-    let panel_top = scroll_bottom.saturating_add(2);
-    let mut output = format!("\x1b[s\x1b[1;{}r", scroll_bottom);
-    for (offset, line) in (0u16..).zip(sprite.lines.iter()).take(3) {
-        let row = panel_top.saturating_add(offset);
-        output.push_str(&format!("\x1b[{};1H\x1b[2K{}", row, line));
-    }
-    output.push_str(&format!("\x1b[{};1H\x1b[2K\x1b[u", rows));
-
-    if let Ok(mut writer) = writer.lock() {
-        let _ = writer.write_all(output.as_bytes());
-        let _ = writer.flush();
-    }
-}
-
-fn clear_live_panel(writer: &Arc<Mutex<Box<dyn Write + Send>>>) {
-    let Ok((_, rows)) = terminal::size() else {
+    let Ok(mut terminal) = terminal.lock() else {
         return;
     };
 
-    let first = rows.saturating_sub(LIVE_PANEL_HEIGHT) + 1;
-    let mut output = String::from("\x1b[s\x1b[r");
-    for row in first..=rows {
-        output.push_str(&format!("\x1b[{};1H\x1b[2K", row));
-    }
-    output.push_str("\x1b[u");
+    let _ = terminal.draw(|frame| {
+        let area = frame.area();
+        let lines = sprite
+            .lines
+            .iter()
+            .take(area.height as usize)
+            .cloned()
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines.join("\n")), area);
 
-    if let Ok(mut writer) = writer.lock() {
-        let _ = writer.write_all(output.as_bytes());
-        let _ = writer.flush();
+        if show_cursor {
+            frame.set_cursor_position(Position::new(0, area.height.saturating_sub(1)));
+        }
+    });
+
+    if show_cursor {
+        let _ = terminal.show_cursor();
+    } else {
+        let _ = terminal.hide_cursor();
     }
 }
 

@@ -852,6 +852,38 @@ pub fn stop(kind: HypervisorKind, name: &str) -> Result<()> {
 /// Forcefully stops a VM that didn't respond to a graceful shutdown request
 /// within a reasonable time. Callers should attempt `stop` first and only
 /// escalate to this after a timeout.
+/// Creates a named VM snapshot. Callers should snapshot a known-good,
+/// stopped or quiesced guest according to the hypervisor's guarantees.
+pub fn create_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Result<()> {
+    validate_snapshot_name(snapshot)?;
+    match kind {
+        HypervisorKind::Kvm => run_checked(kind, &["snapshot-create-as", name, snapshot, "--atomic"])?,
+        HypervisorKind::VirtualBox => run_checked(kind, &["snapshot", name, "take", snapshot])?,
+    }
+    Ok(())
+}
+
+/// Restores a previously-created snapshot. The caller must own the VM
+/// lifecycle and must not restore a VM that has an active runner workload.
+pub fn restore_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Result<()> {
+    validate_snapshot_name(snapshot)?;
+    match kind {
+        HypervisorKind::Kvm => run_checked(kind, &["snapshot-revert", name, "--snapshotname", snapshot])?,
+        HypervisorKind::VirtualBox => run_checked(kind, &["snapshot", name, "restore", snapshot])?,
+    }
+    Ok(())
+}
+
+fn validate_snapshot_name(value: &str) -> Result<()> {
+    if value.trim().is_empty()
+        || value.chars().any(|c| c.is_control() || c.is_whitespace())
+        || value.len() > 128
+    {
+        return Err(VmError::InvalidConfig("invalid snapshot name".into()));
+    }
+    Ok(())
+}
+
 pub fn force_stop(kind: HypervisorKind, name: &str) -> Result<()> {
     match kind {
         HypervisorKind::Kvm => run_checked(kind, &["destroy", name])?,

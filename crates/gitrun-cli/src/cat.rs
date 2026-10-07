@@ -173,15 +173,29 @@ fn fit_page(
 fn normalize_lines(lines: &[String], width: usize) -> Vec<String> {
     lines
         .iter()
-        .map(|line| {
-            let mut normalized: String = line.chars().take(width).collect();
-            let current_width = normalized.chars().count();
-            if current_width < width {
-                normalized.push_str(&" ".repeat(width - current_width));
-            }
-            normalized
-        })
+        .map(|line| normalize_line(line, width))
         .collect()
+}
+
+fn normalize_line(line: &str, width: usize) -> String {
+    let trimmed = line.trim();
+    let mut normalized = if trimmed.starts_with('|') && trimmed.ends_with('|') {
+        let text_width = trimmed.chars().count().min(width);
+        let left_padding = width.saturating_sub(text_width) / 2;
+        format!(
+            "{}{}",
+            " ".repeat(left_padding),
+            trimmed.chars().take(width).collect::<String>()
+        )
+    } else {
+        line.chars().take(width).collect()
+    };
+
+    let current_width = normalized.chars().count();
+    if current_width < width {
+        normalized.push_str(&" ".repeat(width - current_width));
+    }
+    normalized
 }
 
 fn remove_phase_messages(lines: &[String]) -> Vec<String> {
@@ -294,6 +308,15 @@ mod tests {
         assert_eq!(
             normalize_lines(&lines, 4),
             vec!["abc ".to_owned(), "abcd".to_owned()]
+        );
+    }
+
+    #[test]
+    fn bordered_message_lines_are_centered() {
+        let lines = vec!["| text |".to_owned()];
+        assert_eq!(
+            normalize_lines(&lines, 20),
+            vec!["      | text |      ".to_owned()]
         );
     }
 

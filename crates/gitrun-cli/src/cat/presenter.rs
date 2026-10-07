@@ -392,8 +392,11 @@ fn render_live_frame(
         return;
     };
 
-    let panel_top = rows.saturating_sub(LIVE_PANEL_HEIGHT) + 1;
+    // Reserve one blank row between normal command output and the live cat.
+    // The scrolling region ends above that gap, so terminal output can never
+    // overwrite the cat or use its row as part of the normal output stream.
     let scroll_bottom = rows.saturating_sub(LIVE_PANEL_HEIGHT);
+    let panel_top = scroll_bottom.saturating_add(2);
     let mut output = format!("\x1b[s\x1b[1;{}r", scroll_bottom);
     for (offset, line) in (0u16..).zip(sprite.lines.iter()).take(3) {
         let row = panel_top.saturating_add(offset);

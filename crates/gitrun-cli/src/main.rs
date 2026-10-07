@@ -999,7 +999,7 @@ fn validation_state_for_command(command: &Command) -> cat::presenter::Validation
         Command::Cat => ValidationState::Ready,
         Command::Connect { .. } => ValidationState::Connecting,
         Command::Doctor => ValidationState::Validating,
-        Command::Update { .. } => ValidationState::Updating,
+        // Update validates the release plan before entering the updating state.\n        // Keeping the initial state neutral avoids showing "updating" when the\n        // requested release is already installed or otherwise rejected.\n        Command::Update { .. } => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering

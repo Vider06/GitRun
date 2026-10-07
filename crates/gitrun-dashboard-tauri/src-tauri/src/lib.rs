@@ -399,18 +399,12 @@ fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
 }
 
 enum SetupChildOutput {
-    Line {
-        stream: &'static str,
-        line: String,
-    },
+    Line { stream: &'static str, line: String },
     Done,
 }
 
-fn spawn_setup_reader<R>(
-    reader: R,
-    stream: &'static str,
-    sender: mpsc::Sender<SetupChildOutput>,
-) where
+fn spawn_setup_reader<R>(reader: R, stream: &'static str, sender: mpsc::Sender<SetupChildOutput>)
+where
     R: std::io::Read + Send + 'static,
 {
     std::thread::spawn(move || {
@@ -494,14 +488,7 @@ fn stream_privileged_setup(
                 if let Some((phase, _status_message)) = parse_setup_progress_line(&line) {
                     current_phase = phase;
                 }
-                emit_first_setup_event(
-                    app,
-                    current_phase,
-                    line,
-                    stream,
-                    false,
-                    false,
-                );
+                emit_first_setup_event(app, current_phase, line, stream, false, false);
             }
             Ok(SetupChildOutput::Done) => {
                 finished_readers += 1;
@@ -509,11 +496,9 @@ fn stream_privileged_setup(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 if status.is_none() {
-                    status = Some(
-                        child
-                            .wait()
-                            .map_err(|error| format!("unable to wait for privileged setup: {error}"))?,
-                    );
+                    status = Some(child.wait().map_err(|error| {
+                        format!("unable to wait for privileged setup: {error}")
+                    })?);
                 }
                 break;
             }
@@ -636,17 +621,12 @@ async fn run_first_setup(
                     true,
                     false,
                 );
-                Err(format!("privileged GitRun setup failed with status {status}"))
+                Err(format!(
+                    "privileged GitRun setup failed with status {status}"
+                ))
             }
             Err(error) => {
-                emit_first_setup_event(
-                    &app_for_setup,
-                    0,
-                    error.clone(),
-                    "system",
-                    true,
-                    false,
-                );
+                emit_first_setup_event(&app_for_setup, 0, error.clone(), "system", true, false);
                 Err(error)
             }
         }
@@ -1248,10 +1228,12 @@ mod tests {
 
     #[test]
     fn setup_progress_marker_is_parsed() {
-        let parsed = parse_setup_progress_line(
-            "[GitRun setup] [5/8] Building gitrun-runner:latest",
+        let parsed =
+            parse_setup_progress_line("[GitRun setup] [5/8] Building gitrun-runner:latest");
+        assert_eq!(
+            parsed,
+            Some((5, "Building gitrun-runner:latest".to_owned()))
         );
-        assert_eq!(parsed, Some((5, "Building gitrun-runner:latest".to_owned())));
         assert!(parse_setup_progress_line("[GitRun setup] [5/7] invalid").is_none());
     }
 

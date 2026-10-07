@@ -1,9 +1,7 @@
 use crossterm::terminal;
 use ratatui::{
-    backend::CrosstermBackend,
-    layout::Position,
-    widgets::Paragraph,
-    Terminal, TerminalOptions, Viewport,
+    backend::CrosstermBackend, layout::Position, widgets::Paragraph, Terminal, TerminalOptions,
+    Viewport,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -225,15 +223,21 @@ impl CatPresenter {
         };
 
         let mut stdout = io::stdout().lock();
-        let _ = stdout.write_all(b"
-");
+        let _ = stdout.write_all(
+            b"
+",
+        );
         for line in &sprite.lines {
             let _ = stdout.write_all(line.as_bytes());
-            let _ = stdout.write_all(b"
-");
+            let _ = stdout.write_all(
+                b"
+",
+            );
         }
-        let _ = stdout.write_all(b"
-");
+        let _ = stdout.write_all(
+            b"
+",
+        );
         let _ = stdout.flush();
     }
 
@@ -254,7 +258,13 @@ impl CatPresenter {
             }
 
             let selection = LiveSelection::Named(final_name.to_owned());
-            render_live_frame(&live.terminal, self.states.as_deref().unwrap(), &selection, 0, true);
+            render_live_frame(
+                &live.terminal,
+                self.states.as_deref().unwrap(),
+                &selection,
+                0,
+                true,
+            );
             deactivate_terminal(&live.terminal);
         } else {
             self.show_named(final_name);
@@ -521,10 +531,7 @@ fn render_live_frame(
         frame.render_widget(Paragraph::new(lines.join("\n")), area);
 
         if show_cursor {
-            frame.set_cursor_position(Position::new(
-                0,
-                area.height.saturating_sub(1),
-            ));
+            frame.set_cursor_position(Position::new(0, area.height.saturating_sub(1)));
         }
     });
 

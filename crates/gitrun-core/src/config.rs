@@ -19,12 +19,21 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     pub repositories: Vec<String>,
+    /// Host sizing profile: standard, small, or large.
+    pub host_profile: String,
     pub min_runners: u32,
     pub max_runners: u32,
     pub idle_timeout: u64,
     pub poll_interval: u64,
     pub runner_image: String,
     pub runner_labels: String,
+    /// Docker network to attach runner containers to. Operators can point
+    /// this at a pre-created egress-controlled network.
+    pub runner_network: String,
+    /// Docker seccomp profile: `default` or a daemon-visible profile path.
+    pub runner_seccomp_profile: String,
+    /// Optional Docker AppArmor profile name; empty leaves Docker default.
+    pub runner_apparmor_profile: String,
     pub ephemeral: bool,
     pub state_dir: String,
     pub log_dir: String,
@@ -166,12 +175,16 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             repositories: Vec::new(),
+            host_profile: "standard".into(),
             min_runners: 3,
             max_runners: 8,
             idle_timeout: 120,
             poll_interval: 5,
             runner_image: "gitrun-runner:latest".into(),
             runner_labels: "self-hosted,Linux,X64".into(),
+            runner_network: "bridge".into(),
+            runner_seccomp_profile: "default".into(),
+            runner_apparmor_profile: String::new(),
             ephemeral: false,
             state_dir: "/var/lib/gitrun".into(),
             log_dir: "/var/log/gitrun".into(),
@@ -289,9 +302,26 @@ impl Config {
             "GITRUN_POLL_INTERVAL",
             c.poll_interval,
         )?;
+        if let Some(v) = get("GITRUN_HOST_PROFILE") {
+            c.host_profile = v.trim().to_ascii_lowercase();
+        }
+        if c.host_profile == "small" {
+            if !lookup.contains_key("GITRUN_MIN_RUNNERS") { c.min_runners = 1; }
+            if !lookup.contains_key("GITRUN_MAX_RUNNERS") { c.max_runners = 2; }
+            if !lookup.contains_key("GITRUN_CONTAINER_CPUS") { c.container_cpus = "0.5".into(); }
+            if !lookup.contains_key("GITRUN_CONTAINER_MEMORY") { c.container_memory = "768m".into(); }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_CPU_PERCENT") { c.resource_pressure_cpu_percent = 80; }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT") { c.resource_pressure_memory_percent = 85; }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT") { c.resource_pressure_disk_percent = 90; }
+        } else if c.host_profile == "large" {
+            if !lookup.contains_key("GITRUN_MAX_RUNNERS") { c.max_runners = 16; }
+        }
         if let Some(v) = get("GITRUN_RUNNER_IMAGE") {
             c.runner_image = v;
         }
+        if let Some(v) = get("GITRUN_RUNNER_NETWORK") { c.runner_network = v.trim().to_owned(); }
+        if let Some(v) = get("GITRUN_RUNNER_SECCOMP_PROFILE") { c.runner_seccomp_profile = v.trim().to_owned(); }
+        if let Some(v) = get("GITRUN_RUNNER_APPARMOR_PROFILE") { c.runner_apparmor_profile = v.trim().to_owned(); }
         if let Some(v) = get("GITRUN_RUNNER_LABELS") {
             c.runner_labels = v;
         }
@@ -511,6 +541,18 @@ impl Config {
                 "runner home backend must be \"tmpfs\" or \"volume\", got {:?}",
                 self.runner_home_backend
             )));
+        }
+        if !matches!(self.host_profile.as_str(), "small" | "standard" | "large") {
+            return Err(ConfigError::Invalid(format!("host profile must be small, standard, or large, got {:?}", self.host_profile)));
+        }
+        if self.runner_network.trim().is_empty() || self.runner_network.chars().any(char::is_control) || self.runner_network.chars().any(char::is_whitespace) {
+            return Err(ConfigError::Invalid("runner network must be a non-empty Docker network name".into()));
+        }
+        if self.runner_seccomp_profile.trim().is_empty() || self.runner_seccomp_profile.chars().any(char::is_control) || self.runner_seccomp_profile.chars().any(char::is_whitespace) {
+            return Err(ConfigError::Invalid("runner seccomp profile must be a non-empty value without whitespace".into()));
+        }
+        if self.runner_apparmor_profile.chars().any(char::is_control) || self.runner_apparmor_profile.chars().any(char::is_whitespace) {
+            return Err(ConfigError::Invalid("runner AppArmor profile must not contain whitespace or control characters".into()));
         }
         if !matches!(self.gtuu_schedule_timezone.as_str(), "utc" | "local") {
             return Err(ConfigError::Invalid(format!(

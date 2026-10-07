@@ -13,9 +13,12 @@ use gitrun_core::{Config, GitRunApi, GitRunSettings};
 use gitrun_setup::BootstrapAuth;
 use gitrun_vault::{Scope, Vault};
 use serde::{Deserialize, Serialize};
+use std::io::BufRead;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use std::process::Stdio;
+use std::sync::mpsc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter, Manager};
 
 fn load_config() -> Result<Config, String> {
     match std::env::var("GITRUN_CONFIG_FILE") {
@@ -350,6 +353,189 @@ fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), Stri
     result
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct FirstSetupEvent {
+    phase: u8,
+    total: u8,
+    message: String,
+    stream: String,
+    done: bool,
+    success: bool,
+}
+
+const FIRST_SETUP_EVENT: &str = "gitrun-setup-progress";
+const FIRST_SETUP_TOTAL: u8 = 8;
+
+fn emit_first_setup_event(
+    app: &AppHandle,
+    phase: u8,
+    message: impl Into<String>,
+    stream: &str,
+    done: bool,
+    success: bool,
+) {
+    let _ = app.emit(
+        FIRST_SETUP_EVENT,
+        FirstSetupEvent {
+            phase: phase.min(FIRST_SETUP_TOTAL),
+            total: FIRST_SETUP_TOTAL,
+            message: message.into(),
+            stream: stream.to_owned(),
+            done,
+            success,
+        },
+    );
+}
+
+fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
+    let rest = line.strip_prefix("[GitRun setup] [")?;
+    let (fraction, message) = rest.split_once("] ")?;
+    let (step, total) = fraction.split_once('/')?;
+    let step = step.parse::<u8>().ok()?;
+    if total.parse::<u8>().ok()? != FIRST_SETUP_TOTAL {
+        return None;
+    }
+    Some((step.min(FIRST_SETUP_TOTAL), message.to_owned()))
+}
+
+enum SetupChildOutput {
+    Line {
+        stream: &'static str,
+        line: String,
+    },
+    Done,
+}
+
+fn spawn_setup_reader<R>(
+    reader: R,
+    stream: &'static str,
+    sender: mpsc::Sender<SetupChildOutput>,
+) where
+    R: std::io::Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(reader);
+        for line in reader.lines() {
+            match line {
+                Ok(line) => {
+                    if sender
+                        .send(SetupChildOutput::Line { stream, line })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(SetupChildOutput::Line {
+                        stream,
+                        line: format!("unable to read {stream}: {error}"),
+                    });
+                    break;
+                }
+            }
+        }
+        let _ = sender.send(SetupChildOutput::Done);
+    });
+}
+
+fn stream_privileged_setup(
+    app: &AppHandle,
+    pkexec: &std::path::Path,
+    cli: &std::path::Path,
+    request_path: &std::path::Path,
+) -> Result<std::process::ExitStatus, String> {
+    emit_first_setup_event(
+        app,
+        0,
+        "Waiting for administrator authorization…",
+        "system",
+        false,
+        false,
+    );
+
+    let mut child = std::process::Command::new(pkexec)
+        .arg(cli)
+        .arg("--install-root")
+        .arg(request_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("unable to start privileged GitRun setup: {error}"))?;
+
+    emit_first_setup_event(
+        app,
+        0,
+        "Administrator authorization requested. Complete the system authentication dialog to continue.",
+        "system",
+        false,
+        false,
+    );
+
+    let (sender, receiver) = mpsc::channel();
+    let mut expected_readers = 0usize;
+
+    if let Some(stdout) = child.stdout.take() {
+        expected_readers += 1;
+        spawn_setup_reader(stdout, "stdout", sender.clone());
+    }
+    if let Some(stderr) = child.stderr.take() {
+        expected_readers += 1;
+        spawn_setup_reader(stderr, "stderr", sender.clone());
+    }
+    drop(sender);
+
+    let mut finished_readers = 0usize;
+    let mut current_phase = 0u8;
+    let mut status = None;
+
+    while finished_readers < expected_readers || status.is_none() {
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(SetupChildOutput::Line { stream, line }) => {
+                if let Some((phase, _status_message)) = parse_setup_progress_line(&line) {
+                    current_phase = phase;
+                }
+                emit_first_setup_event(
+                    app,
+                    current_phase,
+                    line,
+                    stream,
+                    false,
+                    false,
+                );
+            }
+            Ok(SetupChildOutput::Done) => {
+                finished_readers += 1;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if status.is_none() {
+                    status = Some(
+                        child
+                            .wait()
+                            .map_err(|error| format!("unable to wait for privileged setup: {error}"))?,
+                    );
+                }
+                break;
+            }
+        }
+
+        if status.is_none() {
+            status = child
+                .try_wait()
+                .map_err(|error| format!("unable to inspect privileged setup: {error}"))?;
+        }
+    }
+
+    let status = match status {
+        Some(status) => status,
+        None => child
+            .wait()
+            .map_err(|error| format!("unable to wait for privileged setup: {error}"))?,
+    };
+
+    Ok(status)
+}
+
 #[tauri::command]
 async fn run_first_setup(
     app: AppHandle,
@@ -423,34 +609,46 @@ async fn run_first_setup(
     );
     write_setup_request(&path, &payload)?;
 
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--install-root")
-            .arg(&path)
-            .output();
+    let app_for_setup = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let result = stream_privileged_setup(&app_for_setup, &pkexec, &cli, &path);
 
         let _ = std::fs::remove_file(&path);
 
         match result {
-            Ok(output) if output.status.success() => Ok(()),
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                Err(if stderr.is_empty() {
-                    if stdout.is_empty() {
-                        format!(
-                            "privileged GitRun setup failed with status {}",
-                            output.status
-                        )
-                    } else {
-                        stdout
-                    }
-                } else {
-                    stderr
-                })
+            Ok(status) if status.success() => {
+                emit_first_setup_event(
+                    &app_for_setup,
+                    FIRST_SETUP_TOTAL,
+                    "GitRun setup completed successfully.",
+                    "system",
+                    true,
+                    true,
+                );
+                Ok(())
             }
-            Err(error) => Err(format!("unable to start privileged GitRun setup: {error}")),
+            Ok(status) => {
+                emit_first_setup_event(
+                    &app_for_setup,
+                    0,
+                    format!("Privileged setup failed with status {status}."),
+                    "system",
+                    true,
+                    false,
+                );
+                Err(format!("privileged GitRun setup failed with status {status}"))
+            }
+            Err(error) => {
+                emit_first_setup_event(
+                    &app_for_setup,
+                    0,
+                    error.clone(),
+                    "system",
+                    true,
+                    false,
+                );
+                Err(error)
+            }
         }
     })
     .await

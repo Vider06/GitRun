@@ -655,6 +655,7 @@ async fn run_first_setup(
     .map_err(|error| format!("privileged GitRun setup task failed: {error}"))??;
 
     Ok(())
+}
 
 // ---------------------------------------------------------------------
 // Overview

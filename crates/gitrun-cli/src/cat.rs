@@ -250,6 +250,7 @@ fn preserve_text_line(line: &str) -> bool {
         || trimmed.contains("~purr~")
         || trimmed.contains("<3")
         || trimmed.contains("Thanks for using GitRun!")
+        || trimmed.starts_with("I have for this project spread to everyone")
         || trimmed.contains("-Vider06")
 }
 
@@ -329,6 +330,12 @@ mod tests {
             "I have for this project spread to everyone".to_owned(),
         ];
         assert!(contains_readable_message(&lines));
+    }
+
+    #[test]
+    fn final_message_continuation_is_preserved_during_compaction() {
+        let line = "|                I have for this project spread to everyone                |";
+        assert!(preserve_text_line(line));
     }
 
     #[test]

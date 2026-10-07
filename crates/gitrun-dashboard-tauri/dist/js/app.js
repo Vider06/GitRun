@@ -1105,6 +1105,7 @@ function renderSetupProgress() {
           <li data-setup-phase="6">Install GitRun binaries</li>
           <li data-setup-phase="7">Enable and start GitRun service</li>
           <li data-setup-phase="8">Finalize desktop integration</li>
+          <li data-setup-phase="9">Record completed setup state</li>
         </ol>
         <button class="btn" id="setup-retry" hidden>Back to setup</button>
       </aside>

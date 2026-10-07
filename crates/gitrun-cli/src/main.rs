@@ -912,7 +912,7 @@ fn rollback_command(
 
 fn main() {
     let cli = Cli::parse();
-    let mut presenter = presenter::CatPresenter::new();
+    let mut presenter = presenter::CatPresenter::new(cli.no_cat);
 
     if cli.gitrun {
         presenter.start_live();
@@ -1027,6 +1027,11 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
 #[derive(clap::Parser)]
 #[command(name = "gitrun", about, long_about = None, disable_version_flag = true)]
 struct Cli {
+    /// Disable all cat rendering for this process. Internal use for
+    /// delegated processes that must own the TTY without Ratatui output.
+    #[arg(long = "no-cat", hide = true)]
+    no_cat: bool,
+
     /// Print the GitRun version and exit. Accepts both `-V` (Unix
     /// convention, e.g. `gcc -V`, `rustc -V`) and `-v` as a short form,
     /// since operators reach for either out of habit and there's no other

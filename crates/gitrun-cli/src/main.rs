@@ -973,7 +973,13 @@ fn main() {
             only_containers,
         } => run_update(manifest_url.as_deref(), only_containers, &mut presenter),
         Command::Scheduler => run_scheduler(),
-        Command::Dashboard => run_dashboard(),
+        Command::Dashboard => {
+            // The Tauri runtime may write native GTK/EGL diagnostics directly to
+            // stderr. Do not keep the Ratatui inline renderer active while the
+            // graphical dashboard owns the process and terminal.
+            presenter.prepare_for_external_process();
+            run_dashboard()
+        }
         Command::RecoveryGtuu => run_recovery_gtuu(&mut presenter),
         Command::RepairService => run_repair_service(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),

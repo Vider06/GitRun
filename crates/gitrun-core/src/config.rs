@@ -414,9 +414,21 @@ impl Config {
         if let Some(v) = get("GITRUN_RESOURCE_PRESSURE_ENABLED") {
             c.resource_pressure_enabled = parse_bool("GITRUN_RESOURCE_PRESSURE_ENABLED", &v)?;
         }
-        c.resource_pressure_cpu_percent = value_u8(&get("GITRUN_RESOURCE_PRESSURE_CPU_PERCENT"), "GITRUN_RESOURCE_PRESSURE_CPU_PERCENT", c.resource_pressure_cpu_percent)?;
-        c.resource_pressure_memory_percent = value_u8(&get("GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT"), "GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT", c.resource_pressure_memory_percent)?;
-        c.resource_pressure_disk_percent = value_u8(&get("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT"), "GITRUN_RESOURCE_PRESSURE_DISK_PERCENT", c.resource_pressure_disk_percent)?;
+        c.resource_pressure_cpu_percent = value_u8(
+            &get("GITRUN_RESOURCE_PRESSURE_CPU_PERCENT"),
+            "GITRUN_RESOURCE_PRESSURE_CPU_PERCENT",
+            c.resource_pressure_cpu_percent,
+        )?;
+        c.resource_pressure_memory_percent = value_u8(
+            &get("GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT"),
+            "GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT",
+            c.resource_pressure_memory_percent,
+        )?;
+        c.resource_pressure_disk_percent = value_u8(
+            &get("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT"),
+            "GITRUN_RESOURCE_PRESSURE_DISK_PERCENT",
+            c.resource_pressure_disk_percent,
+        )?;
         c.validate()?;
         Ok(c)
     }
@@ -559,9 +571,15 @@ impl Config {
                 "GITRUN_GSR_ZIZMOR_ENABLED=true requires the zizmor license/terms to have been accepted first (GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED=true) — this is normally set by the dashboard's consent dialog, not by hand".into(),
             ));
         }
-        for (name, value) in [("CPU", self.resource_pressure_cpu_percent), ("memory", self.resource_pressure_memory_percent), ("disk", self.resource_pressure_disk_percent)] {
+        for (name, value) in [
+            ("CPU", self.resource_pressure_cpu_percent),
+            ("memory", self.resource_pressure_memory_percent),
+            ("disk", self.resource_pressure_disk_percent),
+        ] {
             if !(1..=100).contains(&value) {
-                return Err(ConfigError::Invalid(format!("resource pressure {name} threshold must be between 1 and 100%, got {value}")));
+                return Err(ConfigError::Invalid(format!(
+                    "resource pressure {name} threshold must be between 1 and 100%, got {value}"
+                )));
             }
         }
         Ok(())

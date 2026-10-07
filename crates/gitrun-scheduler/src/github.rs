@@ -436,7 +436,10 @@ impl GitHubClient {
         match self.request(reqwest::Method::GET, &url) {
             Ok(response) => {
                 let run: WorkflowRun = response.json()?;
-                Ok(Some(WorkflowRunInfo { id: run_id, name: run.name }))
+                Ok(Some(WorkflowRunInfo {
+                    id: run_id,
+                    name: run.name,
+                }))
             }
             Err(GitHubError::Api { status: 404, .. }) => Ok(None),
             Err(error) => Err(error),

@@ -9,10 +9,10 @@ pub mod gtuu;
 pub mod gtuu_startup;
 pub mod logic_containers;
 pub mod reconcile;
+pub mod resource_pressure;
 pub mod state;
 pub mod vm;
 pub mod vm_resolution;
-pub mod resource_pressure;
 
 pub use backoff::RateLimitTracker;
 pub use github::{GitHubClient, GitHubError, Runner};

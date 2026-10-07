@@ -45,9 +45,15 @@ pub fn sample(config: &Config) -> Result<ResourceSnapshot, ResourcePressureError
     let mut available = None;
     for line in meminfo.lines() {
         if let Some(v) = line.strip_prefix("MemTotal:") {
-            total = v.split_whitespace().next().and_then(|x| x.parse::<f32>().ok());
+            total = v
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse::<f32>().ok());
         } else if let Some(v) = line.strip_prefix("MemAvailable:") {
-            available = v.split_whitespace().next().and_then(|x| x.parse::<f32>().ok());
+            available = v
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse::<f32>().ok());
         }
     }
     let total = total.ok_or(ResourcePressureError::Parse)?;
@@ -98,8 +104,23 @@ mod tests {
         c.resource_pressure_cpu_percent = 80;
         c.resource_pressure_memory_percent = 90;
         c.resource_pressure_disk_percent = 95;
-        assert!(ResourceSnapshot { cpu_percent: 80.0, memory_percent: 1.0, disk_percent: 1.0 }.is_pressured(&c));
-        assert!(ResourceSnapshot { cpu_percent: 1.0, memory_percent: 90.0, disk_percent: 1.0 }.is_pressured(&c));
-        assert!(ResourceSnapshot { cpu_percent: 1.0, memory_percent: 1.0, disk_percent: 95.0 }.is_pressured(&c));
+        assert!(ResourceSnapshot {
+            cpu_percent: 80.0,
+            memory_percent: 1.0,
+            disk_percent: 1.0
+        }
+        .is_pressured(&c));
+        assert!(ResourceSnapshot {
+            cpu_percent: 1.0,
+            memory_percent: 90.0,
+            disk_percent: 1.0
+        }
+        .is_pressured(&c));
+        assert!(ResourceSnapshot {
+            cpu_percent: 1.0,
+            memory_percent: 1.0,
+            disk_percent: 95.0
+        }
+        .is_pressured(&c));
     }
 }

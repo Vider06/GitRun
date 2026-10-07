@@ -64,8 +64,7 @@ pub fn spawn(
         #[cfg(target_os = "linux")]
         {
             use std::os::unix::fs::chown;
-            chown(&path, Some(0), Some(10000))
-                .map_err(|e| format!("set API socket group: {e}"))?;
+            chown(&path, Some(0), Some(10000)).map_err(|e| format!("set API socket group: {e}"))?;
         }
 
         let state_dir = Path::new(&config.state_dir).to_path_buf();
@@ -336,12 +335,13 @@ fn handle_stream(
         .find_workflow_run(&request.invocation.repository, run_id)
         .map_err(|error| format!("verify authoritative workflow run: {error}"))?;
     let Some(workflow_run) = workflow_run else {
-        send_error(&mut stream, "authoritative GitHub workflow run could not be verified")?;
+        send_error(
+            &mut stream,
+            "authoritative GitHub workflow run could not be verified",
+        )?;
         return Ok(());
     };
-    if !request.invocation.workflow.is_empty()
-        && request.invocation.workflow != workflow_run.name
-    {
+    if !request.invocation.workflow.is_empty() && request.invocation.workflow != workflow_run.name {
         send_error(&mut stream, "workflow identity claim does not match GitHub")?;
         return Ok(());
     }
@@ -969,15 +969,18 @@ impl ApiExecutionBackend {
         if run_id == 0 {
             return Err(failed("GitDockRun requires an authoritative workflow run"));
         }
-        let registry = DockRegistry::load(&self.state_dir)
-            .map_err(|error| failed(error.to_string()))?;
-        if registry.binding_for_authorized_container(
-            &request.repository,
-            run_id,
-            &request.job,
-            &self.caller.runner,
-            container,
-        ).is_none() {
+        let registry =
+            DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
+        if registry
+            .binding_for_authorized_container(
+                &request.repository,
+                run_id,
+                &request.job,
+                &self.caller.runner,
+                container,
+            )
+            .is_none()
+        {
             return Err(failed(
                 "GitDockRun resource is not bound to this runner/workflow/job",
             ));

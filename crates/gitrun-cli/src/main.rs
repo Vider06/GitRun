@@ -132,7 +132,15 @@ fn running_as_root() -> bool {
     }
 }
 
-fn elevate_system_update(manifest_url: Option<&str>) -> Result<i32, Box<dyn std::error::Error>> {
+fn elevate_system_update(
+    manifest_url: Option<&str>,
+    presenter: &mut presenter::CatPresenter,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    // sudo writes its password prompt directly to the inherited TTY. End the
+    // parent's Ratatui inline viewport first so its render thread cannot race
+    // with raw child output and corrupt the cat/prompt layout.
+    presenter.prepare_for_external_process();
+
     let executable = std::env::current_exe()?;
     let mut command = std::process::Command::new("sudo");
     command.arg(executable).arg("update");
@@ -1646,7 +1654,7 @@ fn run_update(
     }
 
     if system_install_paths().is_some() && !running_as_root() {
-        match elevate_system_update(manifest_url) {
+        match elevate_system_update(manifest_url, presenter) {
             Ok(code) => return code,
             Err(error) => {
                 eprintln!("GitRun update: unable to elevate system update: {error}");

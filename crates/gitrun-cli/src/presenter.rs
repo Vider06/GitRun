@@ -2,7 +2,7 @@ use crossterm::{cursor::MoveToNextLine, execute, terminal};
 use ratatui::{
     backend::CrosstermBackend,
     layout::Position,
-    widgets::{Paragraph, Widget, Wrap},
+    widgets::{Clear, Paragraph, Widget, Wrap},
     Terminal, TerminalOptions, Viewport,
 };
 use serde::Deserialize;
@@ -287,6 +287,45 @@ impl CatPresenter {
         }
 
         self.last_state = Some(final_state);
+    }
+
+    pub(crate) fn prepare_for_external_process(&mut self) {
+        let Some(mut live) = self.live.take() else {
+            return;
+        };
+
+        live.stop.store(true, Ordering::Relaxed);
+        live.wake.notify_one();
+        if let Some(join) = live.join.take() {
+            let _ = join.join();
+        }
+        if let Some(join) = live.signal_join.take() {
+            let _ = join.join();
+        }
+
+        if let Ok(mut terminal) = live.terminal.lock() {
+            let mut cursor = None;
+            let _ = terminal.draw(|frame| {
+                let area = frame.area();
+                frame.render_widget(Clear, area);
+                cursor = Some(Position::new(
+                    area.x,
+                    area.y + area.height.saturating_sub(1),
+                ));
+            });
+
+            if let Some(cursor) = cursor {
+                let _ = terminal.set_cursor_position(cursor);
+                let _ = terminal.show_cursor();
+                let _ = execute!(terminal.backend_mut(), MoveToNextLine(1));
+                if let Ok(position) = terminal.get_cursor_position() {
+                    let _ = terminal.set_cursor_position(position);
+                }
+                let _ = terminal.backend_mut().flush();
+            }
+        }
+
+        deactivate_terminal(&live.terminal);
     }
 
     fn set_live_selection(&self, selection: LiveSelection) {

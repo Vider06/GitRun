@@ -196,3 +196,45 @@ mod tests {
         assert_eq!(registry.bindings[0].container, "b");
     }
 }
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    fn binding(run_id: u64, runner: &str) -> DockBinding {
+        DockBinding {
+            repository: "Vider06/GitRun".into(),
+            run_id,
+            job: "build".into(),
+            container: "dock-a".into(),
+            dynamic: true,
+            dock_only: true,
+            requester_runner: runner.into(),
+            connected_at: 1,
+        }
+    }
+
+    #[test]
+    fn binding_authorization_rejects_cross_run() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(binding(10, "runner-a"));
+        assert!(registry.binding_for_authorized_container(
+            "Vider06/GitRun", 10, "build", "runner-a", "dock-a"
+        ).is_some());
+        assert!(registry.binding_for_authorized_container(
+            "Vider06/GitRun", 11, "build", "runner-a", "dock-a"
+        ).is_none());
+    }
+
+    #[test]
+    fn binding_authorization_rejects_cross_runner_and_container() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(binding(10, "runner-a"));
+        assert!(registry.binding_for_authorized_container(
+            "Vider06/GitRun", 10, "build", "runner-b", "dock-a"
+        ).is_none());
+        assert!(registry.binding_for_authorized_container(
+            "Vider06/GitRun", 10, "build", "runner-a", "dock-b"
+        ).is_none());
+    }
+}

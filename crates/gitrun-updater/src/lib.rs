@@ -205,6 +205,11 @@ impl ReleaseManifest {
             (None, _) => Ok(()),
             (Some(_), None) => Err(UpdateError::InvalidManifest("manifest is signed but no public key is configured".into())),
             (Some(signature), Some(public_key)) => {
+                if let Ok(expected_id) = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_ID") {
+                    if self.signature_key_id.as_deref() != Some(expected_id.trim()) {
+                        return Err(UpdateError::InvalidManifest("update manifest signing key id does not match configured key".into()));
+                    }
+                }
                 let public = decode_hex(public_key).ok_or_else(|| UpdateError::InvalidManifest("update public key must be 32-byte hex".into()))?;
                 let sig = decode_hex(signature).ok_or_else(|| UpdateError::InvalidManifest("update signature must be hex".into()))?;
                 if public.len() != 32 || sig.len() != 64 {

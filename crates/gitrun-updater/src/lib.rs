@@ -222,7 +222,11 @@ impl ReleaseManifest {
         let mut unsigned = self.clone();
         unsigned.signature = None;
         unsigned.signature_key_id = None;
-        serde_json::to_vec(&unsigned).map_err(|error| UpdateError::InvalidManifest(error.to_string()))
+        let value = serde_json::to_value(&unsigned)
+            .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+        let canonical = canonicalize_json(value);
+        serde_json::to_vec(&canonical)
+            .map_err(|error| UpdateError::InvalidManifest(error.to_string()))
     }
 }
 
@@ -1322,6 +1326,22 @@ fn is_version(value: &str) -> bool {
 
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(entries) => {
+            let sorted: std::collections::BTreeMap<_, _> = entries
+                .into_iter()
+                .map(|(key, value)| (key, canonicalize_json(value)))
+                .collect();
+            serde_json::to_value(sorted).unwrap_or(serde_json::Value::Null)
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonicalize_json).collect())
+        }
+        other => other,
+    }
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {

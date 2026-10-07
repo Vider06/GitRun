@@ -367,7 +367,7 @@ fn cat_allowed_with(
 ) -> bool {
     !no_cat
         && !ci
-        && term.map_or(true, |value| value != "dumb")
+        && term != Some("dumb")
         && stdout_is_terminal
         && stderr_is_terminal
 }

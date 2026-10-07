@@ -1077,6 +1077,116 @@ function setDashboardShell(visible) {
   }
 }
 
+function renderSetupProgress() {
+  setDashboardShell(false);
+  content.innerHTML = `
+    <div class="view-header">
+      <h1 class="view-title">Installing GitRun</h1>
+      <p class="view-subtitle">GitRun is being installed with administrator privileges. Follow the live progress and installer output below.</p>
+    </div>
+
+    <div class="setup-progress-layout">
+      <aside class="card setup-progress-panel">
+        <div class="setup-panel-title">Setup progress</div>
+        <div class="setup-progress-track" role="progressbar" aria-label="GitRun setup progress"
+             aria-valuemin="0" aria-valuemax="8" aria-valuenow="0">
+          <div id="setup-progress-fill" class="setup-progress-fill setup-progress-waiting"></div>
+        </div>
+        <div class="setup-progress-summary">
+          <strong id="setup-progress-percent">Waiting…</strong>
+          <span id="setup-progress-status">Waiting for administrator authorization.</span>
+        </div>
+        <ol class="setup-phase-list" id="setup-phase-list">
+          <li data-setup-phase="1">Check Docker and system prerequisites</li>
+          <li data-setup-phase="2">Prepare GitRun system directories</li>
+          <li data-setup-phase="3">Install runner, recovery, and service resources</li>
+          <li data-setup-phase="4">Write GitRun configuration</li>
+          <li data-setup-phase="5">Build gitrun-runner:latest</li>
+          <li data-setup-phase="6">Install GitRun binaries</li>
+          <li data-setup-phase="7">Enable and start GitRun service</li>
+          <li data-setup-phase="8">Finalize desktop integration</li>
+        </ol>
+        <button class="btn" id="setup-retry" hidden>Back to setup</button>
+      </aside>
+
+      <section class="card setup-terminal-card">
+        <div class="setup-terminal-header">
+          <div>
+            <div class="setup-panel-title">Privileged setup log</div>
+            <div class="field-hint">Live stdout/stderr from the installer.</div>
+          </div>
+          <span class="pill pill-muted" id="setup-terminal-status">Waiting</span>
+        </div>
+        <pre class="setup-terminal-output mono" id="setup-terminal-output" aria-live="polite"></pre>
+      </section>
+    </div>
+  `;
+
+  document.getElementById("setup-retry").addEventListener("click", renderFirstRun);
+}
+
+function setupAppendLog(message) {
+  const terminal = document.getElementById("setup-terminal-output");
+  if (!terminal) return;
+  const timestamp = new Date().toLocaleTimeString();
+  const line = `[${timestamp}] ${String(message)}`;
+  const lines = (terminal.textContent || "").split("\n").filter(Boolean);
+  lines.push(line);
+  if (lines.length > 500) lines.splice(0, lines.length - 500);
+  terminal.textContent = lines.join("\n") + "\n";
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+function setupSetStatus(message, phase) {
+  const status = document.getElementById("setup-progress-status");
+  const percent = document.getElementById("setup-progress-percent");
+  const fill = document.getElementById("setup-progress-fill");
+  const track = document.querySelector(".setup-progress-track");
+  if (!status || !percent || !fill || !track) return;
+
+  const marker = /^\[GitRun setup\] \[(\d+)\/8\] (.*)$/.exec(message);
+  const displayMessage = marker ? marker[2] : message;
+  const safePhase = Math.max(0, Math.min(8, Number(phase) || 0));
+  const value = Math.round((safePhase / 8) * 100);
+
+  status.textContent = displayMessage;
+  percent.textContent = safePhase === 0 ? "Waiting…" : `${value}% • Step ${safePhase}/8`;
+  fill.classList.toggle("setup-progress-waiting", safePhase === 0);
+  fill.style.width = safePhase === 0 ? "18%" : `${value}%`;
+  track.setAttribute("aria-valuenow", String(safePhase));
+}
+
+function applySetupEvent(event) {
+  const phase = Number(event.phase) || 0;
+  const message = String(event.message || "");
+  const done = Boolean(event.done);
+  const success = Boolean(event.success);
+  const stream = String(event.stream || "system");
+  const marker = /^\[GitRun setup\] \[(\d+)\/8\] (.*)$/.exec(message);
+  const displayMessage = marker ? marker[2] : message;
+
+  setupAppendLog(stream === "stdout" || stream === "system" ? message : `[${stream}] ${message}`);
+  setupSetStatus(message, phase);
+
+  document.querySelectorAll("[data-setup-phase]").forEach((item) => {
+    const step = Number(item.dataset.setupPhase);
+    item.classList.toggle("active", step === phase && phase > 0 && !done);
+    item.classList.toggle("complete", step < phase || (done && success && step <= phase));
+  });
+
+  const terminalStatus = document.getElementById("setup-terminal-status");
+  if (terminalStatus) {
+    terminalStatus.textContent = done ? (success ? "Complete" : "Failed") : (phase === 0 ? "Waiting" : `Step ${phase}/8`);
+    terminalStatus.className = `pill ${done ? (success ? "pill-success" : "pill-danger") : "pill-info"}`;
+    terminalStatus.title = displayMessage;
+  }
+
+  if (done && !success) {
+    const retry = document.getElementById("setup-retry");
+    if (retry) retry.hidden = false;
+  }
+}
+
 function renderFirstRun() {
   setDashboardShell(false);
   content.innerHTML = `
@@ -1177,23 +1287,23 @@ function renderFirstRun() {
     const installationIdEl = document.getElementById("setup-installation-id");
     const privateKeyPathEl = document.getElementById("setup-private-key-path");
     const reposEl = document.getElementById("setup-repositories");
-    const statusEl = document.getElementById("setup-status");
-    const button = document.getElementById("setup-submit");
 
     const authMode = authModeEl.value;
     const token = tokenEl.value.trim();
     const appId = appIdEl.value.trim();
     const installationId = installationIdEl.value.trim();
-    const privateKeyPath = privateKeyPathEl.value.trim();
+    let setupPrivateKeyPath = privateKeyPathEl.value.trim();
     const repositories = reposEl.value.trim();
 
     if (authMode === "pat" && !token) {
+      const statusEl = document.getElementById("setup-status");
       statusEl.textContent = "GitHub token is required.";
       statusEl.style.color = "var(--danger)";
       tokenEl.focus();
       return;
     }
     if (authMode === "app" && (!appId || !installationId || !privateKeyPath)) {
+      const statusEl = document.getElementById("setup-status");
       statusEl.textContent = "App ID, installation ID, and private key path are all required.";
       statusEl.style.color = "var(--danger)";
       if (!appId) appIdEl.focus();
@@ -1202,52 +1312,66 @@ function renderFirstRun() {
       return;
     }
     if (!repositories) {
+      const statusEl = document.getElementById("setup-status");
       statusEl.textContent = "At least one repository is required.";
       statusEl.style.color = "var(--danger)";
       reposEl.focus();
       return;
     }
 
-    button.disabled = true;
-    tokenEl.disabled = true;
-    appIdEl.disabled = true;
-    installationIdEl.disabled = true;
-    privateKeyPathEl.disabled = true;
-    reposEl.disabled = true;
-    authModeEl.disabled = true;
-    statusEl.textContent = "Authorizing the privileged GitRun setup…";
-    statusEl.style.color = "var(--text-secondary)";
+    renderSetupProgress();
+    setupAppendLog("Starting first-run GitRun setup…");
+    setupSetStatus("Preparing privileged setup…", 0);
+
+    let unlisten = null;
+    let setupEventDone = false;
 
     try {
+      const { listen } = window.__TAURI__.event;
+      unlisten = await listen("gitrun-setup-progress", (event) => {
+        const payload = event.payload || {};
+        setupEventDone = Boolean(payload.done);
+        applySetupEvent(payload);
+      });
+
       if (authMode === "app") {
-        const securedPath = await invoke("secure_private_key", { privateKeyPath });
-        privateKeyPathEl.value = securedPath;
+        setupAppendLog("Securing the GitHub App private key to mode 0600…");
+        const securedPath = await invoke("secure_private_key", { privateKeyPath: setupPrivateKeyPath });
+        setupAppendLog("Private key security check completed.");
+        setupPrivateKeyPath = securedPath;
       }
+
       await invoke("run_first_setup", {
         authMode,
         token,
         repositories,
         appId,
         installationId,
-        privateKeyPath,
+        privateKeyPath: setupPrivateKeyPath,
       });
-      tokenEl.value = "";
+
       state.firstRun = false;
       setDashboardShell(true);
       await navigate("overview");
       pollHypervisorDecisions();
       setInterval(pollHypervisorDecisions, 5000);
     } catch (error) {
-      statusEl.textContent = "Setup failed: " + error;
-      statusEl.style.color = "var(--danger)";
-      button.disabled = false;
-      tokenEl.disabled = false;
-      appIdEl.disabled = false;
-      installationIdEl.disabled = false;
-      privateKeyPathEl.disabled = false;
-      reposEl.disabled = false;
-      authModeEl.disabled = false;
+      if (!setupEventDone) {
+        applySetupEvent({
+          phase: 0,
+          total: 8,
+          message: "Setup failed: " + String(error),
+          stream: "system",
+          done: true,
+          success: false,
+        });
+      }
+    } finally {
+      if (unlisten) {
+        await unlisten();
+      }
     }
+  });
   });
 }
 

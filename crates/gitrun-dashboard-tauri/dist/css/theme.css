@@ -395,6 +395,124 @@ table.data-table tr:hover td { background: var(--bg-card-hover); }
   margin-top: 20px;
 }
 
+/* ---------------- First-run setup ---------------- */
+
+.setup-progress-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 520px;
+}
+
+.setup-progress-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.setup-panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.setup-progress-track {
+  position: relative;
+  height: 8px;
+  margin: 18px 0 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+
+.setup-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.setup-progress-fill.setup-progress-waiting {
+  width: 18%;
+  animation: setup-progress-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes setup-progress-pulse {
+  0%, 100% { opacity: 0.35; transform: translateX(-8%); }
+  50% { opacity: 1; transform: translateX(0); }
+}
+
+.setup-progress-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 14px;
+}
+
+.setup-progress-summary strong {
+  font-size: 16px;
+}
+
+.setup-phase-list {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  font-size: 12.5px;
+}
+
+.setup-phase-list li {
+  padding-left: 3px;
+}
+
+.setup-phase-list li.active {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.setup-phase-list li.complete {
+  color: var(--success);
+}
+
+.setup-progress-panel #setup-retry {
+  margin-top: auto;
+}
+
+.setup-terminal-card {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.setup-terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.setup-terminal-output {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 14px;
+  background: #080a0e;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 /* ---------------- Utility ---------------- */
 
 .mono { font-family: var(--font-mono); }
@@ -402,6 +520,14 @@ table.data-table tr:hover td { background: var(--bg-card-hover); }
 .text-danger { color: var(--danger); }
 
 @media (max-width: 900px) {
+  .setup-progress-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .setup-terminal-card {
+    min-height: 360px;
+  }
+
   .content {
     padding: 24px;
   }

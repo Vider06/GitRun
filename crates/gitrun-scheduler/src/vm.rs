@@ -118,6 +118,10 @@ pub struct VmConfig {
     /// Port the Docker daemon inside the VM listens on (commonly 2376 for
     /// TLS-secured remote Docker).
     pub docker_port: u16,
+    /// Directory containing ca.pem, cert.pem, and key.pem for the VM Docker daemon.
+    /// Required for Windows VM runners; an empty value keeps legacy Linux VM configs readable.
+    #[serde(default)]
+    pub docker_tls_cert_dir: String,
     pub activation: ActivationMode,
     /// Whether this VM runs Windows — used to pick the Windows-appropriate
     /// `docker::RunnerSpec` flags (see `RunnerSpec::is_windows`'s doc
@@ -200,6 +204,26 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
                 "VM '{}' must use a non-zero Docker port",
                 config.name
             )));
+        }
+
+        if config.is_windows && config.docker_tls_cert_dir.trim().is_empty() {
+            return Err(VmError::InvalidConfig(format!(
+                "Windows VM '{}' requires docker_tls_cert_dir for mutually authenticated Docker TLS",
+                config.name
+            )));
+        }
+        if !config.docker_tls_cert_dir.trim().is_empty() {
+            let cert_dir = Path::new(config.docker_tls_cert_dir.trim());
+            for name in ["ca.pem", "cert.pem", "key.pem"] {
+                let path = cert_dir.join(name);
+                if !path.is_file() {
+                    return Err(VmError::InvalidConfig(format!(
+                        "VM '{}' Docker TLS credential is missing: {}",
+                        config.name,
+                        path.display()
+                    )));
+                }
+            }
         }
 
         if matches!(config.hypervisor, HypervisorKind::VirtualBox)
@@ -957,6 +981,7 @@ mod tests {
             docker_port: 2376,
             activation: ActivationMode::Standard,
             is_windows: false,
+            docker_tls_cert_dir: String::new(),
         }
     }
 

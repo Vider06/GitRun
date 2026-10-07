@@ -333,6 +333,7 @@ pub fn build_plan(
     installed_dependencies: &[(String, Option<String>)],
 ) -> Result<UpdatePlan, UpdateError> {
     manifest.validate()?;
+    manifest.verify_signature_from_env()?;
     if compare_versions(&manifest.version, current_version)? != std::cmp::Ordering::Greater {
         return Err(UpdateError::NotNewer);
     }

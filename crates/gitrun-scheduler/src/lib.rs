@@ -73,6 +73,24 @@ pub fn run() {
         std::process::exit(2);
     }
 
+    let settings_path = gitrun_core::GitRunSettings::path_for_state_dir(&config.state_dir);
+    match gitrun_core::GitRunSettings::load_or_default(&settings_path) {
+        Ok(settings) => {
+            for issue in settings.lint() {
+                eprintln!(
+                    "gitrun-autoscaler: security policy lint [{}] {}: {}",
+                    issue.path,
+                    "warning",
+                    issue.message
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!("gitrun-autoscaler: security policy could not be linted: {error}");
+            std::process::exit(2);
+        }
+    }
+
     let client = match build_github_client(&config) {
         Ok(client) => Arc::new(client),
         Err(error) => {

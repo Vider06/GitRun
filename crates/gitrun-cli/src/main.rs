@@ -13,6 +13,24 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cat;
 
+macro_rules! println {
+    () => {
+        $crate::cat::presenter::terminal_print(format_args!(""), false, true)
+    };
+    ($($arg:tt)*) => {
+        $crate::cat::presenter::terminal_print(format_args!($($arg)*), false, true)
+    };
+}
+
+macro_rules! eprintln {
+    () => {
+        $crate::cat::presenter::terminal_print(format_args!(""), true, true)
+    };
+    ($($arg:tt)*) => {
+        $crate::cat::presenter::terminal_print(format_args!($($arg)*), true, true)
+    };
+}
+
 fn persistent_config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
         return Some(PathBuf::from(path));

@@ -10,6 +10,7 @@ description = "GitRun release update, dependency and rollback manager"
 gitrun-core = { path = "../gitrun-core" }
 flate2 = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+ring = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"

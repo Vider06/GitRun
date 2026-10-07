@@ -598,9 +598,15 @@ fn execute(
             if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
                 return Ok(());
             }
+            // An exited runner crosses a trust boundary: never restart/reuse
+            // its filesystem or credentials. Quarantine the identity first,
+            // then remove the container and create a fresh runner if capacity
+            // is still required.
+            state.quarantine(name);
+            eprintln!(
+                "gitrun-autoscaler: quarantining exited runner {name} for {repo} as a security event"
+            );
             deregister_and_remove(client, repo, name)?;
-            state.clear_idle(name);
-            state.clear_recovery(name);
         }
         Action::CreateRunner {
             permanent,

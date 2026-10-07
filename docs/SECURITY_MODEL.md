@@ -124,18 +124,20 @@ but the default vault instance uses a no-op sink; full external security-event
 wiring is still an integration area rather than something operators should
 assume is always active.
 
-## What GitRun does *not* currently do
+## Remaining hardening limits
 
-Documented here so these limitations are explicit rather than assumed:
+The hardening baseline is now configurable and enforceable, but some controls
+remain deployment-dependent:
 
-- No dedicated network isolation between runner containers and the rest of
-  the host/network beyond Docker's normal networking behavior.
-- No custom seccomp/AppArmor profile beyond Docker's defaults.
-- No complete host-independent secret protection: GitVault encrypts secrets
-  at rest, but the host/master-key trust boundary remains.
-- No complete GSR hardening/sandboxing of every component; GSR's crash
-  watchdog and scheduler-side controls exist today, while broader hardening
-  work remains.
+- Docker networks still require the operator to provide the actual egress
+  boundary (firewall, proxy, or isolated network).
+- AppArmor custom profiles are opt-in because profile availability is host-specific.
+- VM snapshot rollback is an operator-controlled primitive, not an automatic
+  per-job snapshot policy.
+- GitVault's master/root key remains trusted infrastructure even though new data
+  records use a separate derived encryption key.
+- Manifest signing is only mandatory when the updater is configured with
+  GITRUN_UPDATE_SIGNATURE_REQUIRED=true and a trusted public key.
 
 If your threat model requires stronger isolation than this today, consider
 running GitRun's Docker host itself inside a dedicated VM rather than
@@ -154,3 +156,35 @@ This boundary does not reduce Docker-socket privilege. A workflow that can alrea
 ## VM boundary
 
 Logic Containers can route jobs into a Docker daemon inside a KVM/libvirt or VirtualBox VM. This can provide a stronger infrastructure boundary than placing the runner directly on the GitRun host, but the guest Docker daemon, base disk image, guest credentials and hypervisor remain trusted infrastructure. VM-backed runners should be used when the deployment threat model benefits from that additional boundary; they do not make an untrusted GitHub repository automatically safe.
+
+## Security hardening baseline
+
+The scheduler treats the Unix API peer, Docker-managed runner identity, and GitHub workflow/run/job records as one authorization chain. Values supplied through GITHUB_* environment variables are claims only; the host verifies the runner container from SO_PEERCRED/cgroups and resolves the authoritative workflow run/job through GitHub before GSR authorization.
+
+The API socket is created with 0660 permissions and a dedicated numeric group. Runner containers join the socket group at startup. Filesystem permissions are defense in depth; the host-side peer/container identity check remains authoritative.
+
+GitDockRun read/write/execute/melt operations require an exact persistent dock binding for repository, workflow run, job, requester runner, and target container. A container identifier alone does not authorize access, and melt cannot cross those trust-domain bindings.
+
+Runner package caches default to repository-scoped Docker volumes. A global scope remains an explicit operator choice; runner scope is also available where the cache must not survive runner replacement.
+
+Linux runners attach to a configured Docker network and use Docker's default seccomp profile unless an operator explicitly selects another profile. An optional AppArmor profile can also be selected. These settings supplement, rather than replace, Docker-host isolation.
+
+Windows VM-backed runners require a Docker TLS credential directory and are resolved through Docker TLS. Dynamic Windows runners are ephemeral. The VM is treated as persistent infrastructure, while runner state is disposable.
+
+An unexpectedly exited runner is recorded as a critical security event and quarantined instead of being restarted or reused. Runner removal also asks Docker to remove anonymous volumes and explicitly removes the per-runner home volume when applicable.
+
+GitVault now derives a separate data-encryption key from the root/master key for new records, while retaining legacy decryption for pre-hardening records. Secret read/write/delete operations can be emitted through the existing GSR event bridge without logging secret values.
+
+Release manifests support Ed25519 signatures. The updater can require a signature and can optionally bind verification to a configured key identifier. Releases also publish Cargo dependency metadata, an SPDX 2.3 SBOM, and build provenance.
+
+VM resolution includes a Docker daemon health attestation before a VM becomes routable. KVM/libvirt and VirtualBox snapshot create/restore primitives are available for operator-controlled rollback workflows.
+
+The scheduler has a host resource-pressure backpressure gate. By default, when CPU pressure, memory use, or state-filesystem use reaches its threshold, GitRun does not create additional runners or reconcile new placement. Existing workloads are left running and queued GitHub jobs remain queued until pressure drops.
+
+## Trust-boundary summary
+
+Trusted infrastructure: GitRun scheduler, host Docker daemon, GitHub API identity records, hypervisor, VM base image, Docker TLS credentials, and GitVault root key.
+
+Untrusted input: workflow code, workflow-visible environment variables, requested API arguments, logical dock/resource names, repository configuration supplied by workflow code, and downloaded update artifacts until verified.
+
+A successful request therefore requires both authenticated transport identity and authoritative workload binding; policy alone is never treated as proof of identity.

@@ -1,5 +1,6 @@
 use gitrun_core::{Config, GitRunSettings};
 use std::{
+    io::Write,
     fs,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},

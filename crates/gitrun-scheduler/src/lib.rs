@@ -621,9 +621,15 @@ fn execute(
             // then remove the container and create a fresh runner if capacity
             // is still required.
             state.quarantine(name);
-            eprintln!(
-                "gitrun-autoscaler: quarantining exited runner {name} for {repo} as a security event"
+            let events_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
+            let event = gitrun_gsr::SecurityEvent::new(
+                "scheduler",
+                gitrun_gsr::Severity::Critical,
+                format!("runner {name} for {repo} exited unexpectedly and was quarantined; a fresh runner must be created"),
             );
+            if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
+                eprintln!("gitrun-autoscaler: failed to emit runner quarantine event: {error}");
+            }
             deregister_and_remove(client, repo, name)?;
         }
         Action::CreateRunner {

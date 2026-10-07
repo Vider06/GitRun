@@ -1,27 +1,178 @@
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ steps.version.outputs.version_number }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+name: GitRun Release
 
-      - name: Generate release SBOM and provenance
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example v0.5.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gitrun-release-${{ github.ref }}-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.99.0"
+  RELEASE_TARGET: "x86_64-unknown-linux-gnu"
+
+jobs:
+  release:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    name: Build and publish GitRun
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
+      RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify release runner
         shell: bash
         run: |
           set -euo pipefail
-          root="$RUNNER_TEMP/gitrun-release-provenance"
-          rm -rf "$root"
-          mkdir -p "$root"
-          cargo metadata --locked --format-version 1 > "$root/cargo-metadata.json"
-          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq --arg created "$created" --arg commit "$GITHUB_SHA" \
-            '{spdxVersion:"SPDX-2.3", dataLicense:"CC0-1.0", SPDXID:"SPDXRef-DOCUMENT", name:"GitRun", documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit), creationInfo:{created:$created,creators:["Tool: GitRun CI"]}, packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
-            "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
-          jq -n \
-            --arg git_commit "$GITHUB_SHA" \
-            --arg run_id "$GITHUB_RUN_ID" \
-            --arg workflow "$GITHUB_WORKFLOW" \
-            --arg ref "$GITHUB_REF" \
-            --arg runner_os "$RUNNER_OS" \
-            --arg runner_arch "$RUNNER_ARCH" \
-            '{schema:"gitrun.provenance.v1", git_commit:$git_commit, run_id:$run_id, workflow:$workflow, ref:$ref, runner_os:$runner_os, runner_arch:$runner_arch}' \
-            > "$root/provenance.json"
-          echo "PROVENANCE_ROOT=$root" >> "$GITHUB_ENV"
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+
+      - name: Resolve and validate version
+        id: version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$RELEASE_VERSION"
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "Invalid release version: $version" >&2
+            exit 1
+          }
+          expected_version="${version#v}"
+          repository_version="$(tr -d '[:space:]' < version.txt)"
+          test "$repository_version" = "$expected_version"
+          if git rev-parse -q --verify "refs/tags/$version^{commit}" >/dev/null 2>&1; then
+            test "$(git rev-parse "$version^{commit}")" = "$GITHUB_SHA"
+          elif [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "Tag $version is missing from the checkout." >&2
+            exit 1
+          fi
+          echo "GITRUN_VERSION=$expected_version" >> "$GITHUB_ENV"
+          {
+            echo "version=$version"
+            echo "version_number=$expected_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release caches
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .gitrun-ci/cargo .gitrun-ci/rustup target
+          {
+            echo "CARGO_HOME=$GITHUB_WORKSPACE/.gitrun-ci/cargo"
+            echo "RUSTUP_HOME=$GITHUB_WORKSPACE/.gitrun-ci/rustup"
+            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
+          } >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/.gitrun-ci/cargo/bin" >> "$GITHUB_PATH"
+      - name: Restore Rust common cache
+        id: rust-common-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo
+            .gitrun-ci/rustup
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-
+
+      - name: Restore release target cache
+        id: release-target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ steps.version.outputs.version_number }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-
+
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n apt-get update -qq
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            pkg-config \
+            libglib2.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils \
+            imagemagick
+
+      - name: Normalize Tauri PNG icons to RGBA
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+          [ "${#icons[@]}" -gt 0 ] || { echo "No Tauri PNG icons found" >&2; exit 1; }
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+            mv "$tmp" "$icon"
+          done
+          echo "${#icons[@]} Tauri PNG icons normalized to RGBA with ImageMagick"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Set Tauri release version
+        working-directory: crates/gitrun-dashboard-tauri
+        env:
+          VERSION: ${{ steps.version.outputs.version_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i -E "0,/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/s//\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+
+      - name: Build unified GitRun executable
+        env:
+          VERSION: ${{ steps.version.outputs.version_number }}
+          GITRUN_NO_CAT: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p gitrun-cli --bin gitrun
+          test -x target/release/gitrun
+          test "$(target/release/gitrun --version --gitrun)" = "GitRun $VERSION"
+      - name: Save Rust common cache
+        if: success() && steps.rust-common-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo
+            .gitrun-ci/rustup
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+
+      - name: Save release target cache
+        if: success() && steps.release-target-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ steps.version.outputs.version_number }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
 
       - name: Assemble release artifacts
         id: artifacts
@@ -33,3 +184,128 @@
           set -euo pipefail
           root="$RUNNER_TEMP/gitrun-release"
           deb_root="$RUNNER_TEMP/gitrun-deb-root"
+          rm -rf "$root" "$deb_root" "$RUNNER_TEMP/server-check"
+          mkdir -p "$root/server" "$deb_root/DEBIAN" "$deb_root/usr/bin" "$deb_root/usr/share/gitrun" "$deb_root/usr/share/doc/gitrun" "$deb_root/usr/share/applications"
+          deb="GitRun-$VERSION-linux-x86_64-deb.deb"
+          server_archive="GitRun-$VERSION-$TARGET-server.tar.gz"
+
+          install -m 0755 target/release/gitrun "$root/server/gitrun"
+          install -m 0644 version.txt "$root/server/version.txt"
+          cp LICENSE README.md config/config.example.env "$root/server/"
+          tar -C "$root/server" -czf "$root/$server_archive" .
+
+          cat > "$deb_root/DEBIAN/control" <<CONTROL
+          Package: gitrun
+          Version: ${VERSION#v}
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Vider06
+          Description: GitRun self-hosted GitHub Actions runner manager
+           Rust-native GitRun manager with CLI, scheduler, recovery and Tauri dashboard.
+          CONTROL
+
+          install -m 0755 target/release/gitrun "$deb_root/usr/bin/gitrun"
+          install -m 0644 version.txt "$deb_root/usr/share/gitrun/version.txt"
+          install -m 0644 LICENSE "$deb_root/usr/share/doc/gitrun/LICENSE"
+          install -m 0644 README.md "$deb_root/usr/share/doc/gitrun/README.md"
+          install -m 0644 config/config.example.env "$deb_root/usr/share/doc/gitrun/config.example.env"
+          install -m 0644 packaging/gitrun.desktop "$deb_root/usr/share/applications/gitrun.desktop"
+          for spec in \
+            "32:32" \
+            "64:64" \
+            "128:128" \
+            "256:256" \
+            "512:512"; do
+            size="${spec%%:*}"
+            input="assets/gitrun-icon-${size}.png"
+            output="$deb_root/usr/share/icons/hicolor/${size}x${size}/apps/gitrun.png"
+            mkdir -p "$(dirname "$output")"
+            convert "$input" -alpha on -define png:color-type=6 "PNG32:$output"
+          done
+          dpkg-deb --build --root-owner-group "$deb_root" "$root/$deb" >/dev/null
+
+          deb_sha="$(sha256sum "$root/$deb" | awk '{print $1}')"
+          server_sha="$(sha256sum "$root/$server_archive" | awk '{print $1}')"
+          cat > "$root/release-manifest.json" <<JSON
+          {
+            "name": "GitRun",
+            "version": "$VERSION",
+            "git_commit": "$GITHUB_SHA",
+            "repository": "Vider06/GitRun",
+            "artifacts": [
+              {
+                "target": "$TARGET",
+                "file": "$server_archive",
+                "sha256": "$server_sha"
+              },
+              {
+                "target": "linux-x86_64-deb",
+                "file": "$deb",
+                "sha256": "$deb_sha"
+              }
+            ]
+          }
+          JSON
+
+          {
+            echo "root=$root"
+            echo "deb=$deb"
+            echo "server_archive=$server_archive"
+          } >> "$GITHUB_OUTPUT"
+      - name: Verify release artifacts
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GITRUN_NO_CAT: "1"
+          ROOT: ${{ steps.artifacts.outputs.root }}
+          DEB: ${{ steps.artifacts.outputs.deb }}
+          SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+        run: |
+          set -euo pipefail
+          deb="$ROOT/$DEB"
+          server="$ROOT/$SERVER_ARCHIVE"
+          test -f "$deb" && test -f "$server" && test -f "$ROOT/release-manifest.json"
+          test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
+          test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun$')" -eq 1
+          if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
+            echo "release package contains a retired secondary executable" >&2
+            exit 1
+          fi
+          dpkg-deb --contents "$deb" | grep -E '/usr/share/applications/gitrun\.desktop$'
+          dpkg-deb --contents "$deb" | grep -E '/usr/share/gitrun/version\.txt$'
+
+          rm -rf "$RUNNER_TEMP/server-check"
+          mkdir -p "$RUNNER_TEMP/server-check"
+          tar -xzf "$server" -C "$RUNNER_TEMP/server-check"
+          test -x "$RUNNER_TEMP/server-check/gitrun"
+          test "$(find "$RUNNER_TEMP/server-check" -type f -perm /111 | wc -l)" -eq 1
+          test "$(cat "$RUNNER_TEMP/server-check/version.txt")" = "${VERSION#v}"
+          test "$(target/release/gitrun --version --gitrun)" = "GitRun ${VERSION#v}"
+
+          command -v jq >/dev/null 2>&1
+          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["linux-x86_64-deb", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 2) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
+          echo "Release manifest: PASS"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ROOT: ${{ steps.artifacts.outputs.root }}
+          DEB: ${{ steps.artifacts.outputs.deb }}
+          SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            "$ROOT/$DEB"
+            "$ROOT/$SERVER_ARCHIVE"
+            "$ROOT/release-manifest.json"
+          )
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${assets[@]}" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "GitRun $VERSION" \
+              --generate-notes
+          fi

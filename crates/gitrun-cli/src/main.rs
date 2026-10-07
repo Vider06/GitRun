@@ -120,6 +120,10 @@ fn elevate_system_update(manifest_url: Option<&str>) -> Result<i32, Box<dyn std:
     if let Some(url) = manifest_url {
         command.arg(url);
     }
+    // The parent process owns the terminal presenter. Do not let the elevated
+    // child create a second cat presenter, otherwise a single command can
+    // render the final state twice.
+    command.env("GITRUN_NO_CAT", "1");
     let status = command.status()?;
     Ok(status.code().unwrap_or(1))
 }

@@ -141,6 +141,10 @@ impl CatPresenter {
             Err(_) => return false,
         };
 
+        let stop = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(Condvar::new());
+        let wake_guard = Arc::new(Mutex::new(()));
+
         #[cfg(unix)]
         let signal_join = match spawn_signal_watcher(Arc::clone(&terminal), Arc::clone(&stop)) {
             Ok(join) => Some(join),
@@ -149,13 +153,11 @@ impl CatPresenter {
         #[cfg(not(unix))]
         let signal_join = None;
 
-        let selection = Arc::new(Mutex::new(            self.last_state
+        let selection = Arc::new(Mutex::new(
+            self.last_state
                 .map(LiveSelection::Validation)
                 .unwrap_or_else(|| LiveSelection::Named(states.default_state.clone())),
         ));
-        let stop = Arc::new(AtomicBool::new(false));
-        let wake = Arc::new(Condvar::new());
-        let wake_guard = Arc::new(Mutex::new(()));
 
         activate_terminal(Arc::clone(&terminal));
 

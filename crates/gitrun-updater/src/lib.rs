@@ -61,9 +61,9 @@ pub struct ReleaseManifest {
     pub version: String,
     pub git_commit: String,
     pub artifacts: Vec<ReleaseArtifact>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature_key_id: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<DependencyRequirement>,

@@ -2,13 +2,13 @@ use crossterm::{cursor::MoveToNextLine, execute, terminal};
 use ratatui::{
     backend::CrosstermBackend,
     layout::Position,
-    widgets::{Paragraph, Widget},
+    widgets::{Paragraph, Widget, Wrap},
     Terminal, TerminalOptions, Viewport,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -95,7 +95,7 @@ impl Drop for CatPresenter {
 
 impl CatPresenter {
     pub(crate) fn new() -> Self {
-        if std::env::var_os("GITRUN_NO_CAT").is_some() {
+        if !cat_allowed() {
             return Self {
                 states: None,
                 last_state: None,
@@ -309,11 +309,12 @@ pub(crate) fn terminal_print(args: fmt::Arguments<'_>, stderr: bool, newline: bo
     }
 
     if let Some(terminal) = active_terminal() {
-        let height = text.lines().count().max(1).min(u16::MAX as usize) as u16;
         let _ = terminal.lock().map(|mut terminal| {
-            let text = text.as_str();
+            let width = terminal.size().map(|area| area.width).unwrap_or(1).max(1);
+            let paragraph = Paragraph::new(text.as_str()).wrap(Wrap { trim: false });
+            let height = paragraph.line_count(width).max(1).min(u16::MAX as usize) as u16;
             terminal.insert_before(height, |buffer| {
-                Paragraph::new(text).render(buffer.area, buffer);
+                paragraph.render(buffer.area, buffer);
             })
         });
         return;
@@ -330,6 +331,29 @@ pub(crate) fn terminal_print(args: fmt::Arguments<'_>, stderr: bool, newline: bo
     }
 }
 
+fn cat_allowed() -> bool {
+    cat_allowed_with(
+        io::stdout().is_terminal(),
+        io::stderr().is_terminal(),
+        std::env::var_os("GITRUN_NO_CAT").is_some(),
+        std::env::var_os("CI").is_some(),
+        std::env::var("TERM").ok().as_deref(),
+    )
+}
+
+fn cat_allowed_with(
+    stdout_is_terminal: bool,
+    stderr_is_terminal: bool,
+    no_cat: bool,
+    ci: bool,
+    term: Option<&str>,
+) -> bool {
+    !no_cat
+        && !ci
+        && term.map_or(true, |value| value != "dumb")
+        && stdout_is_terminal
+        && stderr_is_terminal
+}
 fn active_terminal() -> Option<SharedTerminal> {
     ACTIVE_TERMINAL
         .get()
@@ -586,6 +610,24 @@ mod tests {
                 assert!(states.states.contains_key(live_state_name(state, tick)));
             }
         }
+    }
+
+
+    #[test]
+    fn cat_is_allowed_only_for_an_interactive_terminal() {
+        assert!(cat_allowed_with(true, true, false, false, Some("xterm")));
+        assert!(!cat_allowed_with(false, true, false, false, Some("xterm")));
+        assert!(!cat_allowed_with(true, false, false, false, Some("xterm")));
+        assert!(!cat_allowed_with(true, true, true, false, Some("xterm")));
+        assert!(!cat_allowed_with(true, true, false, true, Some("xterm")));
+        assert!(!cat_allowed_with(true, true, false, false, Some("dumb")));
+        assert!(cat_allowed_with(true, true, false, false, None));
+    }
+
+    #[test]
+    fn wrapped_terminal_output_height_matches_rendered_paragraph() {
+        let paragraph = Paragraph::new("1234567890 1234567890").wrap(Wrap { trim: false });
+        assert_eq!(paragraph.line_count(10), 2);
     }
 
     #[test]

@@ -107,6 +107,7 @@ fn config_fingerprint(config: &VmConfig) -> u64 {
     feed(&mut hash, &config.memory_mb.to_le_bytes());
     feed(&mut hash, &config.cpus.to_le_bytes());
     feed(&mut hash, &config.docker_port.to_le_bytes());
+    feed(&mut hash, config.docker_tls_cert_dir.as_bytes());
     feed(
         &mut hash,
         &[match config.activation {
@@ -386,20 +387,27 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
     let endpoint = vm::docker_host_address(kind, &ip, config.docker_port);
-    if config.is_windows {
+    let host = if config.is_windows {
         if config.docker_tls_cert_dir.trim().is_empty() {
             return Err(vm::VmError::InvalidConfig(format!(
                 "Windows VM '{}' has no Docker TLS credential directory configured",
                 config.name
             )));
         }
-        Ok(DockerHost::RemoteTls {
+        DockerHost::RemoteTls {
             endpoint,
             cert_dir: config.docker_tls_cert_dir.clone(),
-        })
+        }
     } else {
-        Ok(DockerHost::Remote(endpoint))
-    }
+        DockerHost::Remote(endpoint)
+    };
+    docker::attest_host(&host).map_err(|error| {
+        vm::VmError::Command(format!(
+            "VM '{}' Docker health attestation failed: {error}",
+            config.name
+        ))
+    })?;
+    Ok(host)
 }
 
 /// Loads VM definitions from `{state_dir}/vm-configs.json` at startup —

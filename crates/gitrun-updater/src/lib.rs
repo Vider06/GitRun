@@ -299,6 +299,7 @@ pub fn stage_update(
     staging_root: impl AsRef<Path>,
 ) -> Result<PathBuf, UpdateError> {
     manifest.validate()?;
+    manifest.verify_signature_from_env()?;
     if compare_versions(&manifest.version, current_version)? != std::cmp::Ordering::Greater {
         return Err(UpdateError::NotNewer);
     }

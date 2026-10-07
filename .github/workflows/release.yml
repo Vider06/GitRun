@@ -7,7 +7,7 @@
           root="$RUNNER_TEMP/gitrun-release-provenance"
           rm -rf "$root"
           mkdir -p "$root"
-          cargo metadata --locked --format-version 1 --no-deps > "$root/cargo-metadata.json"
+          cargo metadata --locked --format-version 1 > "$root/cargo-metadata.json"
           created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq --arg created "$created" --arg commit "$GITHUB_SHA" \
             '{spdxVersion:"SPDX-2.3", dataLicense:"CC0-1.0", SPDXID:"SPDXRef-DOCUMENT", name:"GitRun", documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit), creationInfo:{created:$created,creators:["Tool: GitRun CI"]}, packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \

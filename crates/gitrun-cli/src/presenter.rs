@@ -14,7 +14,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const CAT_STATES: &str = include_str!("cat_states.json");
+const CAT_STATES: &str = include_str!("cat/cat_states.json");
 const SECRET_ROLL_RANGE: u64 = 2_000;
 const KEBAB_ROLL_LIMIT: u64 = 3;
 const SECRET_ROLL_LIMIT: u64 = 1;

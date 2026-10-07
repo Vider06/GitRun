@@ -12,22 +12,23 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cat;
+mod presenter;
 
 macro_rules! println {
     () => {
-        $crate::cat::presenter::terminal_print(format_args!(""), false, true)
+        $crate::presenter::terminal_print(format_args!(""), false, true)
     };
     ($($arg:tt)*) => {
-        $crate::cat::presenter::terminal_print(format_args!($($arg)*), false, true)
+        $crate::presenter::terminal_print(format_args!($($arg)*), false, true)
     };
 }
 
 macro_rules! eprintln {
     () => {
-        $crate::cat::presenter::terminal_print(format_args!(""), true, true)
+        $crate::presenter::terminal_print(format_args!(""), true, true)
     };
     ($($arg:tt)*) => {
-        $crate::cat::presenter::terminal_print(format_args!($($arg)*), true, true)
+        $crate::presenter::terminal_print(format_args!($($arg)*), true, true)
     };
 }
 
@@ -168,7 +169,7 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
 
 fn update_command(
     args: &[String],
-    presenter: &mut cat::presenter::CatPresenter,
+    presenter: &mut presenter::CatPresenter,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = if let Some(url) = args.get(1) {
@@ -179,7 +180,7 @@ fn update_command(
     let current = current_version();
     let target = target_triple()?;
     let plan = build_plan(&manifest, &current, &target, &dependency_snapshot())?;
-    presenter.transition(cat::presenter::ValidationState::Loading);
+    presenter.transition(presenter::ValidationState::Loading);
 
     println!(
         "GitRun update: {} -> {}",
@@ -215,7 +216,7 @@ fn update_command(
     let archive = work_root.join(&plan.artifact);
     let artifact = manifest.artifact_for(&target)?;
     download_and_verify(&plan.artifact_url, &artifact.sha256, &archive)?;
-    presenter.transition(cat::presenter::ValidationState::Working);
+    presenter.transition(presenter::ValidationState::Working);
     println!("checksum: PASS");
 
     if let Some((gitrun_binary, version_file)) = system_install {
@@ -265,7 +266,7 @@ fn update_command(
             }
         }
 
-        presenter.transition(cat::presenter::ValidationState::Running);
+        presenter.transition(presenter::ValidationState::Running);
         if let Err(error) = restart_scheduler_service() {
             let rollback_result = rollback_installed_update(&backup);
             let restore_result = restart_scheduler_service();
@@ -285,7 +286,7 @@ fn update_command(
             };
         }
 
-        presenter.transition(cat::presenter::ValidationState::Success);
+        presenter.transition(presenter::ValidationState::Success);
         println!("GitRun update: PASS");
         println!(
             "backup: {}",
@@ -365,7 +366,7 @@ fn update_command(
             }
         };
     }
-    presenter.transition(cat::presenter::ValidationState::Success);
+    presenter.transition(presenter::ValidationState::Success);
     println!("GitRun update: PASS");
     println!(
         "backup: {}",
@@ -664,7 +665,7 @@ fn write_repositories_to_config(
 }
 
 fn terminal_setup_command(
-    presenter: &mut cat::presenter::CatPresenter,
+    presenter: &mut presenter::CatPresenter,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("terminal setup currently targets Linux x86_64".into());
@@ -725,7 +726,7 @@ fn terminal_setup_command(
         _ => unreachable!(),
     };
 
-    presenter.transition(cat::presenter::ValidationState::Connecting);
+    presenter.transition(presenter::ValidationState::Connecting);
     println!();
     let repositories_raw = read_terminal_line("Repositories (owner/repository[,owner/other]): ")?;
     let repositories = repositories_raw
@@ -796,7 +797,7 @@ fn terminal_setup_command(
     }
 
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-        presenter.transition(cat::presenter::ValidationState::Working);
+        presenter.transition(presenter::ValidationState::Working);
         let executable = std::env::current_exe()?;
         println!();
         println!("Installing GitRun with elevated privileges...");
@@ -828,7 +829,7 @@ fn terminal_setup_command(
 
 fn connect_command(
     repository: &str,
-    presenter: &mut cat::presenter::CatPresenter,
+    presenter: &mut presenter::CatPresenter,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if repository.split('/').count() != 2 || repository.split('/').any(|part| part.is_empty()) {
         return Err("usage: gitrun connect <owner/repository>".into());
@@ -840,7 +841,7 @@ fn connect_command(
     let auth = GitHubAuth::from_config_file(&config, &path)?;
 
     verify_repository_access(&auth, repository)?;
-    presenter.transition(cat::presenter::ValidationState::Working);
+    presenter.transition(presenter::ValidationState::Working);
 
     let mut repositories = config.repositories;
     if repositories
@@ -853,7 +854,7 @@ fn connect_command(
     repositories.push(repository.to_owned());
     write_repositories_to_config(&path, &repositories)?;
 
-    presenter.transition(cat::presenter::ValidationState::Success);
+    presenter.transition(presenter::ValidationState::Success);
     println!("Repository connected: {repository}");
     println!("Configuration updated: {}", path.display());
     println!("Restart GitRun to apply it to the scheduler.");
@@ -862,13 +863,13 @@ fn connect_command(
 
 fn rollback_command(
     path: &str,
-    presenter: &mut cat::presenter::CatPresenter,
+    presenter: &mut presenter::CatPresenter,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    presenter.transition(cat::presenter::ValidationState::Recovering);
+    presenter.transition(presenter::ValidationState::Recovering);
     let raw = std::fs::read_to_string(path)?;
     if let Ok(backup) = serde_json::from_str::<InstalledBackupRecord>(&raw) {
         rollback_installed_update(&backup)?;
-        presenter.transition(cat::presenter::ValidationState::Success);
+        presenter.transition(presenter::ValidationState::Success);
         println!("GitRun rollback: PASS");
         return Ok(());
     }
@@ -896,25 +897,25 @@ fn rollback_command(
         backup_root,
     };
     rollback(&paths, &backup)?;
-    presenter.transition(cat::presenter::ValidationState::Success);
+    presenter.transition(presenter::ValidationState::Success);
     println!("GitRun rollback: PASS");
     Ok(())
 }
 
 fn main() {
     let cli = Cli::parse();
-    let mut presenter = cat::presenter::CatPresenter::new();
+    let mut presenter = presenter::CatPresenter::new();
 
     if cli.gitrun {
         presenter.start_live();
-        presenter.transition(cat::presenter::ValidationState::Ready);
+        presenter.transition(presenter::ValidationState::Ready);
         println!("GitRun {}", current_version());
         presenter.finish(0);
         std::process::exit(0);
     }
     if cli.version || cli.all_crates || cli.crate_name.is_some() {
         presenter.start_live();
-        presenter.transition(cat::presenter::ValidationState::Ready);
+        presenter.transition(presenter::ValidationState::Ready);
         let exit_code = run_version(cli.crate_name.as_deref());
         presenter.finish(exit_code);
         std::process::exit(exit_code);
@@ -989,8 +990,8 @@ fn main() {
     std::process::exit(exit_code);
 }
 
-fn validation_state_for_command(command: &Command) -> cat::presenter::ValidationState {
-    use cat::presenter::ValidationState;
+fn validation_state_for_command(command: &Command) -> presenter::ValidationState {
+    use presenter::ValidationState;
 
     match command {
         Command::Config | Command::Settings => ValidationState::Reading,
@@ -999,7 +1000,10 @@ fn validation_state_for_command(command: &Command) -> cat::presenter::Validation
         Command::Cat => ValidationState::Ready,
         Command::Connect { .. } => ValidationState::Connecting,
         Command::Doctor => ValidationState::Validating,
-        Command::Update { .. } => ValidationState::Updating,
+        // Update validates the release plan before entering the updating state.
+        // Keeping the initial state neutral avoids showing "updating" when the
+        // requested release is already installed or otherwise rejected.
+        Command::Update { .. } => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
@@ -1199,8 +1203,8 @@ fn build_status_github_client(
 fn runner_validation_state(
     runner: &gitrun_scheduler::Runner,
     container: Option<&gitrun_scheduler::docker::ManagedContainer>,
-) -> cat::presenter::ValidationState {
-    use cat::presenter::ValidationState;
+) -> presenter::ValidationState {
+    use presenter::ValidationState;
 
     if !runner.is_online() {
         return ValidationState::Failure;
@@ -1222,7 +1226,7 @@ fn runner_cat_state(
     container: Option<&gitrun_scheduler::docker::ManagedContainer>,
     commands: &[String],
 ) -> &'static str {
-    use cat::presenter::ValidationState;
+    use presenter::ValidationState;
 
     if !runner.is_online() {
         return "sad";
@@ -1286,7 +1290,7 @@ fn runner_cat_state(
     "runner"
 }
 
-fn run_status(runner_id: u64, presenter: &mut cat::presenter::CatPresenter) -> i32 {
+fn run_status(runner_id: u64, presenter: &mut presenter::CatPresenter) -> i32 {
     let config = match load_config() {
         Ok(config) => config,
         Err(error) => {
@@ -1296,7 +1300,7 @@ fn run_status(runner_id: u64, presenter: &mut cat::presenter::CatPresenter) -> i
         }
     };
 
-    presenter.transition(cat::presenter::ValidationState::Api);
+    presenter.transition(presenter::ValidationState::Api);
 
     let client = match build_status_github_client(&config) {
         Ok(client) => client,
@@ -1465,10 +1469,7 @@ fn run_api_policy(api_name: &str, operation: Option<&str>, enabled: Option<bool>
     0
 }
 
-fn run_check_compatibility(
-    workflow: Option<&str>,
-    presenter: &mut cat::presenter::CatPresenter,
-) -> i32 {
+fn run_check_compatibility(workflow: Option<&str>, presenter: &mut presenter::CatPresenter) -> i32 {
     let config = match load_config() {
         Ok(config) => config,
         Err(error) => {
@@ -1528,7 +1529,7 @@ fn run_check_compatibility(
     };
     let mut exit_code = 0;
     for (name, content) in files {
-        presenter.transition(cat::presenter::ValidationState::Testing);
+        presenter.transition(presenter::ValidationState::Testing);
         let report = gitrun_core::analyze_compatibility(&name, &content, &effective);
         println!("{}: {:?}", report.workflow, report.status);
         for finding in report.findings {
@@ -1564,13 +1565,13 @@ fn run_desired(min: u32, max: u32, busy: u32, queued: u32) -> i32 {
     0
 }
 
-fn run_setup(presenter: &mut cat::presenter::CatPresenter) -> i32 {
+fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
     match load_config() {
         Ok(config) => {
             let config_dir = setup_config_dir();
             match prepare_directories(&config, config_dir) {
                 Ok(report) => {
-                    presenter.transition(cat::presenter::ValidationState::Working);
+                    presenter.transition(presenter::ValidationState::Working);
                     let failed = report.dependencies.iter().filter(|d| !d.available).count();
                     for dependency in &report.dependencies {
                         println!(
@@ -1590,7 +1591,7 @@ fn run_setup(presenter: &mut cat::presenter::CatPresenter) -> i32 {
                         eprintln!("GitRun setup: FAIL — {failed} dependency check(s) failed");
                         return 1;
                     }
-                    presenter.transition(cat::presenter::ValidationState::Success);
+                    presenter.transition(presenter::ValidationState::Success);
                     println!("GitRun setup: PASS");
                     0
                 }
@@ -1628,10 +1629,10 @@ fn run_doctor() -> i32 {
 fn run_update(
     manifest_url: Option<&str>,
     only_containers: bool,
-    presenter: &mut cat::presenter::CatPresenter,
+    presenter: &mut presenter::CatPresenter,
 ) -> i32 {
     if only_containers {
-        presenter.transition(cat::presenter::ValidationState::Running);
+        presenter.transition(presenter::ValidationState::Running);
         return match gitrun_scheduler::run_gtuu_once() {
             Ok(count) => {
                 println!("GitRun GTUU: updated {count} permanent runner(s)");
@@ -1762,8 +1763,8 @@ fn run_scheduler() -> i32 {
     }
 }
 
-fn run_recovery_gtuu(presenter: &mut cat::presenter::CatPresenter) -> i32 {
-    presenter.transition(cat::presenter::ValidationState::Recovering);
+fn run_recovery_gtuu(presenter: &mut presenter::CatPresenter) -> i32 {
+    presenter.transition(presenter::ValidationState::Recovering);
     match gitrun_recovery::run_gtuu() {
         Ok(report) => {
             if let Some(error) = report.gitrun_update_error {
@@ -1806,7 +1807,7 @@ fn run_install_root(token_path: &str) -> i32 {
     }
 }
 
-fn run_rollback(backup_path: &str, presenter: &mut cat::presenter::CatPresenter) -> i32 {
+fn run_rollback(backup_path: &str, presenter: &mut presenter::CatPresenter) -> i32 {
     match rollback_command(backup_path, presenter) {
         Ok(()) => 0,
         Err(error) => {

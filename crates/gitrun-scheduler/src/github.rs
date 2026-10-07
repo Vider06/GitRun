@@ -80,6 +80,8 @@ struct WorkflowRunsResponse {
 #[derive(Debug, Deserialize)]
 struct WorkflowRun {
     id: u64,
+    #[serde(default)]
+    name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +123,14 @@ pub struct WorkflowJobInfo {
     pub status: String,
     pub conclusion: Option<String>,
     pub runner_name: Option<String>,
+}
+
+/// Authoritative workflow-run identity fetched from GitHub. Request-supplied
+/// workflow metadata is never accepted as authoritative without this lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowRunInfo {
+    pub id: u64,
+    pub name: String,
 }
 
 /// Splits "owner/repo" into its two parts, validating the shape up front so
@@ -414,6 +424,25 @@ impl GitHubClient {
     /// Finds a named job inside one GitHub Actions workflow run. The
     /// caller uses this to map GitDockRun --job &lt;name&gt; to the runner that
     /// executed that job.
+    /// Fetch the workflow run from the repository path. The repository+run
+    /// pair is authoritative; request-supplied GITHUB_* values are claims.
+    pub fn find_workflow_run(&self, repo: &str, run_id: u64) -> Result<Option<WorkflowRunInfo>> {
+        let (owner, name) = split_repo(repo)?;
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs/{run_id}",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        match self.request(reqwest::Method::GET, &url) {
+            Ok(response) => {
+                let run: WorkflowRun = response.json()?;
+                Ok(Some(WorkflowRunInfo { id: run_id, name: run.name }))
+            }
+            Err(GitHubError::Api { status: 404, .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn find_workflow_job(
         &self,
         repo: &str,

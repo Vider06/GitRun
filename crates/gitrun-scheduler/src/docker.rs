@@ -169,6 +169,15 @@ pub struct ManagedContainer {
     pub workflow_run_id: Option<u64>,
 }
 
+fn cache_volume_name(base: &str, scope: &str, repo: &str, runner: &str) -> String {
+    match scope {
+        "global" => base.to_owned(),
+        "repository" => format!("{}-repo-{}", base, cache_path_key(repo)),
+        "runner" => format!("{}-runner-{}", base, sanitize(runner, '-')),
+        _ => format!("{}-repo-{}", base, cache_path_key(repo)),
+    }
+}
+
 pub fn shared_cache_volume(configured: Option<&str>) -> String {
     configured
         .map(str::trim)
@@ -518,6 +527,8 @@ pub struct RunnerSpec<'a> {
     pub memory: &'a str,
     pub pids_limit: &'a str,
     pub shared_cache_volume: &'a str,
+    /// Cache isolation scope: global, repository, or runner.
+    pub cache_scope: &'a str,
     pub docker_socket_gid: &'a str,
     /// Size string (e.g. "8g") for the runner's home directory, whether
     /// backed by tmpfs or a disk volume (see `home_backend`).
@@ -603,6 +614,7 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let cache_key = cache_path_key(spec.repo);
+    let cache_volume = cache_volume_name(spec.shared_cache_volume, spec.cache_scope, spec.repo, spec.name);
     let labels = ensure_label(spec.labels, "gitrun-ci");
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
@@ -699,7 +711,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "--mount".into(),
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",
-                spec.shared_cache_volume
+                cache_volume
             ),
             // The API service lives on the host. The runner gets only this
             // Unix socket file, never the host API process or a workflow token.

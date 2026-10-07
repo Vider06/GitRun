@@ -46,6 +46,8 @@ pub enum DockerHost {
     /// this struct doesn't currently carry cert paths; add them here before
     /// pointing at anything outside a trusted, isolated network.
     Remote(String),
+    /// Remote Docker daemon using Docker client TLS/mTLS credentials.
+    RemoteTls { endpoint: String, cert_dir: String },
 }
 
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
@@ -65,8 +67,13 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
                 .env("DOCKER_HOST", "unix:///var/run/docker.sock");
         }
         DockerHost::Remote(addr) => {
-            // Keep operator-provided TLS variables for the remote daemon.
             command.env("DOCKER_HOST", addr);
+        }
+        DockerHost::RemoteTls { endpoint, cert_dir } => {
+            command
+                .env("DOCKER_HOST", endpoint)
+                .env("DOCKER_TLS_VERIFY", "1")
+                .env("DOCKER_CERT_PATH", cert_dir);
         }
     }
 
@@ -167,6 +174,15 @@ pub struct ManagedContainer {
     pub dock_target: bool,
     pub workflow_job: Option<String>,
     pub workflow_run_id: Option<u64>,
+}
+
+fn cache_volume_name(base: &str, scope: &str, repo: &str, runner: &str) -> String {
+    match scope {
+        "global" => base.to_owned(),
+        "repository" => format!("{}-repo-{}", base, cache_path_key(repo)),
+        "runner" => format!("{}-runner-{}", base, sanitize(runner, '-')),
+        _ => format!("{}-repo-{}", base, cache_path_key(repo)),
+    }
 }
 
 pub fn shared_cache_volume(configured: Option<&str>) -> String {
@@ -484,7 +500,7 @@ pub fn rename_container(from: &str, to: &str) -> Result<()> {
 }
 
 pub fn remove_container_on(host: &DockerHost, name: &str) -> Result<()> {
-    let output = run_on(host, &["rm", "-f", name])?;
+    let output = run_on(host, &["rm", "-f", "-v", name])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if !is_missing_container_error(&stderr) {
@@ -518,6 +534,10 @@ pub struct RunnerSpec<'a> {
     pub memory: &'a str,
     pub pids_limit: &'a str,
     pub shared_cache_volume: &'a str,
+    pub cache_scope: &'a str,
+    pub network: &'a str,
+    pub seccomp_profile: &'a str,
+    pub apparmor_profile: &'a str,
     pub docker_socket_gid: &'a str,
     /// Size string (e.g. "8g") for the runner's home directory, whether
     /// backed by tmpfs or a disk volume (see `home_backend`).
@@ -602,10 +622,23 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
 }
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
+    if spec.is_windows && spec.docker_socket_enabled {
+        return Err(DockerError::Command(
+            "Windows runner cannot enable the Linux Docker socket compatibility option".into(),
+        ));
+    }
+
     let cache_key = cache_path_key(spec.repo);
+    let cache_volume = cache_volume_name(
+        spec.shared_cache_volume,
+        spec.cache_scope,
+        spec.repo,
+        spec.name,
+    );
     let labels = ensure_label(spec.labels, "gitrun-ci");
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
+    args.extend(["--network".into(), spec.network.into()]);
     args.extend([
         "--label".into(),
         "gitrun.runner=true".into(),
@@ -687,7 +720,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "--tmpfs".into(),
             "/tmp:rw,nosuid,nodev,exec,size=256m".into(),
         ]);
-        if spec.docker_socket_enabled {
+        if spec.docker_socket_enabled && !spec.is_windows {
             args.extend([
                 "--volume".into(),
                 "/var/run/docker.sock:/var/run/docker.sock".into(),
@@ -699,7 +732,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "--mount".into(),
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",
-                spec.shared_cache_volume
+                cache_volume
             ),
             // The API service lives on the host. The runner gets only this
             // Unix socket file, never the host API process or a workflow token.
@@ -729,6 +762,13 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             // operator explicitly allows the broader unsafe-runner posture.
             // This does not claim the rest of Docker hardening is enabled.
             args.extend(gsr_supervisor_capability_args());
+        }
+    }
+
+    if !spec.is_windows {
+        args.extend(["--security-opt".into(), format!("seccomp={}", spec.seccomp_profile)]);
+        if !spec.apparmor_profile.trim().is_empty() {
+            args.extend(["--security-opt".into(), format!("apparmor={}", spec.apparmor_profile)]);
         }
     }
 
@@ -767,6 +807,22 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     run_checked_on(host, &arg_refs)?;
     Ok(())
+}
+
+/// Verifies that a Docker daemon is reachable and reports a minimal
+/// server-version/API attestation before a VM becomes routable.
+pub fn attest_host(host: &DockerHost) -> Result<String> {
+    let output = run_checked_on(
+        host,
+        &["version", "--format", "{{.Server.Version}}|{{.Server.APIVersion}}"],
+    )?;
+    let value = output.trim();
+    if value.is_empty() {
+        return Err(DockerError::Command(
+            "Docker daemon returned an empty health attestation".into(),
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 pub fn container_status(name: &str) -> Result<Option<String>> {

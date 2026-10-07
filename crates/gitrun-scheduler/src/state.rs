@@ -36,6 +36,10 @@ struct StateFile {
     /// container name -> unix seconds when it was first observed needing recovery.
     #[serde(default)]
     recovery_since: HashMap<String, u64>,
+    /// Containers observed to have exited unexpectedly. Quarantined names
+    /// are never restarted/reused; reconciliation must create a fresh runner.
+    #[serde(default)]
+    quarantined_since: HashMap<String, u64>,
 }
 
 pub struct SchedulerState {
@@ -49,6 +53,7 @@ fn validate_state(data: &StateFile) -> Result<(), StateError> {
     for (kind, entries) in [
         ("idle_since", &data.idle_since),
         ("recovery_since", &data.recovery_since),
+        ("quarantined_since", &data.quarantined_since),
     ] {
         for (name, since) in entries {
             if name.trim().is_empty() || name.chars().any(char::is_control) {
@@ -168,6 +173,9 @@ impl SchedulerState {
         self.data.recovery_since.retain(|name, _| {
             !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
         });
+        self.data.quarantined_since.retain(|name, _| {
+            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
+        });
     }
     /// Returns how long a container has been marked as needing recovery,
     /// starting the clock now if this is the first time we've seen it.
@@ -183,6 +191,30 @@ impl SchedulerState {
 
     pub fn clear_recovery(&mut self, name: &str) {
         self.data.recovery_since.remove(name);
+    }
+
+    pub fn quarantine(&mut self, name: &str) {
+        self.data
+            .quarantined_since
+            .entry(name.to_owned())
+            .or_insert_with(Self::now);
+        self.clear_idle(name);
+        self.clear_recovery(name);
+    }
+
+    pub fn is_quarantined(&self, name: &str) -> bool {
+        self.data.quarantined_since.contains_key(name)
+    }
+
+    pub fn clear_quarantine(&mut self, name: &str) {
+        self.data.quarantined_since.remove(name);
+    }
+
+    pub fn quarantine_entries(&self) -> Vec<(String, Duration)> {
+        let now = Self::now();
+        self.data.quarantined_since.iter().map(|(name, since)| {
+            (name.clone(), Duration::from_secs(now.saturating_sub(*since)))
+        }).collect()
     }
 
     pub fn recovery_ages(&self) -> Vec<(String, Duration)> {

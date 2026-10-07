@@ -182,7 +182,11 @@ fn normalize_line(line: &str, width: usize) -> String {
     let mut normalized = if trimmed.starts_with('|') && trimmed.ends_with('|') {
         let text_width = trimmed.chars().count().min(width);
         let left_padding = width.saturating_sub(text_width) / 2;
-        format!("{}{}", " ".repeat(left_padding), trimmed.chars().take(width).collect::<String>())
+        format!(
+            "{}{}",
+            " ".repeat(left_padding),
+            trimmed.chars().take(width).collect::<String>()
+        )
     } else {
         line.chars().take(width).collect()
     };

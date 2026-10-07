@@ -34,7 +34,7 @@ pub enum ApiGateError {
         operation: GitRunOperation,
         detail: String,
     },
-    #[error("resource is not allowed by repository policy: {resource}")]
+    #[error("resource denied: no matching repository allow rule for {resource}")]
     ResourceDenied { resource: String },
     #[error("repository policy denied API operation: {reason}")]
     PolicyDenied { reason: String },

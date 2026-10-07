@@ -29,6 +29,33 @@ impl VaultToGsrBridge {
 }
 
 impl VaultEventSink for VaultToGsrBridge {
+    fn on_secret_read(&self, secret_name: &str, scope: &gitrun_vault::Scope) {
+        let event = SecurityEvent::new(
+            "gitvault",
+            Severity::Notice,
+            format!("secret read: {secret_name} scope={scope:?}"),
+        );
+        let _ = gitrun_gsr::events::emit(&self.events_path, &event);
+    }
+
+    fn on_secret_write(&self, secret_name: &str, scope: &gitrun_vault::Scope) {
+        let event = SecurityEvent::new(
+            "gitvault",
+            Severity::Notice,
+            format!("secret write: {secret_name} scope={scope:?}"),
+        );
+        let _ = gitrun_gsr::events::emit(&self.events_path, &event);
+    }
+
+    fn on_secret_delete(&self, secret_name: &str, scope: &gitrun_vault::Scope) {
+        let event = SecurityEvent::new(
+            "gitvault",
+            Severity::Warning,
+            format!("secret delete: {secret_name} scope={scope:?}"),
+        );
+        let _ = gitrun_gsr::events::emit(&self.events_path, &event);
+    }
+
     fn on_randomness_failure(&self, operation: &str) {
         let event = SecurityEvent::new(
             "gitvault",

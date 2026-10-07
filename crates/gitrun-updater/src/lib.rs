@@ -1,4 +1,5 @@
 use reqwest::blocking::Client;
+use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -60,6 +61,10 @@ pub struct ReleaseManifest {
     pub version: String,
     pub git_commit: String,
     pub artifacts: Vec<ReleaseArtifact>,
+    #[serde(default)]
+    pub signature: Option<String>,
+    #[serde(default)]
+    pub signature_key_id: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<DependencyRequirement>,
     #[serde(default)]

@@ -1,7 +1,7 @@
 use gitrun_core::{Config, GitRunSettings};
 use std::{
-    io::Write,
     fs,
+    io::Write,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,

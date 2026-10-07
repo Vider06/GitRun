@@ -95,8 +95,8 @@ impl Drop for CatPresenter {
 }
 
 impl CatPresenter {
-    pub(crate) fn new() -> Self {
-        if !cat_allowed() {
+    pub(crate) fn new(no_cat_override: bool) -> Self {
+        if no_cat_override || !cat_allowed() {
             return Self {
                 states: None,
                 last_state: None,

@@ -169,6 +169,18 @@ impl ReleaseManifest {
         if let Some(repository) = &self.repository {
             validate_repository(repository)?;
         }
+        match (&self.signature, &self.signature_key_id) {
+            (Some(signature), key_id) => {
+                if signature.len() != 128 || !signature.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(UpdateError::InvalidManifest("manifest signature must be 64-byte hex".into()));
+                }
+                if key_id.as_ref().is_some_and(|id| id.trim().is_empty()) {
+                    return Err(UpdateError::InvalidManifest("manifest signature key id cannot be empty".into()));
+                }
+            }
+            (None, Some(_)) => return Err(UpdateError::InvalidManifest("signature key id requires a signature".into())),
+            (None, None) => {}
+        }
         Ok(())
     }
 

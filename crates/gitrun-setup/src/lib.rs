@@ -373,7 +373,7 @@ pub fn bootstrap_linux_with_auth(
     }
 
     setup_progress(3, "Installing runner, recovery, and service resources");
-    let runner_dockerfile = resources::runner_dockerfile_for_bootstrap();
+    let runner_dockerfile = resources::runner_dockerfile_for_bootstrap()?;
     write_resource(
         &root.join("docker/runner/Dockerfile"),
         &runner_dockerfile,

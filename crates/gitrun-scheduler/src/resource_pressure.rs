@@ -159,10 +159,12 @@ mod tests {
 
     #[test]
     fn pressure_is_triggered_by_any_threshold() {
-        let mut c = Config::default();
-        c.resource_pressure_cpu_percent = 80;
-        c.resource_pressure_memory_percent = 90;
-        c.resource_pressure_disk_percent = 95;
+        let c = Config {
+            resource_pressure_cpu_percent: 80,
+            resource_pressure_memory_percent: 90,
+            resource_pressure_disk_percent: 95,
+            ..Config::default()
+        };
         assert!(ResourceSnapshot {
             cpu_percent: 80.0,
             memory_percent: 1.0,

@@ -113,6 +113,8 @@ fn config_fingerprint(config: &VmConfig) -> u64 {
         &[match config.activation {
             vm::ActivationMode::Standard => 1,
             vm::ActivationMode::AlwaysOnExperimental => 2,
+            vm::ActivationMode::EphemeralSnapshotRollback => 3,
+            vm::ActivationMode::EphemeralVm => 4,
         }],
     );
     feed(&mut hash, &[u8::from(config.is_windows)]);
@@ -382,6 +384,18 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     let mut config = vm_config.clone();
     config.hypervisor = kind;
     vm::ensure_vm(&config)?;
+
+    // Ephemeral modes are lifecycle policies, not mere labels. Restore the
+    // operator-designated clean snapshot before a new workload is admitted.
+    // The VM is stopped first because both supported hypervisors require
+    // quiesced state for a deterministic rollback.
+    if matches!(config.activation, vm::ActivationMode::EphemeralSnapshotRollback) {
+        let snapshot = format!("gitrun-clean-{}", config.name);
+        if vm::is_running(kind, &config.name)? {
+            vm::stop(kind, &config.name)?;
+        }
+        vm::restore_snapshot(kind, &config.name, &snapshot)?;
+    }
     if !vm::is_running(kind, &config.name)? {
         vm::start(kind, &config.name)?;
     }

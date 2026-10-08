@@ -27,8 +27,9 @@ pub struct Config {
     pub poll_interval: u64,
     pub runner_image: String,
     pub runner_labels: String,
-    /// Docker network to attach runner containers to. Operators can point
-    /// this at a pre-created egress-controlled network.
+    /// Dedicated Docker network to attach runner containers to. GitRun
+    /// creates it when absent; operators can attach host firewall/proxy
+    /// policy to this stable network as their egress boundary.
     pub runner_network: String,
     /// Docker seccomp profile: `default` or a daemon-visible profile path.
     pub runner_seccomp_profile: String,
@@ -54,9 +55,11 @@ pub struct Config {
     /// package-manager caches (Cargo/pip/npm) — the embryonic GitVault.
     pub shared_cache_volume: String,
     /// Cache isolation scope: `repository` (default), `runner`, or `global`.
-    /// Repository and runner scopes prevent one workflow trust domain from
-    /// reading another domain's package cache through a shared Docker volume.
+    /// Global sharing is an explicit cross-repository trust decision.
     pub shared_cache_scope: String,
+    /// Filesystems sampled by resource-pressure protection. The Docker data
+    /// root should be included on hosts where runner storage can fill it.
+    pub resource_pressure_paths: String,
     /// Size of the runner's home directory (registration state, diagnostics,
     /// job checkouts), applied whether it's backed by tmpfs or a disk volume
     /// — see `runner_home_backend`. Needs headroom for a real checkout +
@@ -182,7 +185,7 @@ impl Default for Config {
             poll_interval: 5,
             runner_image: "gitrun-runner:latest".into(),
             runner_labels: "self-hosted,Linux,X64".into(),
-            runner_network: "bridge".into(),
+            runner_network: "gitrun-runner".into(),
             runner_seccomp_profile: "default".into(),
             runner_apparmor_profile: String::new(),
             ephemeral: false,
@@ -198,6 +201,7 @@ impl Default for Config {
             runner_disable_update: false,
             shared_cache_volume: "gitrun-runner-shared".into(),
             shared_cache_scope: "repository".into(),
+            resource_pressure_paths: "/var/lib/gitrun;/var/lib/docker".into(),
             runner_home_size: "8g".into(),
             runner_home_backend: "tmpfs".into(),
             github_connect_timeout: 5,
@@ -391,6 +395,9 @@ impl Config {
         if let Some(v) = get("GITRUN_SHARED_CACHE_SCOPE") {
             c.shared_cache_scope = v.trim().to_ascii_lowercase();
         }
+        if let Some(v) = get("GITRUN_RESOURCE_PRESSURE_PATHS") {
+            c.resource_pressure_paths = v.trim().to_owned();
+        }
         if let Some(v) = get("GITRUN_RUNNER_HOME_SIZE") {
             let trimmed = v.trim();
             if !trimmed.is_empty() {
@@ -494,7 +501,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.min_runners == 0 || self.max_runners < self.min_runners {
+        if self.max_runners < self.min_runners {
             return Err(ConfigError::Invalid(format!(
                 "runner bounds are invalid: {}..{}",
                 self.min_runners, self.max_runners
@@ -551,6 +558,11 @@ impl Config {
                 "shared cache scope must be global, repository, or runner, got {:?}",
                 self.shared_cache_scope
             )));
+        }
+        if self.resource_pressure_paths.split(';').all(|path| path.trim().is_empty()) {
+            return Err(ConfigError::Invalid(
+                "resource pressure paths must contain at least one filesystem path".into(),
+            ));
         }
         if !is_valid_docker_name(&self.shared_cache_volume) {
             return Err(ConfigError::Invalid(format!(

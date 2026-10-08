@@ -1,0 +1,21 @@
+name: GitRun Premade - Cleanup
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Clean runner workspace
+    if: \${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Remove transient workspace data
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/gitrun-premade" || true
+          rm -rf "$GITHUB_WORKSPACE/.gitrun-ci" || true

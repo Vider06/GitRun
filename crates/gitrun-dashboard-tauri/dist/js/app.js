@@ -920,6 +920,18 @@ async function renderSettings() {
         <button class="btn btn-primary" id="save-security-settings">Save security settings</button>
       </div>
     </div>
+
+    <div class="section" style="max-width:760px">
+      <h2 class="section-title">GitRun installation</h2>
+      <p class="field-hint">Uninstall removes GitRun's service, runtime state, logs, runner containers, cache volumes, image, and system resources. The current launcher stays in place so this dashboard can offer a reinstall without requiring another package download.</p>
+      <div class="toolbar">
+        <span id="installation-action-status" class="field-hint"></span>
+        <button class="btn" id="reinstall-gitrun">Reinstall GitRun</button>
+        <button class="btn btn-danger" id="uninstall-gitrun">Uninstall GitRun</button>
+      </div>
+    </div>
+
+
   `;
 
   const repoSelect = document.getElementById("policy-repo");
@@ -1030,6 +1042,46 @@ async function renderSettings() {
   });
 
   renderVmManagement(vmConfigs);
+
+  document.getElementById("reinstall-gitrun").addEventListener("click", () => {
+    if (!confirm("Reinstall GitRun from the current launcher? GitRun will stop its service and rebuild its installed resources before starting again.")) return;
+    renderFirstRun(true);
+  });
+
+  document.getElementById("uninstall-gitrun").addEventListener("click", async () => {
+    if (!confirm("Uninstall GitRun? This removes the service, runtime state, logs, runner containers, cache volumes, image, and system resources. This cannot be undone.")) return;
+
+    const status = document.getElementById("installation-action-status");
+    status.textContent = "Uninstalling…";
+    status.style.color = "var(--text-muted)";
+
+    let unlisten = null;
+    let setupEventDone = false;
+    try {
+      const { listen } = window.__TAURI__.event;
+      unlisten = await listen("gitrun-setup-progress", (event) => {
+        const payload = event.payload || {};
+        setupEventDone = Boolean(payload.done);
+        setupAppendLog(payload.message || "");
+        if (payload.done && !payload.success) {
+          status.textContent = "Uninstall failed.";
+          status.style.color = "var(--danger)";
+        }
+      });
+
+      await invoke("uninstall_gitrun");
+      state.firstRun = true;
+      renderFirstRun(false);
+    } catch (error) {
+      if (!setupEventDone) {
+        status.textContent = "Uninstall failed: " + error;
+        status.style.color = "var(--danger)";
+      }
+    } finally {
+      if (unlisten) await unlisten();
+    }
+  });
+
 }
 
 // ---------------------------------------------------------------------
@@ -1346,12 +1398,12 @@ function applySetupEvent(event) {
   }
 }
 
-function renderFirstRun() {
+function renderFirstRun(isReinstall = false) {
   setDashboardShell(false);
   content.innerHTML = `
     <div class="view-header">
-      <h1 class="view-title">Welcome to GitRun</h1>
-      <p class="view-subtitle">Complete the one-time setup before the dashboard can manage your runners.</p>
+      <h1 class="view-title">${isReinstall ? "Reinstall GitRun" : "Welcome to GitRun"}</h1>
+      <p class="view-subtitle">${isReinstall ? "Rebuild GitRun's installed resources while preserving your existing runtime configuration and state." : "Complete the one-time setup before the dashboard can manage your runners."}</p>
     </div>
 
     <div class="section" style="max-width:640px">
@@ -1399,7 +1451,7 @@ function renderFirstRun() {
 
         <div class="toolbar" style="margin-top:20px">
           <span id="setup-status" class="field-hint"></span>
-          <button class="btn btn-primary" id="setup-submit">Install and start GitRun</button>
+          <button class="btn btn-primary" id="setup-submit">${isReinstall ? "Reinstall and start GitRun" : "Install and start GitRun"}</button>
         </div>
 
         <p class="field-hint" style="margin-top:16px">
@@ -1479,7 +1531,7 @@ function renderFirstRun() {
     }
 
     renderSetupProgress();
-    setupAppendLog("Starting first-run GitRun setup…");
+    setupAppendLog(isReinstall ? "Starting GitRun reinstall…" : "Starting first-run GitRun setup…");
     setupSetStatus("Preparing privileged setup…", 0);
 
     let unlisten = null;
@@ -1501,12 +1553,15 @@ function renderFirstRun() {
       }
 
       await invoke("run_first_setup", {
-        authMode,
-        token,
-        repositories,
-        appId,
-        installationId,
-        privateKeyPath: setupPrivateKeyPath,
+        request: {
+          authMode,
+          token,
+          repositories,
+          appId,
+          installationId,
+          privateKeyPath: setupPrivateKeyPath,
+          reinstall: isReinstall,
+        },
       });
 
       state.firstRun = false;

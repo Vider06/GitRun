@@ -451,6 +451,32 @@ fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn reinstall_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string(path)?;
+    let owner_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
+    let executable = std::env::current_exe()?;
+
+    let values = parse_setup_request(&raw)?;
+    let repositories = required_setup_value(&values, "GITRUN_REPOSITORIES")?;
+    let auth = match required_setup_value(&values, "AUTH_MODE")?.as_str() {
+        "pat" => BootstrapAuth::Pat(required_setup_value(&values, "GITHUB_TOKEN")?),
+        "app" => BootstrapAuth::GitHubApp {
+            app_id: required_setup_value(&values, "GITRUN_GITHUB_APP_ID")?,
+            installation_id: required_setup_value(&values, "GITRUN_GITHUB_APP_INSTALLATION_ID")?,
+            private_key_path: required_setup_value(&values, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?,
+        },
+        other => return Err(format!("unsupported setup auth mode: {other}").into()),
+    };
+
+    gitrun_setup::reinstall_linux_with_auth(auth, &repositories, &executable, owner_uid)?;
+
+    println!("GitRun reinstall: PASS");
+    Ok(())
+}
+
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")
@@ -1047,6 +1073,8 @@ fn main() {
         Command::RecoveryGtuu => run_recovery_gtuu(&mut presenter),
         Command::RepairService => run_repair_service(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),
+        Command::UninstallRoot => run_uninstall_root(),
+        Command::ReinstallRoot { token_path } => run_reinstall_root(&token_path),
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -1081,6 +1109,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         // requested release is already installed or otherwise rejected.
         Command::Update { .. } => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
+        Command::UninstallRoot | Command::ReinstallRoot { .. } => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1167,6 +1196,14 @@ enum Command {
         /// Optional manifest URL to check instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
+    /// Internal privileged uninstall entry point.
+    #[command(name = "--uninstall-root", hide = true)]
+    UninstallRoot,
+
+    /// Internal privileged reinstall entry point.
+    #[command(name = "--reinstall-root", hide = true)]
+    ReinstallRoot { token_path: String },
+
     /// Internal scheduler service entry point.
     #[command(name = "scheduler", hide = true)]
     Scheduler,
@@ -1858,6 +1895,26 @@ fn run_repair_service() -> i32 {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("GitRun service repair: FAIL — {error}");
+            1
+        }
+    }
+}
+
+fn run_reinstall_root(token_path: &str) -> i32 {
+    match reinstall_root_command(token_path) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("GitRun reinstall: FAIL — {error}");
+            1
+        }
+    }
+}
+
+fn run_uninstall_root() -> i32 {
+    match gitrun_setup::uninstall_linux() {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("GitRun uninstall: FAIL — {error}");
             1
         }
     }

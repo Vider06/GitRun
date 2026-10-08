@@ -4,6 +4,7 @@ description = "Allows the GitRun dashboard frontend to invoke its application co
 commands.allow = [
   "is_first_run",
   "run_first_setup",
+  "uninstall_gitrun",
   "get_overview",
   "get_repo_detail",
   "list_vault_secrets",

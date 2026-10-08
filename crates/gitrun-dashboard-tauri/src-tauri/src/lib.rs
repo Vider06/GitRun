@@ -435,11 +435,11 @@ where
     });
 }
 
-fn stream_privileged_setup(
+fn stream_privileged_command(
     app: &AppHandle,
     pkexec: &std::path::Path,
     cli: &std::path::Path,
-    request_path: &std::path::Path,
+    args: &[String],
 ) -> Result<std::process::ExitStatus, String> {
     emit_first_setup_event(
         app,
@@ -450,10 +450,9 @@ fn stream_privileged_setup(
         false,
     );
 
-    let mut child = std::process::Command::new(pkexec)
-        .arg(cli)
-        .arg("--install-root")
-        .arg(request_path)
+    let mut command = std::process::Command::new(pkexec);
+    command.arg(cli).args(args);
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -525,19 +524,96 @@ fn stream_privileged_setup(
 }
 
 #[tauri::command]
-async fn run_first_setup(
-    app: AppHandle,
+async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err("graphical uninstall currently targets Linux x86_64".into());
+    }
+
+    let pkexec = pkexec_path().ok_or(
+        "trusted pkexec was not found at a root-owned, non-writable system path; graphical uninstall cannot safely continue",
+    )?;
+    let cli = dashboard_cli_path(&app)
+        .ok_or("GitRun CLI executable was not found; cannot run the privileged uninstall")?;
+
+    let app_for_uninstall = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = stream_privileged_command(
+            &app_for_uninstall,
+            &pkexec,
+            &cli,
+            &["--uninstall-root".to_owned()],
+        );
+        match result {
+            Ok(status) if status.success() => {
+                emit_first_setup_event(
+                    &app_for_uninstall,
+                    0,
+                    "GitRun uninstall completed successfully.",
+                    "system",
+                    true,
+                    true,
+                );
+                Ok(())
+            }
+            Ok(status) => {
+                emit_first_setup_event(
+                    &app_for_uninstall,
+                    0,
+                    format!("Privileged uninstall failed with status {status}."),
+                    "system",
+                    true,
+                    false,
+                );
+                Err(format!(
+                    "privileged GitRun uninstall failed with status {status}"
+                ))
+            }
+            Err(error) => {
+                emit_first_setup_event(&app_for_uninstall, 0, error.clone(), "system", true, false);
+                Err(error)
+            }
+        }
+    })
+    .await
+    .map_err(|error| format!("privileged GitRun uninstall task failed: {error}"))??;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FirstSetupRequest {
     auth_mode: String,
     token: String,
     repositories: String,
     app_id: String,
     installation_id: String,
     private_key_path: String,
-) -> Result<(), String> {
+    reinstall: bool,
+}
+
+#[tauri::command]
+async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
+    let FirstSetupRequest {
+        auth_mode,
+        token,
+        repositories: repository_input,
+        app_id,
+        installation_id,
+        private_key_path,
+        reinstall,
+    } = request;
+
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical first-run setup currently targets Linux x86_64".into());
     }
-    if configured_config_path().is_some() {
+    if reinstall {
+        if configured_config_path().is_none() {
+            return Err(
+                "GitRun is not currently configured; use the normal first-run setup instead".into(),
+            );
+        }
+    } else if configured_config_path().is_some() {
         return Err("GitRun is already configured; graphical first-run setup is only available before initial setup".into());
     }
 
@@ -549,7 +625,7 @@ async fn run_first_setup(
         &private_key_path,
     )?;
 
-    let repositories = repositories
+    let repositories = repository_input
         .split(',')
         .map(str::trim)
         .filter(|repo| !repo.is_empty())
@@ -599,7 +675,17 @@ async fn run_first_setup(
 
     let app_for_setup = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result = stream_privileged_setup(&app_for_setup, &pkexec, &cli, &path);
+        let operation = if reinstall {
+            "--reinstall-root"
+        } else {
+            "--install-root"
+        };
+        let result = stream_privileged_command(
+            &app_for_setup,
+            &pkexec,
+            &cli,
+            &[operation.to_owned(), path.to_string_lossy().into_owned()],
+        );
 
         let _ = std::fs::remove_file(&path);
 
@@ -1242,6 +1328,7 @@ pub fn run() {
             is_first_run,
             secure_private_key,
             run_first_setup,
+            uninstall_gitrun,
             get_overview,
             get_repo_detail,
             list_vault_secrets,

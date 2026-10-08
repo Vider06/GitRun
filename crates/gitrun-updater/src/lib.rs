@@ -145,7 +145,6 @@ pub struct ReleaseManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub premade_dockerfile: Option<PremadeDockerfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -244,9 +243,6 @@ impl ReleaseManifest {
         }
         if let Some(repository) = &self.repository {
             validate_repository(repository)?;
-        }
-        if let Some(source) = &self.premade_dockerfile {
-            source.validate()?;
         }
         match (&self.signature, &self.signature_key_id) {
             (Some(signature), key_id) => {
@@ -499,7 +495,6 @@ pub fn build_plan(
         artifact_url,
         dependencies,
         runner_image: manifest.runner_image.clone(),
-        premade_dockerfile: manifest.premade_dockerfile.clone(),
     })
 }
 
@@ -1048,14 +1043,9 @@ pub fn pin_runner_image(
     Ok(())
 }
 
-pub fn update_runner_image(
-    image: &RunnerImage,
-    premade_dockerfile: Option<&PremadeDockerfile>,
-) -> Result<(), UpdateError> {
+pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
     image.validate()?;
-    if let Some(source) = premade_dockerfile {
-        let _ = fetch_premade_runner_dockerfile(source)?;
-    }
+    let _ = fetch_premade_runner_dockerfile(&canonical_premade_runner_dockerfile())?;
     let inspect = Command::new("docker")
         .args([
             "image",

@@ -1303,7 +1303,7 @@ function setupSetStatus(message, phase) {
   const track = document.querySelector(".setup-progress-track");
   if (!status || !percent || !fill || !track) return;
 
-  const marker = /^\[GitRun setup\] \[(\d+)\/8\] (.*)$/.exec(message);
+  const marker = /^\[GitRun setup\] \[(\d+)\/9\] (.*)$/.exec(message);
   const displayMessage = marker ? marker[2] : message;
   const safePhase = Math.max(0, Math.min(9, Number(phase) || 0));
   const value = Math.round((safePhase / 9) * 100);
@@ -1321,7 +1321,7 @@ function applySetupEvent(event) {
   const done = Boolean(event.done);
   const success = Boolean(event.success);
   const stream = String(event.stream || "system");
-  const marker = /^\[GitRun setup\] \[(\d+)\/8\] (.*)$/.exec(message);
+  const marker = /^\[GitRun setup\] \[(\d+)\/9\] (.*)$/.exec(message);
   const displayMessage = marker ? marker[2] : message;
 
   setupAppendLog(stream === "stdout" || stream === "system" ? message : `[${stream}] ${message}`);
@@ -1461,7 +1461,7 @@ function renderFirstRun() {
       tokenEl.focus();
       return;
     }
-    if (authMode === "app" && (!appId || !installationId || !privateKeyPath)) {
+    if (authMode === "app" && (!appId || !installationId || !setupPrivateKeyPath)) {
       const statusEl = document.getElementById("setup-status");
       statusEl.textContent = "App ID, installation ID, and private key path are all required.";
       statusEl.style.color = "var(--danger)";

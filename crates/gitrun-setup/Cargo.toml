@@ -7,4 +7,5 @@ description = "Host dependency and setup checks for GitRun"
 
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
+gitrun-updater = { path = "../gitrun-updater" }
 thiserror = "2"

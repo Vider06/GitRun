@@ -134,6 +134,49 @@ fn running_as_root() -> bool {
     }
 }
 
+fn update_signing_environment() -> Vec<(String, String)> {
+    const KEYS: [&str; 3] = [
+        "GITRUN_UPDATE_PUBLIC_KEY_HEX",
+        "GITRUN_UPDATE_PUBLIC_KEY_ID",
+        "GITRUN_UPDATE_SIGNATURE_REQUIRED",
+    ];
+
+    let mut values = Vec::new();
+    for key in KEYS {
+        if let Ok(value) = std::env::var(key) {
+            if !value.trim().is_empty() {
+                values.push((key.to_owned(), value));
+            }
+        }
+    }
+
+    let Some(path) = persistent_config_path() else {
+        return values;
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return values;
+    };
+
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if KEYS.contains(&key) && !values.iter().any(|(existing, _)| existing == key) {
+            let value = value.trim().trim_matches(['"', '\\'']);
+            if !value.is_empty() {
+                values.push((key.to_owned(), value.to_owned()));
+            }
+        }
+    }
+
+    values
+}
+
 fn elevate_system_update(
     manifest_url: Option<&str>,
     presenter: &mut presenter::CatPresenter,
@@ -145,6 +188,9 @@ fn elevate_system_update(
 
     let executable = std::env::current_exe()?;
     let mut command = std::process::Command::new("sudo");
+    for (key, value) in update_signing_environment() {
+        command.arg("env").arg(format!("{key}={value}"));
+    }
     command.arg(executable).arg("--no-cat").arg("update");
     if let Some(url) = manifest_url {
         command.arg(url);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly premade="Dockers/runners/linux-x86_64/Dockerfile"
+readonly premade="Core/Dockers/runners/linux-x86_64/Dockerfile"
 readonly source="docker/runner/Dockerfile"
 
 git fetch --quiet origin main --depth=1

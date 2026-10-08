@@ -815,6 +815,7 @@ fn create_runner(
             docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
             runner_home_size: &config.runner_home_size,
             home_backend: docker::RunnerHomeBackend::from_config_str(&config.runner_home_backend),
+            rootfs_read_only: config.runner_rootfs_read_only,
             secret_env: &secret_env,
             gsr_policy_env: &gsr_policy_env,
             is_windows,
@@ -824,6 +825,7 @@ fn create_runner(
                 .into_iter()
                 .any(|target| Some(target.as_str()) == job_name),
             docker_socket_hardening: config.gsr_docker_socket_hardening,
+            windows_hyperv_isolation: config.runner_windows_hyperv_isolation,
         },
     )?;
     Ok(())

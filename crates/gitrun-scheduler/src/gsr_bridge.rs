@@ -32,7 +32,7 @@ impl VaultEventSink for VaultToGsrBridge {
     fn on_secret_read(&self, secret_name: &str, scope: &gitrun_vault::Scope) {
         let event = SecurityEvent::new(
             "gitvault",
-            Severity::Notice,
+            Severity::Info,
             format!("secret read: {secret_name} scope={scope:?}"),
         );
         let _ = gitrun_gsr::events::emit(&self.events_path, &event);

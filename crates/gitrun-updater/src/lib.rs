@@ -1904,7 +1904,7 @@ mod tests {
                 {
                     "target": "x86_64-unknown-linux-gnu",
                     "file": "GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz",
-                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    "sha256": "fixture-sha256"
                 }
             ],
             "dependencies": [
@@ -1920,7 +1920,7 @@ mod tests {
 
         assert_eq!(
             payload,
-            r#"{"artifacts":[{"file":"GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target":"x86_64-unknown-linux-gnu"}],"dependencies":[{"minimum_version":"2.40.0","name":"Git"}],"git_commit":"abcdef1","name":"GitRun","repository":"Vider06/GitRun","version":"0.3.0"}"#
+            r#"{"artifacts":[{"file":"GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"fixture-sha256","target":"x86_64-unknown-linux-gnu"}],"dependencies":[{"minimum_version":"2.40.0","name":"Git"}],"git_commit":"abcdef1","name":"GitRun","repository":"Vider06/GitRun","version":"0.3.0"}"#
         );
     }
 

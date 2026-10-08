@@ -58,17 +58,19 @@ impl RunnerImage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PremadeDockerfile {
     pub repository: String,
-    pub git_commit: String,
+    pub reference: String,
     pub path: String,
 }
 
 impl PremadeDockerfile {
     pub fn validate(&self) -> Result<(), UpdateError> {
         validate_repository(&self.repository)?;
-        if self.git_commit.len() != 40 || !self.git_commit.chars().all(|c| c.is_ascii_hexdigit()) {
+        if self.reference.trim().is_empty()
+            || self.reference.contains(['\\', '\n', '\r'])
+            || self.reference.chars().any(char::is_whitespace)
+        {
             return Err(UpdateError::InvalidManifest(
-                "Premade Dockerfile git_commit must be a full 40-character hexadecimal commit"
-                    .into(),
+                "invalid Premade Dockerfile reference".into(),
             ));
         }
         if self.path.trim().is_empty()
@@ -88,22 +90,30 @@ impl PremadeDockerfile {
 }
 
 pub const CANONICAL_PREMADE_RUNNER_REPOSITORY: &str = "Vider06/GitRun";
-pub const CANONICAL_PREMADE_RUNNER_COMMIT: &str = "8c12be2732ce8769b535394fc896c76d99d28472";
-pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "Core/Dockers/runners/linux-x86_64/Dockerfile";
+pub const CANONICAL_PREMADE_RUNNER_REF: &str = "feat/gitrun-premade";
+pub const CANONICAL_PREMADE_RUNNER_PATH: &str =
+    "Core/Dockers/runners/linux-x86_64/Dockerfile";
 
 pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
     PremadeDockerfile {
         repository: CANONICAL_PREMADE_RUNNER_REPOSITORY.into(),
-        git_commit: CANONICAL_PREMADE_RUNNER_COMMIT.into(),
+        reference: CANONICAL_PREMADE_RUNNER_REF.into(),
         path: CANONICAL_PREMADE_RUNNER_PATH.into(),
     }
 }
 
-pub fn fetch_premade_runner_dockerfile(source: &PremadeDockerfile) -> Result<String, UpdateError> {
+pub fn fetch_premade_runner_dockerfile(
+    source: &PremadeDockerfile,
+) -> Result<String, UpdateError> {
     source.validate()?;
+    let commit = if is_full_git_commit(&source.reference) {
+        source.reference.clone()
+    } else {
+        resolve_premade_branch_head(&source.repository, &source.reference)?
+    };
     let url = format!(
         "https://raw.githubusercontent.com/{}/{}/{}",
-        source.repository, source.git_commit, source.path
+        source.repository, commit, source.path
     );
     validate_https_url(&url)?;
     let content = http_client()?.get(url).send()?.error_for_status()?.text()?;
@@ -1672,6 +1682,34 @@ fn validate_https_url(value: &str) -> Result<(), UpdateError> {
         )));
     }
     Ok(())
+}
+
+fn is_full_git_commit(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn resolve_premade_branch_head(repository: &str, reference: &str) -> Result<String, UpdateError> {
+    if reference.starts_with("refs/") || reference.starts_with('/') {
+        return Err(UpdateError::InvalidManifest(
+            "Premade reference must be a branch, tag, or full commit".into(),
+        ));
+    }
+    validate_repository(repository)?;
+    let encoded_reference = reference.replace('/', "%2F");
+    let url = format!(
+        "https://api.github.com/repos/{repository}/commits/{encoded_reference}"
+    );
+    let value: serde_json::Value = http_client()?.get(url).send()?.error_for_status()?.json()?;
+    let sha = value
+        .get("sha")
+        .and_then(|value| value.as_str())
+        .filter(|value| is_full_git_commit(value))
+        .ok_or_else(|| {
+            UpdateError::InvalidManifest(
+                "GitHub Premade reference did not resolve to a full commit SHA".into(),
+            )
+        })?;
+    Ok(sha.to_owned())
 }
 
 fn validate_repository(repository: &str) -> Result<(), UpdateError> {

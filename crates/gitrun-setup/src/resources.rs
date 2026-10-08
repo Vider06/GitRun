@@ -1,3 +1,5 @@
+use super::SetupError;
+
 /// The runner Dockerfile is maintained in GitRun Premade and pinned by the
 /// updater crate. Setup fetches that immutable source and applies the same
 /// minimal-build-context adaptation used by the existing installer.

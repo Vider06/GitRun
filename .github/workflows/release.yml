@@ -305,10 +305,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$GITRUN_UPDATE_SIGNING_KEY_PEM" ]]; then
-            echo "Release manifest signature: SKIPPED (signing secret not configured)"
-            exit 0
-          fi
+          [[ -n "$GITRUN_UPDATE_SIGNING_KEY_PEM" ]] || {
+            echo "GITRUN_UPDATE_SIGNING_KEY_PEM is required for every official release" >&2
+            exit 1
+          }
           [[ -n "$GITRUN_UPDATE_SIGNING_KEY_ID" ]] || {
             echo "GITRUN_UPDATE_SIGNING_KEY_ID is required when manifest signing is enabled" >&2
             exit 1
@@ -362,7 +362,7 @@ jobs:
           test "$(target/release/gitrun --version --gitrun)" = "GitRun ${VERSION#v}"
 
           command -v jq >/dev/null 2>&1
-          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["linux-x86_64-deb", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 2) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
+          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["cargo-metadata", "linux-x86_64-deb", "provenance", "sbom-spdx", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 5) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
           echo "Release manifest: PASS"
       - name: Publish GitHub release
         env:

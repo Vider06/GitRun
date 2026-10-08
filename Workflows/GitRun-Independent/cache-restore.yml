@@ -1,0 +1,30 @@
+name: GitRun Premade - Cache Restore
+
+on:
+  workflow_call:
+    inputs:
+      key:
+        required: true
+        type: string
+      restore-keys:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  actions: read
+
+jobs:
+  restore:
+    name: Restore shared cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Restore cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: \${{ inputs.key }}
+          restore-keys: \${{ inputs.restore-keys }}

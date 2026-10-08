@@ -1,4 +1,4 @@
-//! Host-wide scheduler backpressure based on CPU load, available memory and filesystem usage.
+//! Host-wide scheduler backpressure based on CPU utilization, available memory and critical filesystem usage.
 use gitrun_core::Config;
 use std::{fs, path::Path, process::Command};
 use thiserror::Error;

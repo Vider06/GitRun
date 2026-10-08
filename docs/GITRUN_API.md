@@ -1,4 +1,4 @@
-# Git*Run API reference
+# Git*Run API reference — 1.3.0
 
 GitRun exposes a closed set of workflow-facing APIs. These are named executables, not a generic shell wrapper.
 
@@ -18,15 +18,13 @@ GITRUN_API_SOCKET=/custom/path/api.sock
 
 The client sends one newline-delimited JSON `WireRequest`. Responses are newline-delimited `WireResponse` values: `Accepted`, `Error`, or an execution event.
 
-The API launcher obtains identity from GitHub Actions variables including `GITHUB_REPOSITORY`, `GITHUB_WORKFLOW`, `GITHUB_RUN_ID`, `GITHUB_JOB` and `RUNNER_NAME`.
+The API launcher obtains identity claims from GitHub Actions variables including `GITHUB_REPOSITORY`, `GITHUB_WORKFLOW`, `GITHUB_RUN_ID`, `GITHUB_JOB` and `RUNNER_NAME`. These are claims only; the host verifies the current runner/container and authoritative GitHub job state before authorization.
 
 ## APIs
 
 ### GitVaultRun
 
 Operations: `read`, `write`, `exists`, `delete`, `list`.
-
-Examples:
 
 ```text
 GitVaultRun --read NAME
@@ -51,7 +49,9 @@ GitDockRun --execute COMMAND --docked CONTAINER
 GitDockRun --melt [TARGET] --docked SOURCE
 ```
 
-`connect` identifies the runner container belonging to the current workflow job and records a dock binding. Dynamic completed runners may become dock-only until disconnected. `melt` transfers the source filesystem into an eligible target runner and removes the source.
+`connect` and `disconnect` are restricted to the caller's current workflow job; a caller cannot select another job. A successful connection records a persistent binding containing repository, workflow run, job, requester runner and immutable Docker container identity.
+
+Read/write/execute/melt operations must match that binding. The scheduler revalidates the current Docker container ID immediately before privileged mutation to prevent container-name reuse/TOCTOU attacks. `melt` also requires the source and target to remain inside the caller's exact trust binding.
 
 ### GitSaveRun
 
@@ -122,8 +122,12 @@ The authorization sequence is fail-closed:
 2. Required and allowed arguments are validated.
 3. Effective repository API policy must permit the operation.
 4. Resource policy must permit the requested resource.
-5. GitDockRun execute operations are additionally checked by the GSR command policy.
-6. Only then is an `AuthorizedOperation` created.
+5. The host verifies the peer process/cgroup maps to the current managed runner.
+6. The current GitHub job must be `in_progress`; stale or historical jobs are rejected.
+7. Workflow/run identity is checked against the authoritative GitHub workflow run.
+8. GitDockRun requires an exact persisted dock binding and immutable container identity.
+9. GitDockRun execute operations are additionally checked by the GSR command policy.
+10. Only then is an `AuthorizedOperation` created.
 
 Policy intersection can only remove capabilities; it cannot grant a capability absent from the broader policy.
 

@@ -279,7 +279,7 @@ impl Vault {
                 nonce: base64_encode(&nonce_bytes),
                 ciphertext: base64_encode(&ciphertext),
                 updated_at: now(),
-                scope,
+                scope: scope.clone(),
                 key_version: DATA_KEY_VERSION,
             },
         );

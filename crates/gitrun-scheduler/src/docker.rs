@@ -499,23 +499,37 @@ pub fn rename_container(from: &str, to: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn remove_container_on(host: &DockerHost, name: &str) -> Result<()> {
-    let output = run_on(host, &["rm", "-f", "-v", name])?;
+pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
+    // Resolve the deterministic home-volume name before removing the container.
+    // Callers may intentionally pass an immutable container ID, so deriving
+    // the volume name from that ID would leak the per-runner volume.
+    let home_volume = match run_on(host, &["inspect", "-f", "{{.Name}}", name_or_id]) {
+        Ok(output) if output.status.success() => {
+            let resolved = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .trim_start_matches('/')
+                .to_owned();
+            (!resolved.is_empty()).then(|| home_volume_name(&resolved))
+        }
+        _ => None,
+    };
+
+    let output = run_on(host, &["rm", "-f", "-v", name_or_id)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if !is_missing_container_error(&stderr) {
             return Err(DockerError::Command(if stderr.is_empty() {
-                format!("docker rm -f {name} failed")
+                format!("docker rm -f {name_or_id} failed")
             } else {
                 stderr
             }));
         }
     }
 
-    // Best-effort: remove the disk-backed home volume, if this container
-    // was created with RunnerHomeBackend::Volume. Harmless no-op (fails
-    // silently) for tmpfs-backed containers, which never had one.
-    let _ = run_on(host, &["volume", "rm", "-f", &home_volume_name(name)]);
+    // Best-effort for disk-backed runner-home volumes. Harmless for tmpfs homes.
+    if let Some(volume) = home_volume {
+        let _ = run_on(host, &["volume", "rm", "-f", &volume]);
+    }
     Ok(())
 }
 /// Parameters needed to create a runner container. Kept as a plain struct

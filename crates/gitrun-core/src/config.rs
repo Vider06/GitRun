@@ -81,6 +81,15 @@ pub struct Config {
     /// volume on disk, one per runner container, removed alongside it).
     /// Any other value is rejected by `validate()`.
     pub runner_home_backend: String,
+    /// Mount the runner container root filesystem read-only. This is the
+    /// default sandbox posture; disabling it requires the explicit unsafe
+    /// runner gate. The runner home, caches and runtime tmpfs remain writable.
+    pub runner_rootfs_read_only: bool,
+    /// Require Hyper-V isolation for Windows runner containers. Windows
+    /// runners already execute inside a configured GitRun VM; this adds a
+    /// second container-level boundary where the Windows Docker daemon can
+    /// provide it. Disabling it requires the explicit unsafe runner gate.
+    pub runner_windows_hyperv_isolation: bool,
     /// How long to wait for a TCP connection to GitHub's API before giving
     /// up, in seconds. Separate from the overall request timeout so a dead
     /// route fails fast without capping legitimately slow-but-working
@@ -216,7 +225,9 @@ impl Default for Config {
             resource_pressure_memory_percent: 90,
             resource_pressure_disk_percent: 90,
             runner_home_size: "8g".into(),
-            runner_home_backend: "tmpfs".into(),
+            runner_home_backend: "volume".into(),
+            runner_rootfs_read_only: true,
+            runner_windows_hyperv_isolation: true,
             github_connect_timeout: 5,
             github_request_timeout: 20,
             github_app_id: String::new(),
@@ -411,6 +422,12 @@ impl Config {
                 c.runner_home_size = trimmed.to_owned();
             }
         }
+        if let Some(v) = get("GITRUN_RUNNER_ROOTFS_READ_ONLY") {
+            c.runner_rootfs_read_only = parse_bool("GITRUN_RUNNER_ROOTFS_READ_ONLY", &v)?;
+        }
+        if let Some(v) = get("GITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION") {
+            c.runner_windows_hyperv_isolation = parse_bool("GITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION", &v)?;
+        }
         if let Some(v) = get("GITRUN_RUNNER_HOME_BACKEND") {
             let trimmed = v.trim();
             if !trimmed.is_empty() {
@@ -586,6 +603,21 @@ impl Config {
                 "runner home size must be a positive Docker size, got {:?}",
                 self.runner_home_size
             )));
+        }
+        if self.runner_rootfs_read_only && self.runner_home_backend == "tmpfs" {
+            return Err(ConfigError::Invalid(
+                "GITRUN_RUNNER_HOME_BACKEND=tmpfs is incompatible with a read-only runner root filesystem; use volume, or explicitly disable GITRUN_RUNNER_ROOTFS_READ_ONLY with GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true".into(),
+            ));
+        }
+        if !self.runner_rootfs_read_only && !self.gsr_allow_unsafe_runner {
+            return Err(ConfigError::Invalid(
+                "disabling the runner read-only root filesystem requires GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true".into(),
+            ));
+        }
+        if !self.runner_windows_hyperv_isolation && !self.gsr_allow_unsafe_runner {
+            return Err(ConfigError::Invalid(
+                "disabling Windows Hyper-V container isolation requires GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true".into(),
+            ));
         }
         if !matches!(self.runner_home_backend.as_str(), "tmpfs" | "volume") {
             return Err(ConfigError::Invalid(format!(

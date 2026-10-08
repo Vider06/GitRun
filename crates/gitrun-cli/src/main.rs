@@ -167,7 +167,7 @@ fn update_signing_environment() -> Vec<(String, String)> {
         };
         let key = key.trim();
         if KEYS.contains(&key) && !values.iter().any(|(existing, _)| existing == key) {
-            let value = value.trim().trim_matches(['"', '\\'']);
+            let value = value.trim().trim_matches(['"', '\\']);
             if !value.is_empty() {
                 values.push((key.to_owned(), value.to_owned()));
             }

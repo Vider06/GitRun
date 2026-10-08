@@ -888,7 +888,7 @@ pub fn create_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Resu
     validate_snapshot_name(snapshot)?;
     match kind {
         HypervisorKind::Kvm => {
-            run_checked(kind, &["snapshot-create-as", name, snapshot, "--atomic"])?
+            run_checked(kind, &["snapshot-create-as", name, snapshot, "--atomic"])?;
         }
         HypervisorKind::VirtualBox => run_checked(kind, &["snapshot", name, "take", snapshot])?,
     }
@@ -901,7 +901,7 @@ pub fn restore_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Res
     validate_snapshot_name(snapshot)?;
     match kind {
         HypervisorKind::Kvm => {
-            run_checked(kind, &["snapshot-revert", name, "--snapshotname", snapshot])?
+            run_checked(kind, &["snapshot-revert", name, "--snapshotname", snapshot])?;
         }
         HypervisorKind::VirtualBox => run_checked(kind, &["snapshot", name, "restore", snapshot])?,
     }

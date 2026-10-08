@@ -67,13 +67,17 @@ impl PremadeDockerfile {
         validate_repository(&self.repository)?;
         if self.git_commit.len() != 40 || !self.git_commit.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(UpdateError::InvalidManifest(
-                "Premade Dockerfile git_commit must be a full 40-character hexadecimal commit".into(),
+                "Premade Dockerfile git_commit must be a full 40-character hexadecimal commit"
+                    .into(),
             ));
         }
         if self.path.trim().is_empty()
             || self.path.starts_with('/')
             || self.path.contains(['\\', '\n', '\r'])
-            || self.path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+            || self
+                .path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
         {
             return Err(UpdateError::InvalidManifest(
                 "invalid Premade Dockerfile path".into(),
@@ -84,10 +88,8 @@ impl PremadeDockerfile {
 }
 
 pub const CANONICAL_PREMADE_RUNNER_REPOSITORY: &str = "Vider06/GitRun";
-pub const CANONICAL_PREMADE_RUNNER_COMMIT: &str =
-    "8c12be2732ce8769b535394fc896c76d99d28472";
-pub const CANONICAL_PREMADE_RUNNER_PATH: &str =
-    "Core/Dockers/runners/linux-x86_64/Dockerfile";
+pub const CANONICAL_PREMADE_RUNNER_COMMIT: &str = "8c12be2732ce8769b535394fc896c76d99d28472";
+pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "Core/Dockers/runners/linux-x86_64/Dockerfile";
 
 pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
     PremadeDockerfile {
@@ -97,9 +99,7 @@ pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
     }
 }
 
-pub fn fetch_premade_runner_dockerfile(
-    source: &PremadeDockerfile,
-) -> Result<String, UpdateError> {
+pub fn fetch_premade_runner_dockerfile(source: &PremadeDockerfile) -> Result<String, UpdateError> {
     source.validate()?;
     let url = format!(
         "https://raw.githubusercontent.com/{}/{}/{}",

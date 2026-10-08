@@ -7,9 +7,11 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
     let source = gitrun_updater::fetch_premade_runner_dockerfile(
         &gitrun_updater::canonical_premade_runner_dockerfile(),
     )
-    .map_err(|error| SetupError::Command(format!(
-        "unable to fetch the canonical Premade runner Dockerfile: {error}"
-    )))?;
+    .map_err(|error| {
+        SetupError::Command(format!(
+            "unable to fetch the canonical Premade runner Dockerfile: {error}"
+        ))
+    })?;
     runner_dockerfile_from_source(&source)
 }
 
@@ -197,7 +199,9 @@ mod tests {
 
     #[test]
     fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
-        let dockerfile = runner_dockerfile_from_source(include_str!("../../../docker/runner/Dockerfile")).unwrap();
+        let dockerfile =
+            runner_dockerfile_from_source(include_str!("../../../docker/runner/Dockerfile"))
+                .unwrap();
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
         assert!(dockerfile.contains("COPY crates/gitrun-exe ./crates/gitrun-exe"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));

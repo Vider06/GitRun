@@ -299,7 +299,7 @@ jobs:
             echo "server_archive=$server_archive"
           } >> "$GITHUB_OUTPUT"
       - name: Configure AWS signing credentials
-        uses: aws-actions/configure-aws-credentials@e125382
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
         with:
           role-to-assume: ${{ vars.GITRUN_RELEASE_SIGNING_ROLE_ARN }}
           aws-region: ${{ vars.GITRUN_RELEASE_SIGNING_AWS_REGION }}

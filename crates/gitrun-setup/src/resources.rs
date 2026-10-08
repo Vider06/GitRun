@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
-        let dockerfile = runner_dockerfile_for_bootstrap();
+        let dockerfile = runner_dockerfile_from_source(include_str!("../../../docker/runner/Dockerfile")).unwrap();
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
         assert!(dockerfile.contains("COPY crates/gitrun-exe ./crates/gitrun-exe"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));

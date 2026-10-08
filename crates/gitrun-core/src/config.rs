@@ -75,9 +75,10 @@ pub struct Config {
     /// build, not just scratch space — see the fix note in
     /// gitrun-scheduler/src/docker.rs for why this exists at all.
     pub runner_home_size: String,
-    /// Where the runner's home directory lives: `"tmpfs"` (RAM-backed,
-    /// fastest, but counts against host memory per concurrent runner — the
-    /// original, still the default) or `"volume"` (a Docker-managed named
+    /// Where the runner's home directory lives: `"volume"` (the hardened
+    /// default, a Docker-managed named volume on disk, one per runner
+    /// container, removed alongside it). `"tmpfs"` remains available only
+    /// with an explicitly writable runner root filesystem.
     /// volume on disk, one per runner container, removed alongside it).
     /// Any other value is rejected by `validate()`.
     pub runner_home_backend: String,

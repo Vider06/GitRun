@@ -580,9 +580,9 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-async fn run_first_setup(
-    app: AppHandle,
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FirstSetupRequest {
     auth_mode: String,
     token: String,
     repositories: String,
@@ -590,7 +590,23 @@ async fn run_first_setup(
     installation_id: String,
     private_key_path: String,
     reinstall: bool,
+}
+
+#[tauri::command]
+async fn run_first_setup(
+    app: AppHandle,
+    request: FirstSetupRequest,
 ) -> Result<(), String> {
+    let FirstSetupRequest {
+        auth_mode,
+        token,
+        repositories: repository_input,
+        app_id,
+        installation_id,
+        private_key_path,
+        reinstall,
+    } = request;
+
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical first-run setup currently targets Linux x86_64".into());
     }
@@ -612,7 +628,7 @@ async fn run_first_setup(
         &private_key_path,
     )?;
 
-    let repositories = repositories
+    let repositories = repository_input
         .split(',')
         .map(str::trim)
         .filter(|repo| !repo.is_empty())

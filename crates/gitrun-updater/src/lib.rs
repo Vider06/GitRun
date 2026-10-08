@@ -91,8 +91,7 @@ impl PremadeDockerfile {
 
 pub const CANONICAL_PREMADE_RUNNER_REPOSITORY: &str = "Vider06/GitRun";
 pub const CANONICAL_PREMADE_RUNNER_REF: &str = "feat/gitrun-premade";
-pub const CANONICAL_PREMADE_RUNNER_PATH: &str =
-    "Core/Dockers/runners/linux-x86_64/Dockerfile";
+pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "Core/Dockers/runners/linux-x86_64/Dockerfile";
 
 pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
     PremadeDockerfile {
@@ -102,9 +101,7 @@ pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
     }
 }
 
-pub fn fetch_premade_runner_dockerfile(
-    source: &PremadeDockerfile,
-) -> Result<String, UpdateError> {
+pub fn fetch_premade_runner_dockerfile(source: &PremadeDockerfile) -> Result<String, UpdateError> {
     source.validate()?;
     let commit = if is_full_git_commit(&source.reference) {
         source.reference.clone()
@@ -1695,9 +1692,7 @@ fn resolve_premade_branch_head(repository: &str, reference: &str) -> Result<Stri
     }
     validate_repository(repository)?;
     let encoded_reference = reference.replace('/', "%2F");
-    let url = format!(
-        "https://api.github.com/repos/{repository}/commits/{encoded_reference}"
-    );
+    let url = format!("https://api.github.com/repos/{repository}/commits/{encoded_reference}");
     let value: serde_json::Value = http_client()?.get(url).send()?.error_for_status()?.json()?;
     let sha = value
         .get("sha")

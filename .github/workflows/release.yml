@@ -318,11 +318,16 @@ jobs:
             exit 1
           }
           key="$RUNNER_TEMP/gitrun-release-signing-key.der"
+          public_key="$RUNNER_TEMP/gitrun-release-signing-public-key.der"
+          public_key_hex="$RUNNER_TEMP/gitrun-release-signing-public-key.hex"
           payload="$RUNNER_TEMP/gitrun-manifest-signing-payload.json"
           signature="$RUNNER_TEMP/gitrun-manifest.sig"
-          trap 'rm -f "$key" "$payload" "$signature"' EXIT
+          trap 'rm -f "$key" "$public_key" "$public_key_hex" "$payload" "$signature"' EXIT
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
           chmod 600 "$key"
+          openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public_key"
+          tail -c 32 "$public_key" | od -An -v -tx1 | tr -d '[:space:]' > "$public_key_hex"
+          test "$(wc -c < "$public_key_hex")" -eq 64
           jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\n' > "$payload"
           openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$signature"
           sig_hex="$(od -An -v -tx1 "$signature" | tr -d '[:space:]')"
@@ -332,7 +337,26 @@ jobs:
           }
           jq --arg sig "$sig_hex" --arg key_id "$GITRUN_UPDATE_SIGNING_KEY_ID"             '. + {signature:$sig, signature_key_id:$key_id}'             "$ROOT/release-manifest.json" > "$ROOT/release-manifest.json.tmp"
           mv "$ROOT/release-manifest.json.tmp" "$ROOT/release-manifest.json"
+          {
+            echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$(cat "$public_key_hex")"
+            echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$GITRUN_UPDATE_SIGNING_KEY_ID"
+            echo "GITRUN_RELEASE_MANIFEST=$ROOT/release-manifest.json"
+          } >> "$GITHUB_ENV"
           echo "Release manifest signature: PASS (GitHub Actions secret + Ed25519)"
+
+      - name: Verify release manifest with GitRun updater
+        shell: bash
+        env:
+          GITRUN_UPDATE_PUBLIC_KEY_HEX: ${{ env.GITRUN_UPDATE_PUBLIC_KEY_HEX }}
+          GITRUN_UPDATE_PUBLIC_KEY_ID: ${{ env.GITRUN_UPDATE_PUBLIC_KEY_ID }}
+          GITRUN_UPDATE_SIGNATURE_REQUIRED: "true"
+          GITRUN_RELEASE_MANIFEST: ${{ env.GITRUN_RELEASE_MANIFEST }}
+        run: |
+          set -euo pipefail
+          test -n "$GITRUN_UPDATE_PUBLIC_KEY_HEX"
+          test -n "$GITRUN_UPDATE_PUBLIC_KEY_ID"
+          test -f "$GITRUN_RELEASE_MANIFEST"
+          cargo test --locked -p gitrun-updater --test release_manifest_signature
 
       - name: Verify release artifacts
         shell: bash

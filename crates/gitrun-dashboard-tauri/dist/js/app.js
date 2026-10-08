@@ -1398,12 +1398,12 @@ function applySetupEvent(event) {
   }
 }
 
-function renderFirstRun() {
+function renderFirstRun(isReinstall = false) {
   setDashboardShell(false);
   content.innerHTML = `
     <div class="view-header">
-      <h1 class="view-title">Welcome to GitRun</h1>
-      <p class="view-subtitle">Complete the one-time setup before the dashboard can manage your runners.</p>
+      <h1 class="view-title">${isReinstall ? "Reinstall GitRun" : "Welcome to GitRun"}</h1>
+      <p class="view-subtitle">${isReinstall ? "Rebuild GitRun's installed resources while preserving your existing runtime configuration and state." : "Complete the one-time setup before the dashboard can manage your runners."}</p>
     </div>
 
     <div class="section" style="max-width:640px">
@@ -1451,7 +1451,7 @@ function renderFirstRun() {
 
         <div class="toolbar" style="margin-top:20px">
           <span id="setup-status" class="field-hint"></span>
-          <button class="btn btn-primary" id="setup-submit">Install and start GitRun</button>
+          <button class="btn btn-primary" id="setup-submit">${isReinstall ? "Reinstall and start GitRun" : "Install and start GitRun"}</button>
         </div>
 
         <p class="field-hint" style="margin-top:16px">
@@ -1531,7 +1531,7 @@ function renderFirstRun() {
     }
 
     renderSetupProgress();
-    setupAppendLog("Starting first-run GitRun setup…");
+    setupAppendLog(isReinstall ? "Starting GitRun reinstall…" : "Starting first-run GitRun setup…");
     setupSetStatus("Preparing privileged setup…", 0);
 
     let unlisten = null;
@@ -1559,6 +1559,7 @@ function renderFirstRun() {
         appId,
         installationId,
         privateKeyPath: setupPrivateKeyPath,
+        reinstall: isReinstall,
       });
 
       state.firstRun = false;

@@ -589,11 +589,16 @@ async fn run_first_setup(
     app_id: String,
     installation_id: String,
     private_key_path: String,
+    reinstall: bool,
 ) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical first-run setup currently targets Linux x86_64".into());
     }
-    if configured_config_path().is_some() {
+    if reinstall {
+        if configured_config_path().is_none() {
+            return Err("GitRun is not currently configured; use the normal first-run setup instead".into());
+        }
+    } else if configured_config_path().is_some() {
         return Err("GitRun is already configured; graphical first-run setup is only available before initial setup".into());
     }
 
@@ -655,12 +660,13 @@ async fn run_first_setup(
 
     let app_for_setup = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let operation = if reinstall { "--reinstall-root" } else { "--install-root" };
         let result = stream_privileged_command(
             &app_for_setup,
             &pkexec,
             &cli,
             &[
-                "--install-root".to_owned(),
+                operation.to_owned(),
                 path.to_string_lossy().into_owned(),
             ],
         );

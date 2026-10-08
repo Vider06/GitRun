@@ -263,6 +263,65 @@ fn remove_path_if_present(path: &Path) -> Result<(), SetupError> {
     Ok(())
 }
 
+
+/// Rebuilds a configured GitRun installation from scratch while preserving
+/// the operator's existing configuration and runtime state. Authentication is
+/// supplied by the caller so no secret is copied into a temporary privileged
+/// request beyond the existing setup flow.
+pub fn reinstall_linux_with_auth(
+    auth: BootstrapAuth,
+    repositories: &str,
+    app_binary: &Path,
+    owner_uid: Option<u32>,
+) -> Result<SetupReport, SetupError> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err(SetupError::UnsupportedPlatform);
+    }
+    if !running_as_root() {
+        return Err(SetupError::NotRoot);
+    }
+
+    let config_path = Path::new("/etc/gitrun/gitrun.env");
+    if !config_path.is_file() {
+        return Err(SetupError::Command(
+            "GitRun is not currently installed; use the normal first-run setup instead".into(),
+        ));
+    }
+    let existing_config = fs::read_to_string(config_path)?;
+
+    println!("[GitRun reinstall] Stopping the existing GitRun service");
+    let _ = Command::new("systemctl")
+        .args(["disable", "--now", "gitrun.service"])
+        .status();
+
+    remove_gitrun_docker_resources();
+    for path in [
+        "/etc/systemd/system/gitrun.service",
+        "/usr/local/bin/gitrun-recovery",
+        "/opt/gitrun",
+    ] {
+        remove_path_if_present(Path::new(path))?;
+    }
+    let _ = Command::new("docker")
+        .args(["image", "rm", "-f", "gitrun-runner:latest"])
+        .status();
+    let _ = Command::new("systemctl").args(["daemon-reload"]).status();
+
+    let report = bootstrap_linux_with_auth(auth, repositories, app_binary, owner_uid)?;
+
+    write_resource(config_path, &existing_config, 0o600)?;
+    if let Some(uid) = owner_uid {
+        chown_path(config_path, uid)?;
+    }
+    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
+    run_command(
+        Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]),
+    )?;
+
+    println!("GitRun reinstall: PASS");
+    Ok(report)
+}
+
 pub fn bootstrap_linux_with_auth(
     auth: BootstrapAuth,
     repositories: &str,

@@ -79,7 +79,6 @@ pub struct Config {
     /// default, a Docker-managed named volume on disk, one per runner
     /// container, removed alongside it). `"tmpfs"` remains available only
     /// with an explicitly writable runner root filesystem.
-    /// volume on disk, one per runner container, removed alongside it).
     /// Any other value is rejected by `validate()`.
     pub runner_home_backend: String,
     /// Mount the runner container root filesystem read-only. This is the

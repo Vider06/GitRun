@@ -5,7 +5,7 @@ premade:
 artifacts:
   dockers:
     - id: runner-linux-x86_64
-      path: Dockers/runners/linux-x86_64
+      path: Core/Dockers/runners/linux-x86_64
       version: 0.1.0
       source: gitrun-setup
       platforms:

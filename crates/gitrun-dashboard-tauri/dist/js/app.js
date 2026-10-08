@@ -1553,13 +1553,15 @@ function renderFirstRun(isReinstall = false) {
       }
 
       await invoke("run_first_setup", {
-        authMode,
-        token,
-        repositories,
-        appId,
-        installationId,
-        privateKeyPath: setupPrivateKeyPath,
-        reinstall: isReinstall,
+        request: {
+          authMode,
+          token,
+          repositories,
+          appId,
+          installationId,
+          privateKeyPath: setupPrivateKeyPath,
+          reinstall: isReinstall,
+        },
       });
 
       state.firstRun = false;

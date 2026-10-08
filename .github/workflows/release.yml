@@ -358,6 +358,14 @@ jobs:
           test -f "$GITRUN_RELEASE_MANIFEST"
           cargo test --locked -p gitrun-updater --test release_manifest_signature
 
+          tampered="$RUNNER_TEMP/gitrun-release-manifest-tampered.json"
+          jq '.version = (.version + "-tampered")' "$GITRUN_RELEASE_MANIFEST" > "$tampered"
+          if GITRUN_RELEASE_MANIFEST="$tampered" cargo test --locked -p gitrun-updater --test release_manifest_signature; then
+            echo "GitRun updater accepted a tampered signed manifest" >&2
+            exit 1
+          fi
+          echo "Release manifest tamper rejection: PASS"
+
       - name: Verify release artifacts
         shell: bash
         env:

@@ -68,8 +68,8 @@ mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 
 # GitDockRun can temporarily convert a completed runner container into a
-# dock-only resource. The marker lives in the per-runner home volume, so the state survives stop/start without starting
-# another GitHub Actions runner.
+# dock-only resource. The marker lives in the per-runner home volume, so the
+# state survives stop/start without starting another GitHub Actions runner.
 DOCK_ONLY_MARKER=/home/runner/actions-runner/.gitrun-dock-only
 if [[ ! -f "$DOCK_ONLY_MARKER" ]]; then
   : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
@@ -85,10 +85,10 @@ if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   unset GITRUN_GSR_COMMAND_WHITELIST_ENABLED
   unset GITRUN_GSR_COMMAND_WHITELIST
   unset GITRUN_GSR_VIOLATION_ACTION
-  exec sudo -u runner -E /bin/bash -c 'exec sleep infinity'
+  exec sudo -P -u runner -E /bin/bash -c 'exec sleep infinity'
 fi
 
-sudo -u runner -E mkdir -p \
+sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/cargo" \
   "$SHARED_CACHE_DIR/cargo-target" \
   "$SHARED_CACHE_DIR/pip" \
@@ -102,7 +102,7 @@ if [[ ! -f .runner ]]; then
   args=(--url "$RUNNER_URL" --token "$RUNNER_TOKEN" --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" --unattended --replace)
   [[ "$RUNNER_EPHEMERAL" == "true" ]] && args+=(--ephemeral)
   [[ "$RUNNER_DISABLE_UPDATE" == "true" ]] && args+=(--disableupdate)
-  sudo -u runner -E ./config.sh "${args[@]}"
+  sudo -P -u runner -E ./config.sh "${args[@]}"
 fi
 
 unset RUNNER_TOKEN

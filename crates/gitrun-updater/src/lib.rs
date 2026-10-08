@@ -1380,7 +1380,7 @@ fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    if value.len() % 2 != 0 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !value.len().is_multiple_of(2) || !value.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
     let bytes = value.as_bytes();

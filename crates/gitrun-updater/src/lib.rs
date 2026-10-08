@@ -144,7 +144,6 @@ pub struct ReleaseManifest {
     pub runner_image: Option<RunnerImage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -672,7 +672,7 @@ fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
 }
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
-    ensure_runner_network(host, &spec.network)?;
+    ensure_runner_network(host, spec.network)?;
     if spec.is_windows && spec.docker_socket_enabled {
         return Err(DockerError::Command(
             "Windows runner cannot enable the Linux Docker socket compatibility option".into(),

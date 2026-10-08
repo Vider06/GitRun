@@ -783,6 +783,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.extend([
             "--tmpfs".into(),
             "/tmp:rw,nosuid,nodev,exec,size=256m".into(),
+            "--tmpfs".into(),
+            "/var/tmp:rw,nosuid,nodev,exec,size=64m".into(),
         ]);
         if spec.docker_socket_enabled && !spec.is_windows {
             args.extend([
@@ -816,6 +818,10 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "PIP_CACHE_DIR=/var/lib/gitrun/shared/pip".into(),
             "-e".into(),
             "NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm".into(),
+            "-e".into(),
+            "HOME=/home/runner/actions-runner/home".into(),
+            "-e".into(),
+            "XDG_CONFIG_HOME=/home/runner/actions-runner/home/.config".into(),
             "-e".into(),
             "DOCKER_CONFIG=/tmp/docker-config".into(),
             "--tmpfs".into(),

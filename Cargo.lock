@@ -1581,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-cli"
-version = "0.4.0"
+version = "0.9.1"
 dependencies = [
  "clap",
  "crossterm",
@@ -1600,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-core"
-version = "0.2.0"
+version = "0.7.0"
 dependencies = [
  "jsonwebtoken",
  "reqwest 0.12.28",
@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-dashboard-tauri"
-version = "0.1.0"
+version = "0.6.2"
 dependencies = [
  "gitrun-core",
  "gitrun-gsr",
@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-exe"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.4.3",
  "gitrun-core",
@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-gsr"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "gitrun-core",
  "gitrun-exe",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-recovery"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "gitrun-core",
  "gitrun-scheduler",
@@ -1667,7 +1667,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.23.1",
  "filetime",
@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-setup"
-version = "0.4.0"
+version = "0.7.1"
 dependencies = [
  "gitrun-core",
  "thiserror 2.0.21",
@@ -1694,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-updater"
-version = "0.3.0"
+version = "0.6.1"
 dependencies = [
  "flate2",
  "gitrun-core",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-vault"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",

@@ -88,29 +88,6 @@ if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   exec sudo -u runner -E /bin/bash -c 'exec sleep infinity'
 fi
 
-if [[ -S /run/gitrun/api.sock ]]; then
-  api_socket_gid="$(stat -c '%g' /run/gitrun/api.sock)"
-  if [[ "$api_socket_gid" != "0" ]]; then
-    if ! getent group "$api_socket_gid" >/dev/null 2>&1; then
-      groupadd --gid "$api_socket_gid" gitrun-api-host
-    fi
-    usermod -aG "$api_socket_gid" runner
-  fi
-fi
-
-if [[ -S /var/run/docker.sock ]]; then
-  socket_gid="$(stat -c '%g' /var/run/docker.sock)"
-  if [[ "$socket_gid" != "0" ]]; then
-    if getent group "$socket_gid" >/dev/null 2>&1; then
-      docker_socket_group="$(getent group "$socket_gid" | cut -d: -f1)"
-    else
-      docker_socket_group="docker-host"
-      groupadd --gid "$socket_gid" "$docker_socket_group"
-    fi
-    usermod -aG "$docker_socket_group" runner
-  fi
-fi
-
 sudo -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/cargo" \
   "$SHARED_CACHE_DIR/cargo-target" \

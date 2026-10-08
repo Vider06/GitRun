@@ -29,6 +29,7 @@ pub type Result<T> = std::result::Result<T, DockerError>;
 
 const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
 const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const GITRUN_API_SOCKET_GID: &str = "10000";
 
 /// Where a Docker command actually runs. `Local` is the existing behavior
 /// (talks to the host's own Docker socket via the CLI's default). `Remote`

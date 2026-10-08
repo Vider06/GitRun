@@ -56,6 +56,79 @@ impl RunnerImage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PremadeDockerfile {
+    pub repository: String,
+    pub git_commit: String,
+    pub path: String,
+}
+
+impl PremadeDockerfile {
+    pub fn validate(&self) -> Result<(), UpdateError> {
+        validate_repository(&self.repository)?;
+        if self.git_commit.len() != 40 || !self.git_commit.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(UpdateError::InvalidManifest(
+                "Premade Dockerfile git_commit must be a full 40-character hexadecimal commit".into(),
+            ));
+        }
+        if self.path.trim().is_empty()
+            || self.path.starts_with('/')
+            || self.path.contains(['\\', '\n', '\r'])
+            || self.path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err(UpdateError::InvalidManifest(
+                "invalid Premade Dockerfile path".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub const CANONICAL_PREMADE_RUNNER_REPOSITORY: &str = "Vider06/GitRun";
+pub const CANONICAL_PREMADE_RUNNER_COMMIT: &str =
+    "8c12be2732ce8769b535394fc896c76d99d28472";
+pub const CANONICAL_PREMADE_RUNNER_PATH: &str =
+    "Core/Dockers/runners/linux-x86_64/Dockerfile";
+
+pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
+    PremadeDockerfile {
+        repository: CANONICAL_PREMADE_RUNNER_REPOSITORY.into(),
+        git_commit: CANONICAL_PREMADE_RUNNER_COMMIT.into(),
+        path: CANONICAL_PREMADE_RUNNER_PATH.into(),
+    }
+}
+
+pub fn fetch_premade_runner_dockerfile(
+    source: &PremadeDockerfile,
+) -> Result<String, UpdateError> {
+    source.validate()?;
+    let url = format!(
+        "https://raw.githubusercontent.com/{}/{}/{}",
+        source.repository, source.git_commit, source.path
+    );
+    validate_https_url(&url)?;
+    let content = http_client()?.get(url).send()?.error_for_status()?.text()?;
+    if content.trim().is_empty() {
+        return Err(UpdateError::InvalidManifest(
+            "Premade Dockerfile is empty".into(),
+        ));
+    }
+    if !content.contains("FROM ") || !content.contains("ENTRYPOINT ") {
+        return Err(UpdateError::InvalidManifest(
+            "Premade Dockerfile does not look like a runner Dockerfile".into(),
+        ));
+    }
+    Ok(content)
+}
+
+pub fn sync_premade_runner_dockerfile(
+    source: &PremadeDockerfile,
+    destination: impl AsRef<Path>,
+) -> Result<(), UpdateError> {
+    let content = fetch_premade_runner_dockerfile(source)?;
+    atomic_write_installed_file(destination.as_ref(), content.as_bytes(), 0o644)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReleaseManifest {
     pub name: String,
     pub version: String,
@@ -71,6 +144,8 @@ pub struct ReleaseManifest {
     pub runner_image: Option<RunnerImage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub premade_dockerfile: Option<PremadeDockerfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -91,6 +166,7 @@ pub struct UpdatePlan {
     pub artifact_url: String,
     pub dependencies: Vec<DependencyStatus>,
     pub runner_image: Option<RunnerImage>,
+    pub premade_dockerfile: Option<PremadeDockerfile>,
 }
 
 #[derive(Debug, Clone)]
@@ -168,6 +244,9 @@ impl ReleaseManifest {
         }
         if let Some(repository) = &self.repository {
             validate_repository(repository)?;
+        }
+        if let Some(source) = &self.premade_dockerfile {
+            source.validate()?;
         }
         match (&self.signature, &self.signature_key_id) {
             (Some(signature), key_id) => {
@@ -420,6 +499,7 @@ pub fn build_plan(
         artifact_url,
         dependencies,
         runner_image: manifest.runner_image.clone(),
+        premade_dockerfile: manifest.premade_dockerfile.clone(),
     })
 }
 
@@ -968,8 +1048,14 @@ pub fn pin_runner_image(
     Ok(())
 }
 
-pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
+pub fn update_runner_image(
+    image: &RunnerImage,
+    premade_dockerfile: Option<&PremadeDockerfile>,
+) -> Result<(), UpdateError> {
     image.validate()?;
+    if let Some(source) = premade_dockerfile {
+        let _ = fetch_premade_runner_dockerfile(source)?;
+    }
     let inspect = Command::new("docker")
         .args([
             "image",

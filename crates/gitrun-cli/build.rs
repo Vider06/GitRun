@@ -33,9 +33,9 @@ fn package_metadata(path: &PathBuf) -> Result<(String, String), String> {
             continue;
         }
 
-        if let Some(value) = trimmed.strip_prefix("name = "") {
+        if let Some(value) = trimmed.strip_prefix("name = \\"" {
             name = value.strip_suffix('"').map(str::to_owned);
-        } else if let Some(value) = trimmed.strip_prefix("version = "") {
+        } else if let Some(value) = trimmed.strip_prefix("version = \\"" {
             version = value.strip_suffix('"').map(str::to_owned);
         }
 

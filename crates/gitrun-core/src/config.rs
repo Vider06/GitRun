@@ -340,10 +340,8 @@ impl Config {
             if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT") {
                 c.resource_pressure_disk_percent = 90;
             }
-        } else if c.host_profile == "large" {
-            if !lookup.contains_key("GITRUN_MAX_RUNNERS") {
-                c.max_runners = 16;
-            }
+        } else if c.host_profile == "large" && !lookup.contains_key("GITRUN_MAX_RUNNERS") {
+            c.max_runners = 16;
         }
         if let Some(v) = get("GITRUN_RUNNER_IMAGE") {
             c.runner_image = v;

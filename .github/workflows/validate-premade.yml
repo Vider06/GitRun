@@ -1,0 +1,77 @@
+name: Validate Premade
+
+on:
+  push:
+    branches:
+      - feat/gitrun-premade
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - Core/**
+      - Dockers/**
+      - VM-Images/**
+      - Workflows/**
+      - Testing/**
+      - Other/**
+      - README.md
+      - .gitignore
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  structure:
+    name: Validate Premade structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require Premade directories and READMEs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in Core Dockers VM-Images Workflows Testing Other; do
+            test -d "$path"
+            test -f "$path/README.md"
+          done
+          for path in Core/defaults Core/manifests Core/utils Dockers/runners Dockers/runners/linux-x86_64 VM-Images/linux-x86_64 Workflows/GitRun-Dependent Workflows/GitRun-Independent Testing/Core Testing/Dockers Testing/VM-Images Testing/Workflows Testing/Integration; do
+            test -d "$path"
+            test -f "$path/README.md"
+          done
+
+      - name: Reject GitRun application source
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in Cargo.toml Cargo.lock crates src docker-compose.yml; do
+            if test -e "$path"; then
+              echo "::error::GitRun application content is not allowed in Premade: $path"
+              exit 1
+            fi
+          done
+
+      - name: Validate Premade manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '^schema: gitrun-premade/v1$' Core/manifests/premade.yaml
+          grep -q '^  version:' Core/manifests/premade.yaml
+          grep -q '^artifacts:' Core/manifests/premade.yaml
+
+      - name: Check BuildKit availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx version
+
+      - name: Validate Dockerfiles with BuildKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' dockerfile; do
+            context="$(dirname "$dockerfile")"
+            echo "Checking $dockerfile"
+            docker buildx build --check --progress=plain "$context" -f "$dockerfile"
+          done < <(find Dockers -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' \) -print0)

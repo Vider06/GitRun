@@ -1,0 +1,47 @@
+name: Premade Testing
+
+on:
+  push:
+    paths:
+      - Testing/**
+      - Core/**
+      - Dockers/**
+      - VM-Images/**
+      - Workflows/**
+      - .github/workflows/testing.yml
+  pull_request:
+    paths:
+      - Testing/**
+      - Core/**
+      - Dockers/**
+      - VM-Images/**
+      - Workflows/**
+      - .github/workflows/testing.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testing-tree:
+    name: Validate Testing tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate testing layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in Testing Testing/Core Testing/Dockers Testing/VM-Images Testing/Workflows Testing/Integration; do
+            test -d "$path"
+            test -f "$path/README.md"
+          done
+
+      - name: Ensure every test family is represented
+        shell: bash
+        run: |
+          set -euo pipefail
+          find Testing -mindepth 2 -maxdepth 2 -type f -name README.md -print
+          test "$(find Testing -mindepth 2 -maxdepth 2 -type f -name README.md | wc -l)" -ge 5

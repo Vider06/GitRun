@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # Forzza Dependabot a unificare il grafo dei 522 crate in un unico check
+    groups:
+      workspace-crates:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /docker/manager-rs
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /docker/runner
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

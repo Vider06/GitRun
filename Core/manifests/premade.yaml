@@ -1,0 +1,15 @@
+schema: gitrun-premade/v1
+premade:
+  version: 0.1.0
+  status: scaffold
+
+artifacts:
+  dockers: []
+  vm_images: []
+  workflows: []
+  other: []
+
+verification:
+  required_metadata: true
+  immutable_references: true
+  signed_release_metadata: true

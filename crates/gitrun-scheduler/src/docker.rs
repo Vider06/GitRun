@@ -657,7 +657,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         "--memory".into(),
         spec.memory.into(),
         "--restart".into(),
-        "unless-stopped".into(),
+        if spec.ephemeral { "no".into() } else { "unless-stopped".into() },
     ]);
 
     if let Some(job_name) = spec.workflow_job_name {
@@ -994,6 +994,12 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
 pub struct ApiRunnerIdentity {
     pub name: String,
     pub repository: String,
+    /// Immutable Docker container ID resolved from the peer cgroup.
+    pub container_id: String,
+    /// Job/run labels are present on runner containers that were reserved
+    /// for a specific workflow job. They are authoritative when present.
+    pub workflow_job: Option<String>,
+    pub workflow_run_id: Option<u64>,
 }
 
 /// Resolves the GitRun-managed runner container that owns a Unix-socket
@@ -1002,8 +1008,11 @@ pub struct ApiRunnerIdentity {
 /// the workflow environment.
 #[cfg(target_os = "linux")]
 pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
-    let cgroup =
-        std::fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(DockerError::Spawn)?;
+    let cgroup = match std::fs::read_to_string(format!("/proc/{pid}/cgroup")) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
     let Some(container_id) = container_id_from_cgroup(&cgroup) else {
         return Ok(None);
     };
@@ -1013,7 +1022,7 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
         &[
             "inspect",
             "-f",
-            "{{.Name}}|{{index .Config.Labels \"gitrun.runner\"}}|{{index .Config.Labels \"gitrun.repo\"}}",
+            "{{.Id}}|{{.Name}}|{{index .Config.Labels \"gitrun.runner\"}}|{{index .Config.Labels \"gitrun.repo\"}}|{{index .Config.Labels \"gitrun.workflow_job\"}}|{{index .Config.Labels \"gitrun.workflow_run\"}}",
             &container_id,
         ],
     )?;
@@ -1023,18 +1032,30 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     }
 
     let raw = String::from_utf8_lossy(&output.stdout);
-    let mut parts = raw.trim().splitn(3, '|');
+    let mut parts = raw.trim().splitn(6, '|');
+    let resolved_id = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default().trim_start_matches('/');
     let runner_label = parts.next().unwrap_or_default();
     let repository = parts.next().unwrap_or_default();
+    let workflow_job = parts.next().unwrap_or_default();
+    let workflow_run_id = parts
+        .next()
+        .and_then(|value| value.parse::<u64>().ok());
 
-    if runner_label != "true" || name.is_empty() || repository.is_empty() {
+    if runner_label != "true"
+        || resolved_id.is_empty()
+        || name.is_empty()
+        || repository.is_empty()
+    {
         return Ok(None);
     }
 
     Ok(Some(ApiRunnerIdentity {
         name: name.to_owned(),
         repository: repository.to_owned(),
+        container_id: resolved_id.to_owned(),
+        workflow_job: (!workflow_job.is_empty()).then(|| workflow_job.to_owned()),
+        workflow_run_id,
     }))
 }
 

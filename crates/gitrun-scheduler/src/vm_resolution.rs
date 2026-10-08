@@ -389,7 +389,10 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     // operator-designated clean snapshot before a new workload is admitted.
     // The VM is stopped first because both supported hypervisors require
     // quiesced state for a deterministic rollback.
-    if matches!(config.activation, vm::ActivationMode::EphemeralSnapshotRollback) {
+    if matches!(
+        config.activation,
+        vm::ActivationMode::EphemeralSnapshotRollback
+    ) {
         let snapshot = format!("gitrun-clean-{}", config.name);
         if vm::is_running(kind, &config.name)? {
             vm::stop(kind, &config.name)?;

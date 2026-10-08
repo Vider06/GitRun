@@ -347,10 +347,7 @@ jobs:
       - name: Verify release manifest with GitRun updater
         shell: bash
         env:
-          GITRUN_UPDATE_PUBLIC_KEY_HEX: ${{ env.GITRUN_UPDATE_PUBLIC_KEY_HEX }}
-          GITRUN_UPDATE_PUBLIC_KEY_ID: ${{ env.GITRUN_UPDATE_PUBLIC_KEY_ID }}
           GITRUN_UPDATE_SIGNATURE_REQUIRED: "true"
-          GITRUN_RELEASE_MANIFEST: ${{ env.GITRUN_RELEASE_MANIFEST }}
         run: |
           set -euo pipefail
           test -n "$GITRUN_UPDATE_PUBLIC_KEY_HEX"

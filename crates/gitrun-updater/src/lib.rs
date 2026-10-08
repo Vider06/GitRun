@@ -174,7 +174,6 @@ pub struct UpdatePlan {
     pub artifact_url: String,
     pub dependencies: Vec<DependencyStatus>,
     pub runner_image: Option<RunnerImage>,
-    pub premade_dockerfile: Option<PremadeDockerfile>,
 }
 
 #[derive(Debug, Clone)]
@@ -2010,7 +2009,7 @@ mod tests {
     fn canonical_premade_runner_source_is_immutable() {
         let source = canonical_premade_runner_dockerfile();
         assert_eq!(source.repository, CANONICAL_PREMADE_RUNNER_REPOSITORY);
-        assert_eq!(source.git_commit, CANONICAL_PREMADE_RUNNER_COMMIT);
+        assert_eq!(source.reference, CANONICAL_PREMADE_RUNNER_REF);
         assert_eq!(source.path, CANONICAL_PREMADE_RUNNER_PATH);
         assert!(source.validate().is_ok());
     }
@@ -2018,7 +2017,7 @@ mod tests {
     #[test]
     fn premade_runner_source_rejects_non_immutable_commit() {
         let mut source = canonical_premade_runner_dockerfile();
-        source.git_commit = "main".into();
+        source.reference = "refs/heads/main".into();
         assert!(source.validate().is_err());
     }
 

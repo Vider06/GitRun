@@ -107,7 +107,9 @@ Important runtime state includes:
 - `GITRUN_LOG_DIR` — runtime logs.
 - `GITRUN_VAULT_DIR` — GitVault storage.
 - `GITRUN_RUNNER_IMAGE` — default runner image.
-- `GITRUN_RUNNER_HOME_BACKEND` — runner home storage backend (`tmpfs` or `volume`).
+- `GITRUN_RUNNER_HOME_BACKEND` — runner home storage backend (`volume` is the hardened default; `tmpfs` requires an explicitly writable root).
+- `GITRUN_RUNNER_ROOTFS_READ_ONLY` — mount Linux runner root filesystems read-only (default: `true`).
+- `GITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION` — require Hyper-V isolation for Windows runner containers (default: `true`).
 - `GITRUN_RUNNER_NETWORK` — dedicated Docker network used by managed runners.
 - `GITRUN_RESOURCE_PRESSURE_PATHS` — semicolon-separated critical filesystem paths used by resource-pressure backpressure.
 - `GITRUN_GSR_*` — GSR hardening, command policy and workflow validation.

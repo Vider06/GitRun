@@ -237,10 +237,6 @@ impl Default for Config {
             gsr_workflow_validation_enabled: true,
             gsr_zizmor_enabled: false,
             gsr_zizmor_license_accepted: false,
-            resource_pressure_enabled: true,
-            resource_pressure_cpu_percent: 90,
-            resource_pressure_memory_percent: 90,
-            resource_pressure_disk_percent: 90,
         }
     }
 }

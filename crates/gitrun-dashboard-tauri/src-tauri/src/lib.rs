@@ -593,10 +593,7 @@ struct FirstSetupRequest {
 }
 
 #[tauri::command]
-async fn run_first_setup(
-    app: AppHandle,
-    request: FirstSetupRequest,
-) -> Result<(), String> {
+async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
     let FirstSetupRequest {
         auth_mode,
         token,

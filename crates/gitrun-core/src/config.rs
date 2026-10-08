@@ -54,8 +54,9 @@ pub struct Config {
     /// Name of the Docker volume shared across runner containers for
     /// package-manager caches (Cargo/pip/npm) — the embryonic GitVault.
     pub shared_cache_volume: String,
-    /// Cache isolation scope: `repository` (default), `runner`, or `global`.
-    /// Global sharing is an explicit cross-repository trust decision.
+    /// Cache isolation scope: `runner` (default), `repository`, or `global`.
+    /// Runner scope is safest for untrusted workflow code; broader scopes are
+    /// explicit cross-workflow trust decisions.
     pub shared_cache_scope: String,
     /// Filesystems sampled by resource-pressure protection. The Docker data
     /// root should be included on hosts where runner storage can fill it.
@@ -200,7 +201,7 @@ impl Default for Config {
             container_pids_limit: "1024".into(),
             runner_disable_update: false,
             shared_cache_volume: "gitrun-runner-shared".into(),
-            shared_cache_scope: "repository".into(),
+            shared_cache_scope: "runner".into(),
             resource_pressure_paths: "/var/lib/gitrun;/var/lib/docker".into(),
             runner_home_size: "8g".into(),
             runner_home_backend: "tmpfs".into(),

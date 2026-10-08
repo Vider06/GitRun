@@ -635,7 +635,42 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
     create_runner_on(&DockerHost::Local, spec)
 }
 
+fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
+    let output = run_on(host, &["network", "inspect", network])?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_ascii_lowercase();
+    if !(stderr.contains("no such network") || stderr.contains("network not found")) {
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker network inspect {network} failed")
+        } else {
+            stderr
+        }));
+    }
+
+    // A stable, GitRun-owned bridge network provides container-to-container
+    // separation from Docker's default bridge and gives operators one fixed
+    // network identity to attach host firewall/proxy policy to. It is not
+    // itself an egress firewall: outbound control remains deployment-specific.
+    run_checked_on(
+        host,
+        &[
+            "network",
+            "create",
+            "--driver",
+            "bridge",
+            "--label",
+            "gitrun.managed=true",
+            network,
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
+    ensure_runner_network(host, &spec.network)?;
     if spec.is_windows && spec.docker_socket_enabled {
         return Err(DockerError::Command(
             "Windows runner cannot enable the Linux Docker socket compatibility option".into(),

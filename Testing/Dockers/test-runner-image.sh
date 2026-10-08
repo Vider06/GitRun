@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
-image="gitrun-premade/runner-linux-x86_64:test"
-docker buildx version
-docker buildx build --check --platform linux/amd64 Dockers/runners/linux-x86_64
-docker buildx build --load --platform linux/amd64 --tag "$image" Dockers/runners/linux-x86_64
-docker image inspect "$image" >/dev/null
-docker image inspect "$image" --format '{{.Config.User}}' | grep -Fxq "gitrun"
-echo "Docker runner image checks passed."
+
+readonly premade="Dockers/runners/linux-x86_64/Dockerfile"
+readonly source="docker/runner/Dockerfile"
+
+git fetch --quiet origin main --depth=1
+
+test -f "$premade"
+test -f "$source" || git show "FETCH_HEAD:$source" > /tmp/gitrun-setup-dockerfile
+
+git show "FETCH_HEAD:$source" > /tmp/gitrun-setup-dockerfile
+cmp -s /tmp/gitrun-setup-dockerfile "$premade"
+
+grep -Fq "GITRUN_GSR_COMMAND_POLICY_ENABLED=true" "$premade"
+grep -Fq 'ENTRYPOINT ["/entrypoint.sh"]' "$premade"
+
+echo "Premade setup Dockerfile is synchronized with GitRun."

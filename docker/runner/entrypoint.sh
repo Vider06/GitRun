@@ -68,10 +68,9 @@ mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 
 # GitDockRun can temporarily convert a completed runner container into a
-# dock-only resource. The marker lives in the container writable layer, not
-# in /run (which is tmpfs), so the state survives stop/start without starting
-# another GitHub Actions runner.
-DOCK_ONLY_MARKER=/home/runner/.gitrun-dock-only
+# dock-only resource. The marker lives in the per-runner home volume, so the
+# state survives stop/start without starting another GitHub Actions runner.
+DOCK_ONLY_MARKER=/home/runner/actions-runner/.gitrun-dock-only
 if [[ ! -f "$DOCK_ONLY_MARKER" ]]; then
   : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
 fi
@@ -86,33 +85,13 @@ if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   unset GITRUN_GSR_COMMAND_WHITELIST_ENABLED
   unset GITRUN_GSR_COMMAND_WHITELIST
   unset GITRUN_GSR_VIOLATION_ACTION
-  exec sudo -u runner -E /bin/bash -c 'exec sleep infinity'
+  exec sudo -P -u runner -E /bin/bash -c 'exec sleep infinity'
 fi
 
-if [[ -S /run/gitrun/api.sock ]]; then
-  api_socket_gid="$(stat -c '%g' /run/gitrun/api.sock)"
-  if [[ "$api_socket_gid" != "0" ]]; then
-    if ! getent group "$api_socket_gid" >/dev/null 2>&1; then
-      groupadd --gid "$api_socket_gid" gitrun-api-host
-    fi
-    usermod -aG "$api_socket_gid" runner
-  fi
-fi
+mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+chown runner:runner "$HOME" "$XDG_CONFIG_HOME"
 
-if [[ -S /var/run/docker.sock ]]; then
-  socket_gid="$(stat -c '%g' /var/run/docker.sock)"
-  if [[ "$socket_gid" != "0" ]]; then
-    if getent group "$socket_gid" >/dev/null 2>&1; then
-      docker_socket_group="$(getent group "$socket_gid" | cut -d: -f1)"
-    else
-      docker_socket_group="docker-host"
-      groupadd --gid "$socket_gid" "$docker_socket_group"
-    fi
-    usermod -aG "$docker_socket_group" runner
-  fi
-fi
-
-sudo -u runner -E mkdir -p \
+sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/cargo" \
   "$SHARED_CACHE_DIR/cargo-target" \
   "$SHARED_CACHE_DIR/pip" \
@@ -126,7 +105,7 @@ if [[ ! -f .runner ]]; then
   args=(--url "$RUNNER_URL" --token "$RUNNER_TOKEN" --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" --unattended --replace)
   [[ "$RUNNER_EPHEMERAL" == "true" ]] && args+=(--ephemeral)
   [[ "$RUNNER_DISABLE_UPDATE" == "true" ]] && args+=(--disableupdate)
-  sudo -u runner -E ./config.sh "${args[@]}"
+  sudo -P -u runner -E ./config.sh "${args[@]}"
 fi
 
 unset RUNNER_TOKEN

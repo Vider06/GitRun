@@ -227,7 +227,8 @@ mod tests {
             RUNNER_ENTRYPOINT,
             include_str!("../../../docker/runner/entrypoint.sh")
         );
-        assert!(RUNNER_ENTRYPOINT.contains("docker_socket_group"));
+        assert!(RUNNER_ENTRYPOINT.contains("sudo -P -u runner"));
+        assert!(RUNNER_ENTRYPOINT.contains("actions-runner/.gitrun-dock-only"));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
         assert_eq!(
             SYSTEMD_SERVICE,

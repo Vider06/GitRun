@@ -180,6 +180,8 @@ pub struct GtuuConfig<'a> {
     pub runner_home_size: &'a str,
     /// See `docker::RunnerHomeBackend` / `Config::runner_home_backend`.
     pub runner_home_backend: docker::RunnerHomeBackend,
+    pub runner_rootfs_read_only: bool,
+    pub runner_windows_hyperv_isolation: bool,
     /// Looks up (and decrypts) GitVault secrets for a given repo, returning
     /// them ready to inject as environment variables. Passed as a closure
     /// rather than a fixed list because GTUU updates containers across
@@ -286,6 +288,7 @@ fn update_one(
         docker_socket_gid: config.docker_socket_gid,
         runner_home_size: config.runner_home_size,
         home_backend: config.runner_home_backend,
+        rootfs_read_only: config.runner_rootfs_read_only,
         secret_env: &secret_env,
         gsr_policy_env: config.gsr_policy_env,
         is_windows: false,
@@ -294,6 +297,7 @@ fn update_one(
         dock_target: false,
         docker_socket_enabled,
         docker_socket_hardening: config.docker_socket_hardening,
+        windows_hyperv_isolation: config.runner_windows_hyperv_isolation,
     })?;
 
     if !wait_for_online(client, repo, &replacement_name, config.online_wait_timeout)? {

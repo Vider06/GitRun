@@ -21,7 +21,7 @@ GitRun also applies Docker-level hardening to Linux runners by default: all Linu
 
 The hardening can only be disabled through the explicit unsafe-runner configuration gate.
 
-Windows container runners are different: the current implementation does not mount the Docker socket or apply the Linux hardening flags. Windows isolation depends on the guest/VM boundary and remains a follow-up hardening area.
+Windows runners are only created against configured VM-backed Docker daemons, never the local Linux daemon. They retain the common CPU/memory/network/cache policy, do not receive Linux-only filesystem/capability flags, and request Hyper-V container isolation by default for an additional Windows kernel boundary. Disabling Hyper-V isolation requires the explicit unsafe-runner gate. The VM remains the primary guest boundary for Windows runners.
 
 ## Git*Run API trust boundary
 
@@ -35,16 +35,19 @@ A successful request therefore requires authenticated transport identity **and**
 
 ## Filesystem isolation
 
-Linux runner containers currently keep their root filesystem writable so normal GitHub Actions jobs can install tools and packages. Filesystem isolation is instead provided by:
+Linux runner containers mount their root filesystem read-only by default. Writable state is explicitly provided through:
 
-- a tmpfs **or per-runner Docker volume** at `/home/runner/actions-runner`;
+- a per-runner Docker volume at `/home/runner/actions-runner`;
 - a 256 MiB tmpfs at `/tmp`;
 - a small tmpfs at `/run/gitrun`;
-- a mounted volume for the package-manager cache.
+- a mounted package-manager cache volume;
+- the optional Docker socket and GitRun API socket mounts when their policies allow them.
 
-This is **not a read-only-root sandbox**. It does not protect the host filesystem from a process that can use the Docker socket.
+This is a read-only-root sandbox for normal Linux runner containers. It deliberately means that workflows needing to mutate the base operating-system filesystem should use a prepared runner image from the Premade ecosystem rather than relying on `apt install`-style mutation. Disabling the read-only root requires the explicit unsafe-runner gate.
 
-Windows runners do not receive the Linux read-only-root/tmpfs/PID hardening; their security boundary is the guest VM and Windows container model.
+Windows runners are always routed to configured VM-backed Docker daemons; GitRun never silently falls back to the local Linux daemon for a Windows workload. They receive the common CPU, memory, network and cache policy and request Hyper-V container isolation by default. Linux-only read-only-root/tmpfs/PID/capability primitives are not silently emulated. Disabling Hyper-V container isolation requires the explicit unsafe-runner gate. The VM remains the primary guest boundary for Windows runners.
+
+The Docker socket remains a separate host-authority boundary: a runner explicitly granted it can control the Docker daemon and therefore is not equivalent to an ordinary sandboxed runner.
 
 ## GSR (GitSecureRun)
 

@@ -24,7 +24,7 @@ Direct `/var/run/docker.sock` access is **disabled by default** for GitRun-manag
 
 ## Container hardening
 
-Linux runner containers use CPU, memory and PID limits. The current Linux runner root filesystem remains writable so normal GitHub Actions jobs can install tools and packages. Isolation is provided by the dedicated runner home backend (tmpfs by default, or a per-runner Docker volume), a 256 MiB `/tmp` tmpfs, the GSR capability/no-new-privileges hardening, and the dedicated `/run/gitrun` tmpfs.
+Linux runner containers use CPU, memory and PID limits and a read-only root filesystem by default. Writable state is explicitly mounted through a per-runner Docker volume at the Actions runner home, a 256 MiB `/tmp` tmpfs, the shared cache volume, and the dedicated `/run/gitrun` tmpfs. GSR capability/no-new-privileges hardening remains in place. Workflows that need to mutate the base operating-system filesystem should use a prepared runner image; disabling the read-only root requires the explicit unsafe-runner gate.
 
 The Docker socket is not equivalent to an ordinary container mount. Because direct socket access is **disabled by default** and enabled only by repository policy, treat a socket-enabled repository as trusted to exercise Docker host authority. Verify repository trust before enabling this compatibility mode.
 

@@ -29,6 +29,7 @@ pub type Result<T> = std::result::Result<T, DockerError>;
 
 const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
 const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const GITRUN_API_SOCKET_GID: &str = "10000";
 
 /// Where a Docker command actually runs. `Local` is the existing behavior
 /// (talks to the host's own Docker socket via the CLI's default). `Remote`
@@ -563,6 +564,10 @@ pub struct RunnerSpec<'a> {
     /// container in `remove_container_on`. Configured via
     /// `Config::runner_home_backend` ("tmpfs" | "volume").
     pub home_backend: RunnerHomeBackend,
+    /// Whether the Linux container root filesystem is mounted read-only.
+    /// Writable state must come through the explicit runner-home/cache/runtime
+    /// mounts below. This is the default sandbox posture.
+    pub rootfs_read_only: bool,
     /// Decrypted GitVault secrets to inject as environment variables, as
     /// (name, value) pairs. Decryption happens just before this call and the
     /// plaintext lives only long enough to build the `docker run` argument
@@ -582,9 +587,10 @@ pub struct RunnerSpec<'a> {
     /// normal Dynamic-runner cleanup until the dock binding is released.
     pub dock_target: bool,
     /// True for a Windows container runner (Logic Containers). Changes which
-    /// flags are valid: Windows containers don't support `--read-only`,
-    /// `--tmpfs`, `--pids-limit`, or Unix-style socket/group-add mounts —
-    /// those are Linux-kernel-specific. The Docker socket bind-mount is also
+    /// flags are valid: Windows containers don't support Linux `--read-only`,
+    /// `--tmpfs`, `--pids-limit`, capability or Unix-style socket/group-add
+    /// semantics. Windows isolation is enforced with its own container model.
+    /// The Docker socket bind-mount is also
     /// skipped for Windows today: Docker-in-Docker via a mounted
     /// `//./pipe/docker_engine` named pipe is possible but not yet
     /// implemented here, so a Windows runner cannot itself run Docker builds
@@ -607,6 +613,10 @@ pub struct RunnerSpec<'a> {
     /// this is false — this struct trusts its caller to have gone through
     /// that gate rather than re-checking it here.
     pub docker_socket_hardening: bool,
+    /// Require Hyper-V isolation for Windows containers. Windows runners are
+    /// only routed to configured VM-backed Docker daemons, so this adds a
+    /// second isolation boundary inside the guest when supported.
+    pub windows_hyperv_isolation: bool,
 }
 
 /// Where a runner container's home directory is backed. See
@@ -723,25 +733,24 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
 
     if spec.is_windows {
-        // Windows containers: no --read-only/--tmpfs/--pids-limit/Unix
-        // group-add support. The runner's home directory is simply the
-        // container's own writable filesystem layer — Windows containers
-        // don't get the same read-only-root treatment Linux runners do here
-        // yet; hardening Windows containers is tracked as GSR follow-up
-        // work, not solved by this function.
+        // Windows containers use the Windows container isolation primitive
+        // instead of Linux namespaces/capabilities. GitRun routes these
+        // runners only to configured VM-backed Windows Docker daemons; when
+        // requested, Hyper-V container isolation adds another kernel boundary.
+        if spec.windows_hyperv_isolation {
+            args.extend(["--isolation".into(), "hyperv".into()]);
+        }
+        // Windows containers do not expose Linux filesystem/capability
+        // primitives. Their VM is the primary guest boundary and Hyper-V
+        // container isolation is requested by default, while the common
+        // CPU/memory/network/cache policy remains enforced here.
         args.push("-e".into());
         args.push("GITRUN_SHARED_CACHE_DIR=C:\\gitrun\\shared".into());
     } else {
-        args.extend([
-            "--pids-limit".into(),
-            spec.pids_limit.into(),
-            // Keep the runner root filesystem writable. A general-purpose
-            // GitHub Actions runner is expected to install job-local tools
-            // and packages, and some package managers need to write outside
-            // /home/runner and /tmp. The runner still cannot turn those
-            // writes into privilege escalation because no-new-privileges
-            // and the capability boundary remain enforced.
-        ]);
+        args.extend(["--pids-limit".into(), spec.pids_limit.into()]);
+        if spec.rootfs_read_only {
+            args.push("--read-only".into());
+        }
         match spec.home_backend {
             RunnerHomeBackend::Tmpfs => {
                 args.extend([
@@ -774,6 +783,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.extend([
             "--tmpfs".into(),
             "/tmp:rw,nosuid,nodev,exec,size=256m".into(),
+            "--tmpfs".into(),
+            "/var/tmp:rw,nosuid,nodev,exec,size=64m".into(),
         ]);
         if spec.docker_socket_enabled && !spec.is_windows {
             args.extend([
@@ -784,6 +795,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             ]);
         }
         args.extend([
+            "--group-add".into(),
+            GITRUN_API_SOCKET_GID.into(),
             "--mount".into(),
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",
@@ -806,9 +819,15 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "-e".into(),
             "NPM_CONFIG_CACHE=/var/lib/gitrun/shared/npm".into(),
             "-e".into(),
+            "HOME=/home/runner/actions-runner/home".into(),
+            "-e".into(),
+            "XDG_CONFIG_HOME=/home/runner/actions-runner/home/.config".into(),
+            "-e".into(),
             "DOCKER_CONFIG=/tmp/docker-config".into(),
             "--tmpfs".into(),
             "/run/gitrun:rw,nosuid,nodev,noexec,size=16m,mode=0755".into(),
+            "--tmpfs".into(),
+            "/run/sudo:rw,nosuid,nodev,noexec,size=1m,mode=0755".into(),
         ]);
         if spec.docker_socket_hardening {
             args.extend(docker_socket_hardening_args());

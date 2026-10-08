@@ -175,13 +175,13 @@ Windows VM-backed runners require a Docker TLS credential directory and are reso
 
 An unexpectedly exited runner is recorded as a critical security event and quarantined instead of being restarted or reused. Runner removal also asks Docker to remove anonymous volumes and explicitly removes the per-runner home volume when applicable.
 
-GitVault now derives a separate data-encryption key from the root/master key for new records, while retaining legacy decryption for pre-hardening records. Secret read/write/delete operations can be emitted through the existing GSR event bridge without logging secret values.
+GitVault now derives a separate data-encryption key from the root/master key for new records, while retaining legacy decryption for pre-hardening records. This is cryptographic context separation, not a distinct key per repository or trust domain. Secret read/write/delete operations can be emitted through the existing GSR event bridge without logging secret values; direct secret reads remain intentionally plaintext to the authorized caller.
 
 Release manifests support Ed25519 signatures. The updater can require a signature and can optionally bind verification to a configured key identifier. Releases also publish Cargo dependency metadata, an SPDX 2.3 SBOM, and build provenance.
 
 VM resolution performs a Docker endpoint health check before a VM becomes routable. This check verifies daemon reachability/version/API only; it is not hardware/guest attestation. KVM/libvirt and VirtualBox snapshot create/restore primitives are operator-controlled rollback primitives, not automatic per-job rollback.
 
-The scheduler has a host resource-pressure backpressure gate. By default, when CPU pressure, memory use, or state-filesystem use reaches its threshold, GitRun does not create additional runners or reconcile new placement. Existing workloads are left running and queued GitHub jobs remain queued until pressure drops.
+The scheduler has a host resource-pressure backpressure gate. By default, when CPU utilization, memory use, or any configured critical filesystem reaches its threshold, GitRun does not create additional runners or reconcile new placement. Existing workloads are left running and queued GitHub jobs remain queued until pressure drops.
 
 ## Trust-boundary summary
 

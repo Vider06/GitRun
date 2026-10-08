@@ -1,4 +1,4 @@
-# GitRun architecture
+# GitRun architecture (1.3.0)
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 
@@ -16,18 +16,18 @@ GitRun is a Rust-native control plane. The workspace separates policy, execution
 | `gitrun-updater` | Release update, verification and rollback |
 | `gitrun-recovery` | Startup/repair diagnostics and recovery UI |
 | `gitrun-dashboard-tauri` | Tauri operator dashboard |
-| `gitrun-recovery` | Recovery diagnostics and UI |
 
 ## Workflow API flow
 
 1. A workflow invokes one of the explicit `Git*Run` executables.
 2. The launcher builds an `ApiInvocation` from the command grammar and GitHub Actions environment.
 3. The launcher sends a newline-delimited JSON request through the local Unix socket.
-4. The host-side GitRun/GSR API boundary verifies caller identity and evaluates the closed API contract.
+4. The host-side GitRun/GSR API boundary verifies the peer/container identity and resolves the authoritative in-progress GitHub workflow/job.
 5. Repository API policy, resource policy and GSR command policy are applied.
-6. Only an authorized request becomes an `AuthorizedOperation`.
-7. `gitrun-exe` dispatches the explicit operation to its handler/backend.
-8. Results are returned as structured execution events.
+6. GitDockRun operations additionally require the exact persisted repository/run/job/runner/container binding and immutable Docker container ID.
+7. Only an authorized request becomes an `AuthorizedOperation`.
+8. `gitrun-exe` dispatches the explicit operation to its handler/backend.
+9. Results are returned as structured execution events.
 
 The public API deliberately has no arbitrary shell-operation variant.
 
@@ -59,9 +59,13 @@ The major trust boundaries are:
 
 1. GitHub workflow code -> runner container.
 2. Runner API launcher -> host Unix socket.
-3. API request -> GSR authorization.
-4. Authorized operation -> internal executor.
-5. Executor -> Docker host or VM Docker daemon.
-6. GitVault ciphertext -> master key.
+3. API request -> authenticated peer/container identity.
+4. Identity -> authoritative GitHub workflow/run/job lookup.
+5. API request -> GSR authorization and repository/resource policy.
+6. Authorized operation -> internal executor.
+7. Executor -> Docker host or VM Docker daemon.
+8. GitVault ciphertext -> master/root key.
+
+Runner caches default to per-runner isolation. Repository/global scopes are explicit broader trust decisions. Managed Linux runners use a dedicated GitRun Docker network; the network itself is a segregation point for deployment firewall/proxy policy, not an egress firewall.
 
 The Docker socket remains a host-level privilege boundary on Linux. See [SECURITY_MODEL.md](SECURITY_MODEL.md).

@@ -563,6 +563,10 @@ pub struct RunnerSpec<'a> {
     /// container in `remove_container_on`. Configured via
     /// `Config::runner_home_backend` ("tmpfs" | "volume").
     pub home_backend: RunnerHomeBackend,
+    /// Whether the Linux container root filesystem is mounted read-only.
+    /// Writable state must come through the explicit runner-home/cache/runtime
+    /// mounts below. This is the default sandbox posture.
+    pub rootfs_read_only: bool,
     /// Decrypted GitVault secrets to inject as environment variables, as
     /// (name, value) pairs. Decryption happens just before this call and the
     /// plaintext lives only long enough to build the `docker run` argument
@@ -607,6 +611,10 @@ pub struct RunnerSpec<'a> {
     /// this is false — this struct trusts its caller to have gone through
     /// that gate rather than re-checking it here.
     pub docker_socket_hardening: bool,
+    /// Require Hyper-V isolation for Windows containers. Windows runners are
+    /// only routed to configured VM-backed Docker daemons, so this adds a
+    /// second isolation boundary inside the guest when supported.
+    pub windows_hyperv_isolation: bool,
 }
 
 /// Where a runner container's home directory is backed. See
@@ -723,6 +731,13 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
 
     if spec.is_windows {
+        // Windows containers use the Windows container isolation primitive
+        // instead of Linux namespaces/capabilities. GitRun routes these
+        // runners only to configured VM-backed Windows Docker daemons; when
+        // requested, Hyper-V container isolation adds another kernel boundary.
+        if spec.windows_hyperv_isolation {
+            args.extend(["--isolation".into(), "hyperv".into()]);
+        }
         // Windows containers: no --read-only/--tmpfs/--pids-limit/Unix
         // group-add support. The runner's home directory is simply the
         // container's own writable filesystem layer — Windows containers
@@ -732,16 +747,10 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.push("-e".into());
         args.push("GITRUN_SHARED_CACHE_DIR=C:\\gitrun\\shared".into());
     } else {
-        args.extend([
-            "--pids-limit".into(),
-            spec.pids_limit.into(),
-            // Keep the runner root filesystem writable. A general-purpose
-            // GitHub Actions runner is expected to install job-local tools
-            // and packages, and some package managers need to write outside
-            // /home/runner and /tmp. The runner still cannot turn those
-            // writes into privilege escalation because no-new-privileges
-            // and the capability boundary remain enforced.
-        ]);
+        args.extend(["--pids-limit".into(), spec.pids_limit.into()]);
+        if spec.rootfs_read_only {
+            args.push("--read-only".into());
+        }
         match spec.home_backend {
             RunnerHomeBackend::Tmpfs => {
                 args.extend([

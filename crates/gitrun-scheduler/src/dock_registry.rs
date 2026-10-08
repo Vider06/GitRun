@@ -235,6 +235,21 @@ mod security_tests {
     }
 
     #[test]
+    fn binding_authorization_rejects_cross_job() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(binding(10, "runner-a"));
+        assert!(registry
+            .binding_for_authorized_container(
+                "Vider06/GitRun",
+                10,
+                "deploy",
+                "runner-a",
+                "dock-a",
+            )
+            .is_none());
+    }
+
+    #[test]
     fn binding_authorization_rejects_cross_runner_and_container() {
         let mut registry = DockRegistry::default();
         registry.upsert(binding(10, "runner-a"));

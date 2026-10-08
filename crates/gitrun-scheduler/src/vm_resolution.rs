@@ -444,6 +444,16 @@ pub fn load_vm_definitions(state_dir: &Path) -> vm::Result<Vec<VmConfig>> {
     vm::load_vm_configs(state_dir)
 }
 
+fn is_private_guest_ipv4(value: &str) -> bool {
+    let Ok(ip) = value.parse::<std::net::Ipv4Addr>() else {
+        return false;
+    };
+    let octets = ip.octets();
+    (octets[0] == 10)
+        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+        || (octets[0] == 192 && octets[1] == 168)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,14 +535,4 @@ mod tests {
         drop(guard);
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
-
-fn is_private_guest_ipv4(value: &str) -> bool {
-    let Ok(ip) = value.parse::<std::net::Ipv4Addr>() else {
-        return false;
-    };
-    let octets = ip.octets();
-    (octets[0] == 10)
-        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-        || (octets[0] == 192 && octets[1] == 168)
 }

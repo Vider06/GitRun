@@ -866,7 +866,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
 
 /// Verifies that a Docker daemon is reachable and reports a minimal
 /// server-version/API attestation before a VM becomes routable.
-pub fn attest_host(host: &DockerHost) -> Result<String> {
+pub fn verify_docker_endpoint_health(host: &DockerHost) -> Result<String> {
     let output = run_checked_on(
         host,
         &[
@@ -878,7 +878,7 @@ pub fn attest_host(host: &DockerHost) -> Result<String> {
     let value = output.trim();
     if value.is_empty() {
         return Err(DockerError::Command(
-            "Docker daemon returned an empty health attestation".into(),
+            "Docker daemon health check returned an empty version/API response".into(),
         ));
     }
     Ok(value.to_owned())

@@ -350,6 +350,10 @@ fn handle_stream(
             )?;
             return Ok(());
         }
+        (Some(_), Some(_)) => {
+            // The guarded arm above rejects mismatched bindings; this arm
+            // covers the valid case where the bound run/job matches exactly.
+        }
         (None, None) => {
             let Some(active_job) = github
                 .find_active_workflow_job_for_runner(&request.invocation.repository, &identity.name)

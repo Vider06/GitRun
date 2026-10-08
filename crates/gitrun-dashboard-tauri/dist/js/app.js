@@ -1050,17 +1050,17 @@ async function renderVmManagement(vmConfigs) {
   if (!root) return;
   root.innerHTML = vmConfigs.length === 0
     ? '<div class="empty-state">No VM definitions configured.</div>'
-    : \`<div class="table-scroll"><table class="data-table">
+    : `<div class="table-scroll"><table class="data-table">
         <thead><tr><th>Name</th><th>Hypervisor</th><th>OS</th><th>Lifecycle</th><th>Docker</th><th></th></tr></thead>
-        <tbody>${vmConfigs.map((vm, i) => \`<tr>
+        <tbody>${vmConfigs.map((vm, i) => `<tr>
           <td class="mono">${escapeHtml(vm.name)}</td>
           <td>${escapeHtml(vm.hypervisor)}</td>
           <td>${vm.is_windows ? "Windows" : "Linux"}</td>
           <td><span class="pill pill-info">${escapeHtml(activationLabel(vm.activation))}</span></td>
           <td class="mono">:${vm.docker_port}</td>
           <td><button class="btn btn-sm" data-edit-vm="${i}">Edit</button></td>
-        </tr>\`).join("")}</tbody>
-      </table></div>\`;
+        </tr>`).join("")}</tbody>
+      </table></div>`;
   root.insertAdjacentHTML("beforeend", '<button class="btn btn-sm btn-primary" id="add-vm-config">+ Add VM</button>');
   root.querySelector("#add-vm-config").addEventListener("click", () => openVmModal(null, vmConfigs));
   root.querySelectorAll("[data-edit-vm]").forEach((btn) => btn.addEventListener("click", () => openVmModal(vmConfigs[Number(btn.dataset.editVm)], vmConfigs)));
@@ -1073,7 +1073,7 @@ function openVmModal(existing, allConfigs) {
   };
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop";
-  backdrop.innerHTML = \`
+  backdrop.innerHTML = `
     <div class="modal">
       <h3 class="modal-title">${existing ? "Edit VM" : "Add VM"}</h3>
       <div class="field"><label>Name</label><input id="vm-name" value="${escapeHtml(vm.name)}" /></div>
@@ -1090,7 +1090,7 @@ function openVmModal(existing, allConfigs) {
       </select></div>
       <p class="field-hint" id="vm-lifecycle-help"></p>
       <div class="modal-actions"><button class="btn" id="vm-cancel">Cancel</button><button class="btn btn-primary" id="vm-save">Save VM</button></div>
-    </div>\`;
+    </div>`;
   document.body.appendChild(backdrop);
   enhanceModalAccessibility(backdrop);
   const activation = backdrop.querySelector("#vm-activation");

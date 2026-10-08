@@ -514,7 +514,7 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
         _ => None,
     };
 
-    let output = run_on(host, &["rm", "-f", "-v", name_or_id)?;
+    let output = run_on(host, &["rm", "-f", "-v", name_or_id])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if !is_missing_container_error(&stderr) {

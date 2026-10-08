@@ -587,8 +587,9 @@ pub struct RunnerSpec<'a> {
     /// normal Dynamic-runner cleanup until the dock binding is released.
     pub dock_target: bool,
     /// True for a Windows container runner (Logic Containers). Changes which
-    /// flags are valid: Windows containers don't support `--read-only`,
-    /// `--tmpfs`, `--pids-limit`, or Unix-style socket/group-add mounts —
+    /// flags are valid: Windows containers don't support Linux `--read-only`,
+    /// `--tmpfs`, `--pids-limit`, capability or Unix-style socket/group-add
+    /// semantics. Windows isolation is enforced with its own container model.
     /// those are Linux-kernel-specific. The Docker socket bind-mount is also
     /// skipped for Windows today: Docker-in-Docker via a mounted
     /// `//./pipe/docker_engine` named pipe is possible but not yet
@@ -739,12 +740,10 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         if spec.windows_hyperv_isolation {
             args.extend(["--isolation".into(), "hyperv".into()]);
         }
-        // Windows containers: no --read-only/--tmpfs/--pids-limit/Unix
-        // group-add support. The runner's home directory is simply the
-        // container's own writable filesystem layer — Windows containers
-        // don't get the same read-only-root treatment Linux runners do here
-        // yet; hardening Windows containers is tracked as GSR follow-up
-        // work, not solved by this function.
+        // Windows containers do not expose Linux filesystem/capability
+        // primitives. Their VM is the primary guest boundary and Hyper-V
+        // container isolation is requested by default, while the common
+        // CPU/memory/network/cache policy remains enforced here.
         args.push("-e".into());
         args.push("GITRUN_SHARED_CACHE_DIR=C:\\gitrun\\shared".into());
     } else {

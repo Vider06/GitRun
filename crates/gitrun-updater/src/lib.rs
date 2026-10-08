@@ -16,7 +16,7 @@ pub struct ReleaseArtifact {
     pub target: String,
     pub file: String,
     pub sha256: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download_url: Option<String>,
 }
 
@@ -24,11 +24,11 @@ pub struct ReleaseArtifact {
 pub struct DependencyRequirement {
     pub name: String,
     pub minimum_version: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_version: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installation_method: Option<String>,
 }
 
@@ -65,11 +65,11 @@ pub struct ReleaseManifest {
     pub signature: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature_key_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<DependencyRequirement>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner_image: Option<RunnerImage>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
 }
 
@@ -1891,6 +1891,37 @@ mod tests {
             runner_image: None,
             repository: Some("Vider06/GitRun".into()),
         }
+    }
+
+    #[test]
+    fn signing_payload_preserves_wire_shape_for_sparse_manifests() {
+        let raw = r#"{
+            "name": "GitRun",
+            "version": "0.3.0",
+            "git_commit": "abcdef1",
+            "repository": "Vider06/GitRun",
+            "artifacts": [
+                {
+                    "target": "x86_64-unknown-linux-gnu",
+                    "file": "GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz",
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+            ],
+            "dependencies": [
+                {
+                    "name": "Git",
+                    "minimum_version": "2.40.0"
+                }
+            ]
+        }"#;
+
+        let manifest: ReleaseManifest = serde_json::from_str(raw).unwrap();
+        let payload = String::from_utf8(manifest.signing_payload().unwrap()).unwrap();
+
+        assert_eq!(
+            payload,
+            r#"{"artifacts":[{"file":"GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","target":"x86_64-unknown-linux-gnu"}],"dependencies":[{"minimum_version":"2.40.0","name":"Git"}],"git_commit":"abcdef1","name":"GitRun","repository":"Vider06/GitRun","version":"0.3.0"}"#
+        );
     }
 
     #[test]

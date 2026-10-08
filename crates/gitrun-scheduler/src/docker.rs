@@ -590,7 +590,7 @@ pub struct RunnerSpec<'a> {
     /// flags are valid: Windows containers don't support Linux `--read-only`,
     /// `--tmpfs`, `--pids-limit`, capability or Unix-style socket/group-add
     /// semantics. Windows isolation is enforced with its own container model.
-    /// those are Linux-kernel-specific. The Docker socket bind-mount is also
+    /// The Docker socket bind-mount is also
     /// skipped for Windows today: Docker-in-Docker via a mounted
     /// `//./pipe/docker_engine` named pipe is possible but not yet
     /// implemented here, so a Windows runner cannot itself run Docker builds

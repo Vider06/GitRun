@@ -1189,8 +1189,17 @@ fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
         resource_pressure_cpu_percent: config.resource_pressure_cpu_percent,
         resource_pressure_memory_percent: config.resource_pressure_memory_percent,
         resource_pressure_disk_percent: config.resource_pressure_disk_percent,
-        resource_pressure_paths: config.resource_pressure_paths.split(';').map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned).collect(),
-        runner_network_is_dedicated: !network_lower.is_empty() && network_lower != "bridge" && network_lower != "host" && !network_lower.starts_with("container:"),
+        resource_pressure_paths: config
+            .resource_pressure_paths
+            .split(';')
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        runner_network_is_dedicated: !network_lower.is_empty()
+            && network_lower != "bridge"
+            && network_lower != "host"
+            && !network_lower.starts_with("container:"),
         runner_network: network,
         shared_cache_scope: config.shared_cache_scope,
         seccomp_profile: config.runner_seccomp_profile,

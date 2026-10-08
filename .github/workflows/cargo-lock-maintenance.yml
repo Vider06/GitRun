@@ -33,6 +33,7 @@ jobs:
         shell: bash
         env:
           BASE_SHA: ${{ github.sha }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -euo pipefail
 
@@ -188,7 +189,7 @@ jobs:
           git commit -m "chore: repair Cargo lockfiles"
 
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${GITHUB_REPOSITORY}" ]; then
+            if [ "${IS_FORK}" = "true" ]; then
               echo "::warning::Skipping automatic push for a pull request from a fork; Cargo lock repairs must be applied by the contributor."
               git reset --soft HEAD~1
               git restore --staged --worktree -- .

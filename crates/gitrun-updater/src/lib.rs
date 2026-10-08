@@ -352,6 +352,9 @@ pub fn stage_update(
     Ok(marker)
 }
 
+/// Builds a plan from a manifest that has already passed
+/// load_manifest/fetch_manifest verification. Signature enforcement stays
+/// at the untrusted-input boundaries, so this helper only handles planning.
 pub fn build_plan(
     manifest: &ReleaseManifest,
     current_version: &str,
@@ -359,7 +362,6 @@ pub fn build_plan(
     installed_dependencies: &[(String, Option<String>)],
 ) -> Result<UpdatePlan, UpdateError> {
     manifest.validate()?;
-    manifest.verify_signature_from_env()?;
     if compare_versions(&manifest.version, current_version)? != std::cmp::Ordering::Greater {
         return Err(UpdateError::NotNewer);
     }

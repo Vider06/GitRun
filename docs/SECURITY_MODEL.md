@@ -21,7 +21,7 @@ GitRun also applies Docker-level hardening to Linux runners by default: all Linu
 
 The hardening can only be disabled through the explicit unsafe-runner configuration gate.
 
-Windows container runners are different: the current implementation does not mount the Docker socket or apply the Linux hardening flags. Windows isolation depends on the guest/VM boundary and remains a follow-up hardening area.
+Windows runners are only created against configured VM-backed Docker daemons, never the local Linux daemon. They retain the common CPU/memory/network/cache policy, do not receive Linux-only filesystem/capability flags, and request Hyper-V container isolation by default for an additional Windows kernel boundary. Disabling Hyper-V isolation requires the explicit unsafe-runner gate. The VM remains the primary guest boundary for Windows runners.
 
 ## Git*Run API trust boundary
 
@@ -42,7 +42,7 @@ Linux runner containers currently keep their root filesystem writable so normal 
 - a small tmpfs at `/run/gitrun`;
 - a mounted volume for the package-manager cache.
 
-This is **not a read-only-root sandbox**. It does not protect the host filesystem from a process that can use the Docker socket.
+This is a read-only-root sandbox for normal Linux runner containers. It is not a substitute for the Docker-socket trust boundary: a runner explicitly granted the host Docker socket still has Docker host authority.
 
 Windows runners do not receive the Linux read-only-root/tmpfs/PID hardening; their security boundary is the guest VM and Windows container model.
 

@@ -1446,7 +1446,26 @@ jobs:
             fi
 
             if [ "$dir" = . ]; then base=""; else base="$dir/"; fi
-            check_js() { git ls-files -z -- "${base}*.js" "${base}*.mjs" "${base}*.cjs" | { grep -zvE '(\.min\.js$|/(vendor|dist|build)/)' || true; } | xargs -0 -r -n1 node --check 2>&1 | ci_awk_node; }
+            check_js() {
+              local files=()
+              while IFS= read -r -d '' file; do
+                case "$file" in
+                  *.min.js) continue ;;
+                  *) files+=( "$file" ) ;;
+                esac
+              done < <(git ls-files -z -- "${base}*.js" "${base}*.mjs" "${base}*.cjs")
+              if [ "${#files[@]}" -eq 0 ]; then
+                ci_warn "$lbl: no tracked JavaScript files found"
+                return 0
+              fi
+              local file rc=0
+              for file in "${files[@]}"; do
+                if ! node --check "$file" 2>&1 | ci_awk_node; then
+                  rc=1
+                fi
+              done
+              return "$rc"
+            }
             ci_run "$lbl node --check (tracked JS)" check_js || bad=1
 
             if pkg_has_script test; then step "npm test" npm test; fi
@@ -1711,6 +1730,38 @@ jobs:
           key: ${{ steps.c_tgt.outputs.cache-primary-key }}
       - *report
       - *logs
+
+  # ───────────────────────────────────────────── security-hardening gate ──
+  security-hardening:
+    name: Security hardening regression gate
+    needs: cargo-lock
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+      - name: Run security regression suites
+        run: |
+          set -euo pipefail
+          cargo test --locked -p gitrun-scheduler dock_registry::tests
+          cargo test --locked -p gitrun-scheduler vm::tests
+          cargo test --locked -p gitrun-scheduler vm_resolution::tests
+          cargo test --locked -p gitrun-gsr
+          cargo test --locked -p gitrun-vault
+      - name: Verify security-sensitive workflow invariants
+        run: |
+          set -euo pipefail
+          grep -q 'id-token: write' .github/workflows/release.yml
+          grep -q 'aws-actions/configure-aws-credentials@e125382' .github/workflows/release.yml
+          grep -q 'ED25519_SHA_512' .github/workflows/release.yml
+          grep -q 'GITRUN_UPDATE_SIGNATURE_REQUIRED' crates/gitrun-updater/src/lib.rs
+          grep -q 'GITRUN_RUNNER_NETWORK' config/config.example.env
 
   # ───────────────────────────────────────────────────────────── rust-test ──
   rust-test:

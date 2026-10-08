@@ -83,14 +83,15 @@ pub enum HypervisorKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActivationMode {
-    /// VM starts on first job, stops after being idle — same idle-timeout
-    /// concept as `gitrun_core::Config::idle_timeout` for containers.
+    /// VM starts on first job, stops after the configured idle timeout.
     Standard,
-    /// VM stays running always; only the in-VM runner service is toggled.
-    /// Marked experimental per the operator's explicit request — this
-    /// trades resource cost for responsiveness and should be opt-in, not
-    /// the default a fresh Logic Containers setup gets.
+    /// VM stays running always.
     AlwaysOnExperimental,
+    /// VM is started for a runner lifecycle and rolled back to the named
+    /// clean snapshot before the next workload is admitted.
+    EphemeralSnapshotRollback,
+    /// VM is recreated from the base image for each runner lifecycle.
+    EphemeralVm,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +119,10 @@ pub struct VmConfig {
     /// Port the Docker daemon inside the VM listens on (commonly 2376 for
     /// TLS-secured remote Docker).
     pub docker_port: u16,
+    /// Directory containing ca.pem, cert.pem, and key.pem for the VM Docker daemon.
+    /// Required for Windows VM runners; an empty value keeps legacy Linux VM configs readable.
+    #[serde(default)]
+    pub docker_tls_cert_dir: String,
     pub activation: ActivationMode,
     /// Whether this VM runs Windows — used to pick the Windows-appropriate
     /// `docker::RunnerSpec` flags (see `RunnerSpec::is_windows`'s doc
@@ -200,6 +205,26 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
                 "VM '{}' must use a non-zero Docker port",
                 config.name
             )));
+        }
+
+        if config.is_windows && config.docker_tls_cert_dir.trim().is_empty() {
+            return Err(VmError::InvalidConfig(format!(
+                "Windows VM '{}' requires docker_tls_cert_dir for mutually authenticated Docker TLS",
+                config.name
+            )));
+        }
+        if !config.docker_tls_cert_dir.trim().is_empty() {
+            let cert_dir = Path::new(config.docker_tls_cert_dir.trim());
+            for name in ["ca.pem", "cert.pem", "key.pem"] {
+                let path = cert_dir.join(name);
+                if !path.is_file() {
+                    return Err(VmError::InvalidConfig(format!(
+                        "VM '{}' Docker TLS credential is missing: {}",
+                        config.name,
+                        path.display()
+                    )));
+                }
+            }
         }
 
         if matches!(config.hypervisor, HypervisorKind::VirtualBox)
@@ -825,9 +850,78 @@ pub fn stop(kind: HypervisorKind, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Starts a VM, runs the supplied lifecycle closure, then stops it and optionally
+/// restores its clean snapshot before the next workload can be admitted.
+pub fn with_vm_lifecycle<F>(
+    config: &VmConfig,
+    clean_snapshot: Option<&str>,
+    workload: F,
+) -> Result<()>
+where
+    F: FnOnce() -> Result<()>,
+{
+    start(config.hypervisor, &config.name)?;
+    let workload_result = workload();
+    let stop_result = stop(config.hypervisor, &config.name);
+
+    let rollback_result = match clean_snapshot {
+        Some(snapshot) if stop_result.is_ok() => {
+            restore_snapshot(config.hypervisor, &config.name, snapshot)
+        }
+        Some(_) => Err(VmError::Command(
+            "cannot restore ephemeral VM snapshot because graceful shutdown failed".into(),
+        )),
+        None => Ok(()),
+    };
+
+    // Reset after both success and failure: a failed workload is precisely
+    // the case where stale guest state must not leak into the next job.
+    workload_result.and(stop_result).and(rollback_result)
+}
+
 /// Forcefully stops a VM that didn't respond to a graceful shutdown request
 /// within a reasonable time. Callers should attempt `stop` first and only
 /// escalate to this after a timeout.
+/// Creates a named VM snapshot. Callers should snapshot a known-good,
+/// stopped or quiesced guest according to the hypervisor's guarantees.
+pub fn create_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Result<()> {
+    validate_snapshot_name(snapshot)?;
+    match kind {
+        HypervisorKind::Kvm => {
+            run_checked(kind, &["snapshot-create-as", name, snapshot, "--atomic"])?;
+        }
+        HypervisorKind::VirtualBox => {
+            run_checked(kind, &["snapshot", name, "take", snapshot])?;
+        }
+    }
+    Ok(())
+}
+
+/// Restores a previously-created snapshot. The caller must own the VM
+/// lifecycle and must not restore a VM that has an active runner workload.
+pub fn restore_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Result<()> {
+    validate_snapshot_name(snapshot)?;
+    match kind {
+        HypervisorKind::Kvm => {
+            run_checked(kind, &["snapshot-revert", name, "--snapshotname", snapshot])?;
+        }
+        HypervisorKind::VirtualBox => {
+            run_checked(kind, &["snapshot", name, "restore", snapshot])?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_snapshot_name(value: &str) -> Result<()> {
+    if value.trim().is_empty()
+        || value.chars().any(|c| c.is_control() || c.is_whitespace())
+        || value.len() > 128
+    {
+        return Err(VmError::InvalidConfig("invalid snapshot name".into()));
+    }
+    Ok(())
+}
+
 pub fn force_stop(kind: HypervisorKind, name: &str) -> Result<()> {
     match kind {
         HypervisorKind::Kvm => run_checked(kind, &["destroy", name])?,
@@ -957,6 +1051,7 @@ mod tests {
             docker_port: 2376,
             activation: ActivationMode::Standard,
             is_windows: false,
+            docker_tls_cert_dir: String::new(),
         }
     }
 

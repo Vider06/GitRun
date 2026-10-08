@@ -46,6 +46,8 @@ pub enum DockerHost {
     /// this struct doesn't currently carry cert paths; add them here before
     /// pointing at anything outside a trusted, isolated network.
     Remote(String),
+    /// Remote Docker daemon using Docker client TLS/mTLS credentials.
+    RemoteTls { endpoint: String, cert_dir: String },
 }
 
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
@@ -65,8 +67,13 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
                 .env("DOCKER_HOST", "unix:///var/run/docker.sock");
         }
         DockerHost::Remote(addr) => {
-            // Keep operator-provided TLS variables for the remote daemon.
             command.env("DOCKER_HOST", addr);
+        }
+        DockerHost::RemoteTls { endpoint, cert_dir } => {
+            command
+                .env("DOCKER_HOST", endpoint)
+                .env("DOCKER_TLS_VERIFY", "1")
+                .env("DOCKER_CERT_PATH", cert_dir);
         }
     }
 
@@ -167,6 +174,15 @@ pub struct ManagedContainer {
     pub dock_target: bool,
     pub workflow_job: Option<String>,
     pub workflow_run_id: Option<u64>,
+}
+
+fn cache_volume_name(base: &str, scope: &str, repo: &str, runner: &str) -> String {
+    match scope {
+        "global" => base.to_owned(),
+        "repository" => format!("{}-repo-{}", base, cache_path_key(repo)),
+        "runner" => format!("{}-runner-{}", base, sanitize(runner, '-')),
+        _ => format!("{}-repo-{}", base, cache_path_key(repo)),
+    }
 }
 
 pub fn shared_cache_volume(configured: Option<&str>) -> String {
@@ -483,23 +499,37 @@ pub fn rename_container(from: &str, to: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn remove_container_on(host: &DockerHost, name: &str) -> Result<()> {
-    let output = run_on(host, &["rm", "-f", name])?;
+pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
+    // Resolve the deterministic home-volume name before removing the container.
+    // Callers may intentionally pass an immutable container ID, so deriving
+    // the volume name from that ID would leak the per-runner volume.
+    let home_volume = match run_on(host, &["inspect", "-f", "{{.Name}}", name_or_id]) {
+        Ok(output) if output.status.success() => {
+            let resolved = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .trim_start_matches('/')
+                .to_owned();
+            (!resolved.is_empty()).then(|| home_volume_name(&resolved))
+        }
+        _ => None,
+    };
+
+    let output = run_on(host, &["rm", "-f", "-v", name_or_id])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if !is_missing_container_error(&stderr) {
             return Err(DockerError::Command(if stderr.is_empty() {
-                format!("docker rm -f {name} failed")
+                format!("docker rm -f {name_or_id} failed")
             } else {
                 stderr
             }));
         }
     }
 
-    // Best-effort: remove the disk-backed home volume, if this container
-    // was created with RunnerHomeBackend::Volume. Harmless no-op (fails
-    // silently) for tmpfs-backed containers, which never had one.
-    let _ = run_on(host, &["volume", "rm", "-f", &home_volume_name(name)]);
+    // Best-effort for disk-backed runner-home volumes. Harmless for tmpfs homes.
+    if let Some(volume) = home_volume {
+        let _ = run_on(host, &["volume", "rm", "-f", &volume]);
+    }
     Ok(())
 }
 /// Parameters needed to create a runner container. Kept as a plain struct
@@ -518,6 +548,10 @@ pub struct RunnerSpec<'a> {
     pub memory: &'a str,
     pub pids_limit: &'a str,
     pub shared_cache_volume: &'a str,
+    pub cache_scope: &'a str,
+    pub network: &'a str,
+    pub seccomp_profile: &'a str,
+    pub apparmor_profile: &'a str,
     pub docker_socket_gid: &'a str,
     /// Size string (e.g. "8g") for the runner's home directory, whether
     /// backed by tmpfs or a disk volume (see `home_backend`).
@@ -601,11 +635,61 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
     create_runner_on(&DockerHost::Local, spec)
 }
 
+fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
+    let output = run_on(host, &["network", "inspect", network])?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .trim()
+        .to_ascii_lowercase();
+    if !(stderr.contains("no such network") || stderr.contains("network not found")) {
+        return Err(DockerError::Command(if stderr.is_empty() {
+            format!("docker network inspect {network} failed")
+        } else {
+            stderr
+        }));
+    }
+
+    // A stable, GitRun-owned bridge network provides container-to-container
+    // separation from Docker's default bridge and gives operators one fixed
+    // network identity to attach host firewall/proxy policy to. It is not
+    // itself an egress firewall: outbound control remains deployment-specific.
+    run_checked_on(
+        host,
+        &[
+            "network",
+            "create",
+            "--driver",
+            "bridge",
+            "--label",
+            "gitrun.managed=true",
+            network,
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
+    ensure_runner_network(host, spec.network)?;
+    if spec.is_windows && spec.docker_socket_enabled {
+        return Err(DockerError::Command(
+            "Windows runner cannot enable the Linux Docker socket compatibility option".into(),
+        ));
+    }
+
     let cache_key = cache_path_key(spec.repo);
+    let cache_volume = cache_volume_name(
+        spec.shared_cache_volume,
+        spec.cache_scope,
+        spec.repo,
+        spec.name,
+    );
     let labels = ensure_label(spec.labels, "gitrun-ci");
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
+    args.extend(["--network".into(), spec.network.into()]);
     args.extend([
         "--label".into(),
         "gitrun.runner=true".into(),
@@ -624,7 +708,11 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         "--memory".into(),
         spec.memory.into(),
         "--restart".into(),
-        "unless-stopped".into(),
+        if spec.ephemeral {
+            "no".into()
+        } else {
+            "unless-stopped".into()
+        },
     ]);
 
     if let Some(job_name) = spec.workflow_job_name {
@@ -687,7 +775,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "--tmpfs".into(),
             "/tmp:rw,nosuid,nodev,exec,size=256m".into(),
         ]);
-        if spec.docker_socket_enabled {
+        if spec.docker_socket_enabled && !spec.is_windows {
             args.extend([
                 "--volume".into(),
                 "/var/run/docker.sock:/var/run/docker.sock".into(),
@@ -699,7 +787,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "--mount".into(),
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",
-                spec.shared_cache_volume
+                cache_volume
             ),
             // The API service lives on the host. The runner gets only this
             // Unix socket file, never the host API process or a workflow token.
@@ -729,6 +817,19 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             // operator explicitly allows the broader unsafe-runner posture.
             // This does not claim the rest of Docker hardening is enabled.
             args.extend(gsr_supervisor_capability_args());
+        }
+    }
+
+    if !spec.is_windows {
+        args.extend([
+            "--security-opt".into(),
+            format!("seccomp={}", spec.seccomp_profile),
+        ]);
+        if !spec.apparmor_profile.trim().is_empty() {
+            args.extend([
+                "--security-opt".into(),
+                format!("apparmor={}", spec.apparmor_profile),
+            ]);
         }
     }
 
@@ -767,6 +868,26 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     run_checked_on(host, &arg_refs)?;
     Ok(())
+}
+
+/// Verifies that a Docker daemon is reachable and reports a minimal
+/// server-version/API attestation before a VM becomes routable.
+pub fn verify_docker_endpoint_health(host: &DockerHost) -> Result<String> {
+    let output = run_checked_on(
+        host,
+        &[
+            "version",
+            "--format",
+            "{{.Server.Version}}|{{.Server.APIVersion}}",
+        ],
+    )?;
+    let value = output.trim();
+    if value.is_empty() {
+        return Err(DockerError::Command(
+            "Docker daemon health check returned an empty version/API response".into(),
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 pub fn container_status(name: &str) -> Result<Option<String>> {
@@ -928,6 +1049,12 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
 pub struct ApiRunnerIdentity {
     pub name: String,
     pub repository: String,
+    /// Immutable Docker container ID resolved from the peer cgroup.
+    pub container_id: String,
+    /// Job/run labels are present on runner containers that were reserved
+    /// for a specific workflow job. They are authoritative when present.
+    pub workflow_job: Option<String>,
+    pub workflow_run_id: Option<u64>,
 }
 
 /// Resolves the GitRun-managed runner container that owns a Unix-socket
@@ -936,18 +1063,33 @@ pub struct ApiRunnerIdentity {
 /// the workflow environment.
 #[cfg(target_os = "linux")]
 pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
-    let cgroup =
-        std::fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(DockerError::Spawn)?;
+    let cgroup = match std::fs::read_to_string(format!("/proc/{pid}/cgroup")) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
     let Some(container_id) = container_id_from_cgroup(&cgroup) else {
         return Ok(None);
     };
+
+    // Re-read the cgroup after the Docker lookup. If the peer process exited
+    // and the PID was reused, the second lookup must not silently inherit the
+    // old process's container identity.
+    let cgroup_after = match std::fs::read_to_string(format!("/proc/{pid}/cgroup")) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if container_id_from_cgroup(&cgroup_after).as_deref() != Some(container_id.as_str()) {
+        return Ok(None);
+    }
 
     let output = run_on(
         &DockerHost::Local,
         &[
             "inspect",
             "-f",
-            "{{.Name}}|{{index .Config.Labels \"gitrun.runner\"}}|{{index .Config.Labels \"gitrun.repo\"}}",
+            "{{.Id}}|{{.Name}}|{{index .Config.Labels \"gitrun.runner\"}}|{{index .Config.Labels \"gitrun.repo\"}}|{{index .Config.Labels \"gitrun.workflow_job\"}}|{{index .Config.Labels \"gitrun.workflow_run\"}}",
             &container_id,
         ],
     )?;
@@ -957,18 +1099,25 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     }
 
     let raw = String::from_utf8_lossy(&output.stdout);
-    let mut parts = raw.trim().splitn(3, '|');
+    let mut parts = raw.trim().splitn(6, '|');
+    let resolved_id = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default().trim_start_matches('/');
     let runner_label = parts.next().unwrap_or_default();
     let repository = parts.next().unwrap_or_default();
+    let workflow_job = parts.next().unwrap_or_default();
+    let workflow_run_id = parts.next().and_then(|value| value.parse::<u64>().ok());
 
-    if runner_label != "true" || name.is_empty() || repository.is_empty() {
+    if runner_label != "true" || resolved_id.is_empty() || name.is_empty() || repository.is_empty()
+    {
         return Ok(None);
     }
 
     Ok(Some(ApiRunnerIdentity {
         name: name.to_owned(),
         repository: repository.to_owned(),
+        container_id: resolved_id.to_owned(),
+        workflow_job: (!workflow_job.is_empty()).then(|| workflow_job.to_owned()),
+        workflow_run_id,
     }))
 }
 

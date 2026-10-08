@@ -80,6 +80,8 @@ struct WorkflowRunsResponse {
 #[derive(Debug, Deserialize)]
 struct WorkflowRun {
     id: u64,
+    #[serde(default)]
+    name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +123,14 @@ pub struct WorkflowJobInfo {
     pub status: String,
     pub conclusion: Option<String>,
     pub runner_name: Option<String>,
+}
+
+/// Authoritative workflow-run identity fetched from GitHub. Request-supplied
+/// workflow metadata is never accepted as authoritative without this lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowRunInfo {
+    pub id: u64,
+    pub name: String,
 }
 
 /// Splits "owner/repo" into its two parts, validating the shape up front so
@@ -414,6 +424,99 @@ impl GitHubClient {
     /// Finds a named job inside one GitHub Actions workflow run. The
     /// caller uses this to map GitDockRun --job &lt;name&gt; to the runner that
     /// executed that job.
+    /// Fetch the workflow run from the repository path. The repository+run
+    /// pair is authoritative; request-supplied GITHUB_* values are claims.
+    pub fn find_workflow_run(&self, repo: &str, run_id: u64) -> Result<Option<WorkflowRunInfo>> {
+        let (owner, name) = split_repo(repo)?;
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs/{run_id}",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        match self.request(reqwest::Method::GET, &url) {
+            Ok(response) => {
+                let run: WorkflowRun = response.json()?;
+                Ok(Some(WorkflowRunInfo {
+                    id: run_id,
+                    name: run.name,
+                }))
+            }
+            Err(GitHubError::Api { status: 404, .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Finds the single currently running GitHub Actions job assigned to a runner.
+    /// Historical completed jobs are ignored. Multiple simultaneous assignments
+    /// are treated as a conflict so the caller cannot choose an arbitrary job.
+    pub fn find_active_workflow_job_for_runner(
+        &self,
+        repo: &str,
+        runner_name: &str,
+    ) -> Result<Option<WorkflowJobInfo>> {
+        let (owner, name) = split_repo(repo)?;
+        let mut url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs?status=in_progress&per_page=100",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        let mut matches = Vec::new();
+
+        loop {
+            let response = self.request(reqwest::Method::GET, &url)?;
+            let next_url = parse_next_link(response.headers());
+            let parsed: WorkflowRunsResponse = response.json()?;
+
+            for run in parsed.workflow_runs {
+                let mut jobs_url = format!(
+                    "{API_BASE}/repos/{}/{}/actions/runs/{}/jobs?filter=latest&per_page=100",
+                    encode_path_segment(owner),
+                    encode_path_segment(name),
+                    run.id
+                );
+                loop {
+                    let response = self.request(reqwest::Method::GET, &jobs_url)?;
+                    let jobs_next = parse_next_link(response.headers());
+                    let jobs: JobsResponse = response.json()?;
+                    for job in jobs.jobs {
+                        if job.runner_name.as_deref() == Some(runner_name)
+                            && job.status.eq_ignore_ascii_case("in_progress")
+                            && job.conclusion.is_none()
+                        {
+                            matches.push(WorkflowJobInfo {
+                                id: job.id,
+                                name: job.name,
+                                status: job.status,
+                                conclusion: job.conclusion,
+                                runner_name: job.runner_name,
+                            });
+                        }
+                    }
+                    match jobs_next {
+                        Some(next) => jobs_url = next,
+                        None => break,
+                    }
+                }
+            }
+
+            match next_url {
+                Some(next) => url = next,
+                None => break,
+            }
+        }
+
+        match matches.as_slice() {
+            [] => Ok(None),
+            [job] => Ok(Some(job.clone())),
+            _ => Err(GitHubError::Api {
+                status: 409,
+                detail: format!(
+                    "runner {runner_name} is assigned to multiple active workflow jobs"
+                ),
+            }),
+        }
+    }
+
     pub fn find_workflow_job(
         &self,
         repo: &str,

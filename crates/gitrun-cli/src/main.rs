@@ -14,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod cat;
 mod presenter;
 
+include!(concat!(env!("OUT_DIR"), "/gitrun_crate_versions.rs"));
+
 macro_rules! println {
     () => {
         $crate::presenter::terminal_print(format_args!(""), false, true)
@@ -908,7 +910,23 @@ fn rollback_command(
     Ok(())
 }
 
+fn validate_version_flag_order() {
+    let mut version_seen = false;
+
+    for argument in std::env::args().skip(1) {
+        match argument.as_str() {
+            "--version" | "-V" | "-v" => version_seen = true,
+            "--gitrun" if !version_seen => {
+                eprintln!("error: --gitrun must follow -V, -v, or --version");
+                std::process::exit(2);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn main() {
+    validate_version_flag_order();
     let cli = Cli::parse();
     let mut presenter = presenter::CatPresenter::new(cli.no_cat);
 
@@ -1043,7 +1061,11 @@ struct Cli {
     #[arg(short = 'V', long = "version", short_alias = 'v', alias = "v")]
     version: bool,
     /// Print only the GitRun program version, without workspace crate versions.
-    #[arg(long = "gitrun")]
+    #[arg(
+        long = "gitrun",
+        requires = "version",
+        conflicts_with_all = ["crate_name", "all_crates"]
+    )]
     gitrun: bool,
     /// Show one crate version; omit it to show GitRun and every workspace crate.
     #[arg(long = "crate")]
@@ -1147,53 +1169,34 @@ enum Command {
 
 fn run_version(crate_name: Option<&str>) -> i32 {
     let version = current_version();
-    let lock = include_str!("../../../Cargo.lock");
-    let mut crates = Vec::new();
-    for block in lock.split("[[package]]").skip(1) {
-        let mut name = None;
-        let mut ver = None;
-        for line in block.lines() {
-            if let Some(value) = line.strip_prefix("name = \")") {
-                name = value.strip_suffix('"');
-            }
-            if let Some(value) = line.strip_prefix("version = \")") {
-                ver = value.strip_suffix('"');
-            }
-            if name.is_some() && ver.is_some() {
-                break;
-            }
-        }
-        if let (Some(name), Some(ver)) = (name, ver) {
-            if name.starts_with("gitrun-")
-                && !crates.iter().any(|(n, _): &(String, String)| n == name)
-            {
-                crates.push((name.to_owned(), ver.to_owned()));
-            }
-        }
-    }
-    crates.sort();
+
     if let Some(name) = crate_name {
         let wanted = if name == "gitrun" {
-            "gitrun".into()
+            "gitrun".to_owned()
         } else if name.starts_with("gitrun-") {
             name.to_owned()
         } else {
             format!("gitrun-{name}")
         };
+
         if wanted == "gitrun" {
             println!("GitRun {version}");
-        } else if let Some((_, ver)) = crates.iter().find(|(n, _)| n == &wanted) {
-            println!("{wanted} {ver}");
+        } else if let Some((_, crate_version)) = GITRUN_CRATE_VERSIONS
+            .iter()
+            .find(|(crate_name, _)| *crate_name == wanted)
+        {
+            println!("{wanted} {crate_version}");
         } else {
             eprintln!("unknown GitRun crate: {name}");
             return 2;
         }
     } else {
         println!("GitRun {version}");
-        for (name, ver) in crates {
-            println!("{name} {ver}");
+        for (name, crate_version) in GITRUN_CRATE_VERSIONS {
+            println!("{name} {crate_version}");
         }
     }
+
     0
 }
 

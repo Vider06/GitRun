@@ -139,6 +139,10 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         memory: &config.container_memory,
         pids_limit: &config.container_pids_limit,
         shared_cache_volume: &config.shared_cache_volume,
+        cache_scope: &config.shared_cache_scope,
+        network: &config.runner_network,
+        seccomp_profile: &config.runner_seccomp_profile,
+        apparmor_profile: &config.runner_apparmor_profile,
         docker_socket_gid: &docker_socket_gid,
         runner_home_size: &config.runner_home_size,
         runner_home_backend: crate::docker::RunnerHomeBackend::from_config_str(

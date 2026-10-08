@@ -27,6 +27,10 @@ pub struct DockBinding {
     pub run_id: u64,
     pub job: String,
     pub container: String,
+    /// Immutable Docker object ID captured at connect time. An ID mismatch
+    /// invalidates the binding and prevents container-name reuse/TOCTOU attacks.
+    #[serde(default)]
+    pub container_id: String,
     pub dynamic: bool,
     #[serde(default)]
     pub dock_only: bool,
@@ -90,6 +94,26 @@ impl DockRegistry {
             .find(|binding| binding.container == container)
     }
 
+    /// Returns a binding only when the container belongs to the exact
+    /// workflow-run/job trust domain and was connected by this runner.
+    /// Container names and IDs are not authorization credentials on their own.
+    pub fn binding_for_authorized_container(
+        &self,
+        repository: &str,
+        run_id: u64,
+        job: &str,
+        requester_runner: &str,
+        container: &str,
+    ) -> Option<&DockBinding> {
+        self.bindings.iter().find(|binding| {
+            binding.repository == repository
+                && binding.run_id == run_id
+                && binding.job == job
+                && binding.requester_runner == requester_runner
+                && binding.container == container
+        })
+    }
+
     pub fn upsert(&mut self, binding: DockBinding) {
         self.bindings.retain(|existing| {
             !(existing.repository == binding.repository
@@ -136,6 +160,7 @@ mod tests {
             run_id: 42,
             job: "cache".into(),
             container: "runner-cache".into(),
+            container_id: "sha256:runner-cache".into(),
             dynamic: true,
             dock_only: false,
             requester_runner: "runner-main".into(),
@@ -157,6 +182,7 @@ mod tests {
             run_id: 1,
             job: "cache".into(),
             container: "a".into(),
+            container_id: "sha256:a".into(),
             dynamic: true,
             dock_only: false,
             requester_runner: "r1".into(),
@@ -167,6 +193,7 @@ mod tests {
             run_id: 1,
             job: "cache".into(),
             container: "b".into(),
+            container_id: "sha256:b".into(),
             dynamic: false,
             dock_only: true,
             requester_runner: "r2".into(),
@@ -174,5 +201,57 @@ mod tests {
         });
         assert_eq!(registry.bindings.len(), 1);
         assert_eq!(registry.bindings[0].container, "b");
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    fn binding(run_id: u64, runner: &str) -> DockBinding {
+        DockBinding {
+            repository: "Vider06/GitRun".into(),
+            run_id,
+            job: "build".into(),
+            container: "dock-a".into(),
+            container_id: "sha256:dock-a".into(),
+            dynamic: true,
+            dock_only: true,
+            requester_runner: runner.into(),
+            connected_at: 1,
+        }
+    }
+
+    #[test]
+    fn binding_authorization_rejects_cross_run() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(binding(10, "runner-a"));
+        assert!(registry
+            .binding_for_authorized_container("Vider06/GitRun", 10, "build", "runner-a", "dock-a")
+            .is_some());
+        assert!(registry
+            .binding_for_authorized_container("Vider06/GitRun", 11, "build", "runner-a", "dock-a")
+            .is_none());
+    }
+
+    #[test]
+    fn binding_authorization_rejects_cross_job() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(binding(10, "runner-a"));
+        assert!(registry
+            .binding_for_authorized_container("Vider06/GitRun", 10, "deploy", "runner-a", "dock-a",)
+            .is_none());
+    }
+
+    #[test]
+    fn binding_authorization_rejects_cross_runner_and_container() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(binding(10, "runner-a"));
+        assert!(registry
+            .binding_for_authorized_container("Vider06/GitRun", 10, "build", "runner-b", "dock-a")
+            .is_none());
+        assert!(registry
+            .binding_for_authorized_container("Vider06/GitRun", 10, "build", "runner-a", "dock-b")
+            .is_none());
     }
 }

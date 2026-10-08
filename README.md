@@ -4,7 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/Vider06/GitRun)](https://github.com/Vider06/GitRun/releases)
 [![License](https://img.shields.io/github/license/Vider06/GitRun)](LICENSE)
 
-GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, updates and the Tauri operator dashboard.
+**GitRun 1.3.0** is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, signed updates and the Tauri operator dashboard.
 
 GitRun is designed for administrators running repositories they trust on dedicated infrastructure. It does not require Kubernetes.
 
@@ -24,15 +24,10 @@ managed runner container
 GitRun host service / GSR authorization
      |
      +--> gitrun-exe execution boundary
-     |
      +--> local Docker host
-     |
      +--> VM Docker daemon (KVM/libvirt or VirtualBox)
-     |
      +--> GitVault
-     |
      +--> scheduler / runner lifecycle
-     |
      +--> dashboard + persistent state
 ```
 
@@ -40,10 +35,10 @@ The workflow-facing Git*Run API is a **closed, explicit API surface**, not a gen
 
 See:
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component and data-flow architecture.
-- [docs/GITRUN_API.md](docs/GITRUN_API.md) — Git*Run API reference.
-- [docs/VM.md](docs/VM.md) — VM-backed runner architecture and configuration.
+- [docs/GITRUN_API.md](docs/GITRUN_API.md) — Git*Run API reference and authorization boundary.
+- [docs/VM.md](docs/VM.md) — VM-backed runner architecture and lifecycle modes.
 - [docs/IPC.md](docs/IPC.md) — local API socket and GSR/executor trust boundary.
-- [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) — security model and limitations.
+- [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) — security model, enforcement and limitations.
 - [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md) — Rust runtime architecture.
 
 ## Core capabilities
@@ -51,28 +46,29 @@ See:
 - Docker-based Linux self-hosted runners with autoscaling and recovery.
 - VM-backed runner targets through KVM/libvirt or VirtualBox.
 - Logic Containers rules that route jobs by GitHub labels to a local Docker host or named VM.
-- Closed Git*Run APIs: `GitVaultRun`, `GitDockRun`, `GitSaveRun`, `GitRegisterRun`, `GitInstallRun`, `GitReadRun`, `GitWriteRun`, `GitVerifyRun`, and `GitStatusRun`.
+- Closed Git*Run APIs: `GitVaultRun`, `GitDockRun`, `GitSaveRun`, `GitRegisterRun`, `GitInstallRun`, `GitReadRun`, `GitWriteRun`, `GitVerifyRun` and `GitStatusRun`.
 - Unix-socket API transport at `/run/gitrun/api.sock` by default, configurable with `GITRUN_API_SOCKET`.
 - GSR authorization and command-policy enforcement before privileged execution.
-- Authenticated GSR-to-executor envelopes with HMAC-SHA256, timestamps and replay protection.
+- Authenticated GSR-to-executor envelopes with HMAC-SHA256, timestamps, nonces and replay protection.
 - GitVault AES-256-GCM encrypted-at-rest secrets with global, group and repository scopes.
+- Per-runner cache isolation by default; broader repository/global cache scopes are explicit trust decisions.
+- Dedicated GitRun Docker networking with rejection of ordinary `bridge`, `host` and `container:*` network modes.
+- VM endpoint health verification, Windows Docker TLS validation and operator-controlled snapshot rollback primitives.
+- Host resource-pressure backpressure for CPU, memory and configurable critical filesystems.
 - Tauri 2 operator dashboard for configuration, health, runner pools, VM definitions, Logic Containers and security controls.
-- Versioned updater with checksum verification and rollback.
-- Linux, macOS and Windows installation/release tooling where supported by the relevant path.
+- Versioned updater with checksum verification, signed-manifest verification and rollback.
 
 ## Security boundary
 
 GitRun-managed Linux runners do **not** receive the host Docker socket by default. Direct Docker-socket access is a per-repository compatibility opt-in. When enabled, it grants workflow code host-level Docker authority, not a normal unprivileged container capability.
 
-GSR adds defense-in-depth: container hardening, command-policy enforcement and external process supervision. The Git*Run API is additionally constrained by an explicit API/operation matrix and repository policy.
+GSR adds defense-in-depth: container hardening, command-policy enforcement and external process supervision. Git*Run API operations additionally require the caller's authoritative repository, workflow run, job and runner identity. Dock operations require the exact persisted runner/container binding and immutable container identity, with revalidation before privileged execution.
 
 Do not connect untrusted repositories to a host that contains sensitive workloads. Read [SECURITY.md](SECURITY.md) and [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) before deployment.
 
 ## Installation
 
 ### Linux
-
-For the supported server installation:
 
 ```bash
 git clone https://github.com/Vider06/GitRun.git /opt/gitrun-source
@@ -112,6 +108,8 @@ Important runtime state includes:
 - `GITRUN_VAULT_DIR` — GitVault storage.
 - `GITRUN_RUNNER_IMAGE` — default runner image.
 - `GITRUN_RUNNER_HOME_BACKEND` — runner home storage backend (`tmpfs` or `volume`).
+- `GITRUN_RUNNER_NETWORK` — dedicated Docker network used by managed runners.
+- `GITRUN_RESOURCE_PRESSURE_PATHS` — semicolon-separated critical filesystem paths used by resource-pressure backpressure.
 - `GITRUN_GSR_*` — GSR hardening, command policy and workflow validation.
 - `GITRUN_API_SOCKET` — workflow-facing API socket path; defaults to `/run/gitrun/api.sock`.
 
@@ -125,9 +123,9 @@ Logic Containers rules are stored in the corresponding persistent state and are 
 
 ## Autoscaling and runner lifecycle
 
-For each repository GitRun reconciles desired capacity from minimum runners, busy runners and queued self-hosted jobs, capped by the configured maximum. Offline managed runners can be recovered automatically.
+For each repository GitRun reconciles desired capacity from minimum runners, busy runners and queued self-hosted jobs, capped by the configured maximum. `min_runners=0` is supported when zero idle capacity is desired.
 
-Linux runners use the local Docker daemon. A Logic Containers rule can instead target a named VM. The VM is provisioned ahead of time from an operator-provided disk image; the containers inside it remain the scaling unit.
+Linux runners use the local Docker daemon. A Logic Containers rule can instead target a named VM. Ephemeral runners are not configured with Docker's `unless-stopped` restart policy, so an exited ephemeral runner is not silently recreated by Docker.
 
 ## VM support
 
@@ -136,10 +134,11 @@ VM-backed execution supports:
 - **KVM/libvirt** as the preferred hypervisor.
 - **VirtualBox** as the fallback when KVM is unavailable.
 - Linux or Windows guest images, depending on the supplied base image.
-- A Docker daemon inside the VM, reached through the resolved guest/forwarded endpoint.
-- Asynchronous VM resolution so an operator decision about KVM/VirtualBox does not block reconciliation for other repositories.
+- Docker TLS for Windows VM-backed endpoints where required.
+- Docker endpoint health verification before a VM becomes routable.
+- Operator-controlled snapshot create/restore primitives, including the `EphemeralSnapshotRollback` lifecycle mode.
 
-GitRun does not distribute Windows images, silently install hypervisors, or configure Docker inside an arbitrary guest image. See [docs/VM.md](docs/VM.md).
+The full VM recreation/ephemeral-VM lifecycle remains deployment/operator dependent. GitRun does not distribute Windows images, silently install hypervisors, or configure Docker inside an arbitrary guest image. See [docs/VM.md](docs/VM.md).
 
 ## Git*Run API
 
@@ -157,7 +156,7 @@ The API commands are intentionally explicit:
 | `GitVerifyRun` | Calculate a SHA-256 digest for an allowed path |
 | `GitStatusRun` | Query GitRun status |
 
-The API client derives workflow identity from GitHub Actions environment variables and sends a JSON request over the local Unix socket. The host-side service remains responsible for authorization and execution.
+The host does not trust workflow-visible identity claims by themselves. It binds the request to the current in-progress GitHub job and Docker runner, verifies authoritative workflow/run information, and applies repository/resource policy before creating an authorized operation.
 
 See [docs/GITRUN_API.md](docs/GITRUN_API.md) for the operation grammar and security rules.
 
@@ -199,12 +198,13 @@ At the top level:
 
 ## Development
 
-GitRun is a Rust workspace. Start with:
+GitRun 1.3.0 is a security-hardening release. Start with:
 
 ```bash
 cargo fmt --all --check
 cargo check --workspace --locked
 cargo test --workspace --locked
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 Changes affecting Docker, workflows, shell, PowerShell, packaging, Tauri or release artifacts should also run the corresponding repository checks.

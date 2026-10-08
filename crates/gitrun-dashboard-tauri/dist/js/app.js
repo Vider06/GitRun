@@ -809,9 +809,14 @@ function severityPill(severity) {
 async function renderSettings() {
   const generation = state.navigationGeneration;
   content.innerHTML = `<div class="empty-state">Loading…</div>`;
-  let config, settings;
+  let config, settings, securitySummary, vmConfigs;
   try {
-    [config, settings] = await Promise.all([invoke("get_config"), invoke("get_gitrun_settings")]);
+    [config, settings, securitySummary, vmConfigs] = await Promise.all([
+      invoke("get_config"),
+      invoke("get_gitrun_settings"),
+      invoke("get_security_runtime_summary"),
+      invoke("list_vm_configs"),
+    ]);
   } catch (error) {
     if (generation !== state.navigationGeneration) return;
     content.innerHTML = errorBanner(String(error));
@@ -864,6 +869,36 @@ async function renderSettings() {
         <select id="policy-repo">${config.repositories.map((repo) => `<option value="${escapeHtml(repo)}">${escapeHtml(repo)}</option>`).join("")}</select>
       </div>
       <div id="repo-policy-editor"></div>
+    </div>
+
+    <div class="section" style="max-width:760px">
+      <h2 class="section-title">Resource Pressure</h2>
+      <p class="field-hint">Backpressure pauses new runner creation before host memory, CPU, or monitored storage becomes critical.</p>
+      <label class="field-checkbox"><input type="checkbox" id="resource-pressure-enabled" ${config.resource_pressure_enabled ? "checked" : ""} /><span><strong>Enable resource-pressure protection</strong></span></label>
+      <div class="field-row">
+        <div class="field"><label>CPU threshold (%)</label><input id="resource-pressure-cpu" type="number" min="1" max="100" value="${config.resource_pressure_cpu_percent}" /></div>
+        <div class="field"><label>Memory threshold (%)</label><input id="resource-pressure-memory" type="number" min="1" max="100" value="${config.resource_pressure_memory_percent}" /></div>
+        <div class="field"><label>Disk threshold (%)</label><input id="resource-pressure-disk" type="number" min="1" max="100" value="${config.resource_pressure_disk_percent}" /></div>
+      </div>
+      <div class="field"><label>Critical filesystem paths (semicolon-separated)</label><input id="resource-pressure-paths" value="${escapeHtml(config.resource_pressure_paths || "")}" /></div>
+    </div>
+
+    <div class="section" style="max-width:760px">
+      <h2 class="section-title">Runner Isolation</h2>
+      <div class="table-scroll"><table class="data-table"><tbody>
+        <tr><td>Docker network</td><td class="mono">${escapeHtml(securitySummary.runner_network || "—")}</td><td>${statusPill(securitySummary.runner_network_is_dedicated, "Dedicated", "Unsafe")}</td></tr>
+        <tr><td>Cache scope</td><td class="mono">${escapeHtml(securitySummary.shared_cache_scope)}</td><td>${securitySummary.shared_cache_scope === "runner" ? '<span class="pill pill-success">Isolated</span>' : '<span class="pill pill-warning">Shared</span>'}</td></tr>
+        <tr><td>Seccomp</td><td class="mono">${escapeHtml(securitySummary.seccomp_profile)}</td><td>${statusPill(securitySummary.seccomp_profile !== "unconfined", "Protected", "Unconfined")}</td></tr>
+        <tr><td>AppArmor</td><td class="mono">${escapeHtml(securitySummary.apparmor_profile || "Docker default")}</td><td><span class="pill pill-info">${securitySummary.apparmor_profile ? "Configured" : "Default"}</span></td></tr>
+        <tr><td>Docker socket hardening</td><td colspan="2">${statusPill(securitySummary.docker_socket_hardening, "Enabled", "Disabled")}</td></tr>
+      </tbody></table></div>
+      <p class="field-hint">The dedicated network is enforced by the backend; bridge/host/container networking cannot be selected for runner isolation.</p>
+    </div>
+
+    <div class="section" style="max-width:900px">
+      <h2 class="section-title">VM Lifecycle</h2>
+      <p class="field-hint">VM-backed Logic Containers support standard, always-on, snapshot-rollback, or full ephemeral lifecycle policies. Snapshot rollback requires an operator-created clean snapshot named <span class="mono">gitrun-clean-&lt;vm-name&gt;</span>.</p>
+      <div id="vm-management"></div>
     </div>
 
     <div class="section" style="max-width:760px">
@@ -969,6 +1004,11 @@ async function renderSettings() {
       ...config,
       gsr_docker_socket_hardening: document.getElementById("global-hardening").checked,
       gsr_allow_unsafe_runner: document.getElementById("unsafe-runner").checked,
+      resource_pressure_enabled: document.getElementById("resource-pressure-enabled").checked,
+      resource_pressure_cpu_percent: Number(document.getElementById("resource-pressure-cpu").value),
+      resource_pressure_memory_percent: Number(document.getElementById("resource-pressure-memory").value),
+      resource_pressure_disk_percent: Number(document.getElementById("resource-pressure-disk").value),
+      resource_pressure_paths: document.getElementById("resource-pressure-paths").value.trim(),
     };
 
     const status = document.getElementById("security-save-status");
@@ -988,7 +1028,125 @@ async function renderSettings() {
       status.style.color = "var(--danger)";
     }
   });
+
+  renderVmManagement(vmConfigs);
 }
+
+// ---------------------------------------------------------------------
+// VM lifecycle management
+// ---------------------------------------------------------------------
+
+function activationLabel(mode) {
+  return {
+    Standard: "Standard",
+    AlwaysOnExperimental: "Always on (experimental)",
+    EphemeralSnapshotRollback: "Ephemeral + snapshot rollback",
+    EphemeralVm: "Fully ephemeral VM",
+  }[mode] || mode;
+}
+
+async function renderVmManagement(vmConfigs) {
+  const root = document.getElementById("vm-management");
+  if (!root) return;
+  root.innerHTML = vmConfigs.length === 0
+    ? '<div class="empty-state">No VM definitions configured.</div>'
+    : `<div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Name</th><th>Hypervisor</th><th>OS</th><th>Lifecycle</th><th>Docker</th><th></th></tr></thead>
+        <tbody>${vmConfigs.map((vm, i) => `<tr>
+          <td class="mono">${escapeHtml(vm.name)}</td>
+          <td>${escapeHtml(vm.hypervisor)}</td>
+          <td>${vm.is_windows ? "Windows" : "Linux"}</td>
+          <td><span class="pill pill-info">${escapeHtml(activationLabel(vm.activation))}</span></td>
+          <td class="mono">:${vm.docker_port}</td>
+          <td><button class="btn btn-sm" data-edit-vm="${i}">Edit</button></td>
+        </tr>`).join("")}</tbody>
+      </table></div>`;
+  root.insertAdjacentHTML("beforeend", '<button class="btn btn-sm btn-primary" id="add-vm-config">+ Add VM</button>');
+  root.querySelector("#add-vm-config").addEventListener("click", () => openVmModal(null, vmConfigs));
+  root.querySelectorAll("[data-edit-vm]").forEach((btn) => btn.addEventListener("click", () => openVmModal(vmConfigs[Number(btn.dataset.editVm)], vmConfigs)));
+}
+
+function openVmModal(existing, allConfigs) {
+  const vm = existing || {
+    name: "", hypervisor: "Kvm", base_disk_image: "", memory_mb: 4096, cpus: 2,
+    docker_port: 2376, docker_tls_cert_dir: "", activation: "Standard", is_windows: false
+  };
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `
+    <div class="modal">
+      <h3 class="modal-title">${existing ? "Edit VM" : "Add VM"}</h3>
+      <div class="field"><label>Name</label><input id="vm-name" value="${escapeHtml(vm.name)}" /></div>
+      <div class="field"><label>Hypervisor</label><select id="vm-hypervisor"><option value="Kvm" ${vm.hypervisor === "Kvm" ? "selected" : ""}>KVM</option><option value="VirtualBox" ${vm.hypervisor === "VirtualBox" ? "selected" : ""}>VirtualBox</option></select></div>
+      <div class="field"><label>Base disk image</label><input id="vm-image" value="${escapeHtml(vm.base_disk_image)}" /></div>
+      <div class="field-row"><div class="field"><label>Memory (MiB)</label><input id="vm-memory" type="number" min="1" value="${vm.memory_mb}" /></div><div class="field"><label>CPUs</label><input id="vm-cpus" type="number" min="1" value="${vm.cpus}" /></div><div class="field"><label>Docker port</label><input id="vm-port" type="number" min="1" max="65535" value="${vm.docker_port}" /></div></div>
+      <label class="field-checkbox"><input id="vm-windows" type="checkbox" ${vm.is_windows ? "checked" : ""} /><span>Windows guest (requires mutual Docker TLS)</span></label>
+      <div class="field"><label>Docker TLS cert directory</label><input id="vm-tls" value="${escapeHtml(vm.docker_tls_cert_dir || "")}" placeholder="/etc/gitrun/vm-tls/name" /></div>
+      <div class="field"><label>Lifecycle</label><select id="vm-activation">
+        <option value="Standard">Standard</option>
+        <option value="AlwaysOnExperimental">Always on (experimental)</option>
+        <option value="EphemeralSnapshotRollback">Ephemeral + snapshot rollback</option>
+        <option value="EphemeralVm">Fully ephemeral VM</option>
+      </select></div>
+      <p class="field-hint" id="vm-lifecycle-help"></p>
+      <div class="modal-actions"><button class="btn" id="vm-cancel">Cancel</button><button class="btn btn-primary" id="vm-save">Save VM</button></div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  enhanceModalAccessibility(backdrop);
+  const activation = backdrop.querySelector("#vm-activation");
+  activation.value = vm.activation;
+  const updateHelp = () => {
+    backdrop.querySelector("#vm-lifecycle-help").textContent =
+      activation.value === "EphemeralSnapshotRollback"
+        ? "Restores gitrun-clean-<vm-name> before each workload lifecycle."
+        : activation.value === "EphemeralVm"
+          ? "Recreates the VM from its base image per runner lifecycle when the deployment supports full ephemeral provisioning."
+          : activation.value === "AlwaysOnExperimental"
+            ? "Keeps the VM running continuously; use only where that trade-off is intentional."
+            : "Starts/stops the VM according to the normal runner lifecycle.";
+  };
+  activation.addEventListener("change", updateHelp);
+  updateHelp();
+  backdrop.querySelector("#vm-cancel").addEventListener("click", () => backdrop.remove());
+  backdrop.querySelector("#vm-save").addEventListener("click", async () => {
+    const next = {
+      name: backdrop.querySelector("#vm-name").value.trim(),
+      hypervisor: backdrop.querySelector("#vm-hypervisor").value,
+      base_disk_image: backdrop.querySelector("#vm-image").value.trim(),
+      memory_mb: Number(backdrop.querySelector("#vm-memory").value),
+      cpus: Number(backdrop.querySelector("#vm-cpus").value),
+      docker_port: Number(backdrop.querySelector("#vm-port").value),
+      docker_tls_cert_dir: backdrop.querySelector("#vm-tls").value.trim(),
+      activation: activation.value,
+      is_windows: backdrop.querySelector("#vm-windows").checked,
+    };
+    if (!next.name || !next.base_disk_image || !next.memory_mb || !next.cpus || !next.docker_port) {
+      alert("Name, base image, memory, CPU count, and Docker port are required.");
+      return;
+    }
+    if (next.is_windows && !next.docker_tls_cert_dir) {
+      alert("Windows guests require a Docker TLS certificate directory.");
+      return;
+    }
+    const duplicate = allConfigs.some((item) => item !== existing && item.name.toLowerCase() === next.name.toLowerCase());
+    if (duplicate) {
+      alert("A VM with that name already exists.");
+      return;
+    }
+    try {
+      const updated = existing
+        ? allConfigs.map((item) => item === existing ? next : item)
+        : [...allConfigs, next];
+      await invoke("save_vm_config", { configEntry: next });
+      backdrop.remove();
+      const refreshed = await invoke("list_vm_configs");
+      await renderVmManagement(refreshed);
+    } catch (error) {
+      alert("Could not save VM: " + error);
+    }
+  });
+}
+
 // ---------------------------------------------------------------------
 // Hypervisor decisions — global, cross-view prompt. Polled independently
 // of `navigate()`/`state.view` because this is time-sensitive (the
@@ -1372,7 +1530,6 @@ function renderFirstRun() {
         await unlisten();
       }
     }
-  });
   });
 }
 

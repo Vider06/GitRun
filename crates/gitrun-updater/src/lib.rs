@@ -1,4 +1,5 @@
 use reqwest::blocking::Client;
+use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -60,6 +61,10 @@ pub struct ReleaseManifest {
     pub version: String,
     pub git_commit: String,
     pub artifacts: Vec<ReleaseArtifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_key_id: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<DependencyRequirement>,
     #[serde(default)]
@@ -164,6 +169,26 @@ impl ReleaseManifest {
         if let Some(repository) = &self.repository {
             validate_repository(repository)?;
         }
+        match (&self.signature, &self.signature_key_id) {
+            (Some(signature), key_id) => {
+                if signature.len() != 128 || !signature.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(UpdateError::InvalidManifest(
+                        "manifest signature must be 64-byte hex".into(),
+                    ));
+                }
+                if key_id.as_ref().is_some_and(|id| id.trim().is_empty()) {
+                    return Err(UpdateError::InvalidManifest(
+                        "manifest signature key id cannot be empty".into(),
+                    ));
+                }
+            }
+            (None, Some(_)) => {
+                return Err(UpdateError::InvalidManifest(
+                    "signature key id requires a signature".into(),
+                ))
+            }
+            (None, None) => {}
+        }
         Ok(())
     }
 
@@ -175,9 +200,71 @@ impl ReleaseManifest {
     }
 }
 
+impl ReleaseManifest {
+    /// Verifies an Ed25519 signature. Signed manifests are required by
+    /// default; setting GITRUN_UPDATE_SIGNATURE_REQUIRED=false is the explicit
+    /// compatibility/unsafe opt-out for custom unsigned manifests.
+    pub fn verify_signature_from_env(&self) -> Result<(), UpdateError> {
+        let required = std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED")
+            .ok()
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(true);
+        let key = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_HEX").ok();
+        match (self.signature.as_deref(), key.as_deref()) {
+            (None, _) if required => Err(UpdateError::InvalidManifest(
+                "update manifest signature is required by default; set GITRUN_UPDATE_SIGNATURE_REQUIRED=false only for an explicit unsigned-update opt-out".into(),
+            )),
+            (None, _) => Ok(()),
+            (Some(_), None) => Err(UpdateError::InvalidManifest(
+                "manifest is signed but no public key is configured".into(),
+            )),
+            (Some(signature), Some(public_key)) => {
+                if let Ok(expected_id) = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_ID") {
+                    if self.signature_key_id.as_deref() != Some(expected_id.trim()) {
+                        return Err(UpdateError::InvalidManifest(
+                            "update manifest signing key id does not match configured key".into(),
+                        ));
+                    }
+                }
+                let public = decode_hex(public_key).ok_or_else(|| {
+                    UpdateError::InvalidManifest("update public key must be 32-byte hex".into())
+                })?;
+                let sig = decode_hex(signature).ok_or_else(|| {
+                    UpdateError::InvalidManifest("update signature must be hex".into())
+                })?;
+                if public.len() != 32 || sig.len() != 64 {
+                    return Err(UpdateError::InvalidManifest(
+                        "invalid Ed25519 key or signature length".into(),
+                    ));
+                }
+                let payload = self.signing_payload()?;
+                UnparsedPublicKey::new(&ED25519, &public)
+                    .verify(&payload, &sig)
+                    .map_err(|_| {
+                        UpdateError::InvalidManifest(
+                            "update manifest signature verification failed".into(),
+                        )
+                    })
+            }
+        }
+    }
+
+    fn signing_payload(&self) -> Result<Vec<u8>, UpdateError> {
+        let mut unsigned = self.clone();
+        unsigned.signature = None;
+        unsigned.signature_key_id = None;
+        let value = serde_json::to_value(&unsigned)
+            .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+        let canonical = canonicalize_json(value);
+        serde_json::to_vec(&canonical)
+            .map_err(|error| UpdateError::InvalidManifest(error.to_string()))
+    }
+}
+
 pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateError> {
     let manifest: ReleaseManifest = serde_json::from_slice(&fs::read(path)?)?;
     manifest.validate()?;
+    manifest.verify_signature_from_env()?;
     Ok(manifest)
 }
 
@@ -186,6 +273,7 @@ pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
     let client = http_client()?;
     let manifest: ReleaseManifest = client.get(url).send()?.error_for_status()?.json()?;
     manifest.validate()?;
+    manifest.verify_signature_from_env()?;
     Ok(manifest)
 }
 
@@ -237,6 +325,7 @@ pub fn stage_update(
     staging_root: impl AsRef<Path>,
 ) -> Result<PathBuf, UpdateError> {
     manifest.validate()?;
+    manifest.verify_signature_from_env()?;
     if compare_versions(&manifest.version, current_version)? != std::cmp::Ordering::Greater {
         return Err(UpdateError::NotNewer);
     }
@@ -263,6 +352,9 @@ pub fn stage_update(
     Ok(marker)
 }
 
+/// Builds a plan from a manifest that has already passed
+/// load_manifest/fetch_manifest verification. Signature enforcement stays
+/// at the untrusted-input boundaries, so this helper only handles planning.
 pub fn build_plan(
     manifest: &ReleaseManifest,
     current_version: &str,
@@ -1271,6 +1363,36 @@ fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(entries) => {
+            let sorted: std::collections::BTreeMap<_, _> = entries
+                .into_iter()
+                .map(|(key, value)| (key, canonicalize_json(value)))
+                .collect();
+            serde_json::to_value(sorted).unwrap_or(serde_json::Value::Null)
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonicalize_json).collect())
+        }
+        other => other,
+    }
+}
+
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if !value.len().is_multiple_of(2) || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len() / 2);
+    for index in (0..bytes.len()).step_by(2) {
+        let high = (bytes[index] as char).to_digit(16)? as u8;
+        let low = (bytes[index + 1] as char).to_digit(16)? as u8;
+        output.push((high << 4) | low);
+    }
+    Some(output)
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
@@ -1764,6 +1886,8 @@ mod tests {
                 source: None,
                 installation_method: Some("system-package-manager".into()),
             }],
+            signature: None,
+            signature_key_id: None,
             runner_image: None,
             repository: Some("Vider06/GitRun".into()),
         }

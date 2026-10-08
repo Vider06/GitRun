@@ -270,9 +270,41 @@ pub struct PolicyMatrix {
     pub apis: BTreeMap<GitRunApi, ApiPolicy>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyLintIssue {
+    pub path: String,
+    pub message: String,
+}
+
 impl PolicyMatrix {
     pub fn secure_default() -> Self {
         Self::default()
+    }
+
+    /// Performs a non-mutating policy lint. These findings are diagnostics,
+    /// not an authorization bypass: runtime authorization still fails closed.
+    pub fn lint(&self) -> Vec<PolicyLintIssue> {
+        let mut issues = Vec::new();
+        for (api, policy) in &self.apis {
+            if policy.enabled && policy.allowed_operations.is_empty() {
+                issues.push(PolicyLintIssue {
+                    path: api.as_str().into(),
+                    message: "API is enabled but grants no operations".into(),
+                });
+            }
+            for operation in &policy.allowed_operations {
+                if !api.supports_operation(*operation) {
+                    issues.push(PolicyLintIssue {
+                        path: api.as_str().into(),
+                        message: format!(
+                            "operation {} is not supported by this API",
+                            operation.as_str()
+                        ),
+                    });
+                }
+            }
+        }
+        issues
     }
 
     pub fn set(&mut self, api: GitRunApi, policy: ApiPolicy) {

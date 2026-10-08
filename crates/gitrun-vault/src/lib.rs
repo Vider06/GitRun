@@ -123,6 +123,18 @@ pub trait VaultEventSink: Send + Sync {
     fn on_randomness_failure(&self, operation: &str) {
         let _ = operation;
     }
+
+    fn on_secret_read(&self, secret_name: &str, scope: &Scope) {
+        let _ = (secret_name, scope);
+    }
+
+    fn on_secret_write(&self, secret_name: &str, scope: &Scope) {
+        let _ = (secret_name, scope);
+    }
+
+    fn on_secret_delete(&self, secret_name: &str, scope: &Scope) {
+        let _ = (secret_name, scope);
+    }
 }
 
 /// Default sink used when no observer is configured: does nothing. Kept
@@ -134,6 +146,8 @@ impl VaultEventSink for NoopEventSink {}
 const MASTER_KEY_FILE: &str = "master.key";
 const SECRETS_FILE: &str = "secrets.json";
 const NONCE_LEN: usize = 12;
+const DATA_KEY_CONTEXT: &[u8] = b"GitRun/GitVault/data-key/v1";
+const DATA_KEY_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSecret {
@@ -153,6 +167,10 @@ struct StoredSecret {
     /// behaving exactly as before (available to every repo).
     #[serde(default = "Scope::default_for_migration")]
     scope: Scope,
+    /// 0 is the legacy master-key encryption format. New records use a
+    /// domain-separated data key derived from the master/root key.
+    #[serde(default)]
+    key_version: u8,
 }
 
 impl Scope {
@@ -170,6 +188,9 @@ struct VaultFile {
 pub struct Vault {
     dir: PathBuf,
     cipher: Aes256Gcm,
+    /// Legacy master-key cipher retained only for decrypting pre-hierarchy
+    /// records. New writes never use it.
+    legacy_cipher: Aes256Gcm,
     data: VaultFile,
     events: Box<dyn VaultEventSink>,
 }
@@ -190,8 +211,11 @@ impl Vault {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
         let key_bytes = load_or_create_master_key(&dir, events.as_ref())?;
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+        let legacy_cipher = Aes256Gcm::new_from_slice(&key_bytes)
             .map_err(|_| VaultError::InvalidMasterKey(key_bytes.len()))?;
+        let data_key = derive_data_key(&key_bytes);
+        let cipher = Aes256Gcm::new_from_slice(&data_key)
+            .map_err(|_| VaultError::InvalidMasterKey(data_key.len()))?;
 
         let secrets_path = dir.join(SECRETS_FILE);
         let data = match fs::metadata(&secrets_path) {
@@ -207,6 +231,7 @@ impl Vault {
         Ok(Self {
             dir,
             cipher,
+            legacy_cipher,
             data,
             events,
         })
@@ -254,10 +279,13 @@ impl Vault {
                 nonce: base64_encode(&nonce_bytes),
                 ciphertext: base64_encode(&ciphertext),
                 updated_at: now(),
-                scope,
+                scope: scope.clone(),
+                key_version: DATA_KEY_VERSION,
             },
         );
-        self.persist()
+        self.persist()?;
+        self.events.on_secret_write(name, &scope);
+        Ok(())
     }
 
     /// Decrypts and returns the secret stored under `name` in `Scope::Global`.
@@ -296,18 +324,22 @@ impl Vault {
             self.events.on_decryption_failure(name);
             VaultError::DecryptionFailed(name.to_owned())
         })?;
-        let plaintext = self
-            .cipher
-            .decrypt(&nonce, ciphertext.as_slice())
-            .map_err(|_| {
-                self.events.on_decryption_failure(name);
-                VaultError::DecryptionFailed(name.to_owned())
-            })?;
-
-        String::from_utf8(plaintext).map_err(|_| {
+        let plaintext = match entry.key_version {
+            DATA_KEY_VERSION => self.cipher.decrypt(&nonce, ciphertext.as_slice()),
+            0 => self.legacy_cipher.decrypt(&nonce, ciphertext.as_slice()),
+            _ => Err(aes_gcm::Error),
+        }
+        .map_err(|_| {
             self.events.on_decryption_failure(name);
             VaultError::DecryptionFailed(name.to_owned())
-        })
+        })?;
+
+        let value = String::from_utf8(plaintext).map_err(|_| {
+            self.events.on_decryption_failure(name);
+            VaultError::DecryptionFailed(name.to_owned())
+        })?;
+        self.events.on_secret_read(name, &entry.scope);
+        Ok(value)
     }
 
     pub fn delete(&mut self, name: &str) -> Result<()> {
@@ -319,7 +351,9 @@ impl Vault {
         if self.data.secrets.remove(&key).is_none() {
             return Err(VaultError::NotFound(name.to_owned()));
         }
-        self.persist()
+        self.persist()?;
+        self.events.on_secret_delete(name, scope);
+        Ok(())
     }
 
     /// Lists every secret's name, scope, and last-updated time, without
@@ -591,6 +625,14 @@ fn storage_key(name: &str, scope: &Scope) -> String {
 /// `storage_key`. The name is always the last `\u{1}`-delimited segment.
 fn name_part_of_key(key: &str) -> String {
     key.rsplit('\u{1}').next().unwrap_or(key).to_owned()
+}
+
+fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(master_key);
+    hasher.update(DATA_KEY_CONTEXT);
+    hasher.finalize().into()
 }
 
 fn now() -> u64 {

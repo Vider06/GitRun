@@ -9,6 +9,7 @@ pub mod gtuu;
 pub mod gtuu_startup;
 pub mod logic_containers;
 pub mod reconcile;
+pub mod resource_pressure;
 pub mod state;
 pub mod vm;
 pub mod vm_resolution;
@@ -70,6 +71,22 @@ pub fn run() {
     if config.repositories.is_empty() {
         eprintln!("gitrun-autoscaler: no repositories configured");
         std::process::exit(2);
+    }
+
+    let settings_path = gitrun_core::GitRunSettings::path_for_state_dir(&config.state_dir);
+    match gitrun_core::GitRunSettings::load_or_default(&settings_path) {
+        Ok(settings) => {
+            for issue in settings.lint() {
+                eprintln!(
+                    "gitrun-autoscaler: security policy lint [{}] warning: {}",
+                    issue.path, issue.message
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!("gitrun-autoscaler: security policy could not be linted: {error}");
+            std::process::exit(2);
+        }
     }
 
     let client = match build_github_client(&config) {
@@ -134,6 +151,17 @@ pub fn run() {
         config.poll_interval
     );
     while !stopping.load(Ordering::Relaxed) {
+        if config.resource_pressure_enabled {
+            match resource_pressure::sample(&config) {
+                Ok(snapshot) if snapshot.is_pressured(&config) => {
+                    eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), holding new runner creation until pressure falls", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
+                    sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!("gitrun-autoscaler: resource pressure check unavailable: {error}; continuing for availability"),
+            }
+        }
         for repo in &config.repositories {
             if let Some(remaining) = rate_limits.remaining_cooldown(repo) {
                 // Skip this repo entirely for this tick rather than making
@@ -586,9 +614,21 @@ fn execute(
             if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
                 return Ok(());
             }
+            // An exited runner crosses a trust boundary: never restart/reuse
+            // its filesystem or credentials. Quarantine the identity first,
+            // then remove the container and create a fresh runner if capacity
+            // is still required.
+            state.quarantine(name);
+            let events_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
+            let event = gitrun_gsr::SecurityEvent::new(
+                "scheduler",
+                gitrun_gsr::Severity::Critical,
+                format!("runner {name} for {repo} exited unexpectedly and was quarantined; a fresh runner must be created"),
+            );
+            if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
+                eprintln!("gitrun-autoscaler: failed to emit runner quarantine event: {error}");
+            }
             deregister_and_remove(client, repo, name)?;
-            state.clear_idle(name);
-            state.clear_recovery(name);
         }
         Action::CreateRunner {
             permanent,
@@ -761,12 +801,16 @@ fn create_runner(
             registration_token: &registration_token,
             image: &image,
             labels: &runner_labels,
-            ephemeral: config.ephemeral,
+            ephemeral: config.ephemeral || (is_windows && !permanent),
             disable_update: config.runner_disable_update,
             cpus: &config.container_cpus,
             memory: &config.container_memory,
             pids_limit: &config.container_pids_limit,
             shared_cache_volume: &config.shared_cache_volume,
+            cache_scope: &config.shared_cache_scope,
+            network: &config.runner_network,
+            seccomp_profile: &config.runner_seccomp_profile,
+            apparmor_profile: &config.runner_apparmor_profile,
             docker_socket_gid: &docker_socket_gid,
             docker_socket_enabled: repository_settings.docker.direct_socket_enabled,
             runner_home_size: &config.runner_home_size,
@@ -1165,6 +1209,10 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         memory: &config.container_memory,
         pids_limit: &config.container_pids_limit,
         shared_cache_volume: &config.shared_cache_volume,
+        cache_scope: &config.shared_cache_scope,
+        network: &config.runner_network,
+        seccomp_profile: &config.runner_seccomp_profile,
+        apparmor_profile: &config.runner_apparmor_profile,
         docker_socket_gid: &docker_socket_gid,
         runner_home_size: &config.runner_home_size,
         runner_home_backend: docker::RunnerHomeBackend::from_config_str(

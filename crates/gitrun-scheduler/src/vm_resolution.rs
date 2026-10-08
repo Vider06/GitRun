@@ -25,7 +25,7 @@
 //! result immediately and defers creation of the VM-targeted runner for
 //! that cycle. It never redirects the job to the local Docker host.
 
-use crate::docker::DockerHost;
+use crate::docker::{self, DockerHost};
 use crate::vm::{self, HypervisorKind, VmConfig};
 use gitrun_core::hypervisor_decision::{self, DecisionChoice};
 use std::collections::HashMap;
@@ -107,11 +107,14 @@ fn config_fingerprint(config: &VmConfig) -> u64 {
     feed(&mut hash, &config.memory_mb.to_le_bytes());
     feed(&mut hash, &config.cpus.to_le_bytes());
     feed(&mut hash, &config.docker_port.to_le_bytes());
+    feed(&mut hash, config.docker_tls_cert_dir.as_bytes());
     feed(
         &mut hash,
         &[match config.activation {
             vm::ActivationMode::Standard => 1,
             vm::ActivationMode::AlwaysOnExperimental => 2,
+            vm::ActivationMode::EphemeralSnapshotRollback => 3,
+            vm::ActivationMode::EphemeralVm => 4,
         }],
     );
     feed(&mut hash, &[u8::from(config.is_windows)]);
@@ -381,15 +384,53 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     let mut config = vm_config.clone();
     config.hypervisor = kind;
     vm::ensure_vm(&config)?;
+
+    // Ephemeral modes are lifecycle policies, not mere labels. Restore the
+    // operator-designated clean snapshot before a new workload is admitted.
+    // The VM is stopped first because both supported hypervisors require
+    // quiesced state for a deterministic rollback.
+    if matches!(
+        config.activation,
+        vm::ActivationMode::EphemeralSnapshotRollback
+    ) {
+        let snapshot = format!("gitrun-clean-{}", config.name);
+        if vm::is_running(kind, &config.name)? {
+            vm::stop(kind, &config.name)?;
+        }
+        vm::restore_snapshot(kind, &config.name, &snapshot)?;
+    }
     if !vm::is_running(kind, &config.name)? {
         vm::start(kind, &config.name)?;
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
-    Ok(DockerHost::Remote(vm::docker_host_address(
-        kind,
-        &ip,
-        config.docker_port,
-    )))
+    if config.is_windows && !is_private_guest_ipv4(&ip) {
+        return Err(vm::VmError::InvalidConfig(format!(
+            "Windows KVM VM '{}' reported non-private guest address {}; refusing remote Docker endpoint",
+            config.name, ip
+        )));
+    }
+    let endpoint = vm::docker_host_address(kind, &ip, config.docker_port);
+    let host = if config.is_windows {
+        if config.docker_tls_cert_dir.trim().is_empty() {
+            return Err(vm::VmError::InvalidConfig(format!(
+                "Windows VM '{}' has no Docker TLS credential directory configured",
+                config.name
+            )));
+        }
+        DockerHost::RemoteTls {
+            endpoint,
+            cert_dir: config.docker_tls_cert_dir.clone(),
+        }
+    } else {
+        DockerHost::Remote(endpoint)
+    };
+    docker::verify_docker_endpoint_health(&host).map_err(|error| {
+        vm::VmError::Command(format!(
+            "VM '{}' Docker endpoint health check failed: {error}",
+            config.name
+        ))
+    })?;
+    Ok(host)
 }
 
 /// Loads VM definitions from `{state_dir}/vm-configs.json` at startup —
@@ -401,6 +442,16 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
 /// with zero VMs.
 pub fn load_vm_definitions(state_dir: &Path) -> vm::Result<Vec<VmConfig>> {
     vm::load_vm_configs(state_dir)
+}
+
+fn is_private_guest_ipv4(value: &str) -> bool {
+    let Ok(ip) = value.parse::<std::net::Ipv4Addr>() else {
+        return false;
+    };
+    let octets = ip.octets();
+    (octets[0] == 10)
+        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+        || (octets[0] == 192 && octets[1] == 168)
 }
 
 #[cfg(test)]
@@ -417,6 +468,7 @@ mod tests {
             docker_port: 2376,
             activation: vm::ActivationMode::Standard,
             is_windows: false,
+            docker_tls_cert_dir: String::new(),
         }
     }
 

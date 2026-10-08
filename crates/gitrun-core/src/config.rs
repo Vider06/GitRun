@@ -19,12 +19,22 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     pub repositories: Vec<String>,
+    /// Host sizing profile: standard, small, or large.
+    pub host_profile: String,
     pub min_runners: u32,
     pub max_runners: u32,
     pub idle_timeout: u64,
     pub poll_interval: u64,
     pub runner_image: String,
     pub runner_labels: String,
+    /// Dedicated Docker network to attach runner containers to. GitRun
+    /// creates it when absent; operators can attach host firewall/proxy
+    /// policy to this stable network as their egress boundary.
+    pub runner_network: String,
+    /// Docker seccomp profile: `default` or a daemon-visible profile path.
+    pub runner_seccomp_profile: String,
+    /// Optional Docker AppArmor profile name; empty leaves Docker default.
+    pub runner_apparmor_profile: String,
     pub ephemeral: bool,
     pub state_dir: String,
     pub log_dir: String,
@@ -44,6 +54,21 @@ pub struct Config {
     /// Name of the Docker volume shared across runner containers for
     /// package-manager caches (Cargo/pip/npm) — the embryonic GitVault.
     pub shared_cache_volume: String,
+    /// Cache isolation scope: `runner` (default), `repository`, or `global`.
+    /// Runner scope is safest for untrusted workflow code; broader scopes are
+    /// explicit cross-workflow trust decisions.
+    pub shared_cache_scope: String,
+    /// Filesystems sampled by resource-pressure protection. The Docker data
+    /// root should be included on hosts where runner storage can fill it.
+    pub resource_pressure_paths: String,
+    /// Master switch for host resource-pressure backpressure.
+    pub resource_pressure_enabled: bool,
+    /// CPU utilization percentage at which new runner creation pauses.
+    pub resource_pressure_cpu_percent: u8,
+    /// Memory utilization percentage at which new runner creation pauses.
+    pub resource_pressure_memory_percent: u8,
+    /// Critical filesystem utilization percentage at which new runner creation pauses.
+    pub resource_pressure_disk_percent: u8,
     /// Size of the runner's home directory (registration state, diagnostics,
     /// job checkouts), applied whether it's backed by tmpfs or a disk volume
     /// — see `runner_home_backend`. Needs headroom for a real checkout +
@@ -162,12 +187,16 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             repositories: Vec::new(),
+            host_profile: "standard".into(),
             min_runners: 3,
             max_runners: 8,
             idle_timeout: 120,
             poll_interval: 5,
             runner_image: "gitrun-runner:latest".into(),
             runner_labels: "self-hosted,Linux,X64".into(),
+            runner_network: "gitrun-runner".into(),
+            runner_seccomp_profile: "default".into(),
+            runner_apparmor_profile: String::new(),
             ephemeral: false,
             state_dir: "/var/lib/gitrun".into(),
             log_dir: "/var/log/gitrun".into(),
@@ -180,6 +209,12 @@ impl Default for Config {
             container_pids_limit: "1024".into(),
             runner_disable_update: false,
             shared_cache_volume: "gitrun-runner-shared".into(),
+            shared_cache_scope: "runner".into(),
+            resource_pressure_paths: "/var/lib/gitrun;/var/lib/docker".into(),
+            resource_pressure_enabled: true,
+            resource_pressure_cpu_percent: 90,
+            resource_pressure_memory_percent: 90,
+            resource_pressure_disk_percent: 90,
             runner_home_size: "8g".into(),
             runner_home_backend: "tmpfs".into(),
             github_connect_timeout: 5,
@@ -280,8 +315,45 @@ impl Config {
             "GITRUN_POLL_INTERVAL",
             c.poll_interval,
         )?;
+        if let Some(v) = get("GITRUN_HOST_PROFILE") {
+            c.host_profile = v.trim().to_ascii_lowercase();
+        }
+        if c.host_profile == "small" {
+            if !lookup.contains_key("GITRUN_MIN_RUNNERS") {
+                c.min_runners = 1;
+            }
+            if !lookup.contains_key("GITRUN_MAX_RUNNERS") {
+                c.max_runners = 2;
+            }
+            if !lookup.contains_key("GITRUN_CONTAINER_CPUS") {
+                c.container_cpus = "0.5".into();
+            }
+            if !lookup.contains_key("GITRUN_CONTAINER_MEMORY") {
+                c.container_memory = "768m".into();
+            }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_CPU_PERCENT") {
+                c.resource_pressure_cpu_percent = 80;
+            }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT") {
+                c.resource_pressure_memory_percent = 85;
+            }
+            if !lookup.contains_key("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT") {
+                c.resource_pressure_disk_percent = 90;
+            }
+        } else if c.host_profile == "large" && !lookup.contains_key("GITRUN_MAX_RUNNERS") {
+            c.max_runners = 16;
+        }
         if let Some(v) = get("GITRUN_RUNNER_IMAGE") {
             c.runner_image = v;
+        }
+        if let Some(v) = get("GITRUN_RUNNER_NETWORK") {
+            c.runner_network = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_RUNNER_SECCOMP_PROFILE") {
+            c.runner_seccomp_profile = v.trim().to_owned();
+        }
+        if let Some(v) = get("GITRUN_RUNNER_APPARMOR_PROFILE") {
+            c.runner_apparmor_profile = v.trim().to_owned();
         }
         if let Some(v) = get("GITRUN_RUNNER_LABELS") {
             c.runner_labels = v;
@@ -326,6 +398,12 @@ impl Config {
             if !trimmed.is_empty() {
                 c.shared_cache_volume = trimmed.to_owned();
             }
+        }
+        if let Some(v) = get("GITRUN_SHARED_CACHE_SCOPE") {
+            c.shared_cache_scope = v.trim().to_ascii_lowercase();
+        }
+        if let Some(v) = get("GITRUN_RESOURCE_PRESSURE_PATHS") {
+            c.resource_pressure_paths = v.trim().to_owned();
         }
         if let Some(v) = get("GITRUN_RUNNER_HOME_SIZE") {
             let trimmed = v.trim();
@@ -407,12 +485,30 @@ impl Config {
         if let Some(v) = get("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED") {
             c.gsr_zizmor_license_accepted = parse_bool("GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED", &v)?;
         }
+        if let Some(v) = get("GITRUN_RESOURCE_PRESSURE_ENABLED") {
+            c.resource_pressure_enabled = parse_bool("GITRUN_RESOURCE_PRESSURE_ENABLED", &v)?;
+        }
+        c.resource_pressure_cpu_percent = value_u8(
+            &get("GITRUN_RESOURCE_PRESSURE_CPU_PERCENT"),
+            "GITRUN_RESOURCE_PRESSURE_CPU_PERCENT",
+            c.resource_pressure_cpu_percent,
+        )?;
+        c.resource_pressure_memory_percent = value_u8(
+            &get("GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT"),
+            "GITRUN_RESOURCE_PRESSURE_MEMORY_PERCENT",
+            c.resource_pressure_memory_percent,
+        )?;
+        c.resource_pressure_disk_percent = value_u8(
+            &get("GITRUN_RESOURCE_PRESSURE_DISK_PERCENT"),
+            "GITRUN_RESOURCE_PRESSURE_DISK_PERCENT",
+            c.resource_pressure_disk_percent,
+        )?;
         c.validate()?;
         Ok(c)
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.min_runners == 0 || self.max_runners < self.min_runners {
+        if self.max_runners < self.min_runners {
             return Err(ConfigError::Invalid(format!(
                 "runner bounds are invalid: {}..{}",
                 self.min_runners, self.max_runners
@@ -461,6 +557,24 @@ impl Config {
                 self.container_pids_limit
             )));
         }
+        if !matches!(
+            self.shared_cache_scope.as_str(),
+            "global" | "repository" | "runner"
+        ) {
+            return Err(ConfigError::Invalid(format!(
+                "shared cache scope must be global, repository, or runner, got {:?}",
+                self.shared_cache_scope
+            )));
+        }
+        if self
+            .resource_pressure_paths
+            .split(';')
+            .all(|path| path.trim().is_empty())
+        {
+            return Err(ConfigError::Invalid(
+                "resource pressure paths must contain at least one filesystem path".into(),
+            ));
+        }
         if !is_valid_docker_name(&self.shared_cache_volume) {
             return Err(ConfigError::Invalid(format!(
                 "shared cache volume must be a valid Docker volume name, got {:?}",
@@ -478,6 +592,45 @@ impl Config {
                 "runner home backend must be \"tmpfs\" or \"volume\", got {:?}",
                 self.runner_home_backend
             )));
+        }
+        if !matches!(self.host_profile.as_str(), "small" | "standard" | "large") {
+            return Err(ConfigError::Invalid(format!(
+                "host profile must be small, standard, or large, got {:?}",
+                self.host_profile
+            )));
+        }
+        if self.runner_network.trim().is_empty()
+            || self.runner_network.chars().any(char::is_control)
+            || self.runner_network.chars().any(char::is_whitespace)
+        {
+            return Err(ConfigError::Invalid(
+                "runner network must be a non-empty Docker network name".into(),
+            ));
+        }
+        if matches!(self.runner_network.as_str(), "bridge" | "host")
+            || self.runner_network.starts_with("container:")
+        {
+            return Err(ConfigError::Invalid(
+                "runner network must be a dedicated GitRun network, not Docker host/bridge/container network mode".into(),
+            ));
+        }
+        if self.runner_seccomp_profile.trim().is_empty()
+            || self.runner_seccomp_profile.chars().any(char::is_control)
+            || self.runner_seccomp_profile.chars().any(char::is_whitespace)
+        {
+            return Err(ConfigError::Invalid(
+                "runner seccomp profile must be a non-empty value without whitespace".into(),
+            ));
+        }
+        if self.runner_apparmor_profile.chars().any(char::is_control)
+            || self
+                .runner_apparmor_profile
+                .chars()
+                .any(char::is_whitespace)
+        {
+            return Err(ConfigError::Invalid(
+                "runner AppArmor profile must not contain whitespace or control characters".into(),
+            ));
         }
         if !matches!(self.gtuu_schedule_timezone.as_str(), "utc" | "local") {
             return Err(ConfigError::Invalid(format!(
@@ -548,6 +701,17 @@ impl Config {
             return Err(ConfigError::Invalid(
                 "GITRUN_GSR_ZIZMOR_ENABLED=true requires the zizmor license/terms to have been accepted first (GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED=true) — this is normally set by the dashboard's consent dialog, not by hand".into(),
             ));
+        }
+        for (name, value) in [
+            ("CPU", self.resource_pressure_cpu_percent),
+            ("memory", self.resource_pressure_memory_percent),
+            ("disk", self.resource_pressure_disk_percent),
+        ] {
+            if !(1..=100).contains(&value) {
+                return Err(ConfigError::Invalid(format!(
+                    "resource pressure {name} threshold must be between 1 and 100%, got {value}"
+                )));
+            }
         }
         Ok(())
     }
@@ -662,6 +826,16 @@ fn split_csv(raw: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
+fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, ConfigError> {
+    match value {
+        Some(raw) => raw.trim().parse::<u8>().map_err(|_| ConfigError::Integer {
+            key: key.to_owned(),
+            value: raw.clone(),
+        }),
+        None => Ok(default),
+    }
+}
+
 fn is_positive_u64(value: &str) -> bool {
     value.trim().parse::<u64>().map(|n| n > 0).unwrap_or(false)
 }
@@ -879,6 +1053,14 @@ mod tests {
         assert!(validate_time("23:59").is_ok());
         assert!(validate_time("24:00").is_err());
         assert!(validate_time("3:00").is_err());
+    }
+
+    #[test]
+    fn zero_minimum_runner_pool_is_allowed() {
+        let mut config = Config::default();
+        config.min_runners = 0;
+        config.max_runners = 1;
+        assert!(config.validate().is_ok());
     }
 
     #[test]

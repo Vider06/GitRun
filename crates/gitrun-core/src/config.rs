@@ -597,6 +597,13 @@ impl Config {
                 "runner network must be a non-empty Docker network name".into(),
             ));
         }
+        if matches!(self.runner_network.as_str(), "bridge" | "host")
+            || self.runner_network.starts_with("container:")
+        {
+            return Err(ConfigError::Invalid(
+                "runner network must be a dedicated GitRun network, not Docker host/bridge/container network mode".into(),
+            ));
+        }
         if self.runner_seccomp_profile.trim().is_empty()
             || self.runner_seccomp_profile.chars().any(char::is_control)
             || self.runner_seccomp_profile.chars().any(char::is_whitespace)

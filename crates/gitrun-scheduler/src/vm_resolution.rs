@@ -386,7 +386,7 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
         vm::start(kind, &config.name)?;
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
-    if config.is_windows && matches!(kind, HypervisorKind::Kvm) && !is_private_guest_ipv4(&ip) {
+    if config.is_windows && !is_private_guest_ipv4(&ip) {
         return Err(vm::VmError::InvalidConfig(format!(
             "Windows KVM VM '{}' reported non-private guest address {}; refusing remote Docker endpoint",
             config.name, ip
@@ -407,9 +407,9 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     } else {
         DockerHost::Remote(endpoint)
     };
-    docker::attest_host(&host).map_err(|error| {
+    docker::verify_docker_endpoint_health(&host).map_err(|error| {
         vm::VmError::Command(format!(
-            "VM '{}' Docker health attestation failed: {error}",
+            "VM '{}' Docker endpoint health check failed: {error}",
             config.name
         ))
     })?;

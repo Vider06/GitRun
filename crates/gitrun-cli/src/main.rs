@@ -910,7 +910,23 @@ fn rollback_command(
     Ok(())
 }
 
+fn validate_version_flag_order() {
+    let mut version_seen = false;
+
+    for argument in std::env::args().skip(1) {
+        match argument.as_str() {
+            "--version" | "-V" | "-v" => version_seen = true,
+            "--gitrun" if !version_seen => {
+                eprintln!("error: --gitrun must follow -V, -v, or --version");
+                std::process::exit(2);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn main() {
+    validate_version_flag_order();
     let cli = Cli::parse();
     let mut presenter = presenter::CatPresenter::new(cli.no_cat);
 

@@ -27,6 +27,10 @@ pub struct DockBinding {
     pub run_id: u64,
     pub job: String,
     pub container: String,
+    /// Immutable Docker object ID captured at connect time. An ID mismatch
+    /// invalidates the binding and prevents container-name reuse/TOCTOU attacks.
+    #[serde(default)]
+    pub container_id: String,
     pub dynamic: bool,
     #[serde(default)]
     pub dock_only: bool,
@@ -156,6 +160,7 @@ mod tests {
             run_id: 42,
             job: "cache".into(),
             container: "runner-cache".into(),
+            container_id: "sha256:runner-cache".into(),
             dynamic: true,
             dock_only: false,
             requester_runner: "runner-main".into(),
@@ -177,6 +182,7 @@ mod tests {
             run_id: 1,
             job: "cache".into(),
             container: "a".into(),
+            container_id: "sha256:a".into(),
             dynamic: true,
             dock_only: false,
             requester_runner: "r1".into(),
@@ -187,6 +193,7 @@ mod tests {
             run_id: 1,
             job: "cache".into(),
             container: "b".into(),
+            container_id: "sha256:b".into(),
             dynamic: false,
             dock_only: true,
             requester_runner: "r2".into(),
@@ -207,6 +214,7 @@ mod security_tests {
             run_id,
             job: "build".into(),
             container: "dock-a".into(),
+            container_id: "sha256:dock-a".into(),
             dynamic: true,
             dock_only: true,
             requester_runner: runner.into(),

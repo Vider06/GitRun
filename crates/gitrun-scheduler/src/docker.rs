@@ -795,7 +795,6 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.extend([
             "--group-add".into(),
             GITRUN_API_SOCKET_GID.into(),
-
             "--mount".into(),
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",

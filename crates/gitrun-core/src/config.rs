@@ -427,7 +427,8 @@ impl Config {
             c.runner_rootfs_read_only = parse_bool("GITRUN_RUNNER_ROOTFS_READ_ONLY", &v)?;
         }
         if let Some(v) = get("GITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION") {
-            c.runner_windows_hyperv_isolation = parse_bool("GITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION", &v)?;
+            c.runner_windows_hyperv_isolation =
+                parse_bool("GITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION", &v)?;
         }
         if let Some(v) = get("GITRUN_RUNNER_HOME_BACKEND") {
             let trimmed = v.trim();

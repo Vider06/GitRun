@@ -560,7 +560,11 @@ impl Config {
                 self.shared_cache_scope
             )));
         }
-        if self.resource_pressure_paths.split(';').all(|path| path.trim().is_empty()) {
+        if self
+            .resource_pressure_paths
+            .split(';')
+            .all(|path| path.trim().is_empty())
+        {
             return Err(ConfigError::Invalid(
                 "resource pressure paths must contain at least one filesystem path".into(),
             ));

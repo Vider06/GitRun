@@ -66,7 +66,6 @@ pub fn sample(config: &Config) -> Result<ResourceSnapshot, ResourcePressureError
     })
 }
 
-
 fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
     fn read_total_idle() -> Result<(u64, u64), ResourcePressureError> {
         let stat = fs::read_to_string("/proc/stat")?;
@@ -74,7 +73,10 @@ fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
             .lines()
             .find(|line| line.starts_with("cpu "))
             .ok_or(ResourcePressureError::Parse)?;
-        let mut fields = line.split_whitespace().skip(1).filter_map(|v| v.parse::<u64>().ok());
+        let mut fields = line
+            .split_whitespace()
+            .skip(1)
+            .filter_map(|v| v.parse::<u64>().ok());
         let user = fields.next().ok_or(ResourcePressureError::Parse)?;
         let nice = fields.next().ok_or(ResourcePressureError::Parse)?;
         let system = fields.next().ok_or(ResourcePressureError::Parse)?;
@@ -103,8 +105,10 @@ fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
     if total_delta == 0 {
         return Ok(0.0);
     }
-    Ok(((total_delta.saturating_sub(idle_delta) as f32 / total_delta as f32) * 100.0)
-        .clamp(0.0, 100.0))
+    Ok(
+        ((total_delta.saturating_sub(idle_delta) as f32 / total_delta as f32) * 100.0)
+            .clamp(0.0, 100.0),
+    )
 }
 
 fn sample_disk_percent(config: &Config) -> Result<f32, ResourcePressureError> {

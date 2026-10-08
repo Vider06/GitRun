@@ -510,7 +510,9 @@ impl GitHubClient {
             [job] => Ok(Some(job.clone())),
             _ => Err(GitHubError::Api {
                 status: 409,
-                detail: format!("runner {runner_name} is assigned to multiple active workflow jobs"),
+                detail: format!(
+                    "runner {runner_name} is assigned to multiple active workflow jobs"
+                ),
             }),
         }
     }

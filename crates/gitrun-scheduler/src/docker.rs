@@ -641,7 +641,9 @@ fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_ascii_lowercase();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .trim()
+        .to_ascii_lowercase();
     if !(stderr.contains("no such network") || stderr.contains("network not found")) {
         return Err(DockerError::Command(if stderr.is_empty() {
             format!("docker network inspect {network} failed")
@@ -706,7 +708,11 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         "--memory".into(),
         spec.memory.into(),
         "--restart".into(),
-        if spec.ephemeral { "no".into() } else { "unless-stopped".into() },
+        if spec.ephemeral {
+            "no".into()
+        } else {
+            "unless-stopped".into()
+        },
     ]);
 
     if let Some(job_name) = spec.workflow_job_name {
@@ -1099,14 +1105,9 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     let runner_label = parts.next().unwrap_or_default();
     let repository = parts.next().unwrap_or_default();
     let workflow_job = parts.next().unwrap_or_default();
-    let workflow_run_id = parts
-        .next()
-        .and_then(|value| value.parse::<u64>().ok());
+    let workflow_run_id = parts.next().and_then(|value| value.parse::<u64>().ok());
 
-    if runner_label != "true"
-        || resolved_id.is_empty()
-        || name.is_empty()
-        || repository.is_empty()
+    if runner_label != "true" || resolved_id.is_empty() || name.is_empty() || repository.is_empty()
     {
         return Ok(None);
     }

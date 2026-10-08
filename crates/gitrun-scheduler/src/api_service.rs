@@ -230,7 +230,11 @@ pub(crate) fn preserved_dock_containers(
     let registry = DockRegistry::load(state_dir)
         .map_err(|error| format!("load GitDockRun registry: {error}"))?;
     let mut names = std::collections::BTreeSet::new();
-    for binding in registry.bindings.into_iter().filter(|binding| binding.repository == repository) {
+    for binding in registry
+        .bindings
+        .into_iter()
+        .filter(|binding| binding.repository == repository)
+    {
         let Some(current_id) = docker::container_id(&binding.container)
             .map_err(|error| format!("resolve preserved Dock {}: {error}", binding.container))?
         else {
@@ -348,10 +352,7 @@ fn handle_stream(
         }
         (None, None) => {
             let Some(active_job) = github
-                .find_active_workflow_job_for_runner(
-                    &request.invocation.repository,
-                    &identity.name,
-                )
+                .find_active_workflow_job_for_runner(&request.invocation.repository, &identity.name)
                 .map_err(|error| format!("verify active workflow job: {error}"))?
             else {
                 send_error(
@@ -879,7 +880,11 @@ impl ApiExecutionBackend {
         // The binding is invalid if this name later resolves to another ID.
         let container_id = docker::container_id(&runner_name)
             .map_err(|error| failed(error.to_string()))?
-            .ok_or_else(|| failed(format!("runner container {runner_name} disappeared during connect")))?;
+            .ok_or_else(|| {
+                failed(format!(
+                    "runner container {runner_name} disappeared during connect"
+                ))
+            })?;
 
         let dynamic = !docker::container_is_permanent(&runner_name)
             .map_err(|error| failed(error.to_string()))?;
@@ -1021,14 +1026,18 @@ impl ApiExecutionBackend {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
 
-        docker::exec_container_stream(container.as_str(), &["sh", "-c", command], |is_stderr, bytes| {
-            let value = String::from_utf8_lossy(bytes).into_owned();
-            if is_stderr {
-                sink(ExecutionEvent::Stderr(value));
-            } else {
-                sink(ExecutionEvent::Stdout(value));
-            }
-        })
+        docker::exec_container_stream(
+            container.as_str(),
+            &["sh", "-c", command],
+            |is_stderr, bytes| {
+                let value = String::from_utf8_lossy(bytes).into_owned();
+                if is_stderr {
+                    sink(ExecutionEvent::Stderr(value));
+                } else {
+                    sink(ExecutionEvent::Stdout(value));
+                }
+            },
+        )
         .map_err(|error| failed(error.to_string()))
     }
 
@@ -1157,13 +1166,12 @@ impl ApiExecutionBackend {
             ));
         }
 
-        docker::melt_filesystem(&source, &target_id)
-            .map_err(|error| failed(error.to_string()))?;
+        docker::melt_filesystem(&source, &target_id).map_err(|error| failed(error.to_string()))?;
         let _ = docker::remove_container(&source);
 
-        registry.bindings.retain(|binding| {
-            binding.container != source && binding.container_id != source
-        });
+        registry
+            .bindings
+            .retain(|binding| binding.container != source && binding.container_id != source);
         registry
             .save(&self.state_dir)
             .map_err(|error| failed(error.to_string()))?;

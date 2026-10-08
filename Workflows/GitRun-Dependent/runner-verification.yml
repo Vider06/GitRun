@@ -1,0 +1,30 @@
+name: GitRun Premade - Runner Verification
+
+on:
+  workflow_call:
+    inputs:
+      expected-image:
+        required: true
+        type: string
+        default: gitrun-runner:latest
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify GitRun runner prerequisites
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check Docker
+        run: docker info
+      - name: Check expected runner image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="\${{ inputs.expected-image }}"
+          if ! docker image inspect "$image" >/dev/null 2>&1; then
+            echo "Expected GitRun runner image is not present: $image" >&2
+            exit 1
+          fi

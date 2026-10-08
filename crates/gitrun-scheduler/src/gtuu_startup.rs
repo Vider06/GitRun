@@ -65,7 +65,7 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         }
 
         if let Some(image) = &manifest.runner_image {
-            match gitrun_updater::update_runner_image(image) {
+            match gitrun_updater::update_runner_image(image, manifest.premade_dockerfile.as_ref()) {
                 Ok(()) => {
                     match configured_config_file() {
                         Some(path) => match gitrun_updater::pin_runner_image(path, image) {

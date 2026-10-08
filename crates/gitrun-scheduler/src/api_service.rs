@@ -27,7 +27,7 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
-const DOCK_ONLY_MARKER: &str = "/home/runner/.gitrun-dock-only";
+const DOCK_ONLY_MARKER: &str = "/home/runner/actions-runner/.gitrun-dock-only";
 const API_MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_VAULT_WRITE_BYTES: usize = 1024 * 1024;
 

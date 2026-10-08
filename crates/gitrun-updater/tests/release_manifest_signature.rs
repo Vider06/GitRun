@@ -12,5 +12,8 @@ fn verifies_release_manifest_signature_when_fixture_is_provided() {
     let manifest = load_manifest(path).expect("GitRun updater must accept the release signature");
     assert_eq!(manifest.name, "GitRun");
     assert!(manifest.signature.is_some());
-    assert_eq!(manifest.signature_key_id.as_deref(), Some(expected_key_id.as_str()));
+    assert_eq!(
+        manifest.signature_key_id.as_deref(),
+        Some(expected_key_id.as_str())
+    );
 }

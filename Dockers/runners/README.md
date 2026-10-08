@@ -1,5 +1,3 @@
-# Runner Docker images
+# Runner images
 
-Runner images are the standard execution environments used by GitRun.
-
-Every image must document target architecture, operating system, base image reference, installed components, security hardening, BuildKit requirements, and resulting image metadata or digest.
+Premade runner images are maintained for GitRun-managed execution.

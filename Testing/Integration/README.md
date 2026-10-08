@@ -1,3 +1,3 @@
 # Integration tests
 
-Cross-family tests that validate how Premade resources compose together.
+Cross-area checks proving that the Premade tree is complete, self-contained, and free of the GitRun application workspace.

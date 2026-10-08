@@ -1,0 +1,19 @@
+name: Premade Branch Guard
+
+on:
+  pull_request:
+    branches: [main, 'releases/**']
+
+permissions:
+  contents: read
+
+jobs:
+  reject-premade-as-source:
+    if: github.head_ref == 'feat/gitrun-premade'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Reject merge target
+        run: |
+          echo "GitRun Premade is a maintained artifact branch and must not be merged into application branches."
+          exit 1

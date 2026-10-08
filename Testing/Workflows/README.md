@@ -1,3 +1,3 @@
 # Workflow tests
 
-Tests for reusable workflow syntax, declared inputs and outputs, permissions, and portability contracts.
+Validates every GitHub Actions workflow in `.github/workflows` with actionlint.

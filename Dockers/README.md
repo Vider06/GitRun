@@ -1,5 +1,5 @@
 # Dockers
 
-GitRun-maintained Docker build contexts and metadata.
+Maintained container build definitions for GitRun execution environments.
 
-All images must use BuildKit/buildx. External inputs should be pinned where practical, and each image family must have a matching test area under Testing/Dockers/.
+All Dockerfiles must build with BuildKit/buildx and document image role, platform, security model, and artifact version.

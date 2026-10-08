@@ -1,27 +1,15 @@
 # GitRun Premade
 
-GitRun Premade is the maintained collection of reusable, hardened, versioned resources used by GitRun.
+GitRun Premade is the maintained artifact/content branch for reusable GitRun resources.
 
-This branch intentionally does not contain the GitRun application itself. It is an artifact/content branch that GitRun can consume independently from the application release cycle.
+This branch is intentionally separate from the GitRun application source tree. It contains premade Docker images, VM image definitions, reusable workflows, shared metadata, and tests consumed by GitRun.
 
 ## Layout
 
-- Core/ — shared conventions, manifests, defaults, and reusable utilities.
-- Dockers/ — GitRun-maintained Docker images and build contexts.
-- VM-Images/ — hardened virtual-machine images and metadata.
-- Workflows/ — reusable GitHub Actions building blocks, split into GitRun-Dependent and GitRun-Independent.
-- Testing/ — tests for every Premade resource family and cross-family integration tests.
-- Other/ — additional maintained resources that do not fit the primary families.
+Core/, Dockers/, VM-Images/, Workflows/, Testing/, and Other/ contain maintained Premade content.
 
 ## Rules
 
-1. No GitRun application source belongs in this branch.
-2. Every resource family and resource should document purpose, inputs, outputs, security assumptions, and ownership.
-3. Shared values belong in Core instead of being duplicated or hardcoded in consumers.
-4. Docker builds use BuildKit/buildx. Legacy docker build is not an accepted Premade build path.
-5. Artifacts should have explicit metadata and immutable references where practical.
-6. Testing is part of the resource lifecycle and must run through the dedicated Premade CI workflows.
+Premade must not contain the GitRun application workspace. Every artifact must document its purpose, inputs, outputs, security assumptions, versioning, and ownership. Docker builds use BuildKit/buildx. Artifact references must be explicit and reproducible.
 
-## Status
-
-The branch starts as the Premade scaffold. Artifact families will be added and validated independently.
+The branch is not a source branch for the GitRun application and must not be merged into application branches.

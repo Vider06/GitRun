@@ -1,7 +1,3 @@
 # Testing
 
-Testing contains everything needed to verify Premade resources.
-
-Organize tests by resource family. Tests should be deterministic, explicit about required credentials or capabilities, and safe to run in CI.
-
-The dedicated GitHub Actions workflow at .github/workflows/testing.yml is the entry point for this tree.
+Every Premade area has a dedicated test location. Tests validate the Premade artifact definitions without relying on the GitRun application workspace.

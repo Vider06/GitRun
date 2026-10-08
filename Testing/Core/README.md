@@ -1,3 +1,3 @@
 # Core tests
 
-Tests for manifests, schemas, defaults, and shared utility contracts.
+Validates Premade manifest markers, artifact registration, and verification requirements.

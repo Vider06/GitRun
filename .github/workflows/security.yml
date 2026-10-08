@@ -1,0 +1,20 @@
+name: Premade Security
+
+on:
+  push:
+    branches: [feat/gitrun-premade]
+  pull_request:
+    branches: [feat/gitrun-premade]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash Testing/Integration/test-premade-integrity.sh
+      - run: bash Testing/Core/manifest-test.sh

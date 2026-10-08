@@ -1,14 +1,17 @@
 schema: gitrun-premade/v1
 premade:
-  version: 0.1.0
-  status: scaffold
-
+  version: 0.2.0
+  status: active
 artifacts:
-  dockers: []
+  dockers:
+    - id: runner-linux-x86_64
+      path: Dockers/runners/linux-x86_64
+      version: 0.1.0
+      platforms:
+        - linux/amd64
   vm_images: []
   workflows: []
   other: []
-
 verification:
   required_metadata: true
   immutable_references: true

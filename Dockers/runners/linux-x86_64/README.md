@@ -1,5 +1,7 @@
-# Linux x86_64 runner
+# Linux x86_64 runner base
 
-Placeholder for the maintained Linux x86_64 GitRun runner image.
+Version: 0.1.0
 
-The image will be built from this Premade tree using BuildKit/buildx. GitRun-specific binaries should be consumed as verified release artifacts instead of requiring the GitRun source workspace in this branch.
+A minimal non-root Ubuntu base for GitRun-managed Linux x86_64 runner containers.
+
+Build requirements: BuildKit/buildx, platform linux/amd64, no privileged entrypoint, dedicated `gitrun` user.

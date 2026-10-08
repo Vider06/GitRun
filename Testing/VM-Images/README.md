@@ -1,3 +1,3 @@
 # VM image tests
 
-Tests for VM image metadata, integrity, supported hypervisor targets, and hardening expectations.
+Validates VM image directory layout and required documentation. Real boot tests will be added with the first published image.

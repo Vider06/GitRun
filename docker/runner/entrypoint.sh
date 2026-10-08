@@ -88,6 +88,9 @@ if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   exec sudo -P -u runner -E /bin/bash -c 'exec sleep infinity'
 fi
 
+mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+chown runner:runner "$HOME" "$XDG_CONFIG_HOME"
+
 sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/cargo" \
   "$SHARED_CACHE_DIR/cargo-target" \

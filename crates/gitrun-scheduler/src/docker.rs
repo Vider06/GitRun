@@ -1066,6 +1066,18 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
         return Ok(None);
     };
 
+    // Re-read the cgroup after the Docker lookup. If the peer process exited
+    // and the PID was reused, the second lookup must not silently inherit the
+    // old process's container identity.
+    let cgroup_after = match std::fs::read_to_string(format!("/proc/{pid}/cgroup")) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if container_id_from_cgroup(&cgroup_after).as_deref() != Some(container_id.as_str()) {
+        return Ok(None);
+    }
+
     let output = run_on(
         &DockerHost::Local,
         &[

@@ -851,18 +851,14 @@ impl ApiExecutionBackend {
             .runner_name
             .ok_or_else(|| failed(format!("workflow job {job} has no runner identity")))?;
 
-        let container = docker::container_id(&runner_name)
-            .map_err(|error| failed(error.to_string()))?
-            .ok_or_else(|| failed(format!("runner container {runner_name} was not found")))?;
-
-        let dynamic = !docker::container_is_permanent(&runner_name)
-            .map_err(|error| failed(error.to_string()))?;
-
         // Capture the immutable container ID used for the actual execution.
         // The binding is invalid if this name later resolves to another ID.
         let container_id = docker::container_id(&runner_name)
             .map_err(|error| failed(error.to_string()))?
             .ok_or_else(|| failed(format!("runner container {runner_name} disappeared during connect")))?;
+
+        let dynamic = !docker::container_is_permanent(&runner_name)
+            .map_err(|error| failed(error.to_string()))?;
 
         let completed =
             job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
@@ -968,7 +964,7 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container(container, &["cat", "--", path])
+        let output = docker::exec_container(container.as_str(), &["cat", "--", path])
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
@@ -980,7 +976,7 @@ impl ApiExecutionBackend {
         ensure_safe_runner_path(path)?;
 
         let output = docker::exec_container_with_stdin(
-            container,
+            container.as_str(),
             &["sh", "-c", "cat > \"$1\"", "gitrun-dock-write", path],
             value.as_bytes(),
         )
@@ -996,7 +992,7 @@ impl ApiExecutionBackend {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
 
-        docker::exec_container_stream(container, &["sh", "-c", command], |is_stderr, bytes| {
+        docker::exec_container_stream(container.as_str(), &["sh", "-c", command], |is_stderr, bytes| {
             let value = String::from_utf8_lossy(bytes).into_owned();
             if is_stderr {
                 sink(ExecutionEvent::Stderr(value));
@@ -1013,7 +1009,7 @@ impl ApiExecutionBackend {
     ) -> Result<ExecutionResult, ExecutionError> {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
-        run_docker_command(container, &["sh", "-c", command])
+        run_docker_command(container.as_str(), &["sh", "-c", command])
     }
 
     fn require_dock_binding(

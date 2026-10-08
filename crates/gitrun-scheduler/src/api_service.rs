@@ -382,7 +382,7 @@ fn handle_stream(
         return Ok(());
     };
     if current_job.runner_name.as_deref() != Some(identity.name.as_str())
-        || current_job.status.eq_ignore_ascii_case("completed")
+        || !current_job.status.eq_ignore_ascii_case("in_progress")
         || current_job.conclusion.is_some()
     {
         send_error(

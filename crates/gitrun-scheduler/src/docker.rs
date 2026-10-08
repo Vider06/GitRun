@@ -820,6 +820,8 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             "DOCKER_CONFIG=/tmp/docker-config".into(),
             "--tmpfs".into(),
             "/run/gitrun:rw,nosuid,nodev,noexec,size=16m,mode=0755".into(),
+            "--tmpfs".into(),
+            "/run/sudo:rw,nosuid,nodev,noexec,size=1m,mode=0755".into(),
         ]);
         if spec.docker_socket_hardening {
             args.extend(docker_socket_hardening_args());

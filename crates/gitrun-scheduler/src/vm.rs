@@ -872,9 +872,7 @@ where
         _ => Ok(()),
     };
 
-    workload_result
-        .and(stop_result)
-        .and(rollback_result)
+    workload_result.and(stop_result).and(rollback_result)
 }
 
 /// Forcefully stops a VM that didn't respond to a graceful shutdown request

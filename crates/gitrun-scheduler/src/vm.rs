@@ -864,14 +864,18 @@ where
     let workload_result = workload();
     let stop_result = stop(config.hypervisor, &config.name);
 
-    let rollback_result = match (workload_result.is_ok(), clean_snapshot) {
-        (true, Some(snapshot)) => {
-            stop(config.hypervisor, &config.name)?;
+    let rollback_result = match clean_snapshot {
+        Some(snapshot) if stop_result.is_ok() => {
             restore_snapshot(config.hypervisor, &config.name, snapshot)
         }
-        _ => Ok(()),
+        Some(_) => Err(VmError::Command(
+            "cannot restore ephemeral VM snapshot because graceful shutdown failed".into(),
+        )),
+        None => Ok(()),
     };
 
+    // Reset after both success and failure: a failed workload is precisely
+    // the case where stale guest state must not leak into the next job.
     workload_result.and(stop_result).and(rollback_result)
 }
 

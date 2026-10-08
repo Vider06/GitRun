@@ -401,7 +401,9 @@ table.data-table tr:hover td { background: var(--bg-card-hover); }
   display: grid;
   grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
   gap: 16px;
+  height: 520px;
   min-height: 520px;
+  max-height: 520px;
 }
 
 .setup-progress-panel {
@@ -485,8 +487,11 @@ table.data-table tr:hover td { background: var(--bg-card-hover); }
 .setup-terminal-card {
   min-width: 0;
   min-height: 0;
+  height: 520px;
+  max-height: 520px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .setup-terminal-header {
@@ -506,7 +511,9 @@ table.data-table tr:hover td { background: var(--bg-card-hover); }
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 12px;
@@ -524,8 +531,16 @@ table.data-table tr:hover td { background: var(--bg-card-hover); }
     grid-template-columns: 1fr;
   }
 
+  .setup-progress-layout {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+  }
+
   .setup-terminal-card {
+    height: 360px;
     min-height: 360px;
+    max-height: 360px;
   }
 
   .content {

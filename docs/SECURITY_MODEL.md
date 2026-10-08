@@ -36,7 +36,7 @@ runner operation.
 GitRun also applies Docker-level hardening to Linux runners by default:
 all Linux capabilities are dropped and only `CHOWN`, `SETUID`,
 `SETGID`, and `DAC_OVERRIDE` are added back, and
-`no-new-privileges` is enabled. **This does not remove the Docker-socket
+`no-new-privileges` is enabled for the hardened socket-compatibility path. **This does not remove the Docker-socket
 privilege itself.** A process that can use the mounted socket still has the
 Docker API authority described above.
 
@@ -136,8 +136,10 @@ remain deployment-dependent:
   per-job snapshot policy.
 - GitVault's master/root key remains trusted infrastructure even though new data
   records use a separate derived encryption key.
-- Manifest signing is only mandatory when the updater is configured with
-  GITRUN_UPDATE_SIGNATURE_REQUIRED=true and a trusted public key.
+- Release manifest signing is mandatory in the official release workflow.
+  The updater requires a signed manifest by default; setting
+  GITRUN_UPDATE_SIGNATURE_REQUIRED=false is an explicit compatibility/unsafe
+  opt-out for custom unsigned manifests.
 
 If your threat model requires stronger isolation than this today, consider
 running GitRun's Docker host itself inside a dedicated VM rather than
@@ -165,21 +167,21 @@ The API socket is created with 0660 permissions and a dedicated numeric group. R
 
 GitDockRun read/write/execute/melt operations require an exact persistent dock binding for repository, workflow run, job, requester runner, and target container. A container identifier alone does not authorize access, and melt cannot cross those trust-domain bindings.
 
-Runner package caches default to repository-scoped Docker volumes. A global scope remains an explicit operator choice; runner scope is also available where the cache must not survive runner replacement.
+Runner package caches default to per-runner Docker volumes. Repository/global scopes are explicit cross-workflow trust decisions.
 
-Linux runners attach to a configured Docker network and use Docker's default seccomp profile unless an operator explicitly selects another profile. An optional AppArmor profile can also be selected. These settings supplement, rather than replace, Docker-host isolation.
+Linux runners attach to a dedicated GitRun Docker network, created automatically when absent, and use Docker's configured seccomp/AppArmor policy. The dedicated network is a stable segregation point for deployment firewall/proxy policy; it is not itself an egress firewall.
 
 Windows VM-backed runners require a Docker TLS credential directory and are resolved through Docker TLS. Dynamic Windows runners are ephemeral. The VM is treated as persistent infrastructure, while runner state is disposable.
 
 An unexpectedly exited runner is recorded as a critical security event and quarantined instead of being restarted or reused. Runner removal also asks Docker to remove anonymous volumes and explicitly removes the per-runner home volume when applicable.
 
-GitVault now derives a separate data-encryption key from the root/master key for new records, while retaining legacy decryption for pre-hardening records. Secret read/write/delete operations can be emitted through the existing GSR event bridge without logging secret values.
+GitVault now derives a separate data-encryption key from the root/master key for new records, while retaining legacy decryption for pre-hardening records. This is cryptographic context separation, not a distinct key per repository or trust domain. Secret read/write/delete operations can be emitted through the existing GSR event bridge without logging secret values; direct secret reads remain intentionally plaintext to the authorized caller.
 
 Release manifests support Ed25519 signatures. The updater can require a signature and can optionally bind verification to a configured key identifier. Releases also publish Cargo dependency metadata, an SPDX 2.3 SBOM, and build provenance.
 
-VM resolution includes a Docker daemon health attestation before a VM becomes routable. KVM/libvirt and VirtualBox snapshot create/restore primitives are available for operator-controlled rollback workflows.
+VM resolution performs a Docker endpoint health check before a VM becomes routable. This check verifies daemon reachability/version/API only; it is not hardware/guest attestation. KVM/libvirt and VirtualBox snapshot create/restore primitives are operator-controlled rollback primitives, not automatic per-job rollback.
 
-The scheduler has a host resource-pressure backpressure gate. By default, when CPU pressure, memory use, or state-filesystem use reaches its threshold, GitRun does not create additional runners or reconcile new placement. Existing workloads are left running and queued GitHub jobs remain queued until pressure drops.
+The scheduler has a host resource-pressure backpressure gate. By default, when CPU utilization, memory use, or any configured critical filesystem reaches its threshold, GitRun does not create additional runners or reconcile new placement. Existing workloads are left running and queued GitHub jobs remain queued until pressure drops.
 
 ## Trust-boundary summary
 

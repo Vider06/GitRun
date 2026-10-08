@@ -145,10 +145,21 @@ pub(crate) fn reconcile_dock_bindings(
             continue;
         };
 
+        let Some(current_id) = docker::container_id(&binding.container)
+            .map_err(|error| format!("resolve Dock container {}: {error}", binding.container))?
+        else {
+            continue;
+        };
+        if binding.container_id.is_empty() || current_id != binding.container_id {
+            // Never mutate a different container that happens to reuse the
+            // logical name recorded by an old binding.
+            continue;
+        }
+
         let completed = job.status.eq_ignore_ascii_case("completed") || job.conclusion.is_some();
 
         if completed {
-            make_dock_only(&binding.container, state_dir).map_err(|error| {
+            make_dock_only(&binding.container_id, state_dir).map_err(|error| {
                 format!(
                     "freeze GitRun Dock container {}: {error}",
                     binding.container
@@ -218,12 +229,22 @@ pub(crate) fn preserved_dock_containers(
 ) -> Result<std::collections::BTreeSet<String>, String> {
     let registry = DockRegistry::load(state_dir)
         .map_err(|error| format!("load GitDockRun registry: {error}"))?;
-    Ok(registry
+    let mut names = std::collections::BTreeSet::new();
+    for binding in registry
         .bindings
         .into_iter()
         .filter(|binding| binding.repository == repository)
-        .map(|binding| binding.container)
-        .collect())
+    {
+        let Some(current_id) = docker::container_id(&binding.container)
+            .map_err(|error| format!("resolve preserved Dock {}: {error}", binding.container))?
+        else {
+            continue;
+        };
+        if !binding.container_id.is_empty() && current_id == binding.container_id {
+            names.insert(binding.container);
+        }
+    }
+    Ok(names)
 }
 
 pub(crate) fn is_dock_bound(
@@ -312,6 +333,44 @@ fn handle_stream(
         return Ok(());
     };
 
+    match (identity.workflow_run_id, identity.workflow_job.as_deref()) {
+        (Some(bound_run), Some(bound_job))
+            if bound_run != run_id || bound_job != request.invocation.job =>
+        {
+            send_error(
+                &mut stream,
+                "workflow job identity does not match the runner container binding",
+            )?;
+            return Ok(());
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            send_error(
+                &mut stream,
+                "runner container has incomplete workflow binding metadata",
+            )?;
+            return Ok(());
+        }
+        (None, None) => {
+            let Some(active_job) = github
+                .find_active_workflow_job_for_runner(&request.invocation.repository, &identity.name)
+                .map_err(|error| format!("verify active workflow job: {error}"))?
+            else {
+                send_error(
+                    &mut stream,
+                    "no active GitHub workflow job is assigned to this runner",
+                )?;
+                return Ok(());
+            };
+            if active_job.name != request.invocation.job {
+                send_error(
+                    &mut stream,
+                    "requested workflow job is not the active job assigned to this runner",
+                )?;
+                return Ok(());
+            }
+        }
+    }
+
     let job = request.invocation.job.clone();
     let current_job = github
         .find_workflow_job(&request.invocation.repository, run_id, &job)
@@ -323,10 +382,13 @@ fn handle_stream(
         )?;
         return Ok(());
     };
-    if current_job.runner_name.as_deref() != Some(identity.name.as_str()) {
+    if current_job.runner_name.as_deref() != Some(identity.name.as_str())
+        || !current_job.status.eq_ignore_ascii_case("in_progress")
+        || current_job.conclusion.is_some()
+    {
         send_error(
             &mut stream,
-            "GitRun API request is not being made by the runner assigned to this workflow job",
+            "GitRun API request is not being made by the active runner for this workflow job",
         )?;
         return Ok(());
     }
@@ -386,6 +448,7 @@ fn handle_stream(
         state_dir,
         github,
         caller,
+        caller_container_id: identity.container_id.clone(),
     };
 
     let mut send = |event: ExecutionEvent| {
@@ -462,6 +525,7 @@ struct ApiExecutionBackend {
     state_dir: std::path::PathBuf,
     github: Arc<GitHubClient>,
     caller: VerifiedCaller,
+    caller_container_id: String,
 }
 
 impl ExecutionBackend for ApiExecutionBackend {
@@ -796,6 +860,11 @@ impl ApiExecutionBackend {
             return Err(failed("GitDockRun --connect requires GITHUB_RUN_ID"));
         }
         let job = arg(request, "job")?;
+        if job != request.job {
+            return Err(failed(
+                "GitDockRun --connect may only target the caller's current workflow job",
+            ));
+        }
 
         let job_info = self
             .github
@@ -807,9 +876,15 @@ impl ApiExecutionBackend {
             .runner_name
             .ok_or_else(|| failed(format!("workflow job {job} has no runner identity")))?;
 
-        let container = docker::container_id(&runner_name)
+        // Capture the immutable container ID used for the actual execution.
+        // The binding is invalid if this name later resolves to another ID.
+        let container_id = docker::container_id(&runner_name)
             .map_err(|error| failed(error.to_string()))?
-            .ok_or_else(|| failed(format!("runner container {runner_name} was not found")))?;
+            .ok_or_else(|| {
+                failed(format!(
+                    "runner container {runner_name} disappeared during connect"
+                ))
+            })?;
 
         let dynamic = !docker::container_is_permanent(&runner_name)
             .map_err(|error| failed(error.to_string()))?;
@@ -839,6 +914,7 @@ impl ApiExecutionBackend {
             run_id,
             job: job.to_owned(),
             container: runner_name.clone(),
+            container_id: container_id.clone(),
             dynamic,
             dock_only: dynamic && completed,
             requester_runner: self.caller.runner.clone(),
@@ -849,7 +925,7 @@ impl ApiExecutionBackend {
             .map_err(|error| failed(error.to_string()))?;
 
         Ok(success(format!(
-            "GitDockRun CONNECT: PASS\njob={job}\ncontainer={runner_name}\nid={container}\n"
+            "GitDockRun CONNECT: PASS\njob={job}\ncontainer={runner_name}\nid={container_id}\n"
         )))
     }
 
@@ -862,6 +938,11 @@ impl ApiExecutionBackend {
             return Err(failed("GitDockRun --disconnect requires GITHUB_RUN_ID"));
         }
         let job = arg(request, "job")?;
+        if job != request.job {
+            return Err(failed(
+                "GitDockRun --disconnect may only target the caller's current workflow job",
+            ));
+        }
 
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
@@ -869,6 +950,14 @@ impl ApiExecutionBackend {
             .binding(&request.repository, run_id, job)
             .cloned()
             .ok_or_else(|| failed(format!("no GitDockRun binding exists for job {job}")))?;
+        let current_container_id = docker::container_id(&binding.container)
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed("GitDockRun bound container no longer exists"))?;
+        if binding.container_id.is_empty() || current_container_id != binding.container_id {
+            return Err(failed(
+                "GitDockRun binding is stale: container name now resolves to a different ID",
+            ));
+        }
 
         if binding.dynamic {
             let job_info = self
@@ -893,9 +982,9 @@ impl ApiExecutionBackend {
             .map_err(|error| failed(error.to_string()))?;
 
         if binding.dynamic {
-            let _ = docker::remove_container(&binding.container);
-        } else if docker_container_has_marker(&binding.container)? {
-            restore_runner(&binding.container)?;
+            let _ = docker::remove_container(&binding.container_id);
+        } else if docker_container_has_marker(&binding.container_id)? {
+            restore_runner(&binding.container_id)?;
         }
 
         Ok(success(format!(
@@ -909,7 +998,7 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container(container, &["cat", "--", path])
+        let output = docker::exec_container(container.as_str(), &["cat", "--", path])
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
@@ -921,7 +1010,7 @@ impl ApiExecutionBackend {
         ensure_safe_runner_path(path)?;
 
         let output = docker::exec_container_with_stdin(
-            container,
+            container.as_str(),
             &["sh", "-c", "cat > \"$1\"", "gitrun-dock-write", path],
             value.as_bytes(),
         )
@@ -937,14 +1026,18 @@ impl ApiExecutionBackend {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
 
-        docker::exec_container_stream(container, &["sh", "-c", command], |is_stderr, bytes| {
-            let value = String::from_utf8_lossy(bytes).into_owned();
-            if is_stderr {
-                sink(ExecutionEvent::Stderr(value));
-            } else {
-                sink(ExecutionEvent::Stdout(value));
-            }
-        })
+        docker::exec_container_stream(
+            container.as_str(),
+            &["sh", "-c", command],
+            |is_stderr, bytes| {
+                let value = String::from_utf8_lossy(bytes).into_owned();
+                if is_stderr {
+                    sink(ExecutionEvent::Stderr(value));
+                } else {
+                    sink(ExecutionEvent::Stdout(value));
+                }
+            },
+        )
         .map_err(|error| failed(error.to_string()))
     }
 
@@ -954,14 +1047,14 @@ impl ApiExecutionBackend {
     ) -> Result<ExecutionResult, ExecutionError> {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
-        run_docker_command(container, &["sh", "-c", command])
+        run_docker_command(container.as_str(), &["sh", "-c", command])
     }
 
-    fn require_dock_binding<'a>(
-        &'a self,
+    fn require_dock_binding(
+        &self,
         request: &AuthorizedOperation,
-    ) -> Result<&'a str, ExecutionError> {
-        let container = request
+    ) -> Result<String, ExecutionError> {
+        let requested_container = request
             .resource
             .as_deref()
             .ok_or_else(|| failed("missing docked container"))?;
@@ -971,43 +1064,60 @@ impl ApiExecutionBackend {
         }
         let registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
-        if registry
+        let binding = registry
             .binding_for_authorized_container(
                 &request.repository,
                 run_id,
                 &request.job,
                 &self.caller.runner,
-                container,
+                requested_container,
             )
-            .is_none()
-        {
+            .ok_or_else(|| {
+                failed("GitDockRun resource is not bound to this runner/workflow/job")
+            })?;
+
+        if binding.container_id.is_empty() {
             return Err(failed(
-                "GitDockRun resource is not bound to this runner/workflow/job",
+                "GitDockRun binding has no immutable container ID; reconnect the dock",
             ));
         }
-        Ok(container)
+
+        let current_id = docker::container_id(&binding.container)
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed("GitDockRun bound container no longer exists"))?;
+        if current_id != binding.container_id {
+            return Err(failed(
+                "GitDockRun binding is stale: container name now resolves to another container",
+            ));
+        }
+
+        Ok(binding.container_id.clone())
     }
 
     fn dock_melt(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         let source = self.require_dock_binding(request)?;
-        let target = match request.arguments.get("target").map(String::as_str) {
+        let target_name = match request.arguments.get("target").map(String::as_str) {
             None | Some("runner") => self.caller.runner.as_str(),
             Some(value) => value,
         };
 
-        if source == target {
+        let target_id = docker::container_id(target_name)
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed(format!("melt target container {target_name} was not found")))?;
+
+        if source == target_id {
             return Err(failed("GitDockRun --melt source and target are identical"));
         }
 
-        let source_repo = docker::container_repo_label_on(&docker::DockerHost::Local, source)
+        let source_repo = docker::container_repo_label_on(&docker::DockerHost::Local, &source)
             .map_err(|error| failed(error.to_string()))?;
-        if source_repo.is_none() {
+        if source_repo.as_deref() != Some(request.repository.as_str()) {
             return Err(failed(
-                "GitDockRun --melt source is not a GitRun-managed container",
+                "GitDockRun --melt source is not bound to this repository",
             ));
         }
 
-        let status = docker::container_status(source)
+        let status = docker::container_status(&source)
             .map_err(|error| failed(error.to_string()))?
             .unwrap_or_default();
         if status == "running" {
@@ -1016,37 +1126,58 @@ impl ApiExecutionBackend {
             ));
         }
 
-        if docker::container_id(target)
-            .map_err(|error| failed(error.to_string()))?
-            .is_none()
-        {
-            return Err(failed(format!(
-                "melt target container {target} was not found"
-            )));
+        let mut registry =
+            DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
+
+        // The default target must still be the exact Docker container that
+        // authenticated this API request. An explicit target is allowed only
+        // when it has a binding in the same exact repository/run/job/requester
+        // trust domain.
+        if target_name == self.caller.runner {
+            if target_id != self.caller_container_id {
+                return Err(failed(
+                    "GitDockRun --melt target is no longer the authenticated caller container",
+                ));
+            }
+        } else {
+            let target_binding = registry.bindings.iter().find(|binding| {
+                binding.repository == request.repository
+                    && binding.run_id == request_run_id(request)
+                    && binding.job == request.job
+                    && binding.requester_runner == self.caller.runner
+                    && binding.container == target_name
+                    && binding.container_id == target_id
+            });
+            if target_binding.is_none() {
+                return Err(failed(
+                    "GitDockRun --melt target is outside the caller's exact trust binding",
+                ));
+            }
         }
 
-        let target_repo = docker::container_repo_label_on(&docker::DockerHost::Local, target)
-            .map_err(|error| failed(error.to_string()))?;
-        if target_repo.as_deref() != Some(request.repository.as_str()) {
+        // Re-resolve the target immediately before the privileged operation.
+        // This closes the name-reuse window between authorization and docker exec.
+        let target_recheck = docker::container_id(target_name)
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed("GitDockRun --melt target disappeared during authorization"))?;
+        if target_recheck != target_id {
             return Err(failed(
-                "GitDockRun --melt target is not a GitRun runner for this repository",
+                "GitDockRun --melt target changed during authorization",
             ));
         }
 
-        docker::melt_filesystem(source, target).map_err(|error| failed(error.to_string()))?;
-        let _ = docker::remove_container(source);
+        docker::melt_filesystem(&source, &target_id).map_err(|error| failed(error.to_string()))?;
+        let _ = docker::remove_container(&source);
 
-        let mut registry =
-            DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
         registry
             .bindings
-            .retain(|binding| binding.container != source);
+            .retain(|binding| binding.container != source && binding.container_id != source);
         registry
             .save(&self.state_dir)
             .map_err(|error| failed(error.to_string()))?;
 
         Ok(success(format!(
-            "GitDockRun MELT: PASS\nsource={source}\ntarget={target}\n"
+            "GitDockRun MELT: PASS\nsource={source}\ntarget={target_name}\nid={target_id}\n"
         )))
     }
 }
@@ -1176,7 +1307,8 @@ fn redact_vault_values(config: &Config, repository: &str, text: &str) -> String 
     }
 
     let groups = config.vault_groups_for_repo(repository);
-    let vault = match Vault::open(&config.vault_dir) {
+    let bridge = crate::gsr_bridge::VaultToGsrBridge::new(&config.state_dir);
+    let vault = match Vault::open_with_sink(&config.vault_dir, Box::new(bridge)) {
         Ok(vault) => vault,
         Err(_) => return text.to_owned(),
     };

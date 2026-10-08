@@ -83,14 +83,15 @@ pub enum HypervisorKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActivationMode {
-    /// VM starts on first job, stops after being idle — same idle-timeout
-    /// concept as `gitrun_core::Config::idle_timeout` for containers.
+    /// VM starts on first job, stops after the configured idle timeout.
     Standard,
-    /// VM stays running always; only the in-VM runner service is toggled.
-    /// Marked experimental per the operator's explicit request — this
-    /// trades resource cost for responsiveness and should be opt-in, not
-    /// the default a fresh Logic Containers setup gets.
+    /// VM stays running always.
     AlwaysOnExperimental,
+    /// VM is started for a runner lifecycle and rolled back to the named
+    /// clean snapshot before the next workload is admitted.
+    EphemeralSnapshotRollback,
+    /// VM is recreated from the base image for each runner lifecycle.
+    EphemeralVm,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -847,6 +848,35 @@ pub fn stop(kind: HypervisorKind, name: &str) -> Result<()> {
         HypervisorKind::VirtualBox => run_checked(kind, &["controlvm", name, "acpipowerbutton"])?,
     };
     Ok(())
+}
+
+/// Starts a VM, runs the supplied lifecycle closure, then stops it and optionally
+/// restores its clean snapshot before the next workload can be admitted.
+pub fn with_vm_lifecycle<F>(
+    config: &VmConfig,
+    clean_snapshot: Option<&str>,
+    workload: F,
+) -> Result<()>
+where
+    F: FnOnce() -> Result<()>,
+{
+    start(config.hypervisor, &config.name)?;
+    let workload_result = workload();
+    let stop_result = stop(config.hypervisor, &config.name);
+
+    let rollback_result = match clean_snapshot {
+        Some(snapshot) if stop_result.is_ok() => {
+            restore_snapshot(config.hypervisor, &config.name, snapshot)
+        }
+        Some(_) => Err(VmError::Command(
+            "cannot restore ephemeral VM snapshot because graceful shutdown failed".into(),
+        )),
+        None => Ok(()),
+    };
+
+    // Reset after both success and failure: a failed workload is precisely
+    // the case where stale guest state must not leak into the next job.
+    workload_result.and(stop_result).and(rollback_result)
 }
 
 /// Forcefully stops a VM that didn't respond to a graceful shutdown request

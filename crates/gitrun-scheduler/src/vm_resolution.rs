@@ -113,6 +113,8 @@ fn config_fingerprint(config: &VmConfig) -> u64 {
         &[match config.activation {
             vm::ActivationMode::Standard => 1,
             vm::ActivationMode::AlwaysOnExperimental => 2,
+            vm::ActivationMode::EphemeralSnapshotRollback => 3,
+            vm::ActivationMode::EphemeralVm => 4,
         }],
     );
     feed(&mut hash, &[u8::from(config.is_windows)]);
@@ -382,11 +384,26 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     let mut config = vm_config.clone();
     config.hypervisor = kind;
     vm::ensure_vm(&config)?;
+
+    // Ephemeral modes are lifecycle policies, not mere labels. Restore the
+    // operator-designated clean snapshot before a new workload is admitted.
+    // The VM is stopped first because both supported hypervisors require
+    // quiesced state for a deterministic rollback.
+    if matches!(
+        config.activation,
+        vm::ActivationMode::EphemeralSnapshotRollback
+    ) {
+        let snapshot = format!("gitrun-clean-{}", config.name);
+        if vm::is_running(kind, &config.name)? {
+            vm::stop(kind, &config.name)?;
+        }
+        vm::restore_snapshot(kind, &config.name, &snapshot)?;
+    }
     if !vm::is_running(kind, &config.name)? {
         vm::start(kind, &config.name)?;
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
-    if config.is_windows && matches!(kind, HypervisorKind::Kvm) && !is_private_guest_ipv4(&ip) {
+    if config.is_windows && !is_private_guest_ipv4(&ip) {
         return Err(vm::VmError::InvalidConfig(format!(
             "Windows KVM VM '{}' reported non-private guest address {}; refusing remote Docker endpoint",
             config.name, ip
@@ -407,9 +424,9 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     } else {
         DockerHost::Remote(endpoint)
     };
-    docker::attest_host(&host).map_err(|error| {
+    docker::verify_docker_endpoint_health(&host).map_err(|error| {
         vm::VmError::Command(format!(
-            "VM '{}' Docker health attestation failed: {error}",
+            "VM '{}' Docker endpoint health check failed: {error}",
             config.name
         ))
     })?;

@@ -10,7 +10,7 @@ for required in Core Dockers VM-Images Workflows Testing Other; do
   test -d "$required"
   test -f "$required/README.md"
 done
-test -f Dockers/runners/linux-x86_64/Dockerfile
+test -f Core/Dockers/runners/linux-x86_64/Dockerfile
 test -f Core/manifests/premade.yaml
 test -f README.md
 echo "Premade integrity checks passed."

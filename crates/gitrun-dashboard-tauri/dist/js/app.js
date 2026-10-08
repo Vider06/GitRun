@@ -1071,7 +1071,7 @@ async function renderSettings() {
 
       await invoke("uninstall_gitrun");
       state.firstRun = true;
-      renderFirstRun(true);
+      renderFirstRun(false);
     } catch (error) {
       if (!setupEventDone) {
         status.textContent = "Uninstall failed: " + error;

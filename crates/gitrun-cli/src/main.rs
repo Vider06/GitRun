@@ -1197,11 +1197,11 @@ enum Command {
         manifest_url: Option<String>,
     },
     /// Internal privileged uninstall entry point.
-    #[command(name = "uninstall-root", hide = true)]
+    #[command(name = "--uninstall-root", hide = true)]
     UninstallRoot,
 
     /// Internal privileged reinstall entry point.
-    #[command(name = "reinstall-root", hide = true)]
+    #[command(name = "--reinstall-root", hide = true)]
     ReinstallRoot {
         token_path: String,
     },

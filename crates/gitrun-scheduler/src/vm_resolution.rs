@@ -25,7 +25,7 @@
 //! result immediately and defers creation of the VM-targeted runner for
 //! that cycle. It never redirects the job to the local Docker host.
 
-use crate::docker::DockerHost;
+use crate::docker::{self, DockerHost};
 use crate::vm::{self, HypervisorKind, VmConfig};
 use gitrun_core::hypervisor_decision::{self, DecisionChoice};
 use std::collections::HashMap;

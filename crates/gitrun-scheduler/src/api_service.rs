@@ -430,6 +430,7 @@ fn handle_stream(
         state_dir,
         github,
         caller,
+        caller_container_id: identity.container_id.clone(),
     };
 
     let mut send = |event: ExecutionEvent| {
@@ -506,6 +507,7 @@ struct ApiExecutionBackend {
     state_dir: std::path::PathBuf,
     github: Arc<GitHubClient>,
     caller: VerifiedCaller,
+    caller_container_id: String,
 }
 
 impl ExecutionBackend for ApiExecutionBackend {
@@ -1091,10 +1093,17 @@ impl ApiExecutionBackend {
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
 
-        // The default target is this caller's current runner. An explicit
-        // target is allowed only when it has a binding in the same exact
-        // repository/run/job/requester trust domain.
-        if target_name != self.caller.runner {
+        // The default target must still be the exact Docker container that
+        // authenticated this API request. An explicit target is allowed only
+        // when it has a binding in the same exact repository/run/job/requester
+        // trust domain.
+        if target_name == self.caller.runner {
+            if target_id != self.caller_container_id {
+                return Err(failed(
+                    "GitDockRun --melt target is no longer the authenticated caller container",
+                ));
+            }
+        } else {
             let target_binding = registry.bindings.iter().find(|binding| {
                 binding.repository == request.repository
                     && binding.run_id == request_run_id(request)
@@ -1135,8 +1144,6 @@ impl ApiExecutionBackend {
         Ok(success(format!(
             "GitDockRun MELT: PASS\nsource={source}\ntarget={target_name}\nid={target_id}\n"
         )))
-    }
-
     }
 }
 

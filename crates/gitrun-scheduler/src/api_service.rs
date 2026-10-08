@@ -145,10 +145,21 @@ pub(crate) fn reconcile_dock_bindings(
             continue;
         };
 
+        let Some(current_id) = docker::container_id(&binding.container)
+            .map_err(|error| format!("resolve Dock container {}: {error}", binding.container))?
+        else {
+            continue;
+        };
+        if binding.container_id.is_empty() || current_id != binding.container_id {
+            // Never mutate a different container that happens to reuse the
+            // logical name recorded by an old binding.
+            continue;
+        }
+
         let completed = job.status.eq_ignore_ascii_case("completed") || job.conclusion.is_some();
 
         if completed {
-            make_dock_only(&binding.container, state_dir).map_err(|error| {
+            make_dock_only(&binding.container_id, state_dir).map_err(|error| {
                 format!(
                     "freeze GitRun Dock container {}: {error}",
                     binding.container
@@ -218,12 +229,18 @@ pub(crate) fn preserved_dock_containers(
 ) -> Result<std::collections::BTreeSet<String>, String> {
     let registry = DockRegistry::load(state_dir)
         .map_err(|error| format!("load GitDockRun registry: {error}"))?;
-    Ok(registry
-        .bindings
-        .into_iter()
-        .filter(|binding| binding.repository == repository)
-        .map(|binding| binding.container)
-        .collect())
+    let mut names = std::collections::BTreeSet::new();
+    for binding in registry.bindings.into_iter().filter(|binding| binding.repository == repository) {
+        let Some(current_id) = docker::container_id(&binding.container)
+            .map_err(|error| format!("resolve preserved Dock {}: {error}", binding.container))?
+        else {
+            continue;
+        };
+        if !binding.container_id.is_empty() && current_id == binding.container_id {
+            names.insert(binding.container);
+        }
+    }
+    Ok(names)
 }
 
 pub(crate) fn is_dock_bound(
@@ -842,6 +859,11 @@ impl ApiExecutionBackend {
             return Err(failed("GitDockRun --connect requires GITHUB_RUN_ID"));
         }
         let job = arg(request, "job")?;
+        if job != request.job {
+            return Err(failed(
+                "GitDockRun --connect may only target the caller's current workflow job",
+            ));
+        }
 
         let job_info = self
             .github
@@ -911,6 +933,11 @@ impl ApiExecutionBackend {
             return Err(failed("GitDockRun --disconnect requires GITHUB_RUN_ID"));
         }
         let job = arg(request, "job")?;
+        if job != request.job {
+            return Err(failed(
+                "GitDockRun --disconnect may only target the caller's current workflow job",
+            ));
+        }
 
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;

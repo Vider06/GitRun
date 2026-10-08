@@ -1164,6 +1164,41 @@ fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, St
 // Config (Settings screen)
 // ---------------------------------------------------------------------
 
+#[derive(Debug, Serialize)]
+pub struct SecurityRuntimeSummary {
+    pub resource_pressure_enabled: bool,
+    pub resource_pressure_cpu_percent: u8,
+    pub resource_pressure_memory_percent: u8,
+    pub resource_pressure_disk_percent: u8,
+    pub resource_pressure_paths: Vec<String>,
+    pub runner_network: String,
+    pub runner_network_is_dedicated: bool,
+    pub shared_cache_scope: String,
+    pub seccomp_profile: String,
+    pub apparmor_profile: String,
+    pub docker_socket_hardening: bool,
+}
+
+#[tauri::command]
+fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
+    let config = load_config()?;
+    let network = config.runner_network.trim().to_owned();
+    let network_lower = network.to_ascii_lowercase();
+    Ok(SecurityRuntimeSummary {
+        resource_pressure_enabled: config.resource_pressure_enabled,
+        resource_pressure_cpu_percent: config.resource_pressure_cpu_percent,
+        resource_pressure_memory_percent: config.resource_pressure_memory_percent,
+        resource_pressure_disk_percent: config.resource_pressure_disk_percent,
+        resource_pressure_paths: config.resource_pressure_paths.split(';').map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned).collect(),
+        runner_network_is_dedicated: !network_lower.is_empty() && network_lower != "bridge" && network_lower != "host" && !network_lower.starts_with("container:"),
+        runner_network: network,
+        shared_cache_scope: config.shared_cache_scope,
+        seccomp_profile: config.runner_seccomp_profile,
+        apparmor_profile: config.runner_apparmor_profile,
+        docker_socket_hardening: config.gsr_docker_socket_hardening,
+    })
+}
+
 #[tauri::command]
 fn get_config() -> Result<Config, String> {
     load_config()
@@ -1215,6 +1250,7 @@ pub fn run() {
             list_pending_hypervisor_decisions,
             respond_hypervisor_decision,
             get_config,
+            get_security_runtime_summary,
             save_config,
             get_gitrun_settings,
             save_gitrun_settings,

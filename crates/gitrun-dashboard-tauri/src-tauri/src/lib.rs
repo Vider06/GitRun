@@ -367,7 +367,7 @@ struct FirstSetupEvent {
 }
 
 const FIRST_SETUP_EVENT: &str = "gitrun-setup-progress";
-const FIRST_SETUP_TOTAL: u8 = 8;
+const FIRST_SETUP_TOTAL: u8 = 9;
 
 fn emit_first_setup_event(
     app: &AppHandle,
@@ -1277,12 +1277,12 @@ mod tests {
     #[test]
     fn setup_progress_marker_is_parsed() {
         let parsed =
-            parse_setup_progress_line("[GitRun setup] [5/8] Building gitrun-runner:latest");
+            parse_setup_progress_line("[GitRun setup] [5/9] Building gitrun-runner:latest");
         assert_eq!(
             parsed,
             Some((5, "Building gitrun-runner:latest".to_owned()))
         );
-        assert!(parse_setup_progress_line("[GitRun setup] [5/7] invalid").is_none());
+        assert!(parse_setup_progress_line("[GitRun setup] [5/8] invalid").is_none());
     }
 
     #[test]

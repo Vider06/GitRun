@@ -523,7 +523,6 @@ fn stream_privileged_command(
     Ok(status)
 }
 
-
 #[tauri::command]
 async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
@@ -533,9 +532,8 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     let pkexec = pkexec_path().ok_or(
         "trusted pkexec was not found at a root-owned, non-writable system path; graphical uninstall cannot safely continue",
     )?;
-    let cli = dashboard_cli_path(&app).ok_or(
-        "GitRun CLI executable was not found; cannot run the privileged uninstall",
-    )?;
+    let cli = dashboard_cli_path(&app)
+        .ok_or("GitRun CLI executable was not found; cannot run the privileged uninstall")?;
 
     let app_for_uninstall = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -566,7 +564,9 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
                     true,
                     false,
                 );
-                Err(format!("privileged GitRun uninstall failed with status {status}"))
+                Err(format!(
+                    "privileged GitRun uninstall failed with status {status}"
+                ))
             }
             Err(error) => {
                 emit_first_setup_event(&app_for_uninstall, 0, error.clone(), "system", true, false);
@@ -596,7 +596,9 @@ async fn run_first_setup(
     }
     if reinstall {
         if configured_config_path().is_none() {
-            return Err("GitRun is not currently configured; use the normal first-run setup instead".into());
+            return Err(
+                "GitRun is not currently configured; use the normal first-run setup instead".into(),
+            );
         }
     } else if configured_config_path().is_some() {
         return Err("GitRun is already configured; graphical first-run setup is only available before initial setup".into());
@@ -660,15 +662,16 @@ async fn run_first_setup(
 
     let app_for_setup = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let operation = if reinstall { "--reinstall-root" } else { "--install-root" };
+        let operation = if reinstall {
+            "--reinstall-root"
+        } else {
+            "--install-root"
+        };
         let result = stream_privileged_command(
             &app_for_setup,
             &pkexec,
             &cli,
-            &[
-                operation.to_owned(),
-                path.to_string_lossy().into_owned(),
-            ],
+            &[operation.to_owned(), path.to_string_lossy().into_owned()],
         );
 
         let _ = std::fs::remove_file(&path);

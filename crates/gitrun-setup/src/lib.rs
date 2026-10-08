@@ -170,7 +170,6 @@ fn write_setup_flag() -> Result<(), SetupError> {
     write_resource(&setup_flag_path(), &content, 0o600)
 }
 
-
 /// Removes GitRun's installed runtime resources while deliberately keeping the
 /// current `gitrun` executable in place so the dashboard process can offer a
 /// reinstall without requiring a second package download.
@@ -244,7 +243,9 @@ fn remove_gitrun_docker_resources() {
             .map(str::trim)
             .filter(|volume| !volume.is_empty())
         {
-            let _ = Command::new("docker").args(["volume", "rm", volume]).status();
+            let _ = Command::new("docker")
+                .args(["volume", "rm", volume])
+                .status();
         }
     }
 }
@@ -262,7 +263,6 @@ fn remove_path_if_present(path: &Path) -> Result<(), SetupError> {
     }
     Ok(())
 }
-
 
 /// Rebuilds a configured GitRun installation from scratch while preserving
 /// the operator's existing configuration and runtime state. Authentication is
@@ -314,9 +314,7 @@ pub fn reinstall_linux_with_auth(
         chown_path(config_path, uid)?;
     }
     run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(
-        Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]),
-    )?;
+    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
 
     println!("GitRun reinstall: PASS");
     Ok(report)

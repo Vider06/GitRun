@@ -1202,9 +1202,7 @@ enum Command {
 
     /// Internal privileged reinstall entry point.
     #[command(name = "--reinstall-root", hide = true)]
-    ReinstallRoot {
-        token_path: String,
-    },
+    ReinstallRoot { token_path: String },
 
     /// Internal scheduler service entry point.
     #[command(name = "scheduler", hide = true)]
@@ -1901,7 +1899,6 @@ fn run_repair_service() -> i32 {
         }
     }
 }
-
 
 fn run_reinstall_root(token_path: &str) -> i32 {
     match reinstall_root_command(token_path) {

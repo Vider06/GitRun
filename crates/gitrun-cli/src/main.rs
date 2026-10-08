@@ -1047,6 +1047,7 @@ fn main() {
         Command::RecoveryGtuu => run_recovery_gtuu(&mut presenter),
         Command::RepairService => run_repair_service(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),
+        Command::UninstallRoot => run_uninstall_root(),
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -1167,6 +1168,10 @@ enum Command {
         /// Optional manifest URL to check instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
+    /// Internal privileged uninstall entry point.
+    #[command(name = "uninstall-root", hide = true)]
+    UninstallRoot,
+
     /// Internal scheduler service entry point.
     #[command(name = "scheduler", hide = true)]
     Scheduler,
@@ -1858,6 +1863,17 @@ fn run_repair_service() -> i32 {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("GitRun service repair: FAIL — {error}");
+            1
+        }
+    }
+}
+
+
+fn run_uninstall_root() -> i32 {
+    match gitrun_setup::uninstall_linux() {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("GitRun uninstall: FAIL — {error}");
             1
         }
     }

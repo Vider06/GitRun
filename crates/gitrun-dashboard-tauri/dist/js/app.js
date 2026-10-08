@@ -920,6 +920,18 @@ async function renderSettings() {
         <button class="btn btn-primary" id="save-security-settings">Save security settings</button>
       </div>
     </div>
+
+    <div class="section" style="max-width:760px">
+      <h2 class="section-title">GitRun installation</h2>
+      <p class="field-hint">Uninstall removes GitRun's service, runtime state, logs, runner containers, cache volumes, image, and system resources. The current launcher stays in place so this dashboard can offer a reinstall without requiring another package download.</p>
+      <div class="toolbar">
+        <span id="installation-action-status" class="field-hint"></span>
+        <button class="btn" id="reinstall-gitrun">Reinstall GitRun</button>
+        <button class="btn btn-danger" id="uninstall-gitrun">Uninstall GitRun</button>
+      </div>
+    </div>
+
+
   `;
 
   const repoSelect = document.getElementById("policy-repo");
@@ -1030,6 +1042,46 @@ async function renderSettings() {
   });
 
   renderVmManagement(vmConfigs);
+
+  document.getElementById("reinstall-gitrun").addEventListener("click", () => {
+    if (!confirm("Reinstall GitRun from the current launcher? GitRun will stop its service and rebuild its installed resources before starting again.")) return;
+    renderFirstRun(true);
+  });
+
+  document.getElementById("uninstall-gitrun").addEventListener("click", async () => {
+    if (!confirm("Uninstall GitRun? This removes the service, runtime state, logs, runner containers, cache volumes, image, and system resources. This cannot be undone.")) return;
+
+    const status = document.getElementById("installation-action-status");
+    status.textContent = "Uninstalling…";
+    status.style.color = "var(--text-muted)";
+
+    let unlisten = null;
+    let setupEventDone = false;
+    try {
+      const { listen } = window.__TAURI__.event;
+      unlisten = await listen("gitrun-setup-progress", (event) => {
+        const payload = event.payload || {};
+        setupEventDone = Boolean(payload.done);
+        setupAppendLog(payload.message || "");
+        if (payload.done && !payload.success) {
+          status.textContent = "Uninstall failed.";
+          status.style.color = "var(--danger)";
+        }
+      });
+
+      await invoke("uninstall_gitrun");
+      state.firstRun = true;
+      renderFirstRun(true);
+    } catch (error) {
+      if (!setupEventDone) {
+        status.textContent = "Uninstall failed: " + error;
+        status.style.color = "var(--danger)";
+      }
+    } finally {
+      if (unlisten) await unlisten();
+    }
+  });
+
 }
 
 // ---------------------------------------------------------------------

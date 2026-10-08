@@ -61,6 +61,14 @@ pub struct Config {
     /// Filesystems sampled by resource-pressure protection. The Docker data
     /// root should be included on hosts where runner storage can fill it.
     pub resource_pressure_paths: String,
+    /// Master switch for host resource-pressure backpressure.
+    pub resource_pressure_enabled: bool,
+    /// CPU utilization percentage at which new runner creation pauses.
+    pub resource_pressure_cpu_percent: u8,
+    /// Memory utilization percentage at which new runner creation pauses.
+    pub resource_pressure_memory_percent: u8,
+    /// Critical filesystem utilization percentage at which new runner creation pauses.
+    pub resource_pressure_disk_percent: u8,
     /// Size of the runner's home directory (registration state, diagnostics,
     /// job checkouts), applied whether it's backed by tmpfs or a disk volume
     /// — see `runner_home_backend`. Needs headroom for a real checkout +
@@ -203,6 +211,10 @@ impl Default for Config {
             shared_cache_volume: "gitrun-runner-shared".into(),
             shared_cache_scope: "runner".into(),
             resource_pressure_paths: "/var/lib/gitrun;/var/lib/docker".into(),
+            resource_pressure_enabled: true,
+            resource_pressure_cpu_percent: 90,
+            resource_pressure_memory_percent: 90,
+            resource_pressure_disk_percent: 90,
             runner_home_size: "8g".into(),
             runner_home_backend: "tmpfs".into(),
             github_connect_timeout: 5,

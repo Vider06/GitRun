@@ -1,5 +1,7 @@
-# Linux x86_64 VM images
+## Linux x86_64 VM images
 
-Placeholder for the first maintained hardened Linux x86_64 VM image.
+Initial definition: ubuntu-24.04.
 
-A real image definition and boot test will be added before publication.
+The current artifact is metadata only. It describes the intended hardened base and required verification gates; no bootable image is published yet.
+
+A VM image must pass a real boot test before its status can change from definition-only.

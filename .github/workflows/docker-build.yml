@@ -1,8 +1,8 @@
-name: Premade Docker Build
+name: Premade Docker Definition
 
 on:
   push:
-    branches: [feat/gitrun-premade]
+    branches: [feat/premade-initial-assets]
     paths: [Dockers/**, Core/**, Testing/Dockers/**]
   pull_request:
     branches: [feat/gitrun-premade]
@@ -13,20 +13,11 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  validate:
+    name: Validate setup runner Dockerfile
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build every Dockerfile
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t dockerfiles < <(find Dockers -type f -name Dockerfile -print)
-          test "${#dockerfiles[@]}" -gt 0
-          for dockerfile in "${dockerfiles[@]}"; do
-            context="$(dirname "$dockerfile")"
-            image="gitrun-premade/ci:$(echo "$context" | tr '/_' '--')"
-            docker buildx build --load --platform linux/amd64 --tag "$image" "$context"
-          done
+      - name: Verify source synchronization
+        run: bash Testing/Dockers/test-runner-image.sh

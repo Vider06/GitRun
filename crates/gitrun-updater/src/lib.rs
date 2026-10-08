@@ -201,16 +201,18 @@ impl ReleaseManifest {
 }
 
 impl ReleaseManifest {
-    /// Verifies an Ed25519 signature when a public key is configured.
-    /// GITRUN_UPDATE_SIGNATURE_REQUIRED=true makes an unsigned manifest invalid.
+    /// Verifies an Ed25519 signature. Signed manifests are required by
+    /// default; setting GITRUN_UPDATE_SIGNATURE_REQUIRED=false is the explicit
+    /// compatibility/unsafe opt-out for custom unsigned manifests.
     pub fn verify_signature_from_env(&self) -> Result<(), UpdateError> {
         let required = std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED")
             .ok()
-            .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1");
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(true);
         let key = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_HEX").ok();
         match (self.signature.as_deref(), key.as_deref()) {
             (None, _) if required => Err(UpdateError::InvalidManifest(
-                "update manifest signature is required".into(),
+                "update manifest signature is required by default; set GITRUN_UPDATE_SIGNATURE_REQUIRED=false only for an explicit unsigned-update opt-out".into(),
             )),
             (None, _) => Ok(()),
             (Some(_), None) => Err(UpdateError::InvalidManifest(
@@ -1882,6 +1884,8 @@ mod tests {
                 source: None,
                 installation_method: Some("system-package-manager".into()),
             }],
+            signature: None,
+            signature_key_id: None,
             runner_image: None,
             repository: Some("Vider06/GitRun".into()),
         }

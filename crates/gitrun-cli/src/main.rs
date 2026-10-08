@@ -294,7 +294,7 @@ fn update_command(
         )?;
 
         if let Some(image) = &plan.runner_image {
-            if let Err(error) = update_runner_image(image, plan.premade_dockerfile.as_ref()) {
+            if let Err(error) = update_runner_image(image) {
                 let rollback_error = rollback_installed_update(&backup).err();
                 return Err(match rollback_error {
                     Some(rollback_error) => format!(
@@ -386,7 +386,7 @@ fn update_command(
     }
 
     if let Some(image) = &plan.runner_image {
-        if let Err(error) = update_runner_image(image, plan.premade_dockerfile.as_ref()) {
+        if let Err(error) = update_runner_image(image) {
             rollback(&paths, &backup)?;
             return Err(format!("runner update failed; GitRun was rolled back: {error}").into());
         }

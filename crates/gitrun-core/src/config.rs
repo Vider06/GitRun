@@ -1046,6 +1046,14 @@ mod tests {
     }
 
     #[test]
+    fn zero_minimum_runner_pool_is_allowed() {
+        let mut config = Config::default();
+        config.min_runners = 0;
+        config.max_runners = 1;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
     fn default_config_validates() {
         Config::default().validate().unwrap();
     }

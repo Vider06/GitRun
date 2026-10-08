@@ -874,23 +874,23 @@ async function renderSettings() {
     <div class="section" style="max-width:760px">
       <h2 class="section-title">Resource Pressure</h2>
       <p class="field-hint">Backpressure pauses new runner creation before host memory, CPU, or monitored storage becomes critical.</p>
-      <label class="field-checkbox"><input type="checkbox" id="resource-pressure-enabled" \${config.resource_pressure_enabled ? "checked" : ""} /><span><strong>Enable resource-pressure protection</strong></span></label>
+      <label class="field-checkbox"><input type="checkbox" id="resource-pressure-enabled" ${config.resource_pressure_enabled ? "checked" : ""} /><span><strong>Enable resource-pressure protection</strong></span></label>
       <div class="field-row">
-        <div class="field"><label>CPU threshold (%)</label><input id="resource-pressure-cpu" type="number" min="1" max="100" value="\${config.resource_pressure_cpu_percent}" /></div>
-        <div class="field"><label>Memory threshold (%)</label><input id="resource-pressure-memory" type="number" min="1" max="100" value="\${config.resource_pressure_memory_percent}" /></div>
-        <div class="field"><label>Disk threshold (%)</label><input id="resource-pressure-disk" type="number" min="1" max="100" value="\${config.resource_pressure_disk_percent}" /></div>
+        <div class="field"><label>CPU threshold (%)</label><input id="resource-pressure-cpu" type="number" min="1" max="100" value="${config.resource_pressure_cpu_percent}" /></div>
+        <div class="field"><label>Memory threshold (%)</label><input id="resource-pressure-memory" type="number" min="1" max="100" value="${config.resource_pressure_memory_percent}" /></div>
+        <div class="field"><label>Disk threshold (%)</label><input id="resource-pressure-disk" type="number" min="1" max="100" value="${config.resource_pressure_disk_percent}" /></div>
       </div>
-      <div class="field"><label>Critical filesystem paths (semicolon-separated)</label><input id="resource-pressure-paths" value="\${escapeHtml(config.resource_pressure_paths || "")}" /></div>
+      <div class="field"><label>Critical filesystem paths (semicolon-separated)</label><input id="resource-pressure-paths" value="${escapeHtml(config.resource_pressure_paths || "")}" /></div>
     </div>
 
     <div class="section" style="max-width:760px">
       <h2 class="section-title">Runner Isolation</h2>
       <div class="table-scroll"><table class="data-table"><tbody>
-        <tr><td>Docker network</td><td class="mono">\${escapeHtml(securitySummary.runner_network || "—")}</td><td>\${statusPill(securitySummary.runner_network_is_dedicated, "Dedicated", "Unsafe")}</td></tr>
-        <tr><td>Cache scope</td><td class="mono">\${escapeHtml(securitySummary.shared_cache_scope)}</td><td>\${securitySummary.shared_cache_scope === "runner" ? '<span class="pill pill-success">Isolated</span>' : '<span class="pill pill-warning">Shared</span>'}</td></tr>
-        <tr><td>Seccomp</td><td class="mono">\${escapeHtml(securitySummary.seccomp_profile)}</td><td>\${statusPill(securitySummary.seccomp_profile !== "unconfined", "Protected", "Unconfined")}</td></tr>
-        <tr><td>AppArmor</td><td class="mono">\${escapeHtml(securitySummary.apparmor_profile || "Docker default")}</td><td><span class="pill pill-info">\${securitySummary.apparmor_profile ? "Configured" : "Default"}</span></td></tr>
-        <tr><td>Docker socket hardening</td><td colspan="2">\${statusPill(securitySummary.docker_socket_hardening, "Enabled", "Disabled")}</td></tr>
+        <tr><td>Docker network</td><td class="mono">${escapeHtml(securitySummary.runner_network || "—")}</td><td>${statusPill(securitySummary.runner_network_is_dedicated, "Dedicated", "Unsafe")}</td></tr>
+        <tr><td>Cache scope</td><td class="mono">${escapeHtml(securitySummary.shared_cache_scope)}</td><td>${securitySummary.shared_cache_scope === "runner" ? '<span class="pill pill-success">Isolated</span>' : '<span class="pill pill-warning">Shared</span>'}</td></tr>
+        <tr><td>Seccomp</td><td class="mono">${escapeHtml(securitySummary.seccomp_profile)}</td><td>${statusPill(securitySummary.seccomp_profile !== "unconfined", "Protected", "Unconfined")}</td></tr>
+        <tr><td>AppArmor</td><td class="mono">${escapeHtml(securitySummary.apparmor_profile || "Docker default")}</td><td><span class="pill pill-info">${securitySummary.apparmor_profile ? "Configured" : "Default"}</span></td></tr>
+        <tr><td>Docker socket hardening</td><td colspan="2">${statusPill(securitySummary.docker_socket_hardening, "Enabled", "Disabled")}</td></tr>
       </tbody></table></div>
       <p class="field-hint">The dedicated network is enforced by the backend; bridge/host/container networking cannot be selected for runner isolation.</p>
     </div>
@@ -1052,13 +1052,13 @@ async function renderVmManagement(vmConfigs) {
     ? '<div class="empty-state">No VM definitions configured.</div>'
     : \`<div class="table-scroll"><table class="data-table">
         <thead><tr><th>Name</th><th>Hypervisor</th><th>OS</th><th>Lifecycle</th><th>Docker</th><th></th></tr></thead>
-        <tbody>\${vmConfigs.map((vm, i) => \`<tr>
-          <td class="mono">\${escapeHtml(vm.name)}</td>
-          <td>\${escapeHtml(vm.hypervisor)}</td>
-          <td>\${vm.is_windows ? "Windows" : "Linux"}</td>
-          <td><span class="pill pill-info">\${escapeHtml(activationLabel(vm.activation))}</span></td>
-          <td class="mono">:\${vm.docker_port}</td>
-          <td><button class="btn btn-sm" data-edit-vm="\${i}">Edit</button></td>
+        <tbody>${vmConfigs.map((vm, i) => \`<tr>
+          <td class="mono">${escapeHtml(vm.name)}</td>
+          <td>${escapeHtml(vm.hypervisor)}</td>
+          <td>${vm.is_windows ? "Windows" : "Linux"}</td>
+          <td><span class="pill pill-info">${escapeHtml(activationLabel(vm.activation))}</span></td>
+          <td class="mono">:${vm.docker_port}</td>
+          <td><button class="btn btn-sm" data-edit-vm="${i}">Edit</button></td>
         </tr>\`).join("")}</tbody>
       </table></div>\`;
   root.insertAdjacentHTML("beforeend", '<button class="btn btn-sm btn-primary" id="add-vm-config">+ Add VM</button>');
@@ -1075,13 +1075,13 @@ function openVmModal(existing, allConfigs) {
   backdrop.className = "modal-backdrop";
   backdrop.innerHTML = \`
     <div class="modal">
-      <h3 class="modal-title">\${existing ? "Edit VM" : "Add VM"}</h3>
-      <div class="field"><label>Name</label><input id="vm-name" value="\${escapeHtml(vm.name)}" /></div>
-      <div class="field"><label>Hypervisor</label><select id="vm-hypervisor"><option value="Kvm" \${vm.hypervisor === "Kvm" ? "selected" : ""}>KVM</option><option value="VirtualBox" \${vm.hypervisor === "VirtualBox" ? "selected" : ""}>VirtualBox</option></select></div>
-      <div class="field"><label>Base disk image</label><input id="vm-image" value="\${escapeHtml(vm.base_disk_image)}" /></div>
-      <div class="field-row"><div class="field"><label>Memory (MiB)</label><input id="vm-memory" type="number" min="1" value="\${vm.memory_mb}" /></div><div class="field"><label>CPUs</label><input id="vm-cpus" type="number" min="1" value="\${vm.cpus}" /></div><div class="field"><label>Docker port</label><input id="vm-port" type="number" min="1" max="65535" value="\${vm.docker_port}" /></div></div>
-      <label class="field-checkbox"><input id="vm-windows" type="checkbox" \${vm.is_windows ? "checked" : ""} /><span>Windows guest (requires mutual Docker TLS)</span></label>
-      <div class="field"><label>Docker TLS cert directory</label><input id="vm-tls" value="\${escapeHtml(vm.docker_tls_cert_dir || "")}" placeholder="/etc/gitrun/vm-tls/name" /></div>
+      <h3 class="modal-title">${existing ? "Edit VM" : "Add VM"}</h3>
+      <div class="field"><label>Name</label><input id="vm-name" value="${escapeHtml(vm.name)}" /></div>
+      <div class="field"><label>Hypervisor</label><select id="vm-hypervisor"><option value="Kvm" ${vm.hypervisor === "Kvm" ? "selected" : ""}>KVM</option><option value="VirtualBox" ${vm.hypervisor === "VirtualBox" ? "selected" : ""}>VirtualBox</option></select></div>
+      <div class="field"><label>Base disk image</label><input id="vm-image" value="${escapeHtml(vm.base_disk_image)}" /></div>
+      <div class="field-row"><div class="field"><label>Memory (MiB)</label><input id="vm-memory" type="number" min="1" value="${vm.memory_mb}" /></div><div class="field"><label>CPUs</label><input id="vm-cpus" type="number" min="1" value="${vm.cpus}" /></div><div class="field"><label>Docker port</label><input id="vm-port" type="number" min="1" max="65535" value="${vm.docker_port}" /></div></div>
+      <label class="field-checkbox"><input id="vm-windows" type="checkbox" ${vm.is_windows ? "checked" : ""} /><span>Windows guest (requires mutual Docker TLS)</span></label>
+      <div class="field"><label>Docker TLS cert directory</label><input id="vm-tls" value="${escapeHtml(vm.docker_tls_cert_dir || "")}" placeholder="/etc/gitrun/vm-tls/name" /></div>
       <div class="field"><label>Lifecycle</label><select id="vm-activation">
         <option value="Standard">Standard</option>
         <option value="AlwaysOnExperimental">Always on (experimental)</option>

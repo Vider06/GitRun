@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 concurrency:
   group: gitrun-release-${{ github.ref }}-${{ github.event.inputs.version || github.ref_name }}
@@ -298,18 +297,10 @@ jobs:
             echo "deb=$deb"
             echo "server_archive=$server_archive"
           } >> "$GITHUB_OUTPUT"
-      - name: Configure AWS signing credentials
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
-        with:
-          role-to-assume: ${{ vars.GITRUN_RELEASE_SIGNING_ROLE_ARN }}
-          aws-region: ${{ vars.GITRUN_RELEASE_SIGNING_AWS_REGION }}
-          allowed-account-ids: ${{ vars.GITRUN_RELEASE_SIGNING_AWS_ACCOUNT_ID }}
-          role-session-name: gitrun-release-${{ github.run_id }}
-
       - name: Sign release manifest
         env:
           GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
-          GITRUN_RELEASE_SIGNING_KMS_KEY_ID: ${{ vars.GITRUN_RELEASE_SIGNING_KMS_KEY_ID }}
+          GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
           ROOT: ${{ steps.artifacts.outputs.root }}
         shell: bash
         run: |
@@ -318,29 +309,30 @@ jobs:
             echo "GITRUN_UPDATE_SIGNING_KEY_ID is required" >&2
             exit 1
           }
-          [[ -n "$GITRUN_RELEASE_SIGNING_KMS_KEY_ID" ]] || {
-            echo "GITRUN_RELEASE_SIGNING_KMS_KEY_ID is required" >&2
+          [[ -n "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" ]] || {
+            echo "GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 is required" >&2
             exit 1
           }
+          command -v openssl >/dev/null 2>&1 || {
+            echo "OpenSSL is required for Ed25519 release signing" >&2
+            exit 1
+          }
+          key="$RUNNER_TEMP/gitrun-release-signing-key.der"
           payload="$RUNNER_TEMP/gitrun-manifest-signing-payload.json"
           signature="$RUNNER_TEMP/gitrun-manifest.sig"
-          jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\\n' > "$payload"
-          aws kms sign \
-            --key-id "$GITRUN_RELEASE_SIGNING_KMS_KEY_ID" \
-            --signing-algorithm ED25519_SHA_512 \
-            --message-type RAW \
-            --message "fileb://$payload" \
-            --query Signature \
-            --output text | base64 --decode > "$signature"
+          trap 'rm -f "$key" "$payload" "$signature"' EXIT
+          printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          chmod 600 "$key"
+          jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\n' > "$payload"
+          openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$signature"
           sig_hex="$(od -An -v -tx1 "$signature" | tr -d '[:space:]')"
           [[ "${#sig_hex}" -eq 128 ]] || {
-            echo "KMS Ed25519 signature was not 64 bytes" >&2
+            echo "Ed25519 signature was not 64 bytes" >&2
             exit 1
           }
           jq --arg sig "$sig_hex" --arg key_id "$GITRUN_UPDATE_SIGNING_KEY_ID"             '. + {signature:$sig, signature_key_id:$key_id}'             "$ROOT/release-manifest.json" > "$ROOT/release-manifest.json.tmp"
           mv "$ROOT/release-manifest.json.tmp" "$ROOT/release-manifest.json"
-          rm -f "$payload" "$signature"
-          echo "Release manifest signature: PASS (AWS KMS Ed25519)"
+          echo "Release manifest signature: PASS (GitHub Actions secret + Ed25519)"
 
       - name: Verify release artifacts
         shell: bash

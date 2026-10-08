@@ -1045,7 +1045,6 @@ pub fn pin_runner_image(
 
 pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
     image.validate()?;
-    let _ = fetch_premade_runner_dockerfile(&canonical_premade_runner_dockerfile())?;
     let inspect = Command::new("docker")
         .args([
             "image",
@@ -1068,6 +1067,7 @@ pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
     if local_digest.as_deref() == Some(image.digest.as_str()) {
         return Ok(());
     }
+    let _ = fetch_premade_runner_dockerfile(&canonical_premade_runner_dockerfile())?;
     run_command(Command::new("docker").args(["pull", &image.reference]))?;
     let output = Command::new("docker")
         .args([

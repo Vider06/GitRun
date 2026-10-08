@@ -88,7 +88,7 @@ When pressure reaches a configured threshold, GitRun stops creating additional r
 
 ## Release integrity
 
-Official releases use signed update manifests. The release workflow obtains signing authority through GitHub Actions OIDC and an external KMS boundary rather than a long-lived private Ed25519 key stored in the runner. The manifest carries the signature and configured signing key identifier.
+Official releases use signed update manifests. The release workflow uses a repository-scoped GitHub Actions secret containing the Ed25519 signing key and a non-secret signing key identifier. The private key is materialized only in the ephemeral workflow workspace for signing and is removed after the signing step. The corresponding public key is distributed to update hosts and the manifest carries the signature and configured signing key identifier.
 
 The updater verifies untrusted manifests at load/fetch/stage boundaries. Official release verification requires signatures; `GITRUN_UPDATE_SIGNATURE_REQUIRED=false` is an explicit compatibility/unsafe opt-out for custom unsigned manifests.
 
@@ -109,7 +109,7 @@ If your threat model requires stronger isolation than this today, consider runni
 
 ## Trust-boundary summary
 
-Trusted infrastructure: GitRun scheduler, host Docker daemon, GitHub API identity records, hypervisor, VM base image, Docker TLS credentials, external release-signing KMS and GitVault root key.
+Trusted infrastructure: GitRun scheduler, host Docker daemon, GitHub API identity records, hypervisor, VM base image, Docker TLS credentials, GitHub Actions release-signing secret, trusted release public key and GitVault root key.
 
 Untrusted input: workflow code, workflow-visible environment variables, requested API arguments, logical dock/resource names, repository configuration supplied by workflow code, and downloaded update artifacts until verified.
 

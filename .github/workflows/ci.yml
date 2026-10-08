@@ -1757,9 +1757,11 @@ jobs:
       - name: Verify security-sensitive workflow invariants
         run: |
           set -euo pipefail
-          grep -q 'id-token: write' .github/workflows/release.yml
-          grep -q 'aws-actions/configure-aws-credentials@e125382' .github/workflows/release.yml
-          grep -q 'ED25519_SHA_512' .github/workflows/release.yml
+          grep -q 'id-token: write' .github/workflows/release.yml && exit 1
+          grep -q 'aws-actions/configure-aws-credentials@' .github/workflows/release.yml && exit 1
+          grep -q 'ED25519_SHA_512' .github/workflows/release.yml && exit 1
+          grep -q 'GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64' .github/workflows/release.yml
+          grep -q 'GITRUN_UPDATE_SIGNING_KEY_ID' .github/workflows/release.yml
           grep -q 'GITRUN_UPDATE_SIGNATURE_REQUIRED' crates/gitrun-updater/src/lib.rs
           grep -q 'GITRUN_RUNNER_NETWORK' config/config.example.env
 

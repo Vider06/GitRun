@@ -1970,6 +1970,22 @@ mod tests {
     }
 
     #[test]
+    fn canonical_premade_runner_source_is_immutable() {
+        let source = canonical_premade_runner_dockerfile();
+        assert_eq!(source.repository, CANONICAL_PREMADE_RUNNER_REPOSITORY);
+        assert_eq!(source.git_commit, CANONICAL_PREMADE_RUNNER_COMMIT);
+        assert_eq!(source.path, CANONICAL_PREMADE_RUNNER_PATH);
+        assert!(source.validate().is_ok());
+    }
+
+    #[test]
+    fn premade_runner_source_rejects_non_immutable_commit() {
+        let mut source = canonical_premade_runner_dockerfile();
+        source.git_commit = "main".into();
+        assert!(source.validate().is_err());
+    }
+
+    #[test]
     fn signing_payload_preserves_wire_shape_for_sparse_manifests() {
         let raw = r#"{
             "name": "GitRun",

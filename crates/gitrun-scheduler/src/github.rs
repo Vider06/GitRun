@@ -480,7 +480,7 @@ impl GitHubClient {
                     let jobs: JobsResponse = response.json()?;
                     for job in jobs.jobs {
                         if job.runner_name.as_deref() == Some(runner_name)
-                            && !job.status.eq_ignore_ascii_case("completed")
+                            && job.status.eq_ignore_ascii_case("in_progress")
                             && job.conclusion.is_none()
                         {
                             matches.push(WorkflowJobInfo {

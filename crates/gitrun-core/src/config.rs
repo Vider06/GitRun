@@ -1102,6 +1102,39 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_defaults_are_hardened() {
+        let config = Config::default();
+        assert!(config.runner_rootfs_read_only);
+        assert!(config.runner_windows_hyperv_isolation);
+        assert_eq!(config.runner_home_backend, "volume");
+    }
+
+    #[test]
+    fn danger_gate_blocks_disabling_runner_sandbox_controls() {
+        let mut config = Config::default();
+        config.runner_rootfs_read_only = false;
+        assert!(config.validate().is_err());
+
+        config.runner_rootfs_read_only = true;
+        config.runner_windows_hyperv_isolation = false;
+        assert!(config.validate().is_err());
+
+        config.gsr_allow_unsafe_runner = true;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn read_only_root_rejects_tmpfs_runner_home() {
+        let mut config = Config::default();
+        config.runner_home_backend = "tmpfs".into();
+        assert!(config.validate().is_err());
+
+        config.runner_rootfs_read_only = false;
+        config.gsr_allow_unsafe_runner = true;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
     fn danger_gate_blocks_disabling_hardening_without_explicit_opt_in() {
         let mut config = Config::default();
         config.gsr_docker_socket_hardening = false;

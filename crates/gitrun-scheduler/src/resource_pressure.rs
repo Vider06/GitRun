@@ -15,8 +15,10 @@ pub enum ResourcePressureError {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResourceSnapshot {
+    /// Actual host CPU utilization over a short sampling interval.
     pub cpu_percent: f32,
     pub memory_percent: f32,
+    /// Maximum filesystem utilization across all configured critical paths.
     pub disk_percent: f32,
 }
 
@@ -29,16 +31,7 @@ impl ResourceSnapshot {
 }
 
 pub fn sample(config: &Config) -> Result<ResourceSnapshot, ResourcePressureError> {
-    let load = fs::read_to_string("/proc/loadavg")?;
-    let load1 = load
-        .split_whitespace()
-        .next()
-        .and_then(|v| v.parse::<f32>().ok())
-        .ok_or(ResourcePressureError::Parse)?;
-    let cpus = std::thread::available_parallelism()
-        .map(|v| v.get())
-        .unwrap_or(1) as f32;
-    let cpu_percent = ((load1 / cpus) * 100.0).clamp(0.0, 100.0);
+    let cpu_percent = sample_cpu_percent()?;
 
     let meminfo = fs::read_to_string("/proc/meminfo")?;
     let mut total = None;
@@ -64,34 +57,96 @@ pub fn sample(config: &Config) -> Result<ResourceSnapshot, ResourcePressureError
         100.0
     };
 
-    let path = Path::new(&config.state_dir);
-    let output = Command::new("df")
-        .arg("-P")
-        .arg(path)
-        .output()
-        .map_err(|e| ResourcePressureError::Disk {
-            path: path.display().to_string(),
-            detail: e.to_string(),
-        })?;
-    if !output.status.success() {
-        return Err(ResourcePressureError::Disk {
-            path: path.display().to_string(),
-            detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
-    }
-    let disk_percent = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .nth(1)
-        .and_then(|line| line.split_whitespace().nth(4))
-        .and_then(|v| v.strip_suffix('%'))
-        .and_then(|v| v.parse::<f32>().ok())
-        .ok_or(ResourcePressureError::Parse)?;
+    let disk_percent = sample_disk_percent(config)?;
 
     Ok(ResourceSnapshot {
         cpu_percent,
         memory_percent,
         disk_percent,
     })
+}
+
+
+fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
+    fn read_total_idle() -> Result<(u64, u64), ResourcePressureError> {
+        let stat = fs::read_to_string("/proc/stat")?;
+        let line = stat
+            .lines()
+            .find(|line| line.starts_with("cpu "))
+            .ok_or(ResourcePressureError::Parse)?;
+        let mut fields = line.split_whitespace().skip(1).filter_map(|v| v.parse::<u64>().ok());
+        let user = fields.next().ok_or(ResourcePressureError::Parse)?;
+        let nice = fields.next().ok_or(ResourcePressureError::Parse)?;
+        let system = fields.next().ok_or(ResourcePressureError::Parse)?;
+        let idle = fields.next().ok_or(ResourcePressureError::Parse)?;
+        let iowait = fields.next().unwrap_or(0);
+        let irq = fields.next().unwrap_or(0);
+        let softirq = fields.next().unwrap_or(0);
+        let steal = fields.next().unwrap_or(0);
+        let total = user
+            .saturating_add(nice)
+            .saturating_add(system)
+            .saturating_add(idle)
+            .saturating_add(iowait)
+            .saturating_add(irq)
+            .saturating_add(softirq)
+            .saturating_add(steal);
+        let idle = idle.saturating_add(iowait);
+        Ok((total, idle))
+    }
+
+    let (total_a, idle_a) = read_total_idle()?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let (total_b, idle_b) = read_total_idle()?;
+    let total_delta = total_b.saturating_sub(total_a);
+    let idle_delta = idle_b.saturating_sub(idle_a);
+    if total_delta == 0 {
+        return Ok(0.0);
+    }
+    Ok(((total_delta.saturating_sub(idle_delta) as f32 / total_delta as f32) * 100.0)
+        .clamp(0.0, 100.0))
+}
+
+fn sample_disk_percent(config: &Config) -> Result<f32, ResourcePressureError> {
+    let mut max_usage = 0.0_f32;
+    let mut found = false;
+    for raw_path in config.resource_pressure_paths.split(';') {
+        let raw_path = raw_path.trim();
+        if raw_path.is_empty() {
+            continue;
+        }
+        let path = Path::new(raw_path);
+        if !path.exists() {
+            continue;
+        }
+        found = true;
+        let output = Command::new("df")
+            .arg("-P")
+            .arg(path)
+            .output()
+            .map_err(|e| ResourcePressureError::Disk {
+                path: path.display().to_string(),
+                detail: e.to_string(),
+            })?;
+        if !output.status.success() {
+            return Err(ResourcePressureError::Disk {
+                path: path.display().to_string(),
+                detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+        let usage = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .nth(1)
+            .and_then(|line| line.split_whitespace().nth(4))
+            .and_then(|v| v.strip_suffix('%'))
+            .and_then(|v| v.parse::<f32>().ok())
+            .ok_or(ResourcePressureError::Parse)?;
+        max_usage = max_usage.max(usage);
+    }
+    if !found {
+        return Err(ResourcePressureError::Parse);
+    }
+    Ok(max_usage)
 }
 
 #[cfg(test)]

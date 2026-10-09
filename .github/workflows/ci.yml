@@ -2133,10 +2133,21 @@ jobs:
           hadolint --no-color "$adapted"
           context="$RUNNER_TEMP/premade-runner-context"
           rm -rf "$context"
-          mkdir -p "$context/crates" "$context/docker/runner"
-          printf '%s\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]' > "$context/Cargo.toml"
-          cp crates/gitrun-setup/src/runner-bootstrap.lock "$context/Cargo.lock"
-          cp -a crates/gitrun-core crates/gitrun-exe crates/gitrun-gsr "$context/crates/"
+          mkdir -p "$context/docker/runner"
+          while IFS= read -r target; do
+            case "$target" in
+              Cargo.toml)
+                printf '%s\\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]' > "$context/Cargo.toml"
+                ;;
+              Cargo.lock)
+                cp crates/gitrun-setup/src/runner-bootstrap.lock "$context/Cargo.lock"
+                ;;
+              *)
+                mkdir -p "$context/$(dirname "$target")"
+                cp "$target" "$context/$target"
+                ;;
+            esac
+          done < <(awk '/RUNNER_BUILD_FILES:/ { inside=1; next } inside && /^\\];/ { exit } inside && /^[[:space:]]*\\("/ { path=$0; sub(/^[[:space:]]*\\("/, "", path); sub(/".*/, "", path); print path }' crates/gitrun-setup/src/resources.rs)
           cp docker/runner/entrypoint.sh "$context/docker/runner/entrypoint.sh"
           cp "$adapted" "$context/Dockerfile"
           {

@@ -87,7 +87,7 @@ impl PremadeDockerfile {
 }
 
 pub const CANONICAL_PREMADE_RUNNER_REPOSITORY: &str = "Vider06/GitRun";
-pub const CANONICAL_PREMADE_RUNNER_REF: &str = "8c12be2732ce8769b535394fc896c76d99d28472";
+pub const CANONICAL_PREMADE_RUNNER_REF: &str = "8c12be2732ce8769b535394fc896c76d99d28472"; // DevSkim: ignore DS173237 because this is a public immutable Git commit SHA, not a secret.
 pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "Core/Dockers/runners/linux-x86_64/Dockerfile";
 
 pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {

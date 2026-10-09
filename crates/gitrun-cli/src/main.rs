@@ -1843,6 +1843,8 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
         }
     }
 
+    let config = load_config()?;
+    let _gtuu_lock = gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = latest_manifest(&repository)?;
     if let Some(image) = &manifest.runner_image {

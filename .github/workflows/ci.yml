@@ -2131,12 +2131,20 @@ jobs:
           grep -Fq 'COPY crates/gitrun-gsr ./crates/gitrun-gsr' "$adapted"
           hadolint --no-color "$premade"
           hadolint --no-color "$adapted"
+          context="$RUNNER_TEMP/premade-runner-context"
+          rm -rf "$context"
+          mkdir -p "$context/crates" "$context/docker/runner"
+          printf '%s\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]' > "$context/Cargo.toml"
+          cp crates/gitrun-setup/src/runner-bootstrap.lock "$context/Cargo.lock"
+          cp -a crates/gitrun-core crates/gitrun-exe crates/gitrun-gsr "$context/crates/"
+          cp docker/runner/entrypoint.sh "$context/docker/runner/entrypoint.sh"
+          cp "$adapted" "$context/Dockerfile"
           {
             echo "### Installer Dockerfile source"
             echo
             echo "- Fetched the exact immutable Premade Dockerfile pinned by gitrun-updater."
-            echo "- Checked the full-workspace marker and the minimal-context adaptation required by gitrun-setup."
-            echo "- Linted both source and adapted Dockerfiles. The image build below still builds repository Dockerfiles, not this generated installer context."
+            echo "- Applied the same workspace-copy adaptation as gitrun-setup."
+            echo "- Prepared the minimal three-crate workspace and pinned bootstrap lockfile for the actual image build below."
             echo
           } | ci_sum
       - name: Validate Compose and lint Dockerfiles
@@ -2157,7 +2165,7 @@ jobs:
       - name: Build images
         env:
           MANAGER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-manager-rs-v11-${{ hashFiles('docker/manager-rs/Dockerfile', 'docker/manager-rs/entrypoint.sh', 'Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
-          RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v11-${{ hashFiles('docker/runner/Dockerfile', 'docker/runner/entrypoint.sh', 'Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
+          RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v11-${{ hashFiles('docker/runner/Dockerfile', 'docker/runner/entrypoint.sh', 'crates/gitrun-updater/src/lib.rs', 'crates/gitrun-setup/src/resources.rs', 'crates/gitrun-setup/src/runner-bootstrap.lock', 'Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           test -S /var/run/docker.sock
@@ -2173,13 +2181,14 @@ jobs:
               -t gitrun-manager-rs:ci .
           }
           runner_img() {
+            test -f "$RUNNER_TEMP/premade-runner-context/Dockerfile"
             docker buildx build \
               --progress=plain \
               --network=host \
               --cache-from "type=gha,scope=${RUNNER_CACHE_SCOPE},version=2,timeout=20m" \
               --cache-to "type=gha,scope=${RUNNER_CACHE_SCOPE},mode=max,version=2,timeout=20m,ignore-error=true" \
-              -f docker/runner/Dockerfile \
-              -t gitrun-runner:ci .
+              -f "$RUNNER_TEMP/premade-runner-context/Dockerfile" \
+              -t gitrun-runner:ci "$RUNNER_TEMP/premade-runner-context"
           }
           manager_rc=0
           runner_rc=0

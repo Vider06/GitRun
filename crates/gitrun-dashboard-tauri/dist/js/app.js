@@ -96,7 +96,7 @@ async function renderRecovery() {
   const generation = window.__gitrunNavigationGeneration;
   renderLoading("Collecting recovery diagnostics…");
   let report;
-  try { report = await invoke("get_dashboard_health"); }
+  try { report = await invoke("get_dashboard_health", {forceRefresh:Boolean(window.__gitrunForceRefresh)}); }
   catch (error) { if (generation !== window.__gitrunNavigationGeneration) return; content.innerHTML = errorView(error); return; }
   if (generation !== window.__gitrunNavigationGeneration) return;
   const checks = report.checks || [];

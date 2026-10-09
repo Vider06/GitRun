@@ -1,5 +1,6 @@
 fn main() {
-    let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let workspace_root =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let version_file = workspace_root.join("version.txt");
     println!("cargo:rerun-if-changed={}", version_file.display());
 

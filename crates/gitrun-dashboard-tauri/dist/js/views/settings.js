@@ -53,7 +53,7 @@ export async function renderGeneral() {
       ephemeral: document.getElementById("runner-ephemeral").checked,
       runner_disable_update: document.getElementById("runner-disable-update").checked
     };
-    try { await invoke("save_config", {updated:next}); toast("Capacity settings saved."); }
+    try { await invoke("save_config", {updated:next}); window.dispatchEvent(new Event("gitrun:config-saved")); toast("Capacity settings saved."); }
     catch (error) { toast("Could not save capacity settings: " + error, "error"); }
   });
   document.getElementById("save-general").addEventListener("click", async () => {
@@ -65,7 +65,7 @@ export async function renderGeneral() {
       toast("Check the numeric values: runner limits must be valid and minimum cannot exceed maximum.", "warning"); return;
     }
     const next = {...config, min_runners:min, max_runners:max, poll_interval:poll, idle_timeout:idle, auto_container_update:document.getElementById("auto-update").checked, container_update_time:document.getElementById("update-time").value || "03:00", auto_container_recovery:document.getElementById("auto-recovery").checked};
-    try { await invoke("save_config", {updated:next}); toast("General settings saved."); }
+    try { await invoke("save_config", {updated:next}); window.dispatchEvent(new Event("gitrun:config-saved")); toast("General settings saved."); }
     catch (error) { toast("Could not save settings: " + error, "error"); }
   });
   document.getElementById("run-health-check").addEventListener("click", async () => {

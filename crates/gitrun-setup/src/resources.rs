@@ -39,6 +39,21 @@ fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
     Ok(adapted)
 }
 
+/// Resolve an official, compiled-in runner profile. Arbitrary remote Dockerfiles
+/// are never executed by the privileged bootstrap path.
+pub(crate) fn runner_dockerfile_for_profile(profile: &str) -> Result<String, SetupError> {
+    match profile {
+        "minimum" => Ok(include_str!(
+            "../../../Core/Dockers/runners/linux-x86_64/minimum/Dockerfile"
+        )
+        .to_owned()),
+        "workbench" => runner_dockerfile_for_bootstrap(),
+        _ => Err(SetupError::Command(format!(
+            "unsupported runner profile: {profile}"
+        ))),
+    }
+}
+
 pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/entrypoint.sh");
 
 pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
@@ -207,6 +222,17 @@ mod tests {
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
         assert!(!dockerfile.contains("COPY crates ./crates"));
         assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
+    }
+
+    #[test]
+    fn built_in_runner_profiles_keep_gsr_mandatory() {
+        let minimum = runner_dockerfile_for_profile("minimum").unwrap();
+        let workbench = runner_dockerfile_for_profile("workbench").unwrap();
+        for dockerfile in [&minimum, &workbench] {
+            assert!(dockerfile.contains("gitrun-gsr-agent"));
+            assert!(dockerfile.contains("GITRUN_GSR_COMMAND_POLICY_ENABLED=true"));
+            assert!(dockerfile.contains("GITRUN_GSR_DOCKER_SOCKET_HARDENING=true"));
+        }
     }
 
     #[test]

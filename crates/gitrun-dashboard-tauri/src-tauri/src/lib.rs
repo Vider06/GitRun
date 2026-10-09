@@ -2377,6 +2377,51 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn setup_request_is_created_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-request-permissions-{}-{nonce}.conf",
+            std::process::id()
+        ));
+
+        write_setup_request(&path, "GITHUB_TOKEN=test-token\n").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "GITHUB_TOKEN=test-token\n"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn setup_request_does_not_remove_preexisting_file_on_create_new_failure() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-request-existing-{}-{nonce}.conf",
+            std::process::id()
+        ));
+        std::fs::write(&path, "existing-file\n").unwrap();
+
+        assert!(write_setup_request(&path, "replacement\n").is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "existing-file\n"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn setup_progress_marker_is_parsed() {
         let parsed =

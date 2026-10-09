@@ -875,7 +875,7 @@ fn dashboard_config_cache_key() -> u64 {
         .collect::<Vec<_>>();
     variables.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     variables.hash(&mut hasher);
-    std::env::var("GITHUB_TOKEN")
+    std::env::var_os("GITHUB_TOKEN")
         .unwrap_or_default()
         .hash(&mut hasher);
 
@@ -886,8 +886,8 @@ fn dashboard_config_cache_key() -> u64 {
             contents.hash(&mut hasher);
         }
     }
-    let private_key_path = std::env::var("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")
-        .ok()
+    let private_key_path = std::env::var_os("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")
+        .map(std::path::PathBuf::from)
         .or_else(|| {
             config_path
                 .as_ref()
@@ -896,10 +896,10 @@ fn dashboard_config_cache_key() -> u64 {
                     contents.lines().find_map(|line| {
                         let (key, value) = line.trim().split_once('=')?;
                         (key.trim() == "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")
-                            .then(|| value.trim().trim_matches('"').trim_matches('\'').to_owned())
+                            .then(|| std::path::PathBuf::from(value.trim().trim_matches('"').trim_matches('\'')))
                     })
                 })
-                .filter(|path| !path.is_empty())
+                .filter(|path| !path.as_os_str().is_empty())
         });
     if let Some(key_path) = private_key_path {
         if let Ok(contents) = std::fs::read(key_path) {

@@ -1,4 +1,4 @@
-# VM-backed runners — 1.3.0
+# VM-backed runners — 1.4.4
 
 GitRun can route dynamic runner containers to a Docker daemon running inside a configured VM. This is primarily intended for Windows runner workloads and for Linux workloads that need a VM boundary.
 

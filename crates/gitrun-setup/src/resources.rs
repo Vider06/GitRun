@@ -27,6 +27,17 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
     source
 }
 
+
+/// Resolve an official, compiled-in runner profile. Arbitrary remote Dockerfiles
+/// are never executed by the privileged bootstrap path.
+pub(crate) fn runner_dockerfile_for_profile(profile: &str) -> String {
+    match profile {
+        "minimum" => include_str!("../../../Core/Dockers/runners/linux-x86_64/minimum/Dockerfile").to_owned(),
+        "workbench" => runner_dockerfile_for_bootstrap(),
+        _ => panic!("unsupported runner profile reached the resource resolver"),
+    }
+}
+
 pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/entrypoint.sh");
 
 pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");

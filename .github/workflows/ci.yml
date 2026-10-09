@@ -2109,6 +2109,36 @@ jobs:
           cache-dir: .gitrun-ci/docker-cache/runner
           dockerfile: docker/runner/Dockerfile
           skip-extraction: ${{ steps.c_dmounts.outputs.cache-hit == 'true' }}
+      - name: Verify installer-pinned Premade runner Dockerfile
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          premade_ref="$(sed -n 's/^pub const CANONICAL_PREMADE_RUNNER_REF: &str = "\([0-9a-f]\{40\}\)";.*/\1/p' crates/gitrun-updater/src/lib.rs)"
+          premade_path="$(sed -n 's/^pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "\([^"]*\)";.*/\1/p' crates/gitrun-updater/src/lib.rs)"
+          test -n "$premade_ref"
+          test -n "$premade_path"
+          premade="$RUNNER_TEMP/premade-runner.Dockerfile"
+          adapted="$RUNNER_TEMP/premade-runner-adapted.Dockerfile"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://raw.githubusercontent.com/Vider06/GitRun/$premade_ref/$premade_path" \
+            -o "$premade"
+          grep -Fq 'COPY Cargo.toml Cargo.lock ./' "$premade"
+          grep -Fq 'COPY crates ./crates' "$premade"
+          grep -Fq 'ENTRYPOINT ["/entrypoint.sh"]' "$premade"
+          sed '/^COPY Cargo.toml Cargo.lock \.\/$/ { N; s|COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates|COPY Cargo.toml Cargo.lock ./\nCOPY crates/gitrun-core ./crates/gitrun-core\nCOPY crates/gitrun-exe ./crates/gitrun-exe\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr|; }' "$premade" > "$adapted"
+          ! grep -Fq 'COPY crates ./crates' "$adapted"
+          grep -Fq 'COPY crates/gitrun-core ./crates/gitrun-core' "$adapted"
+          grep -Fq 'COPY crates/gitrun-exe ./crates/gitrun-exe' "$adapted"
+          grep -Fq 'COPY crates/gitrun-gsr ./crates/gitrun-gsr' "$adapted"
+          hadolint --no-color "$premade"
+          hadolint --no-color "$adapted"
+          {
+            echo "### Installer Dockerfile source"
+            echo
+            echo "- Fetched the exact immutable Premade Dockerfile pinned by gitrun-updater."
+            echo "- Checked the full-workspace marker and the minimal-context adaptation required by gitrun-setup."
+            echo "- Linted both source and adapted Dockerfiles. The image build below still builds repository Dockerfiles, not this generated installer context."
+            echo
+          } | ci_sum
       - name: Validate Compose and lint Dockerfiles
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

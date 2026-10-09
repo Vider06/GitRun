@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-dashboard-tauri"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "gitrun-core",
  "gitrun-gsr",

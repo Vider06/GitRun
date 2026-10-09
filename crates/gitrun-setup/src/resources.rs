@@ -232,6 +232,46 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
 mod tests {
     use super::*;
 
+    fn assert_public_modules_are_packaged(paths: &[&str], crate_name: &str, lib_source: &str) {
+        for declaration in lib_source.lines().map(str::trim) {
+            let Some(module) = declaration
+                .strip_prefix("pub mod ")
+                .and_then(|value| value.strip_suffix(';'))
+            else {
+                continue;
+            };
+            let expected = format!("crates/{crate_name}/src/{module}.rs");
+            assert!(
+                paths.iter().any(|path| *path == expected),
+                "runner build resources are missing {expected}, declared by {crate_name}/src/lib.rs"
+            );
+        }
+    }
+
+    #[test]
+    fn runner_build_resources_include_all_public_workspace_modules() {
+        let paths: Vec<_> = RUNNER_BUILD_FILES
+            .iter()
+            .map(|(path, _, _)| *path)
+            .collect();
+
+        assert_public_modules_are_packaged(
+            &paths,
+            "gitrun-core",
+            include_str!("../../../crates/gitrun-core/src/lib.rs"),
+        );
+        assert_public_modules_are_packaged(
+            &paths,
+            "gitrun-exe",
+            include_str!("../../../crates/gitrun-exe/src/lib.rs"),
+        );
+        assert_public_modules_are_packaged(
+            &paths,
+            "gitrun-gsr",
+            include_str!("../../../crates/gitrun-gsr/src/lib.rs"),
+        );
+    }
+
     #[test]
     fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
         let dockerfile =

@@ -5,7 +5,7 @@ use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
     fetch_manifest, latest_manifest, pin_runner_image, rollback, rollback_installed_update,
     update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
-    InstalledBackupRecord, UpdatePaths,
+    InstalledBackupRecord, UpdateError, UpdatePaths,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -221,10 +221,86 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
     .collect()
 }
 
+fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let repository = std::env::var("GITRUN_REPOSITORY")
+        .unwrap_or_else(|_| "Vider06/GitRun".into());
+    let manifest_url = args.get(2).filter(|value| !value.starts_with("--"));
+    let manifest = match manifest_url {
+        Some(url) => fetch_manifest(url)?,
+        None => latest_manifest(&repository)?,
+    };
+
+    let current = current_version();
+    let target = target_triple()?;
+    println!("GitRun update check");
+    println!("Current version: {current}");
+    println!("Latest signed release manifest: {}", manifest.version);
+
+    match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
+        Ok(plan) => {
+            println!("Update available: {} -> {}", plan.current_version, plan.target_version);
+            println!("Target: {}", plan.target);
+            println!("Artifact: {}", plan.artifact);
+            for dependency in &plan.dependencies {
+                println!(
+                    "{}: {} ({})",
+                    dependency.name,
+                    dependency.installed_version.as_deref().unwrap_or("missing"),
+                    dependency.action
+                );
+            }
+        }
+        Err(UpdateError::NotNewer) => {
+            println!("No update available; GitRun is up to date ({current}).");
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    if let Some(image) = &manifest.runner_image {
+        println!("Runner image target: {}@{}", image.reference, image.digest);
+        let inspection = std::process::Command::new("docker")
+            .args([
+                "image",
+                "inspect",
+                "--format",
+                "{{json .RepoDigests}}",
+                &image.reference,
+            ])
+            .output();
+        match inspection {
+            Ok(output) if output.status.success() => {
+                let digests = String::from_utf8_lossy(&output.stdout);
+                if digests.contains(&image.digest) {
+                    println!("Runner image is up to date (digest verified).");
+                } else {
+                    println!("Runner image update available: configured local image does not match the release digest.");
+                }
+            }
+            Ok(output) => {
+                let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                println!(
+                    "Runner image status unknown: {}",
+                    if detail.is_empty() { "Docker image inspect failed" } else { detail.as_str() }
+                );
+            }
+            Err(error) => println!("Runner image status unknown: Docker is unavailable ({error})."),
+        }
+    } else {
+        println!("Runner image: this release manifest does not declare a runner image.");
+    }
+
+    println!("Read-only check complete; no files, dependencies, runner images or services were changed.");
+    Ok(())
+}
+
 fn update_command(
     args: &[String],
     presenter: &mut presenter::CatPresenter,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if args.get(1).is_some_and(|argument| argument == "--check") {
+        return update_check_command(args);
+    }
+
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = if let Some(url) = args.get(1) {
         fetch_manifest(url)?
@@ -1075,7 +1151,8 @@ fn main() {
         Command::Update {
             manifest_url,
             only_containers,
-        } => run_update(manifest_url.as_deref(), only_containers, &mut presenter),
+            check,
+        } => run_update(manifest_url.as_deref(), only_containers, check, &mut presenter),
         Command::Scheduler => run_scheduler(),
         Command::Dashboard => {
             // The Tauri runtime may write native GTK/EGL diagnostics directly to
@@ -1204,10 +1281,13 @@ enum Command {
     Doctor,
     /// Check for and apply GitRun updates.
     Update {
+        /// Check the current release and runner image without downloading or applying anything.
+        #[arg(long, conflicts_with = "only_containers")]
+        check: bool,
         /// Update only the permanent runner pool without replacing GitRun itself.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "check")]
         only_containers: bool,
-        /// Optional manifest URL to check instead of the latest GitHub release.
+        /// Optional manifest URL to inspect instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
     /// Internal privileged uninstall entry point.
@@ -1743,14 +1823,62 @@ fn run_doctor() -> i32 {
     }
 }
 
+fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
+    for (key, value) in update_signing_environment() {
+        if std::env::var_os(&key).is_none() {
+            std::env::set_var(key, value);
+        }
+    }
+
+    let repository = std::env::var("GITRUN_REPOSITORY")
+        .unwrap_or_else(|_| "Vider06/GitRun".into());
+    let manifest = latest_manifest(&repository)?;
+    if let Some(image) = &manifest.runner_image {
+        let config_file = persistent_config_path().ok_or(
+            "GitRun config path is unavailable; cannot safely pin the verified runner image",
+        )?;
+        update_runner_image(image)?;
+        pin_runner_image(&config_file, image)?;
+        println!("Verified runner image pinned: {}@{}", image.reference, image.digest);
+    } else {
+        println!("Release manifest does not declare a runner image; using the currently configured image.");
+    }
+
+    // GTUU compares container image IDs and skips busy permanent runners. Those
+    // runners remain intact and are reconciled on a later GTUU run.
+    Ok(gitrun_scheduler::run_gtuu_once()?)
+}
+
 fn run_update(
     manifest_url: Option<&str>,
     only_containers: bool,
+    check_only: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
+    if check_only {
+        // Signature verification reads these values from the process environment.
+        // Resolve the trusted settings without elevating or writing to the host.
+        for (key, value) in update_signing_environment() {
+            if std::env::var_os(&key).is_none() {
+                std::env::set_var(key, value);
+            }
+        }
+        let args: Vec<String> = match manifest_url {
+            Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
+            None => vec!["update".to_owned(), "--check".to_owned()],
+        };
+        return match update_check_command(&args) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("GitRun update check: FAIL — {error}");
+                1
+            }
+        };
+    }
+
     if only_containers {
         presenter.transition(presenter::ValidationState::Running);
-        return match gitrun_scheduler::run_gtuu_once() {
+        return match run_runner_only_update() {
             Ok(count) => {
                 println!("GitRun GTUU: updated {count} permanent runner(s)");
                 0

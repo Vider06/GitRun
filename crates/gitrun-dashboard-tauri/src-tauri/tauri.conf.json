@@ -13,11 +13,11 @@
         "title": "GitRun",
         "width": 1280,
         "height": 820,
-        "minWidth": 960,
-        "minHeight": 640,
+        "minWidth": 720,
+        "minHeight": 560,
         "resizable": true,
         "fullscreen": false,
-        "backgroundColor": "#0f1115"
+        "backgroundColor": "#0b0d12"
       }
     ],
     "security": {

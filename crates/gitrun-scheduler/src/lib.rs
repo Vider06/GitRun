@@ -1230,12 +1230,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }
-fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
-    let config = config.clone();
-    let auto_update = config.auto_container_update;
-    let update_time = config.container_update_time.clone();
-    let use_local_time = config.gtuu_schedule_timezone == "local";
-    let state_dir = PathBuf::from(&config.state_dir);
+fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) {
     let stopping = stopping.clone();
 
     std::thread::Builder::new()
@@ -1243,14 +1238,27 @@ fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
         .spawn(move || {
             let mut last_run_date: Option<String> = None;
             while !stopping.load(Ordering::Relaxed) {
-                let now = chrono_like_now(use_local_time);
-                if auto_update
-                    && now.time_hhmm == update_time
+                // The dashboard can change the GTUU schedule while the
+                // scheduler is running. Reload local configuration every
+                // tick so those settings apply without a service restart;
+                // this is a file read, not a GitHub API poll.
+                let config = match load_config() {
+                    Ok(config) => config,
+                    Err(error) => {
+                        eprintln!("gitrun-autoscaler: GTUU schedule config reload failed: {error}");
+                        std::thread::sleep(Duration::from_secs(15));
+                        continue;
+                    }
+                };
+                let now = chrono_like_now(config.gtuu_schedule_timezone == "local");
+                let scheduled_time = config.container_update_time.clone();
+                if config.auto_container_update
+                    && now.time_hhmm == scheduled_time
                     && last_run_date.as_deref() != Some(&now.date)
                 {
                     println!("gitrun-autoscaler: GTUU scheduled run starting");
                     let mut completed = false;
-                    match GtuuLock::acquire(&state_dir) {
+                    match GtuuLock::acquire(&PathBuf::from(&config.state_dir)) {
                         Ok(_lock) => match run_gtuu_once() {
                             Ok(count) => {
                                 println!(
@@ -1271,7 +1279,6 @@ fn spawn_gtuu_thread(config: &Config, stopping: &Arc<AtomicBool>) {
         })
         .expect("failed to spawn GTUU thread");
 }
-
 /// Spawns GSR's Layer 2 (external, host-side) enforcement poll loop — see
 /// `crate::gsr_poll` for the full design and
 /// `gitrun_gsr::agent` for Layer 1 (internal, preventive). Started only

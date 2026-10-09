@@ -351,10 +351,18 @@ fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), Stri
         Ok(())
     })();
 
-    if result.is_err() {
-        let _ = std::fs::remove_file(path);
+    match result {
+        Ok(()) => Ok(()),
+        Err(write_error) => match std::fs::remove_file(path) {
+            Ok(()) => Err(write_error),
+            Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => {
+                Err(write_error)
+            }
+            Err(cleanup_error) => Err(format!(
+                "{write_error}; additionally unable to remove the partial setup request file: {cleanup_error}"
+            )),
+        },
     }
-    result
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -378,7 +386,7 @@ fn emit_first_setup_event(
     done: bool,
     success: bool,
 ) {
-    let _ = app.emit(
+    if let Err(error) = app.emit(
         FIRST_SETUP_EVENT,
         FirstSetupEvent {
             phase: phase.min(FIRST_SETUP_TOTAL),
@@ -388,7 +396,9 @@ fn emit_first_setup_event(
             done,
             success,
         },
-    );
+    ) {
+        eprintln!("GitRun dashboard: unable to emit setup progress event: {error}");
+    }
 }
 
 fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
@@ -695,7 +705,22 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
             &[operation.to_owned(), path.to_string_lossy().into_owned()],
         );
 
-        let _ = std::fs::remove_file(&path);
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                let warning = format!(
+                    "WARNING: setup finished running, but the temporary request file containing credentials could not be removed: {error}"
+                );
+                eprintln!("GitRun dashboard: {warning}");
+                emit_first_setup_event(
+                    &app_for_setup,
+                    0,
+                    warning,
+                    "stderr",
+                    false,
+                    false,
+                );
+            }
+        }
 
         match result {
             Ok(status) if status.success() => {

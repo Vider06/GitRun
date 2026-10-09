@@ -135,7 +135,7 @@ fn running_as_root() -> bool {
 }
 
 const DEFAULT_UPDATE_PUBLIC_KEY_HEX: &str =
-    "11cc9eaf0147dada407ffd3497c2cebce17d195e21c06030c1e2e1dc688f41f1";
+    "11cc9eaf0147dada407ffd3497c2cebce17d195e21c06030c1e2e1dc688f41f1"; // DevSkim: ignore DS173237 because this is a public Ed25519 verification key, not a secret.
 const DEFAULT_UPDATE_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
 
 fn update_signing_environment() -> Vec<(String, String)> {

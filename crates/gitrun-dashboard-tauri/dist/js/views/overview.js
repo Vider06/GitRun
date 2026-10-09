@@ -22,8 +22,11 @@ export async function renderOverview(navigate, cachedOverview = null, background
     invoke("get_host_resource_snapshot", {forceRefresh}).catch((error) => ({sampled_at:0,stale:true,error:String(error)}))
   ]);
   let timeoutId;
+  // Static watchdog only: the callback, delay and resolved value are
+  // constants; no HTTP response, repository name or user-controlled string
+  // is evaluated or passed to the timer.
   const timeoutPromise = new Promise((resolve) => {
-    timeoutId = setTimeout(() => resolve(null), 1200);
+    timeoutId = window.setTimeout(() => resolve(null), 1200);
   });
   const snapshots = await Promise.race([snapshotPromise, timeoutPromise]);
   clearTimeout(timeoutId);

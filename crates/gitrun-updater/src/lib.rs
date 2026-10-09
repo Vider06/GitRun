@@ -65,12 +65,9 @@ pub struct PremadeDockerfile {
 impl PremadeDockerfile {
     pub fn validate(&self) -> Result<(), UpdateError> {
         validate_repository(&self.repository)?;
-        if self.reference.trim().is_empty()
-            || self.reference.contains(['\\', '\n', '\r'])
-            || self.reference.chars().any(char::is_whitespace)
-        {
+        if !is_full_git_commit(&self.reference) {
             return Err(UpdateError::InvalidManifest(
-                "invalid Premade Dockerfile reference".into(),
+                "Premade Dockerfile reference must be a full immutable Git commit SHA".into(),
             ));
         }
         if self.path.trim().is_empty()
@@ -90,7 +87,7 @@ impl PremadeDockerfile {
 }
 
 pub const CANONICAL_PREMADE_RUNNER_REPOSITORY: &str = "Vider06/GitRun";
-pub const CANONICAL_PREMADE_RUNNER_REF: &str = "feat/gitrun-premade";
+pub const CANONICAL_PREMADE_RUNNER_REF: &str = "8c12be2732ce8769b535394fc896c76d99d28472";
 pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "Core/Dockers/runners/linux-x86_64/Dockerfile";
 
 pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {

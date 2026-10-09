@@ -2125,12 +2125,21 @@ jobs:
           grep -Fq 'COPY crates ./crates' "$premade"
           grep -Fq 'ENTRYPOINT ["/entrypoint.sh"]' "$premade"
           sed '/^COPY Cargo.toml Cargo.lock \.\/$/ { N; s|COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates|COPY Cargo.toml Cargo.lock ./\nCOPY crates/gitrun-core ./crates/gitrun-core\nCOPY crates/gitrun-exe ./crates/gitrun-exe\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr|; }' "$premade" > "$adapted"
-          ! grep -Fq 'COPY crates ./crates' "$adapted"
+          if grep -Fq 'COPY crates ./crates' "$adapted"; then
+            echo "ERROR: adapted Dockerfile still copies the full crates workspace" >&2
+            exit 1
+          fi
           grep -Fq 'COPY crates/gitrun-core ./crates/gitrun-core' "$adapted"
           grep -Fq 'COPY crates/gitrun-exe ./crates/gitrun-exe' "$adapted"
           grep -Fq 'COPY crates/gitrun-gsr ./crates/gitrun-gsr' "$adapted"
-          hadolint --no-color "$premade"
-          hadolint --no-color "$adapted"
+          echo "Linting immutable installer-pinned Dockerfile: $premade_path@$premade_ref"
+          # This upstream Dockerfile intentionally keeps root as the entrypoint
+          # bootstrap user and follows Debian's pinned-bookworm security stream.
+          # Keep Hadolint errors fatal; advisory warnings must not block the
+          # functional build validation that follows.
+          hadolint --no-color --failure-threshold error "$premade"
+          echo "Linting setup-adapted installer Dockerfile"
+          hadolint --no-color --failure-threshold error "$adapted"
           context="$RUNNER_TEMP/premade-runner-context"
           rm -rf "$context"
           mkdir -p "$context/docker/runner"

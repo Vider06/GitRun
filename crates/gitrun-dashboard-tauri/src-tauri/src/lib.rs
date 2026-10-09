@@ -325,34 +325,30 @@ fn build_first_setup_auth(
 }
 
 fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), String> {
-    let result = (|| {
+    let mut created_file = false;
+    let result = (|| -> Result<(), String> {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::fs::OpenOptions;
-            use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
-
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(path)
-                .map_err(|e| e.to_string())?;
-            file.write_all(payload.as_bytes())
-                .map_err(|e| e.to_string())?;
-            file.sync_all().map_err(|e| e.to_string())?;
+            options.mode(0o600);
         }
 
-        #[cfg(not(unix))]
-        {
-            std::fs::write(path, payload.as_bytes()).map_err(|e| e.to_string())?;
-        }
-
+        let mut file = options.open(path).map_err(|e| e.to_string())?;
+        created_file = true;
+        file.write_all(payload.as_bytes())
+            .map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
         Ok(())
     })();
 
     match result {
         Ok(()) => Ok(()),
+        Err(write_error) if !created_file => Err(write_error),
         Err(write_error) => match std::fs::remove_file(path) {
             Ok(()) => Err(write_error),
             Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => {

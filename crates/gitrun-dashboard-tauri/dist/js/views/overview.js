@@ -1,19 +1,47 @@
 import { invoke, content, esc, heading, metric, panel, pill, empty, errorView, toast, setFooter } from "../lib.js";
 
-export async function renderOverview(navigate, cachedOverview = null) {
+export async function renderOverview(navigate, cachedOverview = null, backgroundRefresh = false) {
   const generation = window.__gitrunNavigationGeneration;
-  content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Reading the local control plane…</p></div>';
+  if (!backgroundRefresh) {
+    content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Reading the local control plane…</p></div>';
+  }
   let data, runnerSnapshot, activitySnapshot, resourceSnapshot;
   const forceRefresh = Boolean(window.__gitrunForceRefresh);
   try {
-    [data, runnerSnapshot, activitySnapshot, resourceSnapshot] = await Promise.all([
-      cachedOverview ? Promise.resolve(cachedOverview) : invoke("get_overview"),
-      invoke("get_runner_snapshot", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[String(error)]})),
-      invoke("get_repository_activity", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[String(error)]})),
-      invoke("get_host_resource_snapshot", {forceRefresh}).catch((error) => ({sampled_at:0,stale:true,error:String(error)}))
-    ]);
-  } catch (error) { if (generation !== window.__gitrunNavigationGeneration) return; content.innerHTML = errorView(error); return; }
+    data = cachedOverview || await invoke("get_overview");
+  } catch (error) {
+    if (generation !== window.__gitrunNavigationGeneration) return;
+    content.innerHTML = errorView(error);
+    return;
+  }
   if (generation !== window.__gitrunNavigationGeneration) return;
+
+  const snapshotPromise = Promise.all([
+    invoke("get_runner_snapshot", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[String(error)]})),
+    invoke("get_repository_activity", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[String(error)]})),
+    invoke("get_host_resource_snapshot", {forceRefresh}).catch((error) => ({sampled_at:0,stale:true,error:String(error)}))
+  ]);
+  let timeoutId;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve(null), 1200);
+  });
+  const snapshots = await Promise.race([snapshotPromise, timeoutPromise]);
+  clearTimeout(timeoutId);
+  if (generation !== window.__gitrunNavigationGeneration) return;
+  if (snapshots) {
+    [runnerSnapshot, activitySnapshot, resourceSnapshot] = snapshots;
+  } else {
+    // Render useful local/configuration data quickly; telemetry can arrive
+    // later without blocking the whole view on a slow GitHub endpoint.
+    runnerSnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[]};
+    activitySnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[]};
+    resourceSnapshot = {sampled_at:0,stale:true,error:"Resource sample is still loading."};
+    snapshotPromise.then(() => {
+      if (generation === window.__gitrunNavigationGeneration) {
+        void renderOverview(navigate, data, true);
+      }
+    }).catch(() => {});
+  }
   if (data.error) { content.innerHTML = errorView(data.error); return; }
   window.dispatchEvent(new CustomEvent("gitrun:mascot-state",{detail:data.recent_critical_events == null || !data.gsr_watching?"serious":Number(data.recent_critical_events)>0?"alert":"calm"}));
   const repos = Array.isArray(data.repositories) ? data.repositories : [];

@@ -459,26 +459,31 @@ pub fn bootstrap_linux_with_auth_and_profile(
     let installed = PathBuf::from("/usr/local/bin/gitrun");
     install_binary(app_binary, &installed, owner_uid)?;
 
-    setup_progress(7, "Enabling and starting the GitRun service");
-    run_command(Command::new("systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
-
-    setup_progress(8, "Finalizing desktop integration");
+    setup_progress(7, "Finalizing desktop integration");
     write_resource(
         Path::new("/usr/share/applications/gitrun.desktop"),
         "[Desktop Entry]\nType=Application\nName=GitRun\nComment=GitHub Actions runner control plane\nExec=/usr/bin/gitrun dashboard\nTerminal=false\nCategories=Development;System;\n",
         0o644,
     )?;
 
-    setup_progress(9, "Recording completed setup state");
+    // Mark the installation complete before starting the scheduler. The
+    // scheduler's recovery preflight requires this flag, so writing it only
+    // after systemctl reports the service active creates a bootstrap deadlock:
+    // the service cannot start until setup is complete, while setup waits for
+    // the service to start before declaring completion.
+    setup_progress(8, "Recording completed setup state");
     write_setup_flag()?;
     if !setup_flag_is_valid() {
         return Err(SetupError::Command(
             "setup completion flag was written but could not be verified".into(),
         ));
     }
+
+    setup_progress(9, "Enabling and starting the GitRun service");
+    run_command(Command::new("systemctl").args(["daemon-reload"]))?;
+    run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
+    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
+    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),

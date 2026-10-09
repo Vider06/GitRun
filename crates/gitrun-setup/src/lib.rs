@@ -337,7 +337,9 @@ pub fn bootstrap_linux_with_auth_and_profile(
     runner_profile: &str,
 ) -> Result<SetupReport, SetupError> {
     if !matches!(runner_profile, "minimum" | "workbench") {
-        return Err(SetupError::Command(format!("unsupported runner profile: {runner_profile}")));
+        return Err(SetupError::Command(format!(
+            "unsupported runner profile: {runner_profile}"
+        )));
     }
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err(SetupError::UnsupportedPlatform);
@@ -446,7 +448,10 @@ pub fn bootstrap_linux_with_auth_and_profile(
         add_user_to_docker_group(uid)?;
     }
 
-    setup_progress(5, &format!("Building gitrun-runner:latest ({runner_profile} profile)"));
+    setup_progress(
+        5,
+        &format!("Building gitrun-runner:latest ({runner_profile} profile)"),
+    );
     build_image(
         "gitrun-runner:latest",
         &root,

@@ -1,0 +1,22 @@
+{
+  "schema": "gitrun-runner-profiles/v1",
+  "platform": "linux/amd64",
+  "profiles": [
+    {
+      "id": "minimum",
+      "name": "Minimum",
+      "description": "Essential GitHub Actions runner with mandatory GSR; project toolchains are installed by workflows.",
+      "path": "Core/Dockers/runners/linux-x86_64/minimum/Dockerfile",
+      "gsrRequired": true,
+      "source": "official-premade"
+    },
+    {
+      "id": "workbench",
+      "name": "Workbench",
+      "description": "Preinstalled Rust, Docker CLI/Buildx/Compose, PowerShell, and common build dependencies with mandatory GSR.",
+      "path": "Core/Dockers/runners/linux-x86_64/workbench/Dockerfile",
+      "gsrRequired": true,
+      "source": "official-premade"
+    }
+  ]
+}

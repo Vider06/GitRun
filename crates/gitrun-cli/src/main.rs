@@ -1863,7 +1863,7 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
 
     // GTUU compares container image IDs and skips busy permanent runners. Those
     // runners remain intact and are reconciled on a later GTUU run.
-    Ok(gitrun_scheduler::run_gtuu_once()?)
+    gitrun_scheduler::run_gtuu_once()
 }
 
 fn run_update(

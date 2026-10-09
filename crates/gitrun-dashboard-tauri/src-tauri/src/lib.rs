@@ -877,13 +877,29 @@ fn dashboard_config_cache_key() -> u64 {
     variables.hash(&mut hasher);
     std::env::var("GITHUB_TOKEN").unwrap_or_default().hash(&mut hasher);
 
-    if let Some(path) = configured_config_path() {
+    let config_path = configured_config_path();
+    if let Some(path) = config_path.as_ref() {
         path.hash(&mut hasher);
-        if let Ok(contents) = std::fs::read(&path) {
+        if let Ok(contents) = std::fs::read(path) {
             contents.hash(&mut hasher);
         }
     }
-    if let Ok(key_path) = std::env::var("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH") {
+    let private_key_path = std::env::var("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")
+        .ok()
+        .or_else(|| {
+            config_path
+                .as_ref()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|contents| {
+                    contents.lines().find_map(|line| {
+                        let (key, value) = line.trim().split_once('=')?;
+                        (key.trim() == "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")
+                            .then(|| value.trim().trim_matches('"').trim_matches('\'').to_owned())
+                    })
+                })
+                .filter(|path| !path.is_empty())
+        });
+    if let Some(key_path) = private_key_path {
         if let Ok(contents) = std::fs::read(key_path) {
             contents.hash(&mut hasher);
         }

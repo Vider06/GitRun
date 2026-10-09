@@ -10,9 +10,9 @@
 //! infrastructure tool.
 
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
+use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
 use gitrun_setup::BootstrapAuth;
 use gitrun_vault::{Scope, Vault};
-use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -1421,7 +1421,10 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
             format!("Unable to read GitRun service journal: {detail}")
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).lines().map(str::to_owned).collect())
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect())
 }
 
 #[cfg(test)]
@@ -1432,7 +1435,10 @@ mod journal_log_tests {
     fn journal_units_are_allowlisted() {
         assert_eq!(journal_units("gsr").unwrap(), vec!["gitrun-gsr.service"]);
         assert_eq!(journal_units("scheduler").unwrap(), vec!["gitrun.service"]);
-        assert_eq!(journal_units("all").unwrap(), vec!["gitrun-gsr.service", "gitrun.service"]);
+        assert_eq!(
+            journal_units("all").unwrap(),
+            vec!["gitrun-gsr.service", "gitrun.service"]
+        );
         assert!(journal_units("arbitrary.service").is_err());
     }
 }

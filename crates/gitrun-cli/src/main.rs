@@ -1,7 +1,7 @@
 use clap::Parser;
 use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, Runner};
 use gitrun_setup::{
-    bootstrap_linux_with_auth, bootstrap_linux_with_auth_and_profile, prepare_directories,
+    bootstrap_linux_with_auth_and_profile, prepare_directories,
     BootstrapAuth,
 };
 use gitrun_updater::{

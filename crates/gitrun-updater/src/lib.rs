@@ -2146,7 +2146,7 @@ mod tests {
         assert!(content.contains("OTHER_SETTING=1"));
 
         let mismatched = RunnerImage {
-            reference: format!("ghcr.io/vider06/gitrun-runner@{}", format!("sha256:{}", "b".repeat(64))),
+            reference: format!("ghcr.io/vider06/gitrun-runner@sha256:{}", "b".repeat(64)),
             digest,
             minimum_version: "0.3.0".into(),
         };

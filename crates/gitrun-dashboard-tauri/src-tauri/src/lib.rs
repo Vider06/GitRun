@@ -870,8 +870,8 @@ fn dashboard_config_cache_key() -> u64 {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    let mut variables = std::env::vars()
-        .filter(|(key, _)| key.starts_with("GITRUN_"))
+    let mut variables = std::env::vars_os()
+        .filter(|(key, _)| key.to_string_lossy().starts_with("GITRUN_"))
         .collect::<Vec<_>>();
     variables.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     variables.hash(&mut hasher);

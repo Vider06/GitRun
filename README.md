@@ -10,6 +10,6 @@ Core/, Dockers/, VM-Images/, Workflows/, Testing/, and Other/ contain maintained
 
 ## Rules
 
-Premade must not contain the GitRun application workspace. Every artifact must document its purpose, inputs, outputs, security assumptions, versioning, and ownership. Docker builds use BuildKit/buildx. Artifact references must be explicit and reproducible.
+Every artifact must document its purpose, inputs, outputs, security assumptions, versioning, and ownership. Docker builds use BuildKit/buildx. Artifact references must be explicit and reproducible.
 
 The branch is not a source branch for the GitRun application and must not be merged into application branches.

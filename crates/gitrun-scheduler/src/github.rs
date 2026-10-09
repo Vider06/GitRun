@@ -66,6 +66,31 @@ struct RunnersResponse {
     runners: Vec<Runner>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RepositoryActivitySummary {
+    pub repository: String,
+    pub stars: u64,
+    pub forks: u64,
+    pub open_pull_requests: u64,
+    pub merged_pull_requests: u64,
+    pub pushed_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepositoryMetadataResponse {
+    #[serde(default)]
+    stargazers_count: u64,
+    #[serde(default)]
+    forks_count: u64,
+    pushed_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchCountResponse {
+    #[serde(default)]
+    total_count: u64,
+}
+
 #[derive(Debug, Deserialize)]
 struct RegistrationTokenResponse {
     token: String,
@@ -82,6 +107,20 @@ struct WorkflowRun {
     id: u64,
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    conclusion: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkflowRunSummary {
+    pub total: u32,
+    pub queued: u32,
+    pub in_progress: u32,
+    pub succeeded: u32,
+    pub failed: u32,
+    pub cancelled: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -387,6 +426,77 @@ impl GitHubClient {
         let response = self.request(reqwest::Method::POST, &url)?;
         let parsed: RegistrationTokenResponse = response.json()?;
         Ok(parsed.token)
+    }
+
+    /// Counts the most recent workflow runs by status. This is deliberately
+    /// labelled as workflow runs (not individual jobs) by the dashboard.
+    pub fn recent_workflow_run_summary(
+        &self,
+        repo: &str,
+        per_page: u32,
+    ) -> Result<WorkflowRunSummary> {
+        let (owner, name) = split_repo(repo)?;
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs?per_page={}",
+            encode_path_segment(owner),
+            encode_path_segment(name),
+            per_page.clamp(1, 100)
+        );
+        let parsed: WorkflowRunsResponse = self.request(reqwest::Method::GET, &url)?.json()?;
+        let mut summary = WorkflowRunSummary::default();
+        for run in parsed.workflow_runs {
+            summary.total += 1;
+            match run.status.to_ascii_lowercase().as_str() {
+                "queued" | "requested" | "waiting" => summary.queued += 1,
+                "in_progress" => summary.in_progress += 1,
+                "completed" => match run
+                    .conclusion
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "success" => summary.succeeded += 1,
+                    "failure" | "timed_out" | "startup_failure" => summary.failed += 1,
+                    "cancelled" | "action_required" | "stale" | "skipped" => summary.cancelled += 1,
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        Ok(summary)
+    }
+
+    /// Fetches repository metadata and pull-request totals for dashboard use.
+    /// The dashboard caches these results for several minutes so navigation
+    /// does not turn into repeated GitHub API polling.
+    pub fn repository_activity_summary(&self, repo: &str) -> Result<RepositoryActivitySummary> {
+        let (owner, name) = split_repo(repo)?;
+        let owner_segment = encode_path_segment(owner);
+        let name_segment = encode_path_segment(name);
+        let metadata_url = format!("{API_BASE}/repos/{owner_segment}/{name_segment}");
+        let metadata: RepositoryMetadataResponse =
+            self.request(reqwest::Method::GET, &metadata_url)?.json()?;
+
+        let open_url = format!(
+            "{API_BASE}/search/issues?q=repo%3A{owner_segment}%2F{name_segment}%20is%3Apr%20is%3Aopen&per_page=1"
+        );
+        let open: SearchCountResponse = self.request(reqwest::Method::GET, &open_url)?.json()?;
+
+        let merged_url = format!(
+            "{API_BASE}/search/issues?q=repo%3A{owner_segment}%2F{name_segment}%20is%3Apr%20is%3Amerged&per_page=1"
+        );
+        let merged: SearchCountResponse =
+            self.request(reqwest::Method::GET, &merged_url)?.json()?;
+
+        Ok(RepositoryActivitySummary {
+            repository: repo.to_owned(),
+            stars: metadata.stargazers_count,
+            forks: metadata.forks_count,
+            open_pull_requests: open.total_count,
+            merged_pull_requests: merged.total_count,
+            pushed_at: metadata.pushed_at,
+        })
     }
 
     pub fn list_runners(&self, repo: &str) -> Result<Vec<Runner>> {

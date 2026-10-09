@@ -28,6 +28,16 @@ impl VaultToGsrBridge {
     }
 }
 
+fn emit_event(events_path: &std::path::Path, event: &SecurityEvent) {
+    if let Err(error) = gitrun_gsr::events::emit(events_path, event) {
+        eprintln!(
+            "gitrun-autoscaler: failed to emit {} event to {}: {error}",
+            event.source,
+            events_path.display()
+        );
+    }
+}
+
 impl VaultEventSink for VaultToGsrBridge {
     fn on_secret_read(&self, secret_name: &str, scope: &gitrun_vault::Scope) {
         let event = SecurityEvent::new(
@@ -35,7 +45,7 @@ impl VaultEventSink for VaultToGsrBridge {
             Severity::Info,
             format!("secret read: {secret_name} scope={scope:?}"),
         );
-        let _ = gitrun_gsr::events::emit(&self.events_path, &event);
+        emit_event(&self.events_path, &event);
     }
 
     fn on_secret_write(&self, secret_name: &str, scope: &gitrun_vault::Scope) {
@@ -44,7 +54,7 @@ impl VaultEventSink for VaultToGsrBridge {
             Severity::Info,
             format!("secret write: {secret_name} scope={scope:?}"),
         );
-        let _ = gitrun_gsr::events::emit(&self.events_path, &event);
+        emit_event(&self.events_path, &event);
     }
 
     fn on_secret_delete(&self, secret_name: &str, scope: &gitrun_vault::Scope) {
@@ -53,7 +63,7 @@ impl VaultEventSink for VaultToGsrBridge {
             Severity::Warning,
             format!("secret delete: {secret_name} scope={scope:?}"),
         );
-        let _ = gitrun_gsr::events::emit(&self.events_path, &event);
+        emit_event(&self.events_path, &event);
     }
 
     fn on_randomness_failure(&self, operation: &str) {
@@ -62,12 +72,7 @@ impl VaultEventSink for VaultToGsrBridge {
             Severity::Critical,
             format!("cryptographic randomness unavailable while {operation}"),
         );
-        if let Err(error) = gitrun_gsr::events::emit(&self.events_path, &event) {
-            eprintln!(
-                "gitrun-autoscaler: failed to emit GitVault randomness-failure event to {}: {error}",
-                self.events_path.display()
-            );
-        }
+        emit_event(&self.events_path, &event);
     }
 
     fn on_decryption_failure(&self, secret_name: &str) {
@@ -81,12 +86,7 @@ impl VaultEventSink for VaultToGsrBridge {
         // (`vault_env_for_repo` in main.rs) still logs the underlying error
         // to stderr independently, so the operator isn't left with zero
         // signal even if this write fails.
-        if let Err(error) = gitrun_gsr::events::emit(&self.events_path, &event) {
-            eprintln!(
-                "gitrun-autoscaler: failed to emit GitVault decryption-failure event to {}: {error}",
-                self.events_path.display()
-            );
-        }
+        emit_event(&self.events_path, &event);
     }
 }
 

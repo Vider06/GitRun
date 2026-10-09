@@ -1,35 +1,42 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GitRun</title>
-  <link rel="stylesheet" href="css/theme.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>GitRun — Runner control plane</title>
+  <link rel="stylesheet" href="css/theme.css">
 </head>
 <body>
-  <div id="app">
-    <nav class="sidebar" aria-label="Primary">
-      <div class="brand">
-        <span class="brand-mark">GitRun</span>
-      </div>
-      <ul class="nav-list" id="repo-nav-list">
-        <li><button class="nav-item active" data-view="overview">Overview</button></li>
-      </ul>
-      <div class="nav-section-label">Repositories</div>
-      <ul class="nav-list" id="repo-list"></ul>
-      <div class="nav-section-label">System</div>
-      <ul class="nav-list">
-        <li><button class="nav-item" data-view="gitvault">GitVault</button></li>
-        <li><button class="nav-item" data-view="gsr">GSR</button></li>
-        <li><button class="nav-item" data-view="settings">Settings</button></li>
-      </ul>
-    </nav>
-
-    <main class="content" id="content">
-      <!-- Views are rendered here by js/app.js -->
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#" data-view="overview" aria-label="GitRun overview">
+        <span class="brand-cat" aria-hidden="true"><svg viewBox="0 0 48 48" role="img"><path d="M9 19 7 5l13 8a19 19 0 0 1 8 0l13-8-2 14c3 4 4 8 3 13-2 8-9 12-18 12S8 40 6 32c-1-5 0-9 3-13Z" fill="currentColor"/><path d="M15 26h.1M33 26h.1" stroke="#11151d" stroke-width="5" stroke-linecap="round"/><path d="M20 33q4 4 8 0" fill="none" stroke="#11151d" stroke-width="2.5" stroke-linecap="round"/></svg></span>
+        <span class="brand-copy"><strong>GitRun</strong><small>RUNNER CONTROL PLANE</small></span>
+      </a>
+      <div class="workspace-label">WORKSPACE</div>
+      <nav aria-label="Main navigation"><button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span><span>Overview</span><span class="nav-end" id="overview-indicator"></span></button></nav>
+      <div class="nav-heading"><span>REPOSITORIES</span><button class="icon-button" id="refresh-repositories" title="Refresh repositories" aria-label="Refresh repositories">↻</button></div>
+      <nav aria-label="Repositories" id="repo-list" class="repo-nav"><div class="nav-placeholder">Loading repositories…</div></nav>
+      <div class="nav-heading">OPERATIONS</div>
+      <nav aria-label="Operations">
+        <button class="nav-item" data-view="security"><span class="nav-icon">◈</span><span>Privacy &amp; Security</span></button>
+        <button class="nav-item" data-view="vault"><span class="nav-icon">▣</span><span>GitVault</span></button>
+        <button class="nav-item" data-view="gsr"><span class="nav-icon">⌁</span><span>GitSecureRun</span></button>
+        <button class="nav-item" data-view="logs"><span class="nav-icon">≋</span><span>Logs</span></button>
+        <button class="nav-item" data-view="recovery"><span class="nav-icon">!</span><span>Recovery</span></button>
+        <button class="nav-item" data-view="general"><span class="nav-icon">◉</span><span>General settings</span></button>
+        <button class="nav-item" data-view="app-settings"><span class="nav-icon">⚙</span><span>App settings</span></button>
+      </nav>
+      <div class="sidebar-footer"><div class="connection-dot" id="connection-dot"></div><div class="connection-copy"><strong id="connection-label">Checking local service</strong><small id="connection-detail">Tauri IPC</small></div><button class="icon-button" id="toggle-sidebar" aria-label="Collapse sidebar" title="Collapse sidebar">⇤</button></div>
+    </aside>
+    <main class="main-area">
+      <header class="topbar"><div class="breadcrumbs"><span class="crumb-muted">GITRUN</span><span class="crumb-divider">/</span><strong id="page-crumb">Overview</strong></div><div class="topbar-actions"><span class="live-label"><span class="live-dot"></span> LOCAL CONTROL PLANE</span><button class="icon-button" id="refresh-view" title="Refresh current view" aria-label="Refresh current view">↻</button><button class="avatar-button" data-view="app-settings" title="App settings">G</button></div></header>
+      <section id="content" class="page-content" aria-live="polite"><div class="loading-state"><span class="loader"></span><p>Starting GitRun dashboard…</p></div></section>
+      <footer class="statusbar"><span><span class="status-led"></span> UI READY</span><span id="footer-status">Waiting for first health check</span><span id="footer-version">VERSION UNKNOWN</span></footer>
     </main>
   </div>
-
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

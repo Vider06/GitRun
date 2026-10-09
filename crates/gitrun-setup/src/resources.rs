@@ -102,6 +102,16 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         0o644,
     ),
     (
+        "crates/gitrun-core/src/api_policy.rs",
+        include_str!("../../../crates/gitrun-core/src/api_policy.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/compatibility.rs",
+        include_str!("../../../crates/gitrun-core/src/compatibility.rs"),
+        0o644,
+    ),
+    (
         "crates/gitrun-core/src/app_auth.rs",
         include_str!("../../../crates/gitrun-core/src/app_auth.rs"),
         0o644,
@@ -129,6 +139,11 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
     (
         "crates/gitrun-core/src/runner.rs",
         include_str!("../../../crates/gitrun-core/src/runner.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/settings.rs",
+        include_str!("../../../crates/gitrun-core/src/settings.rs"),
         0o644,
     ),
     (
@@ -177,6 +192,11 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         0o644,
     ),
     (
+        "crates/gitrun-gsr/src/api_gate.rs",
+        include_str!("../../../crates/gitrun-gsr/src/api_gate.rs"),
+        0o644,
+    ),
+    (
         "crates/gitrun-gsr/src/events.rs",
         include_str!("../../../crates/gitrun-gsr/src/events.rs"),
         0o644,
@@ -211,6 +231,46 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_public_modules_are_packaged(paths: &[&str], crate_name: &str, lib_source: &str) {
+        for declaration in lib_source.lines().map(str::trim) {
+            let Some(module) = declaration
+                .strip_prefix("pub mod ")
+                .and_then(|value| value.strip_suffix(';'))
+            else {
+                continue;
+            };
+            let expected = format!("crates/{crate_name}/src/{module}.rs");
+            assert!(
+                paths.contains(&expected.as_str()),
+                "runner build resources are missing {expected}, declared by {crate_name}/src/lib.rs"
+            );
+        }
+    }
+
+    #[test]
+    fn runner_build_resources_include_all_public_workspace_modules() {
+        let paths: Vec<_> = RUNNER_BUILD_FILES
+            .iter()
+            .map(|(path, _, _)| *path)
+            .collect();
+
+        assert_public_modules_are_packaged(
+            &paths,
+            "gitrun-core",
+            include_str!("../../../crates/gitrun-core/src/lib.rs"),
+        );
+        assert_public_modules_are_packaged(
+            &paths,
+            "gitrun-exe",
+            include_str!("../../../crates/gitrun-exe/src/lib.rs"),
+        );
+        assert_public_modules_are_packaged(
+            &paths,
+            "gitrun-gsr",
+            include_str!("../../../crates/gitrun-gsr/src/lib.rs"),
+        );
+    }
 
     #[test]
     fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
@@ -257,9 +317,13 @@ mod tests {
         assert!(paths.contains(&"Cargo.toml"));
         assert!(paths.contains(&"Cargo.lock"));
         assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
+        assert!(paths.contains(&"crates/gitrun-core/src/api_policy.rs"));
+        assert!(paths.contains(&"crates/gitrun-core/src/compatibility.rs"));
+        assert!(paths.contains(&"crates/gitrun-core/src/settings.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/lib.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/ipc.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/protocol.rs"));
+        assert!(paths.contains(&"crates/gitrun-gsr/src/api_gate.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-api.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/exec_supervisor.rs"));

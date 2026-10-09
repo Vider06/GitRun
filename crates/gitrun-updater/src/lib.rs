@@ -45,6 +45,10 @@ impl RunnerImage {
             || self.reference.contains(['\r', '\n'])
             || self.reference.chars().any(char::is_whitespace)
             || !is_sha256_digest(&self.digest)
+            || self
+                .reference
+                .rsplit_once('@')
+                .is_some_and(|(_, reference_digest)| reference_digest != self.digest)
             || !is_version(&self.minimum_version)
         {
             return Err(UpdateError::InvalidManifest(
@@ -1024,18 +1028,25 @@ pub fn pin_runner_image(
     image.validate()?;
     let path = config_file.as_ref();
     let content = fs::read_to_string(path)?;
+    // Keep the configured runner reference immutable. A mutable tag can point
+    // to different content between verification and container reconciliation.
+    let pinned_reference = if image.reference.rsplit_once('@').is_some() {
+        image.reference.clone()
+    } else {
+        format!("{}@{}", image.reference, image.digest)
+    };
     let mut found = false;
     let mut lines = Vec::new();
     for line in content.lines() {
         if line.trim_start().starts_with("GITRUN_RUNNER_IMAGE=") {
-            lines.push(format!("GITRUN_RUNNER_IMAGE={}", image.reference));
+            lines.push(format!("GITRUN_RUNNER_IMAGE={pinned_reference}"));
             found = true;
         } else {
             lines.push(line.to_owned());
         }
     }
     if !found {
-        lines.push(format!("GITRUN_RUNNER_IMAGE={}", image.reference));
+        lines.push(format!("GITRUN_RUNNER_IMAGE={pinned_reference}"));
     }
     let mut output = lines.join("\n");
     output.push('\n');
@@ -1043,6 +1054,15 @@ pub fn pin_runner_image(
     let mode = existing_file_mode(path, 0o644);
     atomic_write_installed_file(path, output.as_bytes(), mode)?;
     Ok(())
+}
+
+fn docker_repo_digests_contain(output: &str, expected_digest: &str) -> bool {
+    output.split('"').any(|candidate| {
+        candidate
+            .rsplit_once('@')
+            .map(|(_, digest)| digest == expected_digest)
+            .unwrap_or(candidate == expected_digest)
+    })
 }
 
 pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
@@ -1056,17 +1076,13 @@ pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
             &image.reference,
         ])
         .output();
-    let local_digest = inspect.ok().and_then(|output| {
-        if output.status.success() {
-            String::from_utf8_lossy(&output.stdout)
-                .split('"')
-                .find(|v| v.starts_with("sha256:"))
-                .map(str::to_owned)
-        } else {
-            None
-        }
-    });
-    if local_digest.as_deref() == Some(image.digest.as_str()) {
+    let local_digest_matches = inspect
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            docker_repo_digests_contain(&String::from_utf8_lossy(&output.stdout), &image.digest)
+        });
+    if local_digest_matches {
         return Ok(());
     }
     let _ = fetch_premade_runner_dockerfile(&canonical_premade_runner_dockerfile())?;
@@ -2100,6 +2116,48 @@ mod tests {
             std::cmp::Ordering::Greater
         );
         assert!(compare_versions("1.2.3.4", "1.2.3").is_err());
+    }
+
+    #[test]
+    fn runner_image_digest_pins_are_enforced() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let image = RunnerImage {
+            reference: "ghcr.io/vider06/gitrun-runner:stable".into(),
+            digest: digest.clone(),
+            minimum_version: "0.3.0".into(),
+        };
+        let root =
+            std::env::temp_dir().join(format!("gitrun-updater-pin-image-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let config = root.join("gitrun.env");
+        fs::write(&config, "GITRUN_RUNNER_IMAGE=old:tag\nOTHER_SETTING=1\n").unwrap();
+
+        pin_runner_image(&config, &image).unwrap();
+        let content = fs::read_to_string(&config).unwrap();
+        assert!(content.contains(&format!(
+            "GITRUN_RUNNER_IMAGE=ghcr.io/vider06/gitrun-runner:stable@{digest}"
+        )));
+        assert!(content.contains("OTHER_SETTING=1"));
+
+        let mismatched = RunnerImage {
+            reference: format!("ghcr.io/vider06/gitrun-runner@sha256:{}", "b".repeat(64)),
+            digest,
+            minimum_version: "0.3.0".into(),
+        };
+        assert!(mismatched.validate().is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn docker_repo_digest_matcher_reads_digest_after_repository_name() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let output = format!(r#"["ghcr.io/vider06/gitrun-runner:stable@{digest}"]"#);
+        assert!(docker_repo_digests_contain(&output, &digest));
+        assert!(!docker_repo_digests_contain(
+            &output,
+            &format!("sha256:{}", "b".repeat(64))
+        ));
     }
 
     #[test]

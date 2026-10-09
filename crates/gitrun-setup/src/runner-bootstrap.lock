@@ -304,7 +304,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "jsonwebtoken",
  "reqwest",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-exe"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "getrandom 0.4.3",
  "gitrun-core",
@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-gsr"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "gitrun-core",
  "gitrun-exe",

@@ -3,27 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>GitRun Recovery</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main class="card">
-    <header>
-      <div>
-        <div class="eyebrow">GITRUN</div>
-        <h1>Recovery</h1>
+  <main class="recovery-shell">
+    <header class="recovery-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M9 19 7 5l13 8a19 19 0 0 1 8 0l13-8-2 14c3 4 4 8 3 13-2 8-9 12-18 12S8 40 6 32c-1-5 0-9 3-13Z" fill="currentColor"/><path d="M15 26h.1M33 26h.1" stroke="#11151d" stroke-width="5" stroke-linecap="round"/><path d="M20 33q4 4 8 0" fill="none" stroke="#11151d" stroke-width="2.5" stroke-linecap="round"/></svg></span>
+        <div><div class="eyebrow">GITRUN / SYSTEM TOOLS</div><h1>Recovery console</h1><p>Startup diagnostics · integrity checks · repair actions</p></div>
       </div>
-      <div id="health" class="pill">Checking…</div>
+      <div id="health" class="health-state checking"><span class="health-light"></span><span>Checking system</span></div>
     </header>
-    <p id="summary" class="summary">Inspecting the installation.</p>
-    <section id="issues" class="issues"></section>
-    <section class="actions">
-      <button id="gtuu" class="primary">Run GTUU</button>
-      <button id="service">Repair service</button>
-      <button id="dashboard">Open dashboard</button>
-      <button id="refresh">Re-check</button>
+    <section id="alert" class="alert checking"><div class="alert-icon">!</div><div><strong id="summary">Inspecting the installation</strong><p id="alert-detail">Checking configuration, runtime dependencies and startup state.</p></div></section>
+    <section class="metrics" id="checks">
+      <article class="metric"><span>Configuration</span><strong id="check-config">—</strong><small id="check-config-detail">Waiting for report</small></article>
+      <article class="metric"><span>Docker daemon</span><strong id="check-docker">—</strong><small>Local reachability</small></article>
+      <article class="metric"><span>System service</span><strong id="check-service">—</strong><small>Installed unit validation</small></article>
+      <article class="metric"><span>Executable</span><strong id="check-binary">—</strong><small>Binary presence and health</small></article>
     </section>
-    <footer id="meta"></footer>
+    <div class="content-grid">
+      <section class="panel issues-panel">
+        <div class="panel-heading"><div><div class="eyebrow">DIAGNOSTICS</div><h2>Findings</h2></div><span id="issue-count" class="count">—</span></div>
+        <div id="issues" class="issues"><div class="issue info"><strong>Waiting for diagnostics</strong><p>The first inspection will appear here.</p></div></div>
+        <div class="panel-heading update-heading"><div><div class="eyebrow">VERSION CONTROL</div><h2>Update status</h2></div><span id="update-state" class="count">Not checked</span></div>
+        <div id="update-card" class="update-card"><strong id="update-title">Update check not completed</strong><p id="update-detail">Run GTUU to check GitRun and permanent runner updates.</p></div>
+      </section>
+      <aside class="panel actions-panel">
+        <div class="eyebrow">RECOVERY ACTIONS</div><h2>Operator controls</h2>
+        <p class="panel-intro">Repair actions can change host-level services or runner containers. Run them only after reviewing the findings.</p>
+        <button id="gtuu" class="action primary"><span>↻</span><span><strong>Run GTUU</strong><small>Check and reconcile GitRun / permanent runner updates</small></span></button>
+        <button id="service" class="action"><span>⛭</span><span><strong>Repair system service</strong><small>Restore unit file and restart the service</small></span></button>
+        <button id="dashboard" class="action"><span>↗</span><span><strong>Open dashboard</strong><small>Return to the GitRun control plane</small></span></button>
+        <button id="refresh" class="action"><span>⌁</span><span><strong>Re-run diagnostics</strong><small>Read the latest health and crash records</small></span></button>
+        <div class="risk-note"><strong>Before repairing</strong><p>Recovery does not delete workflow data by default. GTUU may replace eligible idle permanent runner containers; dynamic runners are handled by the scheduler.</p></div>
+      </aside>
+    </div>
+    <section class="panel log-panel">
+      <div class="panel-heading"><div><div class="eyebrow">OPERATOR TRACE</div><h2>Activity log</h2></div><button id="clear-log" class="quiet-button">Clear log</button></div>
+      <div id="terminal" class="terminal" role="log" aria-live="polite">[recovery] Initializing diagnostics…</div>
+    </section>
+    <footer><span>GITRUN RECOVERY</span><span id="meta">Resolving version and configuration path…</span></footer>
   </main>
   <script src="app.js"></script>
 </body>

@@ -674,7 +674,7 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
         ),
     };
     let payload = format!(
-        "{auth_lines}GITRUN_REPOSITORIES={}\\nRUNNER_PROFILE={}\\n",
+        "{auth_lines}GITRUN_REPOSITORIES={}\nRUNNER_PROFILE={}\n",
         repositories.join(","),
         runner_profile
     );

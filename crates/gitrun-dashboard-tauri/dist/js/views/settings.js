@@ -70,7 +70,7 @@ export async function renderGeneral() {
   });
   document.getElementById("run-health-check").addEventListener("click", async () => {
     try {
-      const report = await invoke("get_dashboard_health");
+      const report = await invoke("get_dashboard_health", {forceRefresh:true});
       document.getElementById("health-results").innerHTML = (report.checks || []).map((check) => '<div class="list-row"><div class="list-row-main"><strong>' + esc(check.name) + '</strong><small>' + esc(check.detail) + '</small></div>' + pill(check.ok ? "OK" : "Needs attention", check.ok ? "good" : "warn") + '</div>').join("");
       toast("Health check completed.");
     } catch (error) { toast("Health check failed: " + error, "error"); }

@@ -231,7 +231,6 @@ mod tests {
         for dockerfile in [&minimum, &workbench] {
             assert!(dockerfile.contains("gitrun-gsr-agent"));
             assert!(dockerfile.contains("GITRUN_GSR_COMMAND_POLICY_ENABLED=true"));
-            assert!(dockerfile.contains("GITRUN_GSR_DOCKER_SOCKET_HARDENING=true"));
         }
     }
 

@@ -488,7 +488,11 @@ impl GitHubClient {
         let (metadata, open, merged) = std::thread::scope(|scope| {
             let metadata_query = scope.spawn(|| {
                 self.request(reqwest::Method::GET, &metadata_url)
-                    .and_then(|response| response.json::<RepositoryMetadataResponse>().map_err(Into::into))
+                    .and_then(|response| {
+                        response
+                            .json::<RepositoryMetadataResponse>()
+                            .map_err(Into::into)
+                    })
             });
             let open_query = scope.spawn(|| {
                 self.request(reqwest::Method::GET, &open_url)

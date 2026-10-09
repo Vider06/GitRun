@@ -875,7 +875,9 @@ fn dashboard_config_cache_key() -> u64 {
         .collect::<Vec<_>>();
     variables.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     variables.hash(&mut hasher);
-    std::env::var("GITHUB_TOKEN").unwrap_or_default().hash(&mut hasher);
+    std::env::var("GITHUB_TOKEN")
+        .unwrap_or_default()
+        .hash(&mut hasher);
 
     let config_path = configured_config_path();
     if let Some(path) = config_path.as_ref() {
@@ -943,17 +945,14 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
         .clone()
         .filter(|snapshot| snapshot.config_key == config_key);
     if !force_refresh.unwrap_or(false) {
-        if let Some(snapshot) = cached
-            .as_ref()
-            .filter(|snapshot| {
+        if let Some(snapshot) = cached.as_ref().filter(|snapshot| {
             let ttl = if snapshot.value.stale {
                 Duration::from_secs(5)
             } else {
                 CACHE_TTL
             };
             snapshot.fetched_at.elapsed() < ttl
-        })
-        {
+        }) {
             return Ok(snapshot.value.clone());
         }
     }
@@ -970,9 +969,8 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
             // These two GitHub endpoints are independent. Fetch them together
             // so a slow workflow history request does not hold up runner state.
             let (runner_result, workflow_result) = std::thread::scope(|scope| {
-                let runner_query = scope.spawn(|| {
-                    client.list_runners(repo).map_err(|error| error.to_string())
-                });
+                let runner_query =
+                    scope.spawn(|| client.list_runners(repo).map_err(|error| error.to_string()));
                 let workflow_query = scope.spawn(|| {
                     client
                         .recent_workflow_run_summary(repo, 100)
@@ -1249,17 +1247,14 @@ fn get_repository_activity(
         .clone()
         .filter(|snapshot| snapshot.config_key == config_key);
     if !force_refresh.unwrap_or(false) {
-        if let Some(snapshot) = cached
-            .as_ref()
-            .filter(|snapshot| {
+        if let Some(snapshot) = cached.as_ref().filter(|snapshot| {
             let ttl = if snapshot.value.stale {
                 Duration::from_secs(5)
             } else {
                 CACHE_TTL
             };
             snapshot.fetched_at.elapsed() < ttl
-        })
-        {
+        }) {
             return Ok(snapshot.value.clone());
         }
     }
@@ -2109,9 +2104,8 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
     let config = load_config()?;
     let config_path = configured_config_path();
     let (docker_ok, service_active) = std::thread::scope(|scope| {
-        let docker_check = scope.spawn(|| {
-            command_success_with_timeout("docker", &["info"], Duration::from_secs(5))
-        });
+        let docker_check = scope
+            .spawn(|| command_success_with_timeout("docker", &["info"], Duration::from_secs(5)));
         let service_check = scope.spawn(|| {
             command_success_with_timeout(
                 "/usr/bin/systemctl",
@@ -2644,5 +2638,4 @@ mod tests {
         );
         std::fs::remove_file(path).unwrap();
     }
-
 }

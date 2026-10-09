@@ -1080,10 +1080,7 @@ pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
         .ok()
         .filter(|output| output.status.success())
         .is_some_and(|output| {
-            docker_repo_digests_contain(
-                &String::from_utf8_lossy(&output.stdout),
-                &image.digest,
-            )
+            docker_repo_digests_contain(&String::from_utf8_lossy(&output.stdout), &image.digest)
         });
     if local_digest_matches {
         return Ok(());
@@ -2129,10 +2126,8 @@ mod tests {
             digest: digest.clone(),
             minimum_version: "0.3.0".into(),
         };
-        let root = std::env::temp_dir().join(format!(
-            "gitrun-updater-pin-image-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("gitrun-updater-pin-image-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let config = root.join("gitrun.env");
@@ -2159,7 +2154,10 @@ mod tests {
         let digest = format!("sha256:{}", "a".repeat(64));
         let output = format!(r#"["ghcr.io/vider06/gitrun-runner:stable@{digest}"]"#);
         assert!(docker_repo_digests_contain(&output, &digest));
-        assert!(!docker_repo_digests_contain(&output, &format!("sha256:{}", "b".repeat(64))));
+        assert!(!docker_repo_digests_contain(
+            &output,
+            &format!("sha256:{}", "b".repeat(64))
+        ));
     }
 
     #[test]

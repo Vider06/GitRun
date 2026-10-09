@@ -368,6 +368,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
 
     setup_progress(1, "Checking Docker and system prerequisites");
     ensure_docker()?;
+    ensure_buildx()?;
 
     let config_dir = PathBuf::from("/etc/gitrun");
     let state_dir = PathBuf::from("/var/lib/gitrun");
@@ -615,10 +616,52 @@ fn ensure_docker() -> Result<(), SetupError> {
     Ok(())
 }
 
+fn docker_buildx_ready() -> bool {
+    Command::new("docker")
+        .args(["buildx", "version"])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// BuildKit is required by GitRun's runner Dockerfiles (RUN --mount=type=cache).
+/// Some distributions ship Docker without the Buildx plugin, so bootstrap it
+/// rather than failing later with the legacy-builder error.
+fn ensure_buildx() -> Result<(), SetupError> {
+    if docker_buildx_ready() {
+        return Ok(());
+    }
+
+    if !command_exists("apt-get") {
+        return Err(SetupError::MissingCommand(
+            "docker buildx (BuildKit support)".into(),
+        ));
+    }
+
+    println!("[GitRun setup] Docker Buildx is missing; installing the distro plugin");
+    run_command(Command::new("apt-get").args(["update"]))?;
+
+    let plugin_status = Command::new("apt-get")
+        .args(["install", "-y", "docker-buildx-plugin"])
+        .status()?;
+    if !plugin_status.success() {
+        // Ubuntu/Debian may package the same plugin under this name instead.
+        run_command(Command::new("apt-get").args(["install", "-y", "docker-buildx"]))?;
+    }
+
+    if !docker_buildx_ready() {
+        return Err(SetupError::Command(
+            "Docker Buildx installation finished, but docker buildx version still fails".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn build_image(tag: &str, context: &Path, dockerfile: &Path) -> Result<(), SetupError> {
+    // Use Buildx explicitly: docker build may select the legacy builder on
+    // otherwise healthy Docker installations, which cannot process cache mounts.
     run_command(
         Command::new("docker")
-            .args(["build", "-t", tag, "-f"])
+            .args(["buildx", "build", "--load", "-t", tag, "-f"])
             .arg(dockerfile)
             .arg(context),
     )

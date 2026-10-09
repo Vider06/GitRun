@@ -102,6 +102,16 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         0o644,
     ),
     (
+        "crates/gitrun-core/src/api_policy.rs",
+        include_str!("../../../crates/gitrun-core/src/api_policy.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/compatibility.rs",
+        include_str!("../../../crates/gitrun-core/src/compatibility.rs"),
+        0o644,
+    ),
+    (
         "crates/gitrun-core/src/app_auth.rs",
         include_str!("../../../crates/gitrun-core/src/app_auth.rs"),
         0o644,
@@ -129,6 +139,11 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
     (
         "crates/gitrun-core/src/runner.rs",
         include_str!("../../../crates/gitrun-core/src/runner.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-core/src/settings.rs",
+        include_str!("../../../crates/gitrun-core/src/settings.rs"),
         0o644,
     ),
     (
@@ -257,6 +272,9 @@ mod tests {
         assert!(paths.contains(&"Cargo.toml"));
         assert!(paths.contains(&"Cargo.lock"));
         assert!(paths.contains(&"crates/gitrun-core/src/lib.rs"));
+        assert!(paths.contains(&"crates/gitrun-core/src/api_policy.rs"));
+        assert!(paths.contains(&"crates/gitrun-core/src/compatibility.rs"));
+        assert!(paths.contains(&"crates/gitrun-core/src/settings.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/lib.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/ipc.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/protocol.rs"));

@@ -2,6 +2,7 @@ import { invoke, content, esc, heading, pill, empty, formatTime } from "../lib.j
 
 const knownSources = ["gitvault", "gsr-watchdog", "gsr-poll", "gsr-agent", "gsr-exec-supervisor"];
 let cachedEvents = [];
+let eventError = null;
 let cachedJournal = [];
 let journalError = null;
 let journalSource = "all";
@@ -25,6 +26,12 @@ function renderSecurityRows() {
   });
   const target = document.getElementById("security-log-rows");
   if (!target) return;
+  if (eventError) {
+    target.innerHTML = '<div class="notice danger"><div><strong>Security event history unavailable</strong><p>' + esc(eventError) + '</p>The event queue could not be read; this is not an empty log.</div></div>';
+    const count = document.getElementById("security-log-count");
+    if (count) count.textContent = "Read failed";
+    return;
+  }
   target.innerHTML = rows.length ? rows.map((event) => {
     const level = String(event.severity || "info").toLowerCase();
     const kind = level === "critical" ? "bad" : level === "warning" ? "warn" : "info";
@@ -56,7 +63,8 @@ export async function renderLogs() {
   content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Loading GitRun security and service logs…</p></div>';
   const results = await Promise.allSettled([invoke("list_gsr_events", { limit: 500 }), invoke("list_service_logs", { source: journalSource, limit: 200 })]);
   if (generation !== window.__gitrunNavigationGeneration) return;
-  cachedEvents = results[0].status === "fulfilled" ? (results[0].value || []) : [];
+  if (results[0].status === "fulfilled") { cachedEvents = results[0].value || []; eventError = null; }
+  else { cachedEvents = []; eventError = String(results[0].reason || "Unknown event queue error"); }
   if (results[1].status === "fulfilled") { cachedJournal = results[1].value || []; journalError = null; }
   else { cachedJournal = []; journalError = String(results[1].reason || "Unknown journal error"); }
   content.innerHTML = heading("OPERATIONS", "Logs", "Security event history and systemd output for GitRun. GitVault event records never contain secret values.", '<button class="btn" data-action="refresh-view">↻ Refresh</button>') +

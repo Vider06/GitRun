@@ -72,7 +72,11 @@ async function navigate(view, options = {}) {
     return;
   }
   try {
-    if (view === "overview") await renderOverview(navigate);
+    if (view === "overview") {
+      const cachedOverview = overviewCache;
+      overviewCache = null;
+      await renderOverview(navigate, cachedOverview);
+    }
     else if (view === "security") await renderSecurity();
     else if (view === "vault") await renderVault();
     else if (view === "gsr") await renderGsr();
@@ -173,6 +177,10 @@ document.getElementById("toggle-sidebar").addEventListener("click", () => {
 window.addEventListener("gitrun:navigate", (event) => navigate(event.detail));
 window.addEventListener("gitrun:mascot-state", (event) => setCatExpression(event.detail));
 window.addEventListener("gitrun:setup-complete", firstRunComplete);
+window.addEventListener("gitrun:config-saved", () => {
+  overviewCache = null;
+  void loadRepoNav().catch(() => {});
+});
 window.addEventListener("gitrun:reinstall", () => {
   setupInProgress = true;
   renderSetup(true, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });

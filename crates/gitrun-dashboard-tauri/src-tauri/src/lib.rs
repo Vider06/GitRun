@@ -895,8 +895,11 @@ fn dashboard_config_cache_key() -> u64 {
                 .and_then(|contents| {
                     contents.lines().find_map(|line| {
                         let (key, value) = line.trim().split_once('=')?;
-                        (key.trim() == "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")
-                            .then(|| std::path::PathBuf::from(value.trim().trim_matches('"').trim_matches('\'')))
+                        (key.trim() == "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH").then(|| {
+                            std::path::PathBuf::from(
+                                value.trim().trim_matches('"').trim_matches('\''),
+                            )
+                        })
                     })
                 })
                 .filter(|path| !path.as_os_str().is_empty())

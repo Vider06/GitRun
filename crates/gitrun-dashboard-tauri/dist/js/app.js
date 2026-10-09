@@ -1415,6 +1415,7 @@ function renderFirstRun(isReinstall = false) {
             <option value="workbench" selected>Workbench — full development toolchain + mandatory GSR</option>
           </select>
           <p class="field-hint">Minimum omits preinstalled language toolchains and desktop build dependencies. Workbench keeps the full standard toolset. Both official profiles enforce GitSecureRun (GSR).</p>
+          <p class="field-hint">Premade Explorer: <a href="https://github.com/Vider06/GitRun/tree/feat/runner-image-selection/Core/Dockers/runners/linux-x86_64" target="_blank" rel="noreferrer">browse the official profile definitions</a>. Only the built-in, reviewed profiles can be installed from this setup screen.</p>
         </div>
       </div>
       <div class="card">

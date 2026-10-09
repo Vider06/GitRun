@@ -2415,10 +2415,7 @@ mod tests {
         std::fs::write(&path, "existing-file\n").unwrap();
 
         assert!(write_setup_request(&path, "replacement\n").is_err());
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "existing-file\n"
-        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing-file\n");
         std::fs::remove_file(path).unwrap();
     }
 

@@ -862,7 +862,34 @@ struct DashboardRunnerSnapshot {
 #[derive(Clone)]
 struct CachedDashboardRunnerSnapshot {
     fetched_at: Instant,
+    config_key: u64,
     value: DashboardRunnerSnapshot,
+}
+
+fn dashboard_config_cache_key() -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut variables = std::env::vars()
+        .filter(|(key, _)| key.starts_with("GITRUN_"))
+        .collect::<Vec<_>>();
+    variables.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    variables.hash(&mut hasher);
+    std::env::var("GITHUB_TOKEN").unwrap_or_default().hash(&mut hasher);
+
+    if let Some(path) = configured_config_path() {
+        path.hash(&mut hasher);
+        if let Ok(contents) = std::fs::read(&path) {
+            contents.hash(&mut hasher);
+        }
+    }
+    if let Ok(key_path) = std::env::var("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH") {
+        if let Ok(contents) = std::fs::read(key_path) {
+            contents.hash(&mut hasher);
+        }
+    }
+
+    hasher.finish()
 }
 
 static DASHBOARD_RUNNER_CACHE: std::sync::OnceLock<
@@ -893,10 +920,12 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
 fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(60);
     let cache = DASHBOARD_RUNNER_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    let config_key = dashboard_config_cache_key();
     let cached = cache
         .lock()
         .map_err(|_| "runner snapshot cache lock poisoned".to_owned())?
-        .clone();
+        .clone()
+        .filter(|snapshot| snapshot.config_key == config_key);
     if !force_refresh.unwrap_or(false) {
         if let Some(snapshot) = cached
             .as_ref()
@@ -1009,6 +1038,7 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                 .map_err(|_| "runner snapshot cache lock poisoned".to_owned())? =
                 Some(CachedDashboardRunnerSnapshot {
                     fetched_at: Instant::now(),
+                    config_key,
                     value: snapshot.clone(),
                 });
             Ok(snapshot)
@@ -1045,6 +1075,7 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                 .map_err(|_| "runner snapshot cache lock poisoned".to_owned())? =
                 Some(CachedDashboardRunnerSnapshot {
                     fetched_at: Instant::now(),
+                    config_key,
                     value: snapshot.clone(),
                 });
             Ok(snapshot)
@@ -1161,6 +1192,7 @@ struct DashboardRepositoryActivitySnapshot {
 #[derive(Clone)]
 struct CachedDashboardRepositoryActivity {
     fetched_at: Instant,
+    config_key: u64,
     value: DashboardRepositoryActivitySnapshot,
 }
 
@@ -1174,10 +1206,12 @@ fn get_repository_activity(
 ) -> Result<DashboardRepositoryActivitySnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(300);
     let cache = DASHBOARD_REPOSITORY_ACTIVITY_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    let config_key = dashboard_config_cache_key();
     let cached = cache
         .lock()
         .map_err(|_| "repository activity cache lock poisoned".to_owned())?
-        .clone();
+        .clone()
+        .filter(|snapshot| snapshot.config_key == config_key);
     if !force_refresh.unwrap_or(false) {
         if let Some(snapshot) = cached
             .as_ref()
@@ -1240,6 +1274,7 @@ fn get_repository_activity(
                 .map_err(|_| "repository activity cache lock poisoned".to_owned())? =
                 Some(CachedDashboardRepositoryActivity {
                     fetched_at: Instant::now(),
+                    config_key,
                     value: snapshot.clone(),
                 });
             Ok(snapshot)
@@ -1273,6 +1308,7 @@ fn get_repository_activity(
                 .map_err(|_| "repository activity cache lock poisoned".to_owned())? =
                 Some(CachedDashboardRepositoryActivity {
                     fetched_at: Instant::now(),
+                    config_key,
                     value: snapshot.clone(),
                 });
             Ok(snapshot)

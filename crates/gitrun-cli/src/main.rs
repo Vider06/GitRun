@@ -1,6 +1,6 @@
 use clap::Parser;
 use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, Runner};
-use gitrun_setup::{bootstrap_linux_with_auth, prepare_directories, BootstrapAuth};
+use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
     fetch_manifest, latest_manifest, pin_runner_image, rollback, rollback_installed_update,
@@ -497,7 +497,21 @@ fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         other => return Err(format!("unsupported setup auth mode: {other}").into()),
     };
 
-    bootstrap_linux_with_auth(auth, &repositories, &executable, owner_uid)?;
+    let runner_profile = values
+        .get("RUNNER_PROFILE")
+        .map(String::as_str)
+        .unwrap_or("workbench");
+    if !matches!(runner_profile, "minimum" | "workbench") {
+        return Err(format!("unsupported runner profile: {runner_profile}").into());
+    }
+
+    bootstrap_linux_with_auth_and_profile(
+        auth,
+        &repositories,
+        &executable,
+        owner_uid,
+        runner_profile,
+    )?;
 
     println!("GitRun setup: PASS");
     Ok(())

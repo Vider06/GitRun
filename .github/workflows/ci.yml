@@ -2151,19 +2151,25 @@ jobs:
               -f docker/runner/Dockerfile \
               -t gitrun-runner:ci .
           }
+          manager_rc=0
+          runner_rc=0
+          ci_run "build gitrun-manager-rs:ci" manager || manager_rc=$?
+
+          # Keep BuildKit cache mounts alive until buildkit-cache-dance post
+          # steps extract them. The images are validated and exported to the
+          # remote GHA BuildKit cache, not loaded into the local image store.
+          ci_run "build gitrun-runner:ci" runner_img || runner_rc=$?
+
           rc=0
-          ci_run "build gitrun-manager-rs:ci" manager || rc=1
-
-          # GitHub-hosted runners have limited local disk. Both images are
-          # validated and exported to the remote GHA BuildKit cache; they do
-          # not need to be imported into the local Docker image store.
-          docker buildx prune --all --force >/dev/null 2>&1 || true
-
-          ci_run "build gitrun-runner:ci" runner_img || rc=1
+          [ "$manager_rc" -eq 0 ] || rc=1
+          [ "$runner_rc" -eq 0 ] || rc=1
           {
-            echo "### 🐳 Images"
+            echo "### 🐳 Image build validation"
             echo
-            echo "Both Docker images built successfully and their BuildKit layers were exported to the remote GHA cache."
+            if [ "$manager_rc" -eq 0 ]; then echo "- Manager image: build succeeded"; else echo "- Manager image: build failed (exit $manager_rc)"; fi
+            if [ "$runner_rc" -eq 0 ]; then echo "- Runner image: build succeeded"; else echo "- Runner image: build failed (exit $runner_rc)"; fi
+            echo
+            echo "This job validates Dockerfile/Compose configuration and image builds. It does not start containers or test runtime health."
             echo
           } | ci_sum
           exit "$rc"

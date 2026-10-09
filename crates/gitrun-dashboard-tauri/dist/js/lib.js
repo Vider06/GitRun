@@ -11,8 +11,10 @@ export function toast(message, kind = "success") {
   const item = document.createElement("div");
   item.className = "toast " + kind;
   item.textContent = String(message);
+  item.addEventListener("animationend", (event) => {
+    if (event.animationName === "toast-lifetime") item.remove();
+  }, { once: true });
   region.appendChild(item);
-  window.setTimeout(() => item.remove(), 5200);
 }
 export function heading(eyebrow, title, subtitle, actions = "") {
   return '<header class="view-heading"><div><div class="eyebrow">' + esc(eyebrow) + '</div><h1>' + esc(title) + '</h1><p class="subtitle">' + esc(subtitle) + '</p></div><div class="heading-actions">' + actions + '</div></header>';

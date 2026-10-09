@@ -1,4 +1,4 @@
-# GitRun architecture (1.3.0)
+# GitRun architecture (1.4.4)
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 

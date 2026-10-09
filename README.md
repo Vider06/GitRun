@@ -4,7 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/Vider06/GitRun)](https://github.com/Vider06/GitRun/releases)
 [![License](https://img.shields.io/github/license/Vider06/GitRun)](LICENSE)
 
-**GitRun 1.3.0** is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, signed updates and the Tauri operator dashboard.
+**GitRun 1.4.4** is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, signed updates and the Tauri operator dashboard.
 
 GitRun is designed for administrators running repositories they trust on dedicated infrastructure. It does not require Kubernetes.
 
@@ -200,7 +200,7 @@ At the top level:
 
 ## Development
 
-GitRun 1.3.0 is a security-hardening release. Start with:
+GitRun 1.4.4 is the current project version. Start with:
 
 ```bash
 cargo fmt --all --check

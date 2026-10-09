@@ -19,7 +19,7 @@ Direct `/var/run/docker.sock` access is **disabled by default** for GitRun-manag
 - Prefer ephemeral runners for untrusted or isolation-sensitive workloads.
 - Runner tokens are unset in the runner process environment after configuration.
 - Rotate credentials if they are exposed in logs, process inspection, backups, or source control.
-- Treat the GitHub Actions release-signing private key as a high-value credential. Keep it only in `GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64`; distribute only the matching public key to update hosts.
+- Treat the GitHub Actions release-signing private key as a high-value credential. Keep it only in `GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64`. The official GitRun CLI includes the matching public verification key and key ID as trusted defaults; custom deployments may explicitly override the public-key settings. Never distribute or commit the private key.
 - Rotate the release-signing key by publishing a new trusted public key/key identifier before retiring the previous signing key; never commit the private key.
 
 ## Container hardening

@@ -134,6 +134,10 @@ fn running_as_root() -> bool {
     }
 }
 
+const DEFAULT_UPDATE_PUBLIC_KEY_HEX: &str =
+    "11cc9eaf0147dada407ffd3497c2cebce17d195e21c06030c1e2e1dc688f41f1"; // DevSkim: ignore DS173237 because this is a public Ed25519 verification key, not a secret.
+const DEFAULT_UPDATE_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
+
 fn update_signing_environment() -> Vec<(String, String)> {
     const KEYS: [&str; 3] = [
         "GITRUN_UPDATE_PUBLIC_KEY_HEX",
@@ -150,27 +154,40 @@ fn update_signing_environment() -> Vec<(String, String)> {
         }
     }
 
-    let Some(path) = persistent_config_path() else {
-        return values;
-    };
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return values;
-    };
-
-    for raw in content.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if KEYS.contains(&key) && !values.iter().any(|(existing, _)| existing == key) {
-            let value = value.trim().trim_matches(['"', '\\']);
-            if !value.is_empty() {
-                values.push((key.to_owned(), value.to_owned()));
+    if let Some(path) = persistent_config_path() {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for raw in content.lines() {
+                let line = raw.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                let key = key.trim();
+                if KEYS.contains(&key) && !values.iter().any(|(existing, _)| existing == key) {
+                    let value = value.trim().trim_matches(['"', '\\']);
+                    if !value.is_empty() {
+                        values.push((key.to_owned(), value.to_owned()));
+                    }
+                }
             }
+        }
+    }
+
+    // The official release verification key is a trust anchor, not a secret.
+    // Keep updates verifiable on existing installs whose generated config
+    // predates the signing settings. Explicit operator values take precedence.
+    for (key, value) in [
+        (
+            "GITRUN_UPDATE_PUBLIC_KEY_HEX",
+            DEFAULT_UPDATE_PUBLIC_KEY_HEX,
+        ),
+        ("GITRUN_UPDATE_PUBLIC_KEY_ID", DEFAULT_UPDATE_PUBLIC_KEY_ID),
+        ("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true"),
+    ] {
+        if !values.iter().any(|(existing, _)| existing == key) {
+            values.push((key.to_owned(), value.to_owned()));
         }
     }
 

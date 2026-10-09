@@ -589,6 +589,7 @@ struct FirstSetupRequest {
     app_id: String,
     installation_id: String,
     private_key_path: String,
+    runner_profile: String,
     reinstall: bool,
 }
 
@@ -601,6 +602,7 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
         app_id,
         installation_id,
         private_key_path,
+        runner_profile,
         reinstall,
     } = request;
 
@@ -615,6 +617,10 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
         }
     } else if configured_config_path().is_some() {
         return Err("GitRun is already configured; graphical first-run setup is only available before initial setup".into());
+    }
+
+    if !matches!(runner_profile.as_str(), "minimum" | "workbench") {
+        return Err("runner profile must be minimum or workbench".into());
     }
 
     let auth = build_first_setup_auth(
@@ -668,8 +674,9 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
         ),
     };
     let payload = format!(
-        "{auth_lines}GITRUN_REPOSITORIES={}\n",
-        repositories.join(",")
+        "{auth_lines}GITRUN_REPOSITORIES={}\\nRUNNER_PROFILE={}\\n",
+        repositories.join(","),
+        runner_profile
     );
     write_setup_request(&path, &payload)?;
 

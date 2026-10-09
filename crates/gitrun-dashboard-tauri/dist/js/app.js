@@ -1407,6 +1407,16 @@ function renderFirstRun(isReinstall = false) {
     </div>
 
     <div class="section" style="max-width:640px">
+      <div class="card" style="margin-bottom:16px">
+        <div class="field">
+          <label for="setup-runner-profile">Runner image profile</label>
+          <select id="setup-runner-profile">
+            <option value="minimum">Minimum — lightweight, essential runner tools + mandatory GSR</option>
+            <option value="workbench" selected>Workbench — full development toolchain + mandatory GSR</option>
+          </select>
+          <p class="field-hint">Minimum omits preinstalled language toolchains and desktop build dependencies. Workbench keeps the full standard toolset. Both official profiles enforce GitSecureRun (GSR).</p>
+        </div>
+      </div>
       <div class="card">
         <div class="field">
           <label for="setup-auth-mode">GitHub authentication</label>
@@ -1500,6 +1510,7 @@ function renderFirstRun(isReinstall = false) {
     const reposEl = document.getElementById("setup-repositories");
 
     const authMode = authModeEl.value;
+    const runnerProfile = document.getElementById("setup-runner-profile").value;
     const token = tokenEl.value.trim();
     const appId = appIdEl.value.trim();
     const installationId = installationIdEl.value.trim();
@@ -1560,6 +1571,7 @@ function renderFirstRun(isReinstall = false) {
           appId,
           installationId,
           privateKeyPath: setupPrivateKeyPath,
+          runnerProfile,
           reinstall: isReinstall,
         },
       });

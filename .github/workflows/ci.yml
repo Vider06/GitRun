@@ -2156,7 +2156,7 @@ jobs:
                 cp "$target" "$context/$target"
                 ;;
             esac
-          done < <(awk '/RUNNER_BUILD_FILES:/ { inside=1; next } inside && index($0, "];") == 1 { exit } inside && /^[[:space:]]*\("/ { path=$0; sub(/^[[:space:]]*\("/, "", path); sub(/".*/, "", path); print path }' crates/gitrun-setup/src/resources.rs)
+          done < <(awk '/RUNNER_BUILD_FILES:/ { inside=1; next } inside && index($0, "];") == 1 { exit } inside && match($0, /"[^"]+"/) { path=substr($0, RSTART + 1, RLENGTH - 2); if (path == "Cargo.toml" || path == "Cargo.lock" || path ~ /^crates\//) print path }' crates/gitrun-setup/src/resources.rs)
           cp docker/runner/entrypoint.sh "$context/docker/runner/entrypoint.sh"
           cp "$adapted" "$context/Dockerfile"
           {

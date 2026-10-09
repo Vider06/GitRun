@@ -39,6 +39,8 @@ export function renderSetup(isReinstall, onComplete) {
     const append = (line) => { if (line) { log.textContent += String(line) + "\n"; log.scrollTop = log.scrollHeight; } };
     let unlisten = null;
     let done = false;
+    let succeeded = false;
+    let failed = false;
     try {
       const listener = window.__TAURI__.event;
       unlisten = await listener.listen("gitrun-setup-progress", (event) => {
@@ -56,6 +58,7 @@ export function renderSetup(isReinstall, onComplete) {
       let safeKeyPath = privateKeyPath;
       if (authMode === "app") safeKeyPath = await invoke("secure_private_key", {privateKeyPath});
       await invoke("run_first_setup", {request:{authMode,token,repositories,appId,installationId,privateKeyPath:safeKeyPath,runnerProfile,reinstall:Boolean(isReinstall)}});
+      succeeded = true;
       document.getElementById("setup-progress-bar").style.width = "100%";
       document.getElementById("setup-progress-count").textContent = "9 / 9";
       document.getElementById("setup-progress-title").textContent = "GitRun is ready";
@@ -64,16 +67,23 @@ export function renderSetup(isReinstall, onComplete) {
       toast("GitRun setup completed.");
       await onComplete();
     } catch (error) {
+      failed = true;
       append("ERROR: " + error);
       document.getElementById("setup-progress-title").textContent = "Setup failed";
       document.getElementById("setup-progress-status").textContent = "Review the logs and correct the issue before retrying.";
       document.getElementById("setup-retry").hidden = false;
       toast("Setup failed: " + error, "error");
     } finally {
-      if (unlisten) await unlisten();
-      if (!done) submit.disabled = false;
+      if (unlisten) {
+        try {
+          await unlisten();
+        } catch (cleanupError) {
+          append("Could not detach setup progress listener: " + cleanupError);
+        }
+      }
+      submit.disabled = succeeded;
       const retryButton = document.getElementById("setup-retry");
-      if (retryButton) retryButton.hidden = false;
+      if (retryButton) retryButton.hidden = !failed;
     }
   });
   document.getElementById("setup-retry").addEventListener("click", () => renderSetup(isReinstall, onComplete));

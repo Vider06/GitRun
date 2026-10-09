@@ -2572,7 +2572,7 @@ mod tests {
         assert_eq!(mode, 0o600);
         std::fs::remove_file(path).unwrap();
     }
-    
+
     #[test]
     fn explicit_config_path_must_exist_and_is_resolved() {
         let nonce = SystemTime::now()
@@ -2585,7 +2585,7 @@ mod tests {
         ));
         assert!(resolve_config_path(Some(path.as_os_str())).is_err());
 
-        std::fs::write(&path, "GITRUN_REPOSITORIES=owner/repo\\n").unwrap();
+        std::fs::write(&path, "GITRUN_REPOSITORIES=owner/repo\n").unwrap();
         assert_eq!(
             resolve_config_path(Some(path.as_os_str())).unwrap(),
             Some(path.clone())

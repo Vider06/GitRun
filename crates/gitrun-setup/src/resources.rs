@@ -192,6 +192,11 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         0o644,
     ),
     (
+        "crates/gitrun-gsr/src/api_gate.rs",
+        include_str!("../../../crates/gitrun-gsr/src/api_gate.rs"),
+        0o644,
+    ),
+    (
         "crates/gitrun-gsr/src/events.rs",
         include_str!("../../../crates/gitrun-gsr/src/events.rs"),
         0o644,
@@ -278,6 +283,7 @@ mod tests {
         assert!(paths.contains(&"crates/gitrun-exe/src/lib.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/ipc.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/protocol.rs"));
+        assert!(paths.contains(&"crates/gitrun-gsr/src/api_gate.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-api.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/exec_supervisor.rs"));

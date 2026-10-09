@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-setup"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "gitrun-core",
  "gitrun-updater",

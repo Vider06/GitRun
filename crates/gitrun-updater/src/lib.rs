@@ -56,6 +56,83 @@ impl RunnerImage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PremadeDockerfile {
+    pub repository: String,
+    pub reference: String,
+    pub path: String,
+}
+
+impl PremadeDockerfile {
+    pub fn validate(&self) -> Result<(), UpdateError> {
+        validate_repository(&self.repository)?;
+        if !is_full_git_commit(&self.reference) {
+            return Err(UpdateError::InvalidManifest(
+                "Premade Dockerfile reference must be a full immutable Git commit SHA".into(),
+            ));
+        }
+        if self.path.trim().is_empty()
+            || self.path.starts_with('/')
+            || self.path.contains(['\\', '\n', '\r'])
+            || self
+                .path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err(UpdateError::InvalidManifest(
+                "invalid Premade Dockerfile path".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub const CANONICAL_PREMADE_RUNNER_REPOSITORY: &str = "Vider06/GitRun";
+pub const CANONICAL_PREMADE_RUNNER_REF: &str = "8c12be2732ce8769b535394fc896c76d99d28472"; // DevSkim: ignore DS173237 because this is a public immutable Git commit SHA, not a secret.
+pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "Core/Dockers/runners/linux-x86_64/Dockerfile";
+
+pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
+    PremadeDockerfile {
+        repository: CANONICAL_PREMADE_RUNNER_REPOSITORY.into(),
+        reference: CANONICAL_PREMADE_RUNNER_REF.into(),
+        path: CANONICAL_PREMADE_RUNNER_PATH.into(),
+    }
+}
+
+pub fn fetch_premade_runner_dockerfile(source: &PremadeDockerfile) -> Result<String, UpdateError> {
+    source.validate()?;
+    let commit = if is_full_git_commit(&source.reference) {
+        source.reference.clone()
+    } else {
+        resolve_premade_branch_head(&source.repository, &source.reference)?
+    };
+    let url = format!(
+        "https://raw.githubusercontent.com/{}/{}/{}",
+        source.repository, commit, source.path
+    );
+    validate_https_url(&url)?;
+    let content = http_client()?.get(url).send()?.error_for_status()?.text()?;
+    if content.trim().is_empty() {
+        return Err(UpdateError::InvalidManifest(
+            "Premade Dockerfile is empty".into(),
+        ));
+    }
+    if !content.contains("FROM ") || !content.contains("ENTRYPOINT ") {
+        return Err(UpdateError::InvalidManifest(
+            "Premade Dockerfile does not look like a runner Dockerfile".into(),
+        ));
+    }
+    Ok(content)
+}
+
+pub fn sync_premade_runner_dockerfile(
+    source: &PremadeDockerfile,
+    destination: impl AsRef<Path>,
+) -> Result<(), UpdateError> {
+    let content = fetch_premade_runner_dockerfile(source)?;
+    atomic_write_installed_file(destination.as_ref(), content.as_bytes(), 0o644)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReleaseManifest {
     pub name: String,
     pub version: String,
@@ -992,6 +1069,7 @@ pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
     if local_digest.as_deref() == Some(image.digest.as_str()) {
         return Ok(());
     }
+    let _ = fetch_premade_runner_dockerfile(&canonical_premade_runner_dockerfile())?;
     run_command(Command::new("docker").args(["pull", &image.reference]))?;
     let output = Command::new("docker")
         .args([
@@ -1599,6 +1677,32 @@ fn validate_https_url(value: &str) -> Result<(), UpdateError> {
     Ok(())
 }
 
+fn is_full_git_commit(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn resolve_premade_branch_head(repository: &str, reference: &str) -> Result<String, UpdateError> {
+    if reference.starts_with("refs/") || reference.starts_with('/') {
+        return Err(UpdateError::InvalidManifest(
+            "Premade reference must be a branch, tag, or full commit".into(),
+        ));
+    }
+    validate_repository(repository)?;
+    let encoded_reference = reference.replace('/', "%2F");
+    let url = format!("https://api.github.com/repos/{repository}/commits/{encoded_reference}");
+    let value: serde_json::Value = http_client()?.get(url).send()?.error_for_status()?.json()?;
+    let sha = value
+        .get("sha")
+        .and_then(|value| value.as_str())
+        .filter(|value| is_full_git_commit(value))
+        .ok_or_else(|| {
+            UpdateError::InvalidManifest(
+                "GitHub Premade reference did not resolve to a full commit SHA".into(),
+            )
+        })?;
+    Ok(sha.to_owned())
+}
+
 fn validate_repository(repository: &str) -> Result<(), UpdateError> {
     let trimmed = repository.trim_end_matches('/');
     let mut parts = trimmed.split('/');
@@ -1891,6 +1995,22 @@ mod tests {
             runner_image: None,
             repository: Some("Vider06/GitRun".into()),
         }
+    }
+
+    #[test]
+    fn canonical_premade_runner_source_is_immutable() {
+        let source = canonical_premade_runner_dockerfile();
+        assert_eq!(source.repository, CANONICAL_PREMADE_RUNNER_REPOSITORY);
+        assert_eq!(source.reference, CANONICAL_PREMADE_RUNNER_REF);
+        assert_eq!(source.path, CANONICAL_PREMADE_RUNNER_PATH);
+        assert!(source.validate().is_ok());
+    }
+
+    #[test]
+    fn premade_runner_source_rejects_non_immutable_commit() {
+        let mut source = canonical_premade_runner_dockerfile();
+        source.reference = "refs/heads/main".into();
+        assert!(source.validate().is_err());
     }
 
     #[test]

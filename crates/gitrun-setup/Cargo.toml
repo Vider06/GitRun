@@ -1,10 +1,11 @@
 [package]
 name = "gitrun-setup"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "Host dependency and setup checks for GitRun"
 
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
+gitrun-updater = { path = "../gitrun-updater" }
 thiserror = "2"

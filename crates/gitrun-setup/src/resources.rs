@@ -1,9 +1,21 @@
-/// The runner Dockerfile remains the repository source of truth. The bootstrap
-/// uses the exact same image definition, with one deliberate adjustment: a
-/// packaged GitRun installation does not ship the entire workspace, so the
-/// build context is reduced to the crates needed by the GSR shell agent and
-/// its workflow API client.
-pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
+use super::SetupError;
+
+/// The runner Dockerfile is maintained in GitRun Premade and pinned by the
+/// updater crate. Setup fetches that immutable source and applies the same
+/// minimal-build-context adaptation used by the existing installer.
+pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
+    let source = gitrun_updater::fetch_premade_runner_dockerfile(
+        &gitrun_updater::canonical_premade_runner_dockerfile(),
+    )
+    .map_err(|error| {
+        SetupError::Command(format!(
+            "unable to fetch the canonical Premade runner Dockerfile: {error}"
+        ))
+    })?;
+    runner_dockerfile_from_source(&source)
+}
+
+fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
     const FULL_WORKSPACE_COPY: &str = "COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates";
     const MINIMAL_WORKSPACE_COPY: &str = concat!(
         "COPY Cargo.toml Cargo.lock ./\n",
@@ -12,19 +24,19 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> String {
         "COPY crates/gitrun-gsr ./crates/gitrun-gsr"
     );
 
-    let source = include_str!("../../../docker/runner/Dockerfile");
     if !source.contains(FULL_WORKSPACE_COPY) {
-        panic!("runner Dockerfile bootstrap adaptation marker is missing");
+        return Err(SetupError::Command(
+            "Premade runner Dockerfile is missing the expected workspace marker".into(),
+        ));
     }
-    let source = source.replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY);
+    let adapted = source.replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY);
 
-    if source.contains(FULL_WORKSPACE_COPY) {
-        panic!("runner Dockerfile bootstrap adaptation marker was not replaced");
+    if adapted.contains(FULL_WORKSPACE_COPY) || adapted.contains("COPY crates ./crates") {
+        return Err(SetupError::Command(
+            "Premade runner Dockerfile could not be reduced to the setup build context".into(),
+        ));
     }
-    if source.contains("COPY crates ./crates") {
-        panic!("bootstrap Dockerfile must not require the full workspace");
-    }
-    source
+    Ok(adapted)
 }
 
 pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/entrypoint.sh");
@@ -187,7 +199,9 @@ mod tests {
 
     #[test]
     fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
-        let dockerfile = runner_dockerfile_for_bootstrap();
+        let dockerfile =
+            runner_dockerfile_from_source(include_str!("../../../docker/runner/Dockerfile"))
+                .unwrap();
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
         assert!(dockerfile.contains("COPY crates/gitrun-exe ./crates/gitrun-exe"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));

@@ -744,7 +744,8 @@ pub struct OverviewData {
     pub max_runners: u32,
     pub vault_enabled: bool,
     pub gsr_watching: bool,
-    pub recent_critical_events: u32,
+    pub recent_critical_events: Option<u32>,
+    pub warnings: Vec<String>,
 }
 
 #[tauri::command]
@@ -752,14 +753,21 @@ fn get_overview() -> Result<OverviewData, String> {
     let config = load_config()?;
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let cutoff = recent_event_cutoff();
-    let recent_critical_events = gitrun_gsr::events::read_all(&events_path)
-        .map(|events| {
+    let mut warnings = Vec::new();
+    let recent_critical_events = match gitrun_gsr::events::read_all(&events_path) {
+        Ok(events) => Some(
             events
                 .iter()
-                .filter(|e| e.severity == gitrun_gsr::Severity::Critical && e.timestamp >= cutoff)
-                .count() as u32
-        })
-        .unwrap_or(0);
+                .filter(|event| {
+                    event.severity == gitrun_gsr::Severity::Critical && event.timestamp >= cutoff
+                })
+                .count() as u32,
+        ),
+        Err(error) => {
+            warnings.push(format!("Critical-event queue could not be read: {error}"));
+            None
+        }
+    };
     let gsr_watching = process_name_running("gitrun-gsr");
 
     Ok(OverviewData {
@@ -769,6 +777,7 @@ fn get_overview() -> Result<OverviewData, String> {
         vault_enabled: !config.vault_dir.trim().is_empty(),
         gsr_watching,
         recent_critical_events,
+        warnings,
     })
 }
 

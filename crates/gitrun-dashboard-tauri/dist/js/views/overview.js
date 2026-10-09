@@ -15,7 +15,7 @@ export async function renderOverview(navigate) {
   } catch (error) { if (generation !== window.__gitrunNavigationGeneration) return; content.innerHTML = errorView(error); return; }
   if (generation !== window.__gitrunNavigationGeneration) return;
   if (data.error) { content.innerHTML = errorView(data.error); return; }
-  window.dispatchEvent(new CustomEvent("gitrun:mascot-state",{detail:Number(data.recent_critical_events)>0?"alert":!data.gsr_watching?"serious":"calm"}));
+  window.dispatchEvent(new CustomEvent("gitrun:mascot-state",{detail:data.recent_critical_events == null || !data.gsr_watching?"serious":Number(data.recent_critical_events)>0?"alert":"calm"}));
   const repos = Array.isArray(data.repositories) ? data.repositories : [];
   const activity = Array.isArray(activitySnapshot.repositories) ? activitySnapshot.repositories : [];
   const activityKnown = activitySnapshot.repositories_checked === repos.length && repos.length === activitySnapshot.repositories_total;
@@ -34,8 +34,9 @@ export async function renderOverview(navigate) {
   const onlineRunners = runners.filter((runner) => runner.online).length;
   const busyRunners = runners.filter((runner) => runner.busy).length;
   const runnerFreshness = runnerSnapshot.checked_at ? new Date(Number(runnerSnapshot.checked_at) * 1000).toLocaleTimeString() : "Not checked";
+  const overviewWarnings = Array.isArray(data.warnings) && data.warnings.length ? '<div class="notice warn section"><div><strong>Overview warnings</strong>' + data.warnings.map((warning) => '<p>' + esc(warning) + '</p>').join("") + '</div></div>' : "";
   const resourceBar = (label, value) => {
-    const known = resourceSnapshot && Number.isFinite(Number(value));
+    const known = value !== null && value !== undefined && value !== "" && resourceSnapshot && Number.isFinite(Number(value));
     const number = known ? Math.max(0,Math.min(100,Number(value))) : 0;
     return '<div class="resource-row"><div class="resource-label"><span>' + esc(label) + '</span><strong>' + (known ? number.toFixed(1) + "%" : "Unknown") + '</strong></div><div class="resource-track"><span style="width:' + (known ? number : 0) + '%"></span></div></div>';
   };
@@ -49,11 +50,12 @@ export async function renderOverview(navigate) {
     return `<article class="panel repo-card"><div class="repo-card-top"><div class="repo-avatar">${esc(repo.slice(0, 1).toUpperCase())}</div><div class="repo-title"><strong>${esc(repo)}</strong><small>Configured repository · operational snapshot</small></div>${pill("Configured", "good")}</div><div class="repo-card-foot"><span class="pill neutral">★ ${esc(stars)}</span><span class="pill neutral">Open PRs ${esc(openPrs)}</span><span class="pill neutral">Merged ${esc(mergedPrs)}</span><span class="pill neutral">Runner pool ${esc(data.min_runners)}–${esc(data.max_runners)}</span><button class="btn" data-open-repo="${esc(repo)}">Open repository →</button></div></article>`;
   }).join("");
   content.innerHTML = heading("CONTROL PLANE", "Overview", "A clear view of what GitRun knows right now. Unknown runtime metrics stay unknown instead of being presented as zero.", '<button class="btn" data-action="refresh-view">↻ Refresh</button>') +
+    overviewWarnings +
     '<div class="grid metrics-grid">' +
       metric("Repositories", repos.length, "Configured in GitRun", "⌘") +
       metric("Runner pool target", String(data.min_runners) + "–" + String(data.max_runners), "Configured limits, not live capacity", "⇄") +
       metric("GitVault", data.vault_enabled ? "Configured" : "Not configured", "Directory/configuration signal only", "▣") +
-      metric("Critical events", data.recent_critical_events, "Recorded in the last 24 hours", "!") +
+      metric("Critical events", data.recent_critical_events == null ? "Unknown" : data.recent_critical_events, data.recent_critical_events == null ? "Event queue unavailable" : "Recorded in the last 24 hours", "!") +
       metric("Online runners", runnerCountsKnown ? onlineRunners : "Unknown", runnerSnapshot.stale ? "Cached snapshot · " + runnerFreshness : "GitHub snapshot · " + runnerFreshness, "●") +
       metric("Busy runners", runnerCountsKnown ? busyRunners : "Unknown", runnerCountsKnown ? "Observed GitHub runner occupancy" : "Some repositories could not be queried", "↻") +
       metric("Stars", activityKnown ? totalStars : "Unknown", activitySnapshot.stale ? "Cached / stale repository metadata" : "Across configured repositories", "★") +
@@ -78,7 +80,7 @@ export async function renderOverview(navigate) {
       '<p class="field-hint" style="margin-top:10px">Workflow run snapshots share the 60-second cache with runner inventory.</p></div>' +
     '<div class="two-col section">' +
       panel("Runner pool", '<div class="kv-grid"><div class="kv"><small>Minimum target</small><strong>' + esc(data.min_runners) + '</strong></div><div class="kv"><small>Maximum target</small><strong>' + esc(data.max_runners) + '</strong></div><div class="kv"><small>Observed runners</small><strong>' + (runnerCountsKnown ? esc(runners.length) : "Unknown") + '</strong></div><div class="kv"><small>Busy runners</small><strong>' + (runnerCountsKnown ? esc(busyRunners) : "Unknown") + '</strong></div></div>') +
-      panel("System signals", '<div class="activity-item"><span class="activity-mark ' + (data.gsr_watching ? "good" : "bad") + '"></span><div><strong>GSR watchdog</strong><p>' + (data.gsr_watching ? "Process detected; enforcement still requires verification." : "Watchdog process was not detected.") + '</p></div></div><div class="activity-item"><span class="activity-mark ' + (data.vault_enabled ? "good" : "") + '"></span><div><strong>GitVault</strong><p>' + (data.vault_enabled ? "A vault directory is configured; storage health is not yet confirmed." : "Vault directory is not configured.") + '</p></div></div><div class="activity-item"><span class="activity-mark ' + (Number(data.recent_critical_events) > 0 ? "bad" : "good") + '"></span><div><strong>Security events</strong><p>' + esc(data.recent_critical_events) + ' critical event(s) recorded in the last 24 hours.</p></div></div>')
+      panel("System signals", '<div class="activity-item"><span class="activity-mark ' + (data.gsr_watching ? "good" : "bad") + '"></span><div><strong>GSR watchdog</strong><p>' + (data.gsr_watching ? "Process detected; enforcement still requires verification." : "Watchdog process was not detected.") + '</p></div></div><div class="activity-item"><span class="activity-mark ' + (data.vault_enabled ? "good" : "") + '"></span><div><strong>GitVault</strong><p>' + (data.vault_enabled ? "A vault directory is configured; storage health is not yet confirmed." : "Vault directory is not configured.") + '</p></div></div><div class="activity-item"><span class="activity-mark ' + (data.recent_critical_events == null ? "warn" : Number(data.recent_critical_events) > 0 ? "bad" : "good") + '"></span><div><strong>Security events</strong><p>' + esc(data.recent_critical_events) + ' critical event(s) recorded in the last 24 hours.</p></div></div>')
     + '</div>';
   content.querySelectorAll("[data-open-repo]").forEach((button) => button.addEventListener("click", () => navigate("repo:" + button.dataset.openRepo)));
   setFooter("Overview refreshed · " + new Date().toLocaleTimeString());

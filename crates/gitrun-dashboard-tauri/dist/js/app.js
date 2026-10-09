@@ -116,7 +116,7 @@ function firstRunComplete() {
     backdrop.innerHTML = '<section class="modal" role="dialog" aria-modal="true" aria-labelledby="welcome-tour-title"><div class="mascot-inline"><div class="mascot-face"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 19 7 5l13 8a19 19 0 0 1 8 0l13-8-2 14c3 4 4 8 3 13-2 8-9 12-18 12S8 40 6 32c-1-5 0-9 3-13Z" fill="currentColor"/><path d="M15 26h.1M33 26h.1" stroke="#11151d" stroke-width="5" stroke-linecap="round"/><path d="M20 33q4 4 8 0" fill="none" stroke="#11151d" stroke-width="2.5" stroke-linecap="round"/></svg></div><div class="mascot-copy"><strong id="welcome-tour-title">Welcome to GitRun</strong><p>Your control plane is set up. Want a quick guided tour?</p></div></div><div class="modal-actions"><button class="btn" data-later>Later</button><button class="btn btn-primary" data-start>Start tour</button></div></section>';
     document.body.appendChild(backdrop);
     backdrop.querySelector("[data-later]").onclick = () => { localStorage.setItem("gitrun-tutorial-dismissed","true"); backdrop.remove(); };
-    backdrop.querySelector("[data-start]").onclick = () => { backdrop.remove(); navigate("app-settings").then(() => document.getElementById("restart-tour")?.click()); };
+    backdrop.querySelector("[data-start]").onclick = () => { localStorage.removeItem("gitrun-tutorial-dismissed"); backdrop.remove(); navigate("app-settings").then(() => document.getElementById("restart-tour")?.click()); };
   }
 }
 function setCatExpression(state) {

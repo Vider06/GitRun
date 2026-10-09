@@ -200,11 +200,18 @@ if (localStorage.getItem("gitrun-sidebar-collapsed") === "true") document.body.c
       renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
     } else {
       await loadRepoNav();
-      try {
-        const health = await invoke("get_dashboard_health");
-        document.getElementById("footer-version").textContent = "VERSION " + String(health.version || "UNKNOWN").toUpperCase();
-      } catch (_) { document.getElementById("footer-version").textContent = "VERSION UNKNOWN"; }
       firstRunComplete();
+      // Version/health probes may need to wait for Docker or systemd. They
+      // should update the footer asynchronously, not block the first view.
+      void invoke("get_dashboard_health").then((health) => {
+        const footerVersion = document.getElementById("footer-version");
+        if (footerVersion) {
+          footerVersion.textContent = "VERSION " + String(health.version || "UNKNOWN").toUpperCase();
+        }
+      }).catch(() => {
+        const footerVersion = document.getElementById("footer-version");
+        if (footerVersion) footerVersion.textContent = "VERSION UNKNOWN";
+      });
     }
   } catch (error) {
     content.innerHTML = errorView("Could not initialize GitRun: " + error);

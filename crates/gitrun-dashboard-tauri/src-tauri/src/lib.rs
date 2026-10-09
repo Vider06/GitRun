@@ -1981,14 +1981,14 @@ fn command_success_with_timeout(program: &str, args: &[&str], timeout: Duration)
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct DashboardHealthCheck {
     name: String,
     ok: bool,
     detail: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct DashboardHealth {
     version: String,
     config_ok: bool,
@@ -1999,6 +1999,17 @@ struct DashboardHealth {
     service_active: bool,
     checks: Vec<DashboardHealthCheck>,
 }
+
+#[derive(Clone)]
+struct CachedDashboardHealth {
+    fetched_at: Instant,
+    config_key: u64,
+    value: DashboardHealth,
+}
+
+static DASHBOARD_HEALTH_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<Option<CachedDashboardHealth>>,
+> = std::sync::OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2068,14 +2079,51 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             format!("systemctl {action_arg} gitrun.service failed: {detail}")
         });
     }
+    if let Some(cache) = DASHBOARD_HEALTH_CACHE.get() {
+        if let Ok(mut cached) = cache.lock() {
+            *cached = None;
+        }
+    }
     Ok(format!("Requested system service action: {action_arg}"))
 }
 
 #[tauri::command]
-fn get_dashboard_health() -> Result<DashboardHealth, String> {
+fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, String> {
+    const CACHE_TTL: Duration = Duration::from_secs(10);
+    let config_key = dashboard_config_cache_key();
+    let cache = DASHBOARD_HEALTH_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    let cached = cache
+        .lock()
+        .map_err(|_| "dashboard health cache lock poisoned".to_owned())?
+        .clone()
+        .filter(|snapshot| snapshot.config_key == config_key);
+    if !force_refresh.unwrap_or(false) {
+        if let Some(snapshot) = cached
+            .as_ref()
+            .filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL)
+        {
+            return Ok(snapshot.value.clone());
+        }
+    }
+
     let config = load_config()?;
     let config_path = configured_config_path();
-    let docker_ok = command_success_with_timeout("docker", &["info"], Duration::from_secs(5));
+    let (docker_ok, service_active) = std::thread::scope(|scope| {
+        let docker_check = scope.spawn(|| {
+            command_success_with_timeout("docker", &["info"], Duration::from_secs(5))
+        });
+        let service_check = scope.spawn(|| {
+            command_success_with_timeout(
+                "/usr/bin/systemctl",
+                &["is-active", "--quiet", "gitrun.service"],
+                Duration::from_secs(3),
+            )
+        });
+        (
+            docker_check.join().unwrap_or(false),
+            service_check.join().unwrap_or(false),
+        )
+    });
     let gsr_process_seen = process_name_running("gitrun-gsr");
     let service_installed = [
         "/etc/systemd/system/gitrun.service",
@@ -2084,11 +2132,6 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
     ]
     .iter()
     .any(|path| std::path::Path::new(path).is_file());
-    let service_active = command_success_with_timeout(
-        "/usr/bin/systemctl",
-        &["is-active", "--quiet", "gitrun.service"],
-        Duration::from_secs(3),
-    );
     let vault_status = if config.vault_dir.trim().is_empty() {
         (
             true,
@@ -2152,7 +2195,7 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
             detail: if config.gsr_docker_socket_hardening { "Hardening is enabled in configuration; active runtime application is not verified here.".into() } else { "Hardening is disabled in configuration.".into() },
         },
     ];
-    Ok(DashboardHealth {
+    let report = DashboardHealth {
         version,
         config_ok: true,
         config_path: config_path.map(|path| path.display().to_string()),
@@ -2161,7 +2204,16 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
         service_installed,
         service_active,
         checks,
-    })
+    };
+    *cache
+        .lock()
+        .map_err(|_| "dashboard health cache lock poisoned".to_owned())? =
+        Some(CachedDashboardHealth {
+            fetched_at: Instant::now(),
+            config_key,
+            value: report.clone(),
+        });
+    Ok(report)
 }
 
 #[derive(Debug, Serialize)]

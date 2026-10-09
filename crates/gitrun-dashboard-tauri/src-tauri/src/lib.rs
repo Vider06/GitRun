@@ -21,26 +21,40 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
+fn resolve_config_path(explicit: Option<&std::ffi::OsStr>) -> Result<Option<PathBuf>, String> {
+    if let Some(path) = explicit {
+        let path = PathBuf::from(path);
+        if !path.is_file() {
+            return Err(format!(
+                "GITRUN_CONFIG_FILE points to a missing configuration file: {}",
+                path.display()
+            ));
+        }
+        return Ok(Some(path));
+    }
+
+    Ok([
+        PathBuf::from("/etc/gitrun/gitrun.env"),
+        PathBuf::from("config/gitrun.env"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file()))
+}
+
 fn load_config() -> Result<Config, String> {
-    match std::env::var("GITRUN_CONFIG_FILE") {
-        Ok(path) => Config::from_env_file(path),
-        Err(_) => Config::from_env(),
+    let explicit = std::env::var_os("GITRUN_CONFIG_FILE");
+    let path = resolve_config_path(explicit.as_deref())?;
+    match path {
+        Some(path) => Config::from_env_file(path),
+        None => Config::from_env(),
     }
     .map_err(|e| e.to_string())
 }
 
 fn configured_config_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
-        let path = PathBuf::from(path);
-        return path.is_file().then_some(path);
-    }
-
-    [
-        PathBuf::from("/etc/gitrun/gitrun.env"),
-        PathBuf::from("config/gitrun.env"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
+    resolve_config_path(std::env::var_os("GITRUN_CONFIG_FILE").as_deref())
+        .ok()
+        .flatten()
 }
 
 #[tauri::command]
@@ -886,7 +900,14 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
     if !force_refresh.unwrap_or(false) {
         if let Some(snapshot) = cached
             .as_ref()
-            .filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL)
+            .filter(|snapshot| {
+            let ttl = if snapshot.value.stale {
+                Duration::from_secs(5)
+            } else {
+                CACHE_TTL
+            };
+            snapshot.fetched_at.elapsed() < ttl
+        })
         {
             return Ok(snapshot.value.clone());
         }
@@ -1013,6 +1034,9 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                         warnings: Vec::new(),
                     });
             snapshot.stale = true;
+            snapshot
+                .warnings
+                .retain(|warning| !warning.starts_with("Runner refresh unavailable:"));
             snapshot
                 .warnings
                 .push(format!("Runner refresh unavailable: {error}"));
@@ -1157,7 +1181,14 @@ fn get_repository_activity(
     if !force_refresh.unwrap_or(false) {
         if let Some(snapshot) = cached
             .as_ref()
-            .filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL)
+            .filter(|snapshot| {
+            let ttl = if snapshot.value.stale {
+                Duration::from_secs(5)
+            } else {
+                CACHE_TTL
+            };
+            snapshot.fetched_at.elapsed() < ttl
+        })
         {
             return Ok(snapshot.value.clone());
         }
@@ -1231,6 +1262,9 @@ fn get_repository_activity(
                 }
             });
             snapshot.stale = true;
+            snapshot
+                .warnings
+                .retain(|warning| !warning.starts_with("Repository activity refresh unavailable:"));
             snapshot
                 .warnings
                 .push(format!("Repository activity refresh unavailable: {error}"));
@@ -2003,7 +2037,9 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
             std::fs::read_to_string("/usr/share/gitrun/version.txt")
                 .ok()
                 .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
         })
+        .or_else(|| option_env!("GITRUN_BUILD_VERSION").map(str::to_owned))
         .unwrap_or_else(|| "unknown".to_owned());
     let checks = vec![
         DashboardHealthCheck {
@@ -2464,4 +2500,25 @@ mod tests {
         assert_eq!(mode, 0o600);
         std::fs::remove_file(path).unwrap();
     }
+    
+    #[test]
+    fn explicit_config_path_must_exist_and_is_resolved() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-dashboard-config-path-{}-{nonce}.env",
+            std::process::id()
+        ));
+        assert!(resolve_config_path(Some(path.as_os_str())).is_err());
+
+        std::fs::write(&path, "GITRUN_REPOSITORIES=owner/repo\\n").unwrap();
+        assert_eq!(
+            resolve_config_path(Some(path.as_os_str())).unwrap(),
+            Some(path.clone())
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
 }

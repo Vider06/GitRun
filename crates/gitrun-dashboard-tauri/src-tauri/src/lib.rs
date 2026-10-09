@@ -12,6 +12,7 @@
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
 use gitrun_setup::BootstrapAuth;
 use gitrun_vault::{Scope, Vault};
+use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -1303,7 +1304,8 @@ fn open_vault(config: &Config) -> Result<Vault, String> {
     if config.vault_dir.trim().is_empty() {
         return Err("GitVault is not configured (GITRUN_VAULT_DIR is empty)".into());
     }
-    Vault::open(&config.vault_dir).map_err(|e| e.to_string())
+    let sink = VaultToGsrBridge::new(&config.state_dir);
+    Vault::open_with_sink(&config.vault_dir, Box::new(sink)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1381,6 +1383,58 @@ fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent
         events.truncate(limit);
     }
     Ok(events)
+}
+
+fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
+    match source {
+        "gsr" => Ok(vec!["gitrun-gsr.service"]),
+        "scheduler" => Ok(vec!["gitrun.service"]),
+        "all" => Ok(vec!["gitrun-gsr.service", "gitrun.service"]),
+        _ => Err("unsupported log source; expected gsr, scheduler, or all".into()),
+    }
+}
+
+#[tauri::command]
+fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("System journal logs are currently available only on Linux.".into());
+    }
+    let units = journal_units(&source)?;
+    let limit = limit.unwrap_or(200).clamp(1, 500);
+    let mut command = std::process::Command::new("journalctl");
+    command
+        .arg("--no-pager")
+        .arg("--output=short-iso-precise")
+        .arg("--lines")
+        .arg(limit.to_string());
+    for unit in units {
+        command.arg("--unit").arg(unit);
+    }
+    let output = command.output().map_err(|error| {
+        format!("Unable to execute journalctl; GitRun service logs are unavailable: {error}")
+    })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!("journalctl exited with status {}", output.status)
+        } else {
+            format!("Unable to read GitRun service journal: {detail}")
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).lines().map(str::to_owned).collect())
+}
+
+#[cfg(test)]
+mod journal_log_tests {
+    use super::journal_units;
+
+    #[test]
+    fn journal_units_are_allowlisted() {
+        assert_eq!(journal_units("gsr").unwrap(), vec!["gitrun-gsr.service"]);
+        assert_eq!(journal_units("scheduler").unwrap(), vec!["gitrun.service"]);
+        assert_eq!(journal_units("all").unwrap(), vec!["gitrun-gsr.service", "gitrun.service"]);
+        assert!(journal_units("arbitrary.service").is_err());
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -2264,6 +2318,7 @@ pub fn run() {
             delete_vault_secret,
             get_gsr_status,
             list_gsr_events,
+            list_service_logs,
             get_zizmor_info,
             accept_zizmor_license_and_install,
             disable_zizmor,

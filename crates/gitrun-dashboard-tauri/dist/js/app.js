@@ -3,6 +3,7 @@ import { renderOverview } from "./views/overview.js";
 import { renderRepository } from "./views/repositories.js";
 import { renderVault } from "./views/vault.js";
 import { renderGsr } from "./views/gsr.js";
+import { renderLogs } from "./views/logs.js";
 import { renderSecurity } from "./views/security.js";
 import { renderGeneral } from "./views/settings.js";
 import { renderAppSettings, applyTheme } from "./views/app-settings.js";
@@ -11,7 +12,7 @@ import { renderSetup } from "./setup.js";
 const repoList = document.getElementById("repo-list");
 const names = {
   overview: "Overview", security: "Privacy & Security", vault: "GitVault",
-  gsr: "GitSecureRun", general: "General settings", "app-settings": "App settings",
+  gsr: "GitSecureRun", logs: "Logs", general: "General settings", "app-settings": "App settings",
   recovery: "Recovery"
 };
 let currentView = "overview";
@@ -75,6 +76,7 @@ async function navigate(view, options = {}) {
     else if (view === "security") await renderSecurity();
     else if (view === "vault") await renderVault();
     else if (view === "gsr") await renderGsr();
+    else if (view === "logs") await renderLogs();
     else if (view === "general") await renderGeneral();
     else if (view === "app-settings") await renderAppSettings();
     else if (view === "recovery") await renderRecovery();

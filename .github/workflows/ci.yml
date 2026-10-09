@@ -2159,6 +2159,20 @@ jobs:
           done < <(awk '/RUNNER_BUILD_FILES:/ { inside=1; next } inside && index($0, "];") == 1 { exit } inside && match($0, /"[^"]+"/) { path=substr($0, RSTART + 1, RLENGTH - 2); if (path == "Cargo.toml" || path == "Cargo.lock" || path ~ /^crates\//) print path }' crates/gitrun-setup/src/resources.rs)
           cp docker/runner/entrypoint.sh "$context/docker/runner/entrypoint.sh"
           cp "$adapted" "$context/Dockerfile"
+          for required in \
+            Cargo.toml \
+            Cargo.lock \
+            crates/gitrun-core/Cargo.toml \
+            crates/gitrun-exe/src/lib.rs \
+            crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs \
+            crates/gitrun-gsr/src/bin/gitrun-api.rs \
+            docker/runner/entrypoint.sh
+          do
+            if [ ! -s "$context/$required" ]; then
+              echo "ERROR: installer runner build context is missing $required" >&2
+              exit 1
+            fi
+          done
           {
             echo "### Installer Dockerfile source"
             echo

@@ -30,7 +30,9 @@ fn run_gtuu() -> Result<super::RecoveryReport, String> {
 
     let mut report = super::inspect();
     if let Some(gtuu) = structured {
-        let target_changed = gtuu.target_version.as_deref()
+        let target_changed = gtuu
+            .target_version
+            .as_deref()
             .map(|version| version != report.version)
             .unwrap_or(false);
         let applied = gtuu.gitrun_updated;
@@ -38,20 +40,36 @@ fn run_gtuu() -> Result<super::RecoveryReport, String> {
             checked: true,
             available: target_changed && !applied,
             current_version: if applied {
-                gtuu.target_version.clone().unwrap_or(gtuu.current_version.clone())
+                gtuu.target_version
+                    .clone()
+                    .unwrap_or(gtuu.current_version.clone())
             } else {
                 gtuu.current_version.clone()
             },
             target_version: gtuu.target_version.clone(),
             applied,
-            error: gtuu.gitrun_update_error.clone()
+            error: gtuu
+                .gitrun_update_error
+                .clone()
                 .or(gtuu.runner_image_error.clone())
                 .or(gtuu.containers_error.clone()),
         };
         for (code, title, error) in [
-            ("gtuu-gitrun", "GitRun update failed", gtuu.gitrun_update_error),
-            ("gtuu-runner-image", "Runner image update failed", gtuu.runner_image_error),
-            ("gtuu-containers", "Runner container reconciliation failed", gtuu.containers_error),
+            (
+                "gtuu-gitrun",
+                "GitRun update failed",
+                gtuu.gitrun_update_error,
+            ),
+            (
+                "gtuu-runner-image",
+                "Runner image update failed",
+                gtuu.runner_image_error,
+            ),
+            (
+                "gtuu-containers",
+                "Runner container reconciliation failed",
+                gtuu.containers_error,
+            ),
         ] {
             if let Some(detail) = error {
                 report.issues.push(super::RecoveryIssue {

@@ -833,18 +833,14 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
     let connect_timeout = Duration::from_secs(config.github_connect_timeout);
     let request_timeout = Duration::from_secs(config.github_request_timeout);
     match auth {
-        gitrun_core::GitHubAuth::Pat(token) => gitrun_scheduler::GitHubClient::with_timeouts(
-            token,
-            connect_timeout,
-            request_timeout,
-        )
-        .map_err(|error| error.to_string()),
-        gitrun_core::GitHubAuth::App(auth) => gitrun_scheduler::GitHubClient::with_app_auth(
-            auth,
-            connect_timeout,
-            request_timeout,
-        )
-        .map_err(|error| error.to_string()),
+        gitrun_core::GitHubAuth::Pat(token) => {
+            gitrun_scheduler::GitHubClient::with_timeouts(token, connect_timeout, request_timeout)
+                .map_err(|error| error.to_string())
+        }
+        gitrun_core::GitHubAuth::App(auth) => {
+            gitrun_scheduler::GitHubClient::with_app_auth(auth, connect_timeout, request_timeout)
+                .map_err(|error| error.to_string())
+        }
     }
 }
 
@@ -852,9 +848,15 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
 fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(60);
     let cache = DASHBOARD_RUNNER_CACHE.get_or_init(|| std::sync::Mutex::new(None));
-    let cached = cache.lock().map_err(|_| "runner snapshot cache lock poisoned".to_owned())?.clone();
+    let cached = cache
+        .lock()
+        .map_err(|_| "runner snapshot cache lock poisoned".to_owned())?
+        .clone();
     if !force_refresh.unwrap_or(false) {
-        if let Some(snapshot) = cached.as_ref().filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL) {
+        if let Some(snapshot) = cached
+            .as_ref()
+            .filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL)
+        {
             return Ok(snapshot.value.clone());
         }
     }
@@ -891,18 +893,26 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                         cancelled: summary.cancelled,
                     });
                 }
-                Err(error) => warnings.push(format!("{repo}: workflow-run summary failed: {error}")),
+                Err(error) => {
+                    warnings.push(format!("{repo}: workflow-run summary failed: {error}"))
+                }
             }
-            let Some(remote_runners) = remote_runners else { continue; };
+            let Some(remote_runners) = remote_runners else {
+                continue;
+            };
             let containers = match gitrun_scheduler::docker::managed_containers(repo) {
                 Ok(value) => Some(value),
                 Err(error) => {
-                    warnings.push(format!("{repo}: Docker container state unavailable: {error}"));
+                    warnings.push(format!(
+                        "{repo}: Docker container state unavailable: {error}"
+                    ));
                     None
                 }
             };
             for runner in remote_runners {
-                let container = containers.as_ref().and_then(|items| items.iter().find(|item| item.name == runner.name));
+                let container = containers
+                    .as_ref()
+                    .and_then(|items| items.iter().find(|item| item.name == runner.name));
                 let kind = match (container, containers.is_some()) {
                     (Some(item), _) if item.permanent => "Permanent",
                     (Some(_), _) => "Dynamic",
@@ -921,11 +931,16 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                 });
             }
         }
-        let checked_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0);
+        let checked_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
         Ok(DashboardRunnerSnapshot {
             checked_at,
             stale: false,
-            complete: repositories_checked == config.repositories.len() && workflow_repositories_checked == config.repositories.len() && warnings.is_empty(),
+            complete: repositories_checked == config.repositories.len()
+                && workflow_repositories_checked == config.repositories.len()
+                && warnings.is_empty(),
             repositories_checked,
             repositories_total: config.repositories.len(),
             workflow_repositories_checked,
@@ -937,30 +952,46 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
 
     match fresh {
         Ok(snapshot) => {
-            *cache.lock().map_err(|_| "runner snapshot cache lock poisoned".to_owned())? = Some(CachedDashboardRunnerSnapshot {
-                fetched_at: Instant::now(),
-                value: snapshot.clone(),
-            });
+            *cache
+                .lock()
+                .map_err(|_| "runner snapshot cache lock poisoned".to_owned())? =
+                Some(CachedDashboardRunnerSnapshot {
+                    fetched_at: Instant::now(),
+                    value: snapshot.clone(),
+                });
             Ok(snapshot)
         }
         Err(error) => {
-            let mut snapshot = cached.map(|cached| cached.value).unwrap_or_else(|| DashboardRunnerSnapshot {
-                checked_at: SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0),
-                stale: true,
-                complete: false,
-                repositories_checked: 0,
-                repositories_total: load_config().map(|config| config.repositories.len()).unwrap_or(0),
-                workflow_repositories_checked: 0,
-                workflow_runs: Vec::new(),
-                runners: Vec::new(),
-                warnings: Vec::new(),
-            });
+            let mut snapshot =
+                cached
+                    .map(|cached| cached.value)
+                    .unwrap_or_else(|| DashboardRunnerSnapshot {
+                        checked_at: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|duration| duration.as_secs())
+                            .unwrap_or(0),
+                        stale: true,
+                        complete: false,
+                        repositories_checked: 0,
+                        repositories_total: load_config()
+                            .map(|config| config.repositories.len())
+                            .unwrap_or(0),
+                        workflow_repositories_checked: 0,
+                        workflow_runs: Vec::new(),
+                        runners: Vec::new(),
+                        warnings: Vec::new(),
+                    });
             snapshot.stale = true;
-            snapshot.warnings.push(format!("Runner refresh unavailable: {error}"));
-            *cache.lock().map_err(|_| "runner snapshot cache lock poisoned".to_owned())? = Some(CachedDashboardRunnerSnapshot {
-                fetched_at: Instant::now(),
-                value: snapshot.clone(),
-            });
+            snapshot
+                .warnings
+                .push(format!("Runner refresh unavailable: {error}"));
+            *cache
+                .lock()
+                .map_err(|_| "runner snapshot cache lock poisoned".to_owned())? =
+                Some(CachedDashboardRunnerSnapshot {
+                    fetched_at: Instant::now(),
+                    value: snapshot.clone(),
+                });
             Ok(snapshot)
         }
     }
@@ -987,12 +1018,20 @@ static DASHBOARD_HOST_RESOURCE_CACHE: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[tauri::command]
-fn get_host_resource_snapshot(force_refresh: Option<bool>) -> Result<DashboardHostResourceSnapshot, String> {
+fn get_host_resource_snapshot(
+    force_refresh: Option<bool>,
+) -> Result<DashboardHostResourceSnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(15);
     let cache = DASHBOARD_HOST_RESOURCE_CACHE.get_or_init(|| std::sync::Mutex::new(None));
-    let cached = cache.lock().map_err(|_| "host resource cache lock poisoned".to_owned())?.clone();
+    let cached = cache
+        .lock()
+        .map_err(|_| "host resource cache lock poisoned".to_owned())?
+        .clone();
     if !force_refresh.unwrap_or(false) {
-        if let Some(snapshot) = cached.as_ref().filter(|snapshot| snapshot.sampled_at.elapsed() < CACHE_TTL) {
+        if let Some(snapshot) = cached
+            .as_ref()
+            .filter(|snapshot| snapshot.sampled_at.elapsed() < CACHE_TTL)
+        {
             return Ok(snapshot.value.clone());
         }
     }
@@ -1001,7 +1040,10 @@ fn get_host_resource_snapshot(force_refresh: Option<bool>) -> Result<DashboardHo
     });
     match sample {
         Ok(sample) => {
-            let sampled_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0);
+            let sampled_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
             let snapshot = DashboardHostResourceSnapshot {
                 sampled_at,
                 stale: false,
@@ -1010,20 +1052,28 @@ fn get_host_resource_snapshot(force_refresh: Option<bool>) -> Result<DashboardHo
                 disk_percent: sample.disk_percent,
                 error: None,
             };
-            *cache.lock().map_err(|_| "host resource cache lock poisoned".to_owned())? = Some(CachedDashboardHostResources {
-                sampled_at: Instant::now(),
-                value: snapshot.clone(),
-            });
+            *cache
+                .lock()
+                .map_err(|_| "host resource cache lock poisoned".to_owned())? =
+                Some(CachedDashboardHostResources {
+                    sampled_at: Instant::now(),
+                    value: snapshot.clone(),
+                });
             Ok(snapshot)
         }
         Err(error) => {
             if let Some(mut snapshot) = cached.map(|cached| cached.value) {
                 snapshot.stale = true;
-                snapshot.error = Some(format!("Resource probe failed; showing cached values: {error}"));
-                *cache.lock().map_err(|_| "host resource cache lock poisoned".to_owned())? = Some(CachedDashboardHostResources {
-                    sampled_at: Instant::now(),
-                    value: snapshot.clone(),
-                });
+                snapshot.error = Some(format!(
+                    "Resource probe failed; showing cached values: {error}"
+                ));
+                *cache
+                    .lock()
+                    .map_err(|_| "host resource cache lock poisoned".to_owned())? =
+                    Some(CachedDashboardHostResources {
+                        sampled_at: Instant::now(),
+                        value: snapshot.clone(),
+                    });
                 Ok(snapshot)
             } else {
                 Err(error)
@@ -1064,12 +1114,20 @@ static DASHBOARD_REPOSITORY_ACTIVITY_CACHE: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[tauri::command]
-fn get_repository_activity(force_refresh: Option<bool>) -> Result<DashboardRepositoryActivitySnapshot, String> {
+fn get_repository_activity(
+    force_refresh: Option<bool>,
+) -> Result<DashboardRepositoryActivitySnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(300);
     let cache = DASHBOARD_REPOSITORY_ACTIVITY_CACHE.get_or_init(|| std::sync::Mutex::new(None));
-    let cached = cache.lock().map_err(|_| "repository activity cache lock poisoned".to_owned())?.clone();
+    let cached = cache
+        .lock()
+        .map_err(|_| "repository activity cache lock poisoned".to_owned())?
+        .clone();
     if !force_refresh.unwrap_or(false) {
-        if let Some(snapshot) = cached.as_ref().filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL) {
+        if let Some(snapshot) = cached
+            .as_ref()
+            .filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL)
+        {
             return Ok(snapshot.value.clone());
         }
     }
@@ -1093,10 +1151,15 @@ fn get_repository_activity(force_refresh: Option<bool>) -> Result<DashboardRepos
                         pushed_at: item.pushed_at,
                     });
                 }
-                Err(error) => warnings.push(format!("{repo}: repository activity query failed: {error}")),
+                Err(error) => {
+                    warnings.push(format!("{repo}: repository activity query failed: {error}"))
+                }
             }
         }
-        let checked_at = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0);
+        let checked_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
         Ok(DashboardRepositoryActivitySnapshot {
             checked_at,
             stale: false,
@@ -1110,28 +1173,43 @@ fn get_repository_activity(force_refresh: Option<bool>) -> Result<DashboardRepos
 
     match fresh {
         Ok(snapshot) => {
-            *cache.lock().map_err(|_| "repository activity cache lock poisoned".to_owned())? = Some(CachedDashboardRepositoryActivity {
-                fetched_at: Instant::now(),
-                value: snapshot.clone(),
-            });
+            *cache
+                .lock()
+                .map_err(|_| "repository activity cache lock poisoned".to_owned())? =
+                Some(CachedDashboardRepositoryActivity {
+                    fetched_at: Instant::now(),
+                    value: snapshot.clone(),
+                });
             Ok(snapshot)
         }
         Err(error) => {
-            let mut snapshot = cached.map(|cached| cached.value).unwrap_or_else(|| DashboardRepositoryActivitySnapshot {
-                checked_at: SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0),
-                stale: true,
-                complete: false,
-                repositories_checked: 0,
-                repositories_total: load_config().map(|config| config.repositories.len()).unwrap_or(0),
-                repositories: Vec::new(),
-                warnings: Vec::new(),
+            let mut snapshot = cached.map(|cached| cached.value).unwrap_or_else(|| {
+                DashboardRepositoryActivitySnapshot {
+                    checked_at: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or(0),
+                    stale: true,
+                    complete: false,
+                    repositories_checked: 0,
+                    repositories_total: load_config()
+                        .map(|config| config.repositories.len())
+                        .unwrap_or(0),
+                    repositories: Vec::new(),
+                    warnings: Vec::new(),
+                }
             });
             snapshot.stale = true;
-            snapshot.warnings.push(format!("Repository activity refresh unavailable: {error}"));
-            *cache.lock().map_err(|_| "repository activity cache lock poisoned".to_owned())? = Some(CachedDashboardRepositoryActivity {
-                fetched_at: Instant::now(),
-                value: snapshot.clone(),
-            });
+            snapshot
+                .warnings
+                .push(format!("Repository activity refresh unavailable: {error}"));
+            *cache
+                .lock()
+                .map_err(|_| "repository activity cache lock poisoned".to_owned())? =
+                Some(CachedDashboardRepositoryActivity {
+                    fetched_at: Instant::now(),
+                    value: snapshot.clone(),
+                });
             Ok(snapshot)
         }
     }
@@ -1547,7 +1625,9 @@ fn save_gitrun_settings(
         .map_err(|error| error.to_string())?;
     let socket_opt_out = settings.repositories.iter().any(|(name, repository)| {
         repository.docker.direct_socket_enabled
-            && !current_settings.repositories.get(name)
+            && !current_settings
+                .repositories
+                .get(name)
                 .map(|current| current.docker.direct_socket_enabled)
                 .unwrap_or(false)
     });
@@ -1745,9 +1825,12 @@ fn current_process_is_root() -> bool {
 }
 
 fn trusted_systemctl_path() -> Option<PathBuf> {
-    [PathBuf::from("/usr/bin/systemctl"), PathBuf::from("/bin/systemctl")]
-        .into_iter()
-        .find_map(|path| trusted_privileged_binary(&path))
+    [
+        PathBuf::from("/usr/bin/systemctl"),
+        PathBuf::from("/bin/systemctl"),
+    ]
+    .into_iter()
+    .find_map(|path| trusted_privileged_binary(&path))
 }
 
 #[tauri::command]
@@ -1768,17 +1851,23 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             .output()
             .map_err(|error| format!("unable to run systemctl: {error}"))?
     } else {
-        let pkexec = pkexec_path().ok_or("trusted pkexec was not found; service operation cannot continue")?;
+        let pkexec = pkexec_path()
+            .ok_or("trusted pkexec was not found; service operation cannot continue")?;
         std::process::Command::new(pkexec)
             .arg(&systemctl)
             .args([action_arg, "gitrun.service"])
             .output()
-            .map_err(|error| format!("unable to request privileged system service control: {error}"))?
+            .map_err(|error| {
+                format!("unable to request privileged system service control: {error}")
+            })?
     };
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
-            format!("systemctl {action_arg} gitrun.service exited with {}", output.status)
+            format!(
+                "systemctl {action_arg} gitrun.service exited with {}",
+                output.status
+            )
         } else {
             format!("systemctl {action_arg} gitrun.service failed: {detail}")
         });
@@ -1796,23 +1885,35 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
         "/etc/systemd/system/gitrun.service",
         "/usr/lib/systemd/system/gitrun.service",
         "/lib/systemd/system/gitrun.service",
-    ].iter().any(|path| std::path::Path::new(path).is_file());
+    ]
+    .iter()
+    .any(|path| std::path::Path::new(path).is_file());
     let service_active = command_success_with_timeout(
         "/usr/bin/systemctl",
         &["is-active", "--quiet", "gitrun.service"],
         Duration::from_secs(3),
     );
     let vault_status = if config.vault_dir.trim().is_empty() {
-        (true, "GitVault is not configured; this optional feature is disabled.".to_owned())
+        (
+            true,
+            "GitVault is not configured; this optional feature is disabled.".to_owned(),
+        )
     } else if PathBuf::from(&config.vault_dir).is_dir() {
         (true, "Configured vault directory exists. This check does not open the vault or verify secret decryption.".to_owned())
     } else {
-        (false, "Configured vault directory does not exist or is not a directory.".to_owned())
+        (
+            false,
+            "Configured vault directory does not exist or is not a directory.".to_owned(),
+        )
     };
     let version = std::env::var("GITRUN_VERSION")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| std::fs::read_to_string("/usr/share/gitrun/version.txt").ok().map(|value| value.trim().to_owned()))
+        .or_else(|| {
+            std::fs::read_to_string("/usr/share/gitrun/version.txt")
+                .ok()
+                .map(|value| value.trim().to_owned())
+        })
         .unwrap_or_else(|| "unknown".to_owned());
     let checks = vec![
         DashboardHealthCheck {
@@ -1887,10 +1988,17 @@ fn check_gitrun_updates() -> UpdateCheckResult {
     candidates.push(PathBuf::from("/usr/bin/gitrun"));
     if let Ok(current) = std::env::current_exe() {
         if let Some(parent) = current.parent() {
-            candidates.push(parent.join(if cfg!(windows) { "gitrun.exe" } else { "gitrun" }));
+            candidates.push(parent.join(if cfg!(windows) {
+                "gitrun.exe"
+            } else {
+                "gitrun"
+            }));
         }
     }
-    let Some(binary) = candidates.into_iter().find_map(|path| trusted_privileged_binary(&path)) else {
+    let Some(binary) = candidates
+        .into_iter()
+        .find_map(|path| trusted_privileged_binary(&path))
+    else {
         return UpdateCheckResult {
             checked: false,
             available: false,
@@ -1909,7 +2017,11 @@ fn check_gitrun_updates() -> UpdateCheckResult {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            let combined = [stdout.as_str(), stderr.as_str()].into_iter().filter(|value| !value.is_empty()).collect::<Vec<_>>().join("\n");
+            let combined = [stdout.as_str(), stderr.as_str()]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
             let lower = combined.to_ascii_lowercase();
             let available = lower.lines().any(|line| {
                 let line = line.trim();
@@ -1917,21 +2029,49 @@ fn check_gitrun_updates() -> UpdateCheckResult {
                     || line.starts_with("new version available:")
                     || line.starts_with("update is available:")
             });
-            let already_current = lower.contains("up to date") || lower.contains("already latest") || lower.contains("no update available");
-            let runner_image_update_available = lower.lines().any(|line| line.trim().starts_with("runner image update available:"));
-            let runner_image_status = combined.lines()
+            let already_current = lower.contains("up to date")
+                || lower.contains("already latest")
+                || lower.contains("no update available");
+            let runner_image_update_available = lower
+                .lines()
+                .any(|line| line.trim().starts_with("runner image update available:"));
+            let runner_image_status = combined
+                .lines()
                 .find(|line| line.trim().to_ascii_lowercase().starts_with("runner image"))
                 .map(|line| line.trim().to_owned());
             let checked = output.status.success();
             UpdateCheckResult {
                 checked,
                 available: checked && available,
-                runner_image_update_available: if checked { Some(runner_image_update_available) } else { None },
+                runner_image_update_available: if checked {
+                    Some(runner_image_update_available)
+                } else {
+                    None
+                },
                 runner_image_status,
-                title: if !checked { "Update check failed".into() } else if available { "Update available".into() } else if already_current { "GitRun is up to date".into() } else { "Update check completed".into() },
-                detail: if combined.is_empty() { format!("Command exited with status {} without output.", output.status) } else { combined.clone() },
+                title: if !checked {
+                    "Update check failed".into()
+                } else if available {
+                    "Update available".into()
+                } else if already_current {
+                    "GitRun is up to date".into()
+                } else {
+                    "Update check completed".into()
+                },
+                detail: if combined.is_empty() {
+                    format!(
+                        "Command exited with status {} without output.",
+                        output.status
+                    )
+                } else {
+                    combined.clone()
+                },
                 output: combined,
-                error: if checked { None } else { Some(format!("Command exited with status {}", output.status)) },
+                error: if checked {
+                    None
+                } else {
+                    Some(format!("Command exited with status {}", output.status))
+                },
             }
         }
         Err(error) => UpdateCheckResult {
@@ -1954,8 +2094,9 @@ async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
     }
     let pkexec = pkexec_path()
         .ok_or("trusted pkexec was not found; runner update cannot safely continue")?;
-    let cli = dashboard_cli_path(&app)
-        .ok_or("trusted GitRun CLI executable was not found; runner update cannot safely continue")?;
+    let cli = dashboard_cli_path(&app).ok_or(
+        "trusted GitRun CLI executable was not found; runner update cannot safely continue",
+    )?;
 
     let app_for_update = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -2000,29 +2141,48 @@ fn save_dashboard_settings(
     updated.validate().map_err(|error| error.to_string())?;
     let current_config = load_config()?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
-        return Err(format!("unsupported GitRun settings schema version {}", settings.schema_version));
+        return Err(format!(
+            "unsupported GitRun settings schema version {}",
+            settings.schema_version
+        ));
     }
-    if settings.repositories.keys().any(|repo| !updated.repositories.iter().any(|configured| configured == repo)) {
+    if settings.repositories.keys().any(|repo| {
+        !updated
+            .repositories
+            .iter()
+            .any(|configured| configured == repo)
+    }) {
         return Err("GitRun settings contain a repository that is not configured in GitRun".into());
     }
     let settings_path = gitrun_settings_path(&updated);
-    let current_settings = GitRunSettings::load_or_default(gitrun_settings_path(&current_config)).map_err(|error| error.to_string())?;
+    let current_settings = GitRunSettings::load_or_default(gitrun_settings_path(&current_config))
+        .map_err(|error| error.to_string())?;
     let socket_opt_out = settings.repositories.iter().any(|(name, repository)| {
         repository.docker.direct_socket_enabled
-            && !current_settings.repositories.get(name)
+            && !current_settings
+                .repositories
+                .get(name)
                 .map(|current| current.docker.direct_socket_enabled)
                 .unwrap_or(false)
     });
     if socket_opt_out && !confirm_socket_opt_out {
-        return Err("enabling direct Docker socket access requires explicit danger-gate confirmation".into());
+        return Err(
+            "enabling direct Docker socket access requires explicit danger-gate confirmation"
+                .into(),
+        );
     }
     let config_path = configured_config_path()
         .ok_or_else(|| "No persistent GitRun configuration file could be resolved; refusing to save settings to an implicit path".to_owned())?;
-    let original_config = std::fs::read(&config_path).map_err(|error| format!("unable to back up configuration before saving: {error}"))?;
+    let original_config = std::fs::read(&config_path)
+        .map_err(|error| format!("unable to back up configuration before saving: {error}"))?;
     let original_settings = match std::fs::read(&settings_path) {
         Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(format!("unable to back up GitRun settings before saving: {error}")),
+        Err(error) => {
+            return Err(format!(
+                "unable to back up GitRun settings before saving: {error}"
+            ))
+        }
     };
     if let Err(error) = gitrun_setup::update_env_file(&config_path, &updated) {
         return match std::fs::write(&config_path, original_config.clone()) {
@@ -2042,9 +2202,15 @@ fn save_dashboard_settings(
         };
         let rollback_detail = match (config_rollback, settings_rollback) {
             (Ok(()), Ok(())) => "Previous files were restored.".to_owned(),
-            (config_result, settings_result) => format!("Rollback results: config={:?}; settings={:?}", config_result.err(), settings_result.err()),
+            (config_result, settings_result) => format!(
+                "Rollback results: config={:?}; settings={:?}",
+                config_result.err(),
+                settings_result.err()
+            ),
         };
-        return Err(format!("GitRun settings could not be saved: {save_error}. {rollback_detail}"));
+        return Err(format!(
+            "GitRun settings could not be saved: {save_error}. {rollback_detail}"
+        ));
     }
     Ok(())
 }

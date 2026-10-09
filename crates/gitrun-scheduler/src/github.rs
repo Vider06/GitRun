@@ -91,7 +91,6 @@ struct SearchCountResponse {
     total_count: u64,
 }
 
-
 #[derive(Debug, Deserialize)]
 struct RegistrationTokenResponse {
     token: String,
@@ -431,7 +430,11 @@ impl GitHubClient {
 
     /// Counts the most recent workflow runs by status. This is deliberately
     /// labelled as workflow runs (not individual jobs) by the dashboard.
-    pub fn recent_workflow_run_summary(&self, repo: &str, per_page: u32) -> Result<WorkflowRunSummary> {
+    pub fn recent_workflow_run_summary(
+        &self,
+        repo: &str,
+        per_page: u32,
+    ) -> Result<WorkflowRunSummary> {
         let (owner, name) = split_repo(repo)?;
         let url = format!(
             "{API_BASE}/repos/{}/{}/actions/runs?per_page={}",
@@ -446,7 +449,13 @@ impl GitHubClient {
             match run.status.to_ascii_lowercase().as_str() {
                 "queued" | "requested" | "waiting" => summary.queued += 1,
                 "in_progress" => summary.in_progress += 1,
-                "completed" => match run.conclusion.as_deref().unwrap_or("").to_ascii_lowercase().as_str() {
+                "completed" => match run
+                    .conclusion
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
                     "success" => summary.succeeded += 1,
                     "failure" | "timed_out" | "startup_failure" => summary.failed += 1,
                     "cancelled" | "action_required" | "stale" | "skipped" => summary.cancelled += 1,
@@ -472,8 +481,7 @@ impl GitHubClient {
         let open_url = format!(
             "{API_BASE}/search/issues?q=repo%3A{owner_segment}%2F{name_segment}%20is%3Apr%20is%3Aopen&per_page=1"
         );
-        let open: SearchCountResponse =
-            self.request(reqwest::Method::GET, &open_url)?.json()?;
+        let open: SearchCountResponse = self.request(reqwest::Method::GET, &open_url)?.json()?;
 
         let merged_url = format!(
             "{API_BASE}/search/issues?q=repo%3A{owner_segment}%2F{name_segment}%20is%3Apr%20is%3Amerged&per_page=1"

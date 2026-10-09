@@ -222,8 +222,7 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
 }
 
 fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let repository = std::env::var("GITRUN_REPOSITORY")
-        .unwrap_or_else(|_| "Vider06/GitRun".into());
+    let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest_url = args.get(2).filter(|value| !value.starts_with("--"));
     let manifest = match manifest_url {
         Some(url) => fetch_manifest(url)?,
@@ -238,7 +237,10 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
 
     match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
         Ok(plan) => {
-            println!("Update available: {} -> {}", plan.current_version, plan.target_version);
+            println!(
+                "Update available: {} -> {}",
+                plan.current_version, plan.target_version
+            );
             println!("Target: {}", plan.target);
             println!("Artifact: {}", plan.artifact);
             for dependency in &plan.dependencies {
@@ -280,7 +282,11 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
                 let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
                 println!(
                     "Runner image status unknown: {}",
-                    if detail.is_empty() { "Docker image inspect failed" } else { detail.as_str() }
+                    if detail.is_empty() {
+                        "Docker image inspect failed"
+                    } else {
+                        detail.as_str()
+                    }
                 );
             }
             Err(error) => println!("Runner image status unknown: Docker is unavailable ({error})."),
@@ -289,7 +295,9 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
         println!("Runner image: this release manifest does not declare a runner image.");
     }
 
-    println!("Read-only check complete; no files, dependencies, runner images or services were changed.");
+    println!(
+        "Read-only check complete; no files, dependencies, runner images or services were changed."
+    );
     Ok(())
 }
 
@@ -1152,7 +1160,12 @@ fn main() {
             manifest_url,
             only_containers,
             check,
-        } => run_update(manifest_url.as_deref(), only_containers, check, &mut presenter),
+        } => run_update(
+            manifest_url.as_deref(),
+            only_containers,
+            check,
+            &mut presenter,
+        ),
         Command::Scheduler => run_scheduler(),
         Command::Dashboard => {
             // The Tauri runtime may write native GTK/EGL diagnostics directly to
@@ -1830,8 +1843,7 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
         }
     }
 
-    let repository = std::env::var("GITRUN_REPOSITORY")
-        .unwrap_or_else(|_| "Vider06/GitRun".into());
+    let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = latest_manifest(&repository)?;
     if let Some(image) = &manifest.runner_image {
         let config_file = persistent_config_path().ok_or(
@@ -1839,7 +1851,10 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
         )?;
         update_runner_image(image)?;
         pin_runner_image(&config_file, image)?;
-        println!("Verified runner image pinned: {}@{}", image.reference, image.digest);
+        println!(
+            "Verified runner image pinned: {}@{}",
+            image.reference, image.digest
+        );
     } else {
         println!("Release manifest does not declare a runner image; using the currently configured image.");
     }

@@ -1,12 +1,14 @@
 import { invoke, content, esc, heading, panel, pill, toast, confirmModal } from "../lib.js";
 
 export async function renderAppSettings() {
+  const generation = window.__gitrunNavigationGeneration;
   const savedTheme = localStorage.getItem("gitrun-theme") || "dark";
   const catEnabled = localStorage.getItem("gitrun-cat-enabled") !== "false";
   const tutorialSeen = localStorage.getItem("gitrun-tutorial-complete") === "true";
   const compact = localStorage.getItem("gitrun-compact-mode") === "true";
   let serviceState = {service_installed:false,service_active:false,checks:[]};
   try { serviceState = await invoke("get_dashboard_health"); } catch (_) {}
+  if (generation !== window.__gitrunNavigationGeneration) return;
   content.innerHTML = heading("APPLICATION","App settings","Preferences for the dashboard itself. Runner and security configuration lives elsewhere.") +
     '<div class="two-col">' +
       panel("Appearance", '<div class="field"><label for="theme-select">Color theme</label><select id="theme-select"><option value="dark" ' + (savedTheme === "dark" ? "selected" : "") + '>Dark · GitRun default</option><option value="light" ' + (savedTheme === "light" ? "selected" : "") + '>Light</option><option value="system" ' + (savedTheme === "system" ? "selected" : "") + '>Follow system preference</option></select></div><label class="checkbox-row"><input id="compact-mode" type="checkbox" ' + (compact ? "checked" : "") + '><span><strong>Compact data density</strong>Reduce padding in tables and cards for information-heavy screens.</span></label><div class="toolbar"><span class="field-hint">Theme is stored locally on this device.</span><button class="btn btn-primary" id="save-appearance">Save appearance</button></div>') +

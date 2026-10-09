@@ -21,26 +21,40 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
+fn resolve_config_path(explicit: Option<&std::ffi::OsStr>) -> Result<Option<PathBuf>, String> {
+    if let Some(path) = explicit {
+        let path = PathBuf::from(path);
+        if !path.is_file() {
+            return Err(format!(
+                "GITRUN_CONFIG_FILE points to a missing configuration file: {}",
+                path.display()
+            ));
+        }
+        return Ok(Some(path));
+    }
+
+    Ok([
+        PathBuf::from("/etc/gitrun/gitrun.env"),
+        PathBuf::from("config/gitrun.env"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file()))
+}
+
 fn load_config() -> Result<Config, String> {
-    match std::env::var("GITRUN_CONFIG_FILE") {
-        Ok(path) => Config::from_env_file(path),
-        Err(_) => Config::from_env(),
+    let explicit = std::env::var_os("GITRUN_CONFIG_FILE");
+    let path = resolve_config_path(explicit.as_deref())?;
+    match path {
+        Some(path) => Config::from_env_file(path),
+        None => Config::from_env(),
     }
     .map_err(|e| e.to_string())
 }
 
 fn configured_config_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
-        let path = PathBuf::from(path);
-        return path.is_file().then_some(path);
-    }
-
-    [
-        PathBuf::from("/etc/gitrun/gitrun.env"),
-        PathBuf::from("config/gitrun.env"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
+    resolve_config_path(std::env::var_os("GITRUN_CONFIG_FILE").as_deref())
+        .ok()
+        .flatten()
 }
 
 #[tauri::command]
@@ -848,7 +862,55 @@ struct DashboardRunnerSnapshot {
 #[derive(Clone)]
 struct CachedDashboardRunnerSnapshot {
     fetched_at: Instant,
+    config_key: u64,
     value: DashboardRunnerSnapshot,
+}
+
+fn dashboard_config_cache_key() -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut variables = std::env::vars_os()
+        .filter(|(key, _)| key.to_string_lossy().starts_with("GITRUN_"))
+        .collect::<Vec<_>>();
+    variables.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    variables.hash(&mut hasher);
+    std::env::var_os("GITHUB_TOKEN")
+        .unwrap_or_default()
+        .hash(&mut hasher);
+
+    let config_path = configured_config_path();
+    if let Some(path) = config_path.as_ref() {
+        path.hash(&mut hasher);
+        if let Ok(contents) = std::fs::read(path) {
+            contents.hash(&mut hasher);
+        }
+    }
+    let private_key_path = std::env::var_os("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            config_path
+                .as_ref()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|contents| {
+                    contents.lines().find_map(|line| {
+                        let (key, value) = line.trim().split_once('=')?;
+                        (key.trim() == "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH").then(|| {
+                            std::path::PathBuf::from(
+                                value.trim().trim_matches('"').trim_matches('\''),
+                            )
+                        })
+                    })
+                })
+                .filter(|path| !path.as_os_str().is_empty())
+        });
+    if let Some(key_path) = private_key_path {
+        if let Ok(contents) = std::fs::read(key_path) {
+            contents.hash(&mut hasher);
+        }
+    }
+
+    hasher.finish()
 }
 
 static DASHBOARD_RUNNER_CACHE: std::sync::OnceLock<
@@ -879,15 +941,21 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
 fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(60);
     let cache = DASHBOARD_RUNNER_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    let config_key = dashboard_config_cache_key();
     let cached = cache
         .lock()
         .map_err(|_| "runner snapshot cache lock poisoned".to_owned())?
-        .clone();
+        .clone()
+        .filter(|snapshot| snapshot.config_key == config_key);
     if !force_refresh.unwrap_or(false) {
-        if let Some(snapshot) = cached
-            .as_ref()
-            .filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL)
-        {
+        if let Some(snapshot) = cached.as_ref().filter(|snapshot| {
+            let ttl = if snapshot.value.stale {
+                Duration::from_secs(5)
+            } else {
+                CACHE_TTL
+            };
+            snapshot.fetched_at.elapsed() < ttl
+        }) {
             return Ok(snapshot.value.clone());
         }
     }
@@ -901,7 +969,26 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
         let mut repositories_checked = 0usize;
         let mut workflow_repositories_checked = 0usize;
         for repo in &config.repositories {
-            let remote_runners = match client.list_runners(repo) {
+            // These two GitHub endpoints are independent. Fetch them together
+            // so a slow workflow history request does not hold up runner state.
+            let (runner_result, workflow_result) = std::thread::scope(|scope| {
+                let runner_query =
+                    scope.spawn(|| client.list_runners(repo).map_err(|error| error.to_string()));
+                let workflow_query = scope.spawn(|| {
+                    client
+                        .recent_workflow_run_summary(repo, 100)
+                        .map_err(|error| error.to_string())
+                });
+                let runners = runner_query
+                    .join()
+                    .unwrap_or_else(|_| Err("runner query worker panicked".to_owned()));
+                let workflows = workflow_query
+                    .join()
+                    .unwrap_or_else(|_| Err("workflow summary worker panicked".to_owned()));
+                (runners, workflows)
+            });
+
+            let remote_runners = match runner_result {
                 Ok(value) => {
                     repositories_checked += 1;
                     Some(value)
@@ -911,7 +998,7 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                     None
                 }
             };
-            match client.recent_workflow_run_summary(repo, 100) {
+            match workflow_result {
                 Ok(summary) => {
                     workflow_repositories_checked += 1;
                     workflow_runs.push(DashboardWorkflowRunSummary {
@@ -988,6 +1075,7 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                 .map_err(|_| "runner snapshot cache lock poisoned".to_owned())? =
                 Some(CachedDashboardRunnerSnapshot {
                     fetched_at: Instant::now(),
+                    config_key,
                     value: snapshot.clone(),
                 });
             Ok(snapshot)
@@ -1015,12 +1103,16 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
             snapshot.stale = true;
             snapshot
                 .warnings
+                .retain(|warning| !warning.starts_with("Runner refresh unavailable:"));
+            snapshot
+                .warnings
                 .push(format!("Runner refresh unavailable: {error}"));
             *cache
                 .lock()
                 .map_err(|_| "runner snapshot cache lock poisoned".to_owned())? =
                 Some(CachedDashboardRunnerSnapshot {
                     fetched_at: Instant::now(),
+                    config_key,
                     value: snapshot.clone(),
                 });
             Ok(snapshot)
@@ -1137,6 +1229,7 @@ struct DashboardRepositoryActivitySnapshot {
 #[derive(Clone)]
 struct CachedDashboardRepositoryActivity {
     fetched_at: Instant,
+    config_key: u64,
     value: DashboardRepositoryActivitySnapshot,
 }
 
@@ -1150,15 +1243,21 @@ fn get_repository_activity(
 ) -> Result<DashboardRepositoryActivitySnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(300);
     let cache = DASHBOARD_REPOSITORY_ACTIVITY_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    let config_key = dashboard_config_cache_key();
     let cached = cache
         .lock()
         .map_err(|_| "repository activity cache lock poisoned".to_owned())?
-        .clone();
+        .clone()
+        .filter(|snapshot| snapshot.config_key == config_key);
     if !force_refresh.unwrap_or(false) {
-        if let Some(snapshot) = cached
-            .as_ref()
-            .filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL)
-        {
+        if let Some(snapshot) = cached.as_ref().filter(|snapshot| {
+            let ttl = if snapshot.value.stale {
+                Duration::from_secs(5)
+            } else {
+                CACHE_TTL
+            };
+            snapshot.fetched_at.elapsed() < ttl
+        }) {
             return Ok(snapshot.value.clone());
         }
     }
@@ -1209,6 +1308,7 @@ fn get_repository_activity(
                 .map_err(|_| "repository activity cache lock poisoned".to_owned())? =
                 Some(CachedDashboardRepositoryActivity {
                     fetched_at: Instant::now(),
+                    config_key,
                     value: snapshot.clone(),
                 });
             Ok(snapshot)
@@ -1233,12 +1333,16 @@ fn get_repository_activity(
             snapshot.stale = true;
             snapshot
                 .warnings
+                .retain(|warning| !warning.starts_with("Repository activity refresh unavailable:"));
+            snapshot
+                .warnings
                 .push(format!("Repository activity refresh unavailable: {error}"));
             *cache
                 .lock()
                 .map_err(|_| "repository activity cache lock poisoned".to_owned())? =
                 Some(CachedDashboardRepositoryActivity {
                     fetched_at: Instant::now(),
+                    config_key,
                     value: snapshot.clone(),
                 });
             Ok(snapshot)
@@ -1875,14 +1979,14 @@ fn command_success_with_timeout(program: &str, args: &[&str], timeout: Duration)
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct DashboardHealthCheck {
     name: String,
     ok: bool,
     detail: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct DashboardHealth {
     version: String,
     config_ok: bool,
@@ -1893,6 +1997,17 @@ struct DashboardHealth {
     service_active: bool,
     checks: Vec<DashboardHealthCheck>,
 }
+
+#[derive(Clone)]
+struct CachedDashboardHealth {
+    fetched_at: Instant,
+    config_key: u64,
+    value: DashboardHealth,
+}
+
+static DASHBOARD_HEALTH_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<Option<CachedDashboardHealth>>,
+> = std::sync::OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1962,14 +2077,50 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             format!("systemctl {action_arg} gitrun.service failed: {detail}")
         });
     }
+    if let Some(cache) = DASHBOARD_HEALTH_CACHE.get() {
+        if let Ok(mut cached) = cache.lock() {
+            *cached = None;
+        }
+    }
     Ok(format!("Requested system service action: {action_arg}"))
 }
 
 #[tauri::command]
-fn get_dashboard_health() -> Result<DashboardHealth, String> {
+fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, String> {
+    const CACHE_TTL: Duration = Duration::from_secs(10);
+    let config_key = dashboard_config_cache_key();
+    let cache = DASHBOARD_HEALTH_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    let cached = cache
+        .lock()
+        .map_err(|_| "dashboard health cache lock poisoned".to_owned())?
+        .clone()
+        .filter(|snapshot| snapshot.config_key == config_key);
+    if !force_refresh.unwrap_or(false) {
+        if let Some(snapshot) = cached
+            .as_ref()
+            .filter(|snapshot| snapshot.fetched_at.elapsed() < CACHE_TTL)
+        {
+            return Ok(snapshot.value.clone());
+        }
+    }
+
     let config = load_config()?;
     let config_path = configured_config_path();
-    let docker_ok = command_success_with_timeout("docker", &["info"], Duration::from_secs(5));
+    let (docker_ok, service_active) = std::thread::scope(|scope| {
+        let docker_check = scope
+            .spawn(|| command_success_with_timeout("docker", &["info"], Duration::from_secs(5)));
+        let service_check = scope.spawn(|| {
+            command_success_with_timeout(
+                "/usr/bin/systemctl",
+                &["is-active", "--quiet", "gitrun.service"],
+                Duration::from_secs(3),
+            )
+        });
+        (
+            docker_check.join().unwrap_or(false),
+            service_check.join().unwrap_or(false),
+        )
+    });
     let gsr_process_seen = process_name_running("gitrun-gsr");
     let service_installed = [
         "/etc/systemd/system/gitrun.service",
@@ -1978,11 +2129,6 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
     ]
     .iter()
     .any(|path| std::path::Path::new(path).is_file());
-    let service_active = command_success_with_timeout(
-        "/usr/bin/systemctl",
-        &["is-active", "--quiet", "gitrun.service"],
-        Duration::from_secs(3),
-    );
     let vault_status = if config.vault_dir.trim().is_empty() {
         (
             true,
@@ -2003,7 +2149,9 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
             std::fs::read_to_string("/usr/share/gitrun/version.txt")
                 .ok()
                 .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
         })
+        .or_else(|| option_env!("GITRUN_BUILD_VERSION").map(str::to_owned))
         .unwrap_or_else(|| "unknown".to_owned());
     let checks = vec![
         DashboardHealthCheck {
@@ -2044,7 +2192,7 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
             detail: if config.gsr_docker_socket_hardening { "Hardening is enabled in configuration; active runtime application is not verified here.".into() } else { "Hardening is disabled in configuration.".into() },
         },
     ];
-    Ok(DashboardHealth {
+    let report = DashboardHealth {
         version,
         config_ok: true,
         config_path: config_path.map(|path| path.display().to_string()),
@@ -2053,7 +2201,16 @@ fn get_dashboard_health() -> Result<DashboardHealth, String> {
         service_installed,
         service_active,
         checks,
-    })
+    };
+    *cache
+        .lock()
+        .map_err(|_| "dashboard health cache lock poisoned".to_owned())? =
+        Some(CachedDashboardHealth {
+            fetched_at: Instant::now(),
+            config_key,
+            value: report.clone(),
+        });
+    Ok(report)
 }
 
 #[derive(Debug, Serialize)]
@@ -2462,6 +2619,26 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn explicit_config_path_must_exist_and_is_resolved() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-dashboard-config-path-{}-{nonce}.env",
+            std::process::id()
+        ));
+        assert!(resolve_config_path(Some(path.as_os_str())).is_err());
+
+        std::fs::write(&path, "GITRUN_REPOSITORIES=owner/repo\n").unwrap();
+        assert_eq!(
+            resolve_config_path(Some(path.as_os_str())).unwrap(),
+            Some(path.clone())
+        );
         std::fs::remove_file(path).unwrap();
     }
 }

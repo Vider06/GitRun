@@ -53,7 +53,7 @@ export async function renderGeneral() {
       ephemeral: document.getElementById("runner-ephemeral").checked,
       runner_disable_update: document.getElementById("runner-disable-update").checked
     };
-    try { await invoke("save_config", {updated:next}); toast("Capacity settings saved."); }
+    try { await invoke("save_config", {updated:next}); window.dispatchEvent(new Event("gitrun:config-saved")); toast("Capacity settings saved."); }
     catch (error) { toast("Could not save capacity settings: " + error, "error"); }
   });
   document.getElementById("save-general").addEventListener("click", async () => {
@@ -65,12 +65,12 @@ export async function renderGeneral() {
       toast("Check the numeric values: runner limits must be valid and minimum cannot exceed maximum.", "warning"); return;
     }
     const next = {...config, min_runners:min, max_runners:max, poll_interval:poll, idle_timeout:idle, auto_container_update:document.getElementById("auto-update").checked, container_update_time:document.getElementById("update-time").value || "03:00", auto_container_recovery:document.getElementById("auto-recovery").checked};
-    try { await invoke("save_config", {updated:next}); toast("General settings saved."); }
+    try { await invoke("save_config", {updated:next}); window.dispatchEvent(new Event("gitrun:config-saved")); toast("General settings saved."); }
     catch (error) { toast("Could not save settings: " + error, "error"); }
   });
   document.getElementById("run-health-check").addEventListener("click", async () => {
     try {
-      const report = await invoke("get_dashboard_health");
+      const report = await invoke("get_dashboard_health", {forceRefresh:true});
       document.getElementById("health-results").innerHTML = (report.checks || []).map((check) => '<div class="list-row"><div class="list-row-main"><strong>' + esc(check.name) + '</strong><small>' + esc(check.detail) + '</small></div>' + pill(check.ok ? "OK" : "Needs attention", check.ok ? "good" : "warn") + '</div>').join("");
       toast("Health check completed.");
     } catch (error) { toast("Health check failed: " + error, "error"); }
@@ -127,3 +127,127 @@ export async function renderGeneral() {
   });
   setFooter("Settings loaded · " + new Date().toLocaleTimeString());
 }
+
+function renderVmManagement(vmConfigs) {
+  const target = document.getElementById("vm-management");
+  if (!target) return;
+  const configs = Array.isArray(vmConfigs) ? vmConfigs : [];
+  target.innerHTML = configs.length
+    ? '<div class="card-list">' + configs.map((vm, index) =>
+        '<article class="list-row"><div class="list-row-main"><strong>' + esc(vm.name) + '</strong>' +
+        '<small>' + esc(vm.hypervisor) + ' · ' + (vm.is_windows ? 'Windows guest' : 'Linux/other guest') +
+        ' · ' + esc(vm.cpus) + ' CPU · ' + esc(vm.memory_mb) + ' MiB · Docker TCP ' + esc(vm.docker_port) +
+        (vm.docker_tls_cert_dir ? ' · TLS configured' : ' · TLS not configured') + '</small>' +
+        '<small class="mono">' + esc(vm.base_disk_image) + '</small></div>' +
+        '<div class="heading-actions"><button class="btn" data-edit-vm="' + index + '">Edit</button>' +
+        '<button class="btn btn-danger" data-delete-vm="' + esc(vm.name) + '">Delete</button></div></article>'
+      ).join("") + '</div>'
+    : empty("No VM definitions", "Add a VM definition to use it as a Logic Containers backend.");
+
+  target.querySelectorAll("[data-edit-vm]").forEach((button) => {
+    button.addEventListener("click", () => openVmModal(configs[Number(button.dataset.editVm)]));
+  });
+  target.querySelectorAll("[data-delete-vm]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const name = button.dataset.deleteVm;
+      const accepted = await confirmModal(
+        "Delete VM definition?",
+        "This removes the saved definition for " + name + ". It does not delete or stop the actual virtual machine.",
+        "Delete definition",
+        true
+      );
+      if (!accepted) return;
+      button.disabled = true;
+      try {
+        await invoke("delete_vm_config", { name });
+        toast("VM definition deleted.");
+        await renderGeneral();
+      } catch (error) {
+        button.disabled = false;
+        toast("Could not delete VM definition: " + error, "error");
+      }
+    });
+  });
+}
+
+function openVmModal(config = null) {
+  const editing = Boolean(config);
+  const hypervisor = config?.hypervisor || "Kvm";
+  const activation = config?.activation || "Standard";
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  const option = (value, label, current) =>
+    '<option value="' + esc(value) + '"' + (value === current ? " selected" : "") + '>' + esc(label) + '</option>';
+  modal.innerHTML =
+    '<section class="modal" role="dialog" aria-modal="true" aria-labelledby="vm-modal-title">' +
+      '<h2 id="vm-modal-title">' + (editing ? "Edit VM definition" : "Add VM definition") + '</h2>' +
+      '<p>GitRun stores the definition; it does not install the hypervisor or create the VM here. The base image must already exist.</p>' +
+      '<div class="field"><label for="vm-name">VM name</label><input id="vm-name" autocomplete="off" value="' + esc(config?.name || "") + '"' + (editing ? " readonly" : "") + '></div>' +
+      '<div class="form-grid">' +
+        '<div class="field"><label for="vm-hypervisor">Hypervisor</label><select id="vm-hypervisor">' +
+          option("Kvm", "KVM / libvirt", hypervisor) + option("VirtualBox", "VirtualBox", hypervisor) +
+        '</select></div>' +
+        '<div class="field"><label for="vm-activation">Activation mode</label><select id="vm-activation">' +
+          option("Standard", "Standard · start on demand", activation) +
+          option("AlwaysOnExperimental", "Always on (experimental)", activation) +
+          option("EphemeralSnapshotRollback", "Ephemeral · snapshot rollback", activation) +
+          option("EphemeralVm", "Ephemeral · recreate VM", activation) +
+        '</select></div>' +
+        '<div class="field"><label for="vm-memory">Memory (MiB)</label><input id="vm-memory" type="number" min="1" max="1048576" value="' + esc(config?.memory_mb ?? 4096) + '"></div>' +
+        '<div class="field"><label for="vm-cpus">vCPUs</label><input id="vm-cpus" type="number" min="1" max="256" value="' + esc(config?.cpus ?? 2) + '"></div>' +
+        '<div class="field"><label for="vm-port">Docker port</label><input id="vm-port" type="number" min="1" max="65535" value="' + esc(config?.docker_port ?? 2376) + '"></div>' +
+      '</div>' +
+      '<div class="field"><label for="vm-base-image">Base disk image path</label><input id="vm-base-image" autocomplete="off" value="' + esc(config?.base_disk_image || "") + '" placeholder="/var/lib/libvirt/images/windows-base.qcow2"></div>' +
+      '<div class="field"><label for="vm-tls-dir">Docker TLS certificate directory</label><input id="vm-tls-dir" autocomplete="off" value="' + esc(config?.docker_tls_cert_dir || "") + '" placeholder="/etc/gitrun/vm-certs/my-vm"><small class="field-hint">Windows guests require ca.pem, cert.pem and key.pem in this directory.</small></div>' +
+      '<label class="checkbox-row"><input id="vm-windows" type="checkbox"' + (config?.is_windows ? " checked" : "") + '><span><strong>Windows guest</strong>Require mutual TLS for the remote Docker endpoint.</span></label>' +
+      '<div class="modal-actions"><button class="btn" data-cancel>Cancel</button><button class="btn btn-primary" data-save-vm>Save definition</button></div>' +
+    '</section>';
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector("[data-cancel]").addEventListener("click", close);
+  modal.addEventListener("click", (event) => { if (event.target === modal) close(); });
+  modal.querySelector("#vm-windows").addEventListener("change", (event) => {
+    const tls = modal.querySelector("#vm-tls-dir");
+    if (event.target.checked) tls.required = true;
+    else tls.required = false;
+  });
+  modal.querySelector("[data-save-vm]").addEventListener("click", async () => {
+    const name = modal.querySelector("#vm-name").value.trim();
+    const baseDiskImage = modal.querySelector("#vm-base-image").value.trim();
+    const memoryMb = Number(modal.querySelector("#vm-memory").value);
+    const cpus = Number(modal.querySelector("#vm-cpus").value);
+    const dockerPort = Number(modal.querySelector("#vm-port").value);
+    const dockerTlsCertDir = modal.querySelector("#vm-tls-dir").value.trim();
+    const isWindows = modal.querySelector("#vm-windows").checked;
+    if (!name || !baseDiskImage || !Number.isInteger(memoryMb) || memoryMb < 1 ||
+        !Number.isInteger(cpus) || cpus < 1 || !Number.isInteger(dockerPort) ||
+        dockerPort < 1 || dockerPort > 65535 || (isWindows && !dockerTlsCertDir)) {
+      toast("Complete the VM name, base image and valid resource/port values. Windows guests also require a TLS certificate directory.", "warning");
+      return;
+    }
+    const button = modal.querySelector("[data-save-vm]");
+    button.disabled = true;
+    const configEntry = {
+      name,
+      hypervisor: modal.querySelector("#vm-hypervisor").value,
+      base_disk_image: baseDiskImage,
+      memory_mb: memoryMb,
+      cpus,
+      docker_port: dockerPort,
+      docker_tls_cert_dir: dockerTlsCertDir,
+      activation: modal.querySelector("#vm-activation").value,
+      is_windows: isWindows
+    };
+    try {
+      await invoke("save_vm_config", { configEntry });
+      close();
+      toast("VM definition saved.");
+      await renderGeneral();
+    } catch (error) {
+      button.disabled = false;
+      toast("Could not save VM definition: " + error, "error");
+    }
+  });
+  modal.querySelector("#vm-name").focus();
+}
+

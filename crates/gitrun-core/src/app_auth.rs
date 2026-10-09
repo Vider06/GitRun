@@ -104,18 +104,18 @@ impl AppAuth {
     pub fn token(&self) -> Result<String> {
         const REFRESH_MARGIN: Duration = Duration::from_secs(120);
 
-        {
-            let cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(entry) = cached.as_ref() {
-                let now = SystemTime::now();
-                if entry.expires_at > now + REFRESH_MARGIN {
-                    return Ok(entry.token.clone());
-                }
+        // Keep the cache lock across token minting. Without this, parallel
+        // dashboard/API requests can all observe an empty cache and mint
+        // duplicate installation tokens at the same time.
+        let mut cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = cached.as_ref() {
+            let now = SystemTime::now();
+            if entry.expires_at > now + REFRESH_MARGIN {
+                return Ok(entry.token.clone());
             }
         }
 
         let fresh = self.mint_installation_token()?;
-        let mut cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
         *cached = Some(CachedToken {
             token: fresh.0.clone(),
             expires_at: fresh.1,

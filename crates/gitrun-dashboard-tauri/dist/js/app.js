@@ -72,7 +72,11 @@ async function navigate(view, options = {}) {
     return;
   }
   try {
-    if (view === "overview") await renderOverview(navigate);
+    if (view === "overview") {
+      const cachedOverview = overviewCache;
+      overviewCache = null;
+      await renderOverview(navigate, cachedOverview);
+    }
     else if (view === "security") await renderSecurity();
     else if (view === "vault") await renderVault();
     else if (view === "gsr") await renderGsr();
@@ -92,7 +96,7 @@ async function renderRecovery() {
   const generation = window.__gitrunNavigationGeneration;
   renderLoading("Collecting recovery diagnostics…");
   let report;
-  try { report = await invoke("get_dashboard_health"); }
+  try { report = await invoke("get_dashboard_health", {forceRefresh:Boolean(window.__gitrunForceRefresh)}); }
   catch (error) { if (generation !== window.__gitrunNavigationGeneration) return; content.innerHTML = errorView(error); return; }
   if (generation !== window.__gitrunNavigationGeneration) return;
   const checks = report.checks || [];
@@ -173,6 +177,10 @@ document.getElementById("toggle-sidebar").addEventListener("click", () => {
 window.addEventListener("gitrun:navigate", (event) => navigate(event.detail));
 window.addEventListener("gitrun:mascot-state", (event) => setCatExpression(event.detail));
 window.addEventListener("gitrun:setup-complete", firstRunComplete);
+window.addEventListener("gitrun:config-saved", () => {
+  overviewCache = null;
+  void loadRepoNav().catch(() => {});
+});
 window.addEventListener("gitrun:reinstall", () => {
   setupInProgress = true;
   renderSetup(true, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
@@ -192,11 +200,18 @@ if (localStorage.getItem("gitrun-sidebar-collapsed") === "true") document.body.c
       renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
     } else {
       await loadRepoNav();
-      try {
-        const health = await invoke("get_dashboard_health");
-        document.getElementById("footer-version").textContent = "VERSION " + String(health.version || "UNKNOWN").toUpperCase();
-      } catch (_) { document.getElementById("footer-version").textContent = "VERSION UNKNOWN"; }
       firstRunComplete();
+      // Version/health probes may need to wait for Docker or systemd. They
+      // should update the footer asynchronously, not block the first view.
+      void invoke("get_dashboard_health").then((health) => {
+        const footerVersion = document.getElementById("footer-version");
+        if (footerVersion) {
+          footerVersion.textContent = "VERSION " + String(health.version || "UNKNOWN").toUpperCase();
+        }
+      }).catch(() => {
+        const footerVersion = document.getElementById("footer-version");
+        if (footerVersion) footerVersion.textContent = "VERSION UNKNOWN";
+      });
     }
   } catch (error) {
     content.innerHTML = errorView("Could not initialize GitRun: " + error);

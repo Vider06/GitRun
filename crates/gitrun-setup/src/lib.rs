@@ -379,6 +379,8 @@ pub fn bootstrap_linux_with_auth_and_profile(
     ensure_directory(&state_dir, 0o750)?;
     ensure_directory(&log_dir, 0o750)?;
     ensure_directory(&root, 0o755)?;
+    let vault_dir = state_dir.join("vault");
+    ensure_directory(&vault_dir, 0o700)?;
 
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
     if !settings_path.exists() {
@@ -435,7 +437,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
         ),
     };
     let rendered = format!(
-        "{auth_lines}GITRUN_REPOSITORIES={}\nGITRUN_MIN_RUNNERS=3\nGITRUN_MAX_RUNNERS=8\nGITRUN_IDLE_TIMEOUT=120\nGITRUN_POLL_INTERVAL=5\nGITRUN_AUTO_CONTAINER_UPDATE=false\nGITRUN_CONTAINER_UPDATE_TIME=03:00\nGITRUN_RUNNER_IMAGE=gitrun-runner:latest\nGITRUN_RUNNER_LABELS=self-hosted,Linux,X64\nGITRUN_EPHEMERAL=false\nGITRUN_DISABLE_UPDATE=false\nGITRUN_CONTAINER_CPUS=1\nGITRUN_CONTAINER_MEMORY=1g\nGITRUN_CONTAINER_PIDS=1024\nGITRUN_LOG_LEVEL=INFO\nGITRUN_STATE_DIR=/var/lib/gitrun\nGITRUN_LOG_DIR=/var/log/gitrun\nGITRUN_SHARED_CACHE_VOLUME=gitrun-runner-shared\nGITRUN_RUNNER_HOME_SIZE=8g\nGITRUN_RUNNER_HOME_BACKEND=volume\nGITRUN_RUNNER_ROOTFS_READ_ONLY=true\nGITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION=true\nGITRUN_GITHUB_CONNECT_TIMEOUT=5\nGITRUN_GITHUB_REQUEST_TIMEOUT=20\n# GSR and other optional settings use their Config defaults.\n",
+        "{auth_lines}GITRUN_REPOSITORIES={}\nGITRUN_MIN_RUNNERS=3\nGITRUN_MAX_RUNNERS=8\nGITRUN_IDLE_TIMEOUT=120\nGITRUN_POLL_INTERVAL=5\nGITRUN_AUTO_CONTAINER_UPDATE=false\nGITRUN_CONTAINER_UPDATE_TIME=03:00\nGITRUN_RUNNER_IMAGE=gitrun-runner:latest\nGITRUN_VAULT_DIR=/var/lib/gitrun/vault\nGITRUN_RUNNER_LABELS=self-hosted,Linux,X64\nGITRUN_EPHEMERAL=false\nGITRUN_DISABLE_UPDATE=false\nGITRUN_CONTAINER_CPUS=1\nGITRUN_CONTAINER_MEMORY=1g\nGITRUN_CONTAINER_PIDS=1024\nGITRUN_LOG_LEVEL=INFO\nGITRUN_STATE_DIR=/var/lib/gitrun\nGITRUN_LOG_DIR=/var/log/gitrun\nGITRUN_SHARED_CACHE_VOLUME=gitrun-runner-shared\nGITRUN_RUNNER_HOME_SIZE=8g\nGITRUN_RUNNER_HOME_BACKEND=volume\nGITRUN_RUNNER_ROOTFS_READ_ONLY=true\nGITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION=true\nGITRUN_GITHUB_CONNECT_TIMEOUT=5\nGITRUN_GITHUB_REQUEST_TIMEOUT=20\n# GSR and other optional settings use their Config defaults.\n",
         repositories.join(",")
     );
     write_resource(&config_path, &rendered, 0o600)?;
@@ -445,6 +447,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
         chown_path(&state_dir, uid)?;
         chown_path(&log_dir, uid)?;
         chown_path(&settings_path, uid)?;
+        chown_path(&vault_dir, uid)?;
         add_user_to_docker_group(uid)?;
     }
 

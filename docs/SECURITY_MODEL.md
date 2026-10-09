@@ -1,4 +1,4 @@
-# Security model — GitRun 1.3.0
+# Security model — GitRun 1.4.4
 
 This document states plainly what GitRun's design trusts, and what an operator is implicitly granting when they run it. It documents the security properties that exist today and the important limits that remain.
 
@@ -91,9 +91,9 @@ When pressure reaches a configured threshold, GitRun stops creating additional r
 
 ## Release integrity
 
-Official releases use signed update manifests. The release workflow uses a repository-scoped GitHub Actions secret containing the Ed25519 signing key and a non-secret signing key identifier. The private key is materialized only in the ephemeral workflow workspace for signing and is removed after the signing step. The corresponding public key is distributed to update hosts and the manifest carries the signature and configured signing key identifier.
+Official releases use signed update manifests. The release workflow uses a repository-scoped GitHub Actions secret containing the Ed25519 signing key and a non-secret signing key identifier. The private key is materialized only in the ephemeral workflow workspace for signing and is removed after the signing step. The official GitRun CLI includes the matching trusted public verification key and key identifier (`gitrun-release-ed25519-v1`) as defaults, so existing installations can verify official releases without manually adding a public key to their environment file. Explicit operator values from the process environment or persistent configuration take precedence over these defaults.
 
-The updater verifies untrusted manifests at load/fetch/stage boundaries. Official release verification requires signatures; `GITRUN_UPDATE_SIGNATURE_REQUIRED=false` is an explicit compatibility/unsafe opt-out for custom unsigned manifests.
+The updater verifies untrusted manifests at load/fetch/stage boundaries. Signature verification is required by default for official releases. Setting `GITRUN_UPDATE_SIGNATURE_REQUIRED=false` is an explicit compatibility/unsafe opt-out for custom unsigned manifests and should not be used for official releases.
 
 Release artifacts also publish dependency metadata, an SPDX 2.3 SBOM and build provenance. These are supply-chain evidence, not a substitute for signature verification.
 

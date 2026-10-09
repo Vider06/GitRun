@@ -326,6 +326,19 @@ pub fn bootstrap_linux_with_auth(
     app_binary: &Path,
     owner_uid: Option<u32>,
 ) -> Result<SetupReport, SetupError> {
+    bootstrap_linux_with_auth_and_profile(auth, repositories, app_binary, owner_uid, "workbench")
+}
+
+pub fn bootstrap_linux_with_auth_and_profile(
+    auth: BootstrapAuth,
+    repositories: &str,
+    app_binary: &Path,
+    owner_uid: Option<u32>,
+    runner_profile: &str,
+) -> Result<SetupReport, SetupError> {
+    if !matches!(runner_profile, "minimum" | "workbench") {
+        return Err(SetupError::Command(format!("unsupported runner profile: {runner_profile}")));
+    }
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err(SetupError::UnsupportedPlatform);
     }
@@ -373,7 +386,7 @@ pub fn bootstrap_linux_with_auth(
     }
 
     setup_progress(3, "Installing runner, recovery, and service resources");
-    let runner_dockerfile = resources::runner_dockerfile_for_bootstrap();
+    let runner_dockerfile = resources::runner_dockerfile_for_profile(runner_profile);
     write_resource(
         &root.join("docker/runner/Dockerfile"),
         &runner_dockerfile,
@@ -433,7 +446,7 @@ pub fn bootstrap_linux_with_auth(
         add_user_to_docker_group(uid)?;
     }
 
-    setup_progress(5, "Building gitrun-runner:latest");
+    setup_progress(5, &format!("Building gitrun-runner:latest ({runner_profile} profile)"));
     build_image(
         "gitrun-runner:latest",
         &root,

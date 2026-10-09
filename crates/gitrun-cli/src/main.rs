@@ -165,9 +165,7 @@ fn update_signing_environment() -> Vec<(String, String)> {
                     continue;
                 };
                 let key = key.trim();
-                if KEYS.contains(&key)
-                    && !values.iter().any(|(existing, _)| existing == key)
-                {
+                if KEYS.contains(&key) && !values.iter().any(|(existing, _)| existing == key) {
                     let value = value.trim().trim_matches(['"', '\\']);
                     if !value.is_empty() {
                         values.push((key.to_owned(), value.to_owned()));
@@ -181,7 +179,10 @@ fn update_signing_environment() -> Vec<(String, String)> {
     // Keep updates verifiable on existing installs whose generated config
     // predates the signing settings. Explicit operator values take precedence.
     for (key, value) in [
-        ("GITRUN_UPDATE_PUBLIC_KEY_HEX", DEFAULT_UPDATE_PUBLIC_KEY_HEX),
+        (
+            "GITRUN_UPDATE_PUBLIC_KEY_HEX",
+            DEFAULT_UPDATE_PUBLIC_KEY_HEX,
+        ),
         ("GITRUN_UPDATE_PUBLIC_KEY_ID", DEFAULT_UPDATE_PUBLIC_KEY_ID),
         ("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true"),
     ] {

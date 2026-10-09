@@ -951,7 +951,27 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
         let mut repositories_checked = 0usize;
         let mut workflow_repositories_checked = 0usize;
         for repo in &config.repositories {
-            let remote_runners = match client.list_runners(repo) {
+            // These two GitHub endpoints are independent. Fetch them together
+            // so a slow workflow history request does not hold up runner state.
+            let (runner_result, workflow_result) = std::thread::scope(|scope| {
+                let runner_query = scope.spawn(|| {
+                    client.list_runners(repo).map_err(|error| error.to_string())
+                });
+                let workflow_query = scope.spawn(|| {
+                    client
+                        .recent_workflow_run_summary(repo, 100)
+                        .map_err(|error| error.to_string())
+                });
+                let runners = runner_query
+                    .join()
+                    .unwrap_or_else(|_| Err("runner query worker panicked".to_owned()));
+                let workflows = workflow_query
+                    .join()
+                    .unwrap_or_else(|_| Err("workflow summary worker panicked".to_owned()));
+                (runners, workflows)
+            });
+
+            let remote_runners = match runner_result {
                 Ok(value) => {
                     repositories_checked += 1;
                     Some(value)
@@ -961,7 +981,7 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                     None
                 }
             };
-            match client.recent_workflow_run_summary(repo, 100) {
+            match workflow_result {
                 Ok(summary) => {
                     workflow_repositories_checked += 1;
                     workflow_runs.push(DashboardWorkflowRunSummary {

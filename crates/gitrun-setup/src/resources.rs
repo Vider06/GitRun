@@ -207,6 +207,18 @@ mod tests {
     }
 
     #[test]
+    fn built_in_runner_profiles_keep_gsr_mandatory() {
+        let minimum = runner_dockerfile_for_profile("minimum");
+        let workbench = runner_dockerfile_for_profile("workbench");
+        for dockerfile in [&minimum, &workbench] {
+            assert!(dockerfile.contains("gitrun-gsr-agent"));
+            assert!(dockerfile.contains("GITRUN_GSR_COMMAND_POLICY_ENABLED=true"));
+            assert!(dockerfile.contains("ENTRYPOINT [\"/entrypoint.sh\"]"));
+        }
+        assert!(!minimum.contains("apt-get install -y --no-install-recommends \\\n       build-essential cmake pkg-config libssl-dev"));
+    }
+
+    #[test]
     fn bootstrap_lock_matches_the_minimal_workspace() {
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-core"));
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-exe"));

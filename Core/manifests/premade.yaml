@@ -1,0 +1,43 @@
+schema: gitrun-premade/v1
+premade:
+  version: 0.4.0
+  status: active
+artifacts:
+  dockers:
+    - id: runner-linux-x86_64
+      path: Core/Dockers/runners/linux-x86_64
+      version: 0.2.0
+      source: gitrun-setup
+      platforms:
+        - linux/amd64
+    - id: runner-linux-x86_64-minimum
+      path: Core/Dockers/runners/linux-x86_64/minimum
+      version: 0.1.0
+      source: gitrun-setup
+      platforms:
+        - linux/amd64
+    - id: runner-linux-x86_64-workbench
+      path: Core/Dockers/runners/linux-x86_64/workbench
+      version: 0.1.0
+      source: gitrun-setup
+      platforms:
+        - linux/amd64
+  vm_images:
+    - id: linux-x86_64-ubuntu-24.04
+      path: VM-Images/linux-x86_64/ubuntu-24.04/image.yaml
+      version: 0.1.0
+  workflows:
+    - id: cache-restore
+      path: Workflows/GitRun-Independent/cache-restore.yml
+      version: 0.1.0
+    - id: cleanup
+      path: Workflows/GitRun-Independent/cleanup.yml
+      version: 0.1.0
+    - id: runner-verification
+      path: Workflows/GitRun-Dependent/runner-verification.yml
+      version: 0.1.0
+  other: []
+verification:
+  required_metadata: true
+  immutable_references: true
+  signed_release_metadata: true

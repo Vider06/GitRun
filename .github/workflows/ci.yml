@@ -2146,7 +2146,7 @@ jobs:
           while IFS= read -r target; do
             case "$target" in
               Cargo.toml)
-                printf '%s\\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]' > "$context/Cargo.toml"
+                printf '%s\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]' > "$context/Cargo.toml"
                 ;;
               Cargo.lock)
                 cp crates/gitrun-setup/src/runner-bootstrap.lock "$context/Cargo.lock"
@@ -2156,7 +2156,7 @@ jobs:
                 cp "$target" "$context/$target"
                 ;;
             esac
-          done < <(awk '/RUNNER_BUILD_FILES:/ { inside=1; next } inside && /^\\];/ { exit } inside && /^[[:space:]]*\\("/ { path=$0; sub(/^[[:space:]]*\\("/, "", path); sub(/".*/, "", path); print path }' crates/gitrun-setup/src/resources.rs)
+          done < <(awk '/RUNNER_BUILD_FILES:/ { inside=1; next } inside && index($0, "];") == 1 { exit } inside && /^[[:space:]]*\("/ { path=$0; sub(/^[[:space:]]*\("/, "", path); sub(/".*/, "", path); print path }' crates/gitrun-setup/src/resources.rs)
           cp docker/runner/entrypoint.sh "$context/docker/runner/entrypoint.sh"
           cp "$adapted" "$context/Dockerfile"
           {

@@ -32,10 +32,7 @@ commands.allow = [
   "get_security_runtime_summary",
   "save_config",
   "get_gitrun_settings",
-  "save_gitrun_settings",
-  "get_repo_api_policies",
   "get_dock_requirements",
   "list_vm_configs",
-  "save_vm_config",
   "secure_private_key",
 ]

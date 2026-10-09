@@ -242,7 +242,7 @@ mod tests {
             };
             let expected = format!("crates/{crate_name}/src/{module}.rs");
             assert!(
-                paths.iter().any(|path| *path == expected.as_str()),
+                paths.contains(&expected.as_str()),
                 "runner build resources are missing {expected}, declared by {crate_name}/src/lib.rs"
             );
         }

@@ -111,12 +111,16 @@ export async function renderRepository(repo, navigate) {
     if (logic[key]) { toast("A policy with that name already exists.","warning"); return; }
     const list = document.getElementById("logic-policy-list");
     list.insertAdjacentHTML("beforeend",logicCard(key,{connect:true,read:true,write:true,execute:false,melt:false,mountable:false,allowed_melt_targets:["runner"]}));
+    const createdPolicy = list.lastElementChild;
+    createdPolicy.querySelector("[data-remove-logic-policy]").addEventListener("click", () => createdPolicy.remove());
     logic[key] = {connect:true,read:true,write:true,execute:false,melt:false,mountable:false,allowed_melt_targets:["runner"]};
   });
   document.getElementById("add-mount-rule").addEventListener("click", () => {
     const list = document.getElementById("mount-rules-list");
     const index = list.querySelectorAll("[data-mount-index]").length;
     list.insertAdjacentHTML("beforeend",mountCard({source:"",recursive:false,read_only:true,allow:true},index));
+    const createdMount = list.lastElementChild;
+    createdMount.querySelector("[data-remove-mount]").addEventListener("click", () => createdMount.remove());
   });
   content.querySelectorAll("[data-remove-mount]").forEach((button) => button.addEventListener("click", () => button.closest("[data-mount-index]")?.remove()));
   content.querySelectorAll("[data-remove-logic-policy]").forEach((button) => button.addEventListener("click", () => button.closest("[data-logic-policy]")?.remove()));

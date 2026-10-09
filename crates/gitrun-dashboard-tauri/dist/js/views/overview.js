@@ -1,13 +1,13 @@
 import { invoke, content, esc, heading, metric, panel, pill, empty, errorView, toast, setFooter } from "../lib.js";
 
-export async function renderOverview(navigate) {
+export async function renderOverview(navigate, cachedOverview = null) {
   const generation = window.__gitrunNavigationGeneration;
   content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Reading the local control plane…</p></div>';
   let data, runnerSnapshot, activitySnapshot, resourceSnapshot;
   const forceRefresh = Boolean(window.__gitrunForceRefresh);
   try {
     [data, runnerSnapshot, activitySnapshot, resourceSnapshot] = await Promise.all([
-      invoke("get_overview"),
+      cachedOverview ? Promise.resolve(cachedOverview) : invoke("get_overview"),
       invoke("get_runner_snapshot", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[String(error)]})),
       invoke("get_repository_activity", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[String(error)]})),
       invoke("get_host_resource_snapshot", {forceRefresh}).catch((error) => ({sampled_at:0,stale:true,error:String(error)}))

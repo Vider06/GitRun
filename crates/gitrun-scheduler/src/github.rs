@@ -475,19 +475,50 @@ impl GitHubClient {
         let owner_segment = encode_path_segment(owner);
         let name_segment = encode_path_segment(name);
         let metadata_url = format!("{API_BASE}/repos/{owner_segment}/{name_segment}");
-        let metadata: RepositoryMetadataResponse =
-            self.request(reqwest::Method::GET, &metadata_url)?.json()?;
-
         let open_url = format!(
             "{API_BASE}/search/issues?q=repo%3A{owner_segment}%2F{name_segment}%20is%3Apr%20is%3Aopen&per_page=1"
         );
-        let open: SearchCountResponse = self.request(reqwest::Method::GET, &open_url)?.json()?;
-
         let merged_url = format!(
             "{API_BASE}/search/issues?q=repo%3A{owner_segment}%2F{name_segment}%20is%3Apr%20is%3Amerged&per_page=1"
         );
-        let merged: SearchCountResponse =
-            self.request(reqwest::Method::GET, &merged_url)?.json()?;
+
+        // All three values are independent. Running the requests together
+        // makes the snapshot latency approach the slowest endpoint rather
+        // than the sum of all three endpoint latencies.
+        let (metadata, open, merged) = std::thread::scope(|scope| {
+            let metadata_query = scope.spawn(|| {
+                self.request(reqwest::Method::GET, &metadata_url)
+                    .and_then(|response| response.json::<RepositoryMetadataResponse>().map_err(Into::into))
+            });
+            let open_query = scope.spawn(|| {
+                self.request(reqwest::Method::GET, &open_url)
+                    .and_then(|response| response.json::<SearchCountResponse>().map_err(Into::into))
+            });
+            let merged_query = scope.spawn(|| {
+                self.request(reqwest::Method::GET, &merged_url)
+                    .and_then(|response| response.json::<SearchCountResponse>().map_err(Into::into))
+            });
+
+            let metadata = metadata_query.join().unwrap_or_else(|_| {
+                Err(GitHubError::Api {
+                    status: 0,
+                    detail: "repository metadata query worker panicked".into(),
+                })
+            })?;
+            let open = open_query.join().unwrap_or_else(|_| {
+                Err(GitHubError::Api {
+                    status: 0,
+                    detail: "open pull-request query worker panicked".into(),
+                })
+            })?;
+            let merged = merged_query.join().unwrap_or_else(|_| {
+                Err(GitHubError::Api {
+                    status: 0,
+                    detail: "merged pull-request query worker panicked".into(),
+                })
+            })?;
+            Ok::<_, GitHubError>((metadata, open, merged))
+        })?;
 
         Ok(RepositoryActivitySummary {
             repository: repo.to_owned(),

@@ -1049,6 +1049,44 @@ mod tests {
     }
 
     #[test]
+    fn example_env_keys_have_runtime_consumers_or_explicit_external_owners() {
+        const EXTERNAL_RUNTIME_KEYS: &[&str] = &[
+            // These are consumed by the updater CLI/library, not Config.
+            "GITRUN_UPDATE_PUBLIC_KEY_HEX",
+            "GITRUN_UPDATE_PUBLIC_KEY_ID",
+            "GITRUN_UPDATE_SIGNATURE_REQUIRED",
+        ];
+
+        let example = include_str!("../../../config/config.example.env");
+        let parser = include_str!("config.rs");
+        let consumed_by_config: std::collections::BTreeSet<String> = parser
+            .split("get(\"")
+            .skip(1)
+            .filter_map(|tail| tail.split_once('\"').map(|(key, _)| key.to_owned()))
+            .collect();
+        let external: std::collections::BTreeSet<&str> =
+            EXTERNAL_RUNTIME_KEYS.iter().copied().collect();
+
+        let mut unowned = Vec::new();
+        for line in example.lines().map(str::trim) {
+            let Some((key, _)) = line.split_once('=') else {
+                continue;
+            };
+            let key = key.trim();
+            if key.starts_with("GITRUN_")
+                && !consumed_by_config.contains(key)
+                && !external.contains(key)
+            {
+                unowned.push(key.to_owned());
+            }
+        }
+        assert!(
+            unowned.is_empty(),
+            "environment keys in config/config.example.env have no runtime owner: {unowned:?}"
+        );
+    }
+
+    #[test]
     fn invalid_boolean_is_rejected() {
         assert!(parse_bool("TEST", "maybe").is_err());
     }

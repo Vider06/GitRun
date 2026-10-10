@@ -1619,13 +1619,6 @@ mod tests {
     #[test]
     fn uninstaller_only_targets_gitrun_owned_docker_resources() {
         let source = include_str!("lib.rs");
-        assert!(source.contains("label=gitrun.runner=true"));
-        assert!(source.contains("label=gitrun.shared=true"));
-        assert!(source.contains("label=gitrun.managed=true"));
-        assert!(source.contains("reference=gitrun-runner:*"));
-        assert!(source.contains("fn remove_gitrun_runner_containers_and_home_volumes()"));
-        assert!(source.contains("name.ends_with(\"-home\")"));
-
         let uninstall = source
             .split("pub fn uninstall_linux()")
             .nth(1)
@@ -1633,6 +1626,12 @@ mod tests {
             .split("pub fn uninstall_linux_package_hook()")
             .next()
             .unwrap();
+        assert!(uninstall.contains("label=gitrun.runner=true"));
+        assert!(uninstall.contains("label=gitrun.shared=true"));
+        assert!(uninstall.contains("label=gitrun.managed=true"));
+        assert!(uninstall.contains("reference=gitrun-runner:*"));
+        assert!(uninstall.contains("fn remove_gitrun_runner_containers_and_home_volumes()"));
+        assert!(uninstall.contains("name.ends_with(\"-home\")"));
         assert!(!uninstall.contains("apt-get purge docker"));
         assert!(!uninstall.contains("remove_dir_all(Path::new(\"/var/lib/docker\"))"));
     }
@@ -1640,6 +1639,13 @@ mod tests {
     #[test]
     fn package_hook_does_not_recursively_call_dpkg_purge() {
         let source = include_str!("lib.rs");
+        let uninstall = source
+            .split("pub fn uninstall_linux()")
+            .nth(1)
+            .unwrap()
+            .split("pub fn uninstall_linux_package_hook()")
+            .next()
+            .unwrap();
         let hook = source
             .split("pub fn uninstall_linux_package_hook()")
             .nth(1)
@@ -1648,7 +1654,7 @@ mod tests {
             .next()
             .unwrap();
         assert!(!hook.contains("dpkg"));
-        assert!(source.contains("args([\"--purge\", \"gitrun\"])"));
+        assert!(uninstall.contains("args([\"--purge\", \"gitrun\"])"));
     }
 
     #[test]

@@ -1238,7 +1238,9 @@ mod tests {
             unowned.is_empty(),
             "setup-generated environment contains unowned variables: {unowned:?}"
         );
-        assert!(!rendered.lines().any(|line| line.starts_with("GITRUN_LOG_LEVEL=")));
+        assert!(!rendered
+            .lines()
+            .any(|line| line.starts_with("GITRUN_LOG_LEVEL=")));
 
         fs::write(&path, &rendered).unwrap();
 

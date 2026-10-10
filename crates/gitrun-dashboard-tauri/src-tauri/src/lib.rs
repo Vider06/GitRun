@@ -104,6 +104,14 @@ fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {
 fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
     let mut candidates = Vec::new();
 
+    // Prefer the current package-managed or server-installed CLI. Reinstall
+    // replaces these paths; a bundled resource copy could otherwise be stale.
+    #[cfg(unix)]
+    {
+        candidates.push(PathBuf::from("/usr/bin/gitrun"));
+        candidates.push(PathBuf::from("/usr/local/bin/gitrun"));
+    }
+
     if let Ok(resource_dir) = app.path().resource_dir() {
         candidates.push(resource_dir.join(if cfg!(windows) {
             "gitrun.exe"
@@ -120,12 +128,6 @@ fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
                 "gitrun"
             }));
         }
-    }
-
-    #[cfg(unix)]
-    {
-        candidates.push(PathBuf::from("/usr/bin/gitrun"));
-        candidates.push(PathBuf::from("/usr/local/bin/gitrun"));
     }
 
     #[cfg(windows)]
@@ -605,6 +607,141 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     })
     .await
     .map_err(|error| format!("privileged GitRun uninstall task failed: {error}"))??;
+
+    Ok(())
+}
+
+fn stream_unprivileged_command(
+    app: &AppHandle,
+    cli: &std::path::Path,
+    args: &[String],
+) -> Result<std::process::ExitStatus, String> {
+    emit_first_setup_event(
+        app,
+        0,
+        "Starting the verified GitRun reinstall helper…",
+        "system",
+        false,
+        false,
+    );
+
+    let mut child = std::process::Command::new(cli)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("unable to start GitRun reinstall helper: {error}"))?;
+
+    let (sender, receiver) = mpsc::channel();
+    let mut expected_readers = 0usize;
+    if let Some(stdout) = child.stdout.take() {
+        expected_readers += 1;
+        spawn_setup_reader(stdout, "stdout", sender.clone());
+    }
+    if let Some(stderr) = child.stderr.take() {
+        expected_readers += 1;
+        spawn_setup_reader(stderr, "stderr", sender.clone());
+    }
+    drop(sender);
+
+    let mut finished_readers = 0usize;
+    let mut current_phase = 0u8;
+    let mut status = None;
+    while finished_readers < expected_readers || status.is_none() {
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(SetupChildOutput::Line { stream, line }) => {
+                if let Some((phase, _)) = parse_setup_progress_line(&line) {
+                    current_phase = phase;
+                }
+                emit_first_setup_event(app, current_phase, line, stream, false, false);
+            }
+            Ok(SetupChildOutput::Done) => finished_readers += 1,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if status.is_none() {
+                    status = Some(child.wait().map_err(|error| {
+                        format!("unable to wait for GitRun reinstall helper: {error}")
+                    })?);
+                }
+                break;
+            }
+        }
+        if status.is_none() {
+            status = child
+                .try_wait()
+                .map_err(|error| format!("unable to inspect GitRun reinstall helper: {error}"))?;
+        }
+    }
+
+    match status {
+        Some(status) => Ok(status),
+        None => child
+            .wait()
+            .map_err(|error| format!("unable to wait for GitRun reinstall helper: {error}")),
+    }
+}
+
+#[tauri::command]
+async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err("graphical reinstall currently targets Linux x86_64".into());
+    }
+    let cli = dashboard_cli_path(&app)
+        .ok_or("trusted GitRun CLI was not found; the reinstall cannot safely continue")?;
+
+    let app_for_reinstall = app.clone();
+    let cli_for_reinstall = cli.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = stream_unprivileged_command(
+            &app_for_reinstall,
+            &cli_for_reinstall,
+            &["--no-cat".to_owned(), "reinstall".to_owned()],
+        );
+        match result {
+            Ok(status) if status.success() => {
+                emit_first_setup_event(
+                    &app_for_reinstall,
+                    0,
+                    "Verified latest GitRun release installed. Restarting the dashboard…",
+                    "system",
+                    true,
+                    true,
+                );
+                std::process::Command::new(&cli_for_reinstall)
+                    .arg("--no-cat")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|error| format!("GitRun reinstalled but the dashboard could not restart: {error}"))?;
+                Ok(())
+            }
+            Ok(status) => {
+                emit_first_setup_event(
+                    &app_for_reinstall,
+                    0,
+                    format!("GitRun reinstall failed with status {status}."),
+                    "system",
+                    true,
+                    false,
+                );
+                Err(format!("GitRun reinstall failed with status {status}"))
+            }
+            Err(error) => {
+                emit_first_setup_event(
+                    &app_for_reinstall,
+                    0,
+                    error.clone(),
+                    "system",
+                    true,
+                    false,
+                );
+                Err(error)
+            }
+        }
+    })
+    .await
+    .map_err(|error| format!("GitRun reinstall task failed: {error}"))??;
 
     Ok(())
 }
@@ -2537,6 +2674,7 @@ pub fn run() {
             secure_private_key,
             run_first_setup,
             uninstall_gitrun,
+            reinstall_gitrun,
             get_overview,
             get_runner_snapshot,
             get_repository_activity,

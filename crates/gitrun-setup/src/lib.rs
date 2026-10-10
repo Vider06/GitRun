@@ -1623,7 +1623,7 @@ mod tests {
             .split("pub fn uninstall_linux()")
             .nth(1)
             .unwrap()
-            .split("pub fn uninstall_linux_package_hook()")
+            .split("#[cfg(test)]\\nmod tests")
             .next()
             .unwrap();
         assert!(uninstall.contains("label=gitrun.runner=true"));
@@ -1643,7 +1643,7 @@ mod tests {
             .split("pub fn uninstall_linux()")
             .nth(1)
             .unwrap()
-            .split("pub fn uninstall_linux_package_hook()")
+            .split("#[cfg(test)]\\nmod tests")
             .next()
             .unwrap();
         let hook = source

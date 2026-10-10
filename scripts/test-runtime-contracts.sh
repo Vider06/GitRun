@@ -6,6 +6,13 @@ BIN="${1:-$ROOT/target/debug/gitrun}"
 BIN="$(realpath "$BIN")"
 test -x "$BIN" || { echo "GitRun binary missing or not executable: $BIN" >&2; exit 1; }
 
+EXPECTED_VERSION="$(tr -d '[:space:]' < "$ROOT/version.txt")"
+VERSION_OUTPUT="$("$BIN" --no-cat -V --gitrun)"
+if [[ "$VERSION_OUTPUT" != "GitRun $EXPECTED_VERSION" ]]; then
+  printf 'Version contract failed: expected %q, got %q\n' "GitRun $EXPECTED_VERSION" "$VERSION_OUTPUT" >&2
+  exit 1
+fi
+
 TMP="$(mktemp -d)"
 WATCHDOG_PID=""
 CHILD_PID=""

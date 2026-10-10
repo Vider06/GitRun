@@ -2278,7 +2278,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         println!("GitRun reinstall: verified latest release metadata for {version}");
         download_and_verify(&url, &artifact_sha256, &package_file)?;
 
-        let package_name = Command::new("dpkg-deb")
+        let package_name = std::process::Command::new("dpkg-deb")
             .arg("-f")
             .arg(&package_file)
             .arg("Package")
@@ -2288,7 +2288,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("verified release artifact is not the GitRun Debian package".into());
         }
-        let package_version = Command::new("dpkg-deb")
+        let package_version = std::process::Command::new("dpkg-deb")
             .arg("-f")
             .arg(&package_file)
             .arg("Version")
@@ -2300,14 +2300,14 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
             return Err("Debian package version does not match the signed release manifest".into());
         }
 
-        let installed = Command::new("dpkg-query")
+        let installed = std::process::Command::new("dpkg-query")
             .args(["-W", "-f=${db:Status-Status}", "gitrun"])
             .output()
             .is_ok_and(|output| {
                 output.status.success()
                     && String::from_utf8_lossy(&output.stdout).trim() == "installed"
             });
-        let mut apt = Command::new("apt-get");
+        let mut apt = std::process::Command::new("apt-get");
         apt.args(["install", "--yes", "--no-install-recommends"]);
         if installed {
             apt.arg("--reinstall");
@@ -2322,7 +2322,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         install_debian_cli_as_service_binary()?;
 
         if Path::new("/etc/gitrun/gitrun.env").is_file() {
-            let status = Command::new("/usr/local/bin/gitrun")
+            let status = std::process::Command::new("/usr/local/bin/gitrun")
                 .args(["--no-cat", "--reinstall-existing-root"])
                 .status()?;
             if !status.success() {

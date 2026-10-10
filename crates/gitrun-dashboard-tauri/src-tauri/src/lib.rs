@@ -15,7 +15,7 @@ use gitrun_setup::BootstrapAuth;
 use gitrun_vault::{Scope, Vault};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

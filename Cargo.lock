@@ -1587,6 +1587,7 @@ dependencies = [
  "crossterm",
  "gitrun-core",
  "gitrun-dashboard-tauri",
+ "gitrun-gsr",
  "gitrun-recovery",
  "gitrun-scheduler",
  "gitrun-setup",

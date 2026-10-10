@@ -195,7 +195,15 @@ fn process_name_running(expected_name: &str) -> bool {
             let Some(pid) = name.to_str().and_then(|value| value.parse::<u32>().ok()) else {
                 return false;
             };
-            process_has_name(pid, expected_name)
+            if process_has_name(pid, expected_name) {
+                return true;
+            }
+            // GSR is launched as a dedicated process of the single packaged
+            // GitRun executable to keep distribution single-binary.
+            expected_name == "gitrun-gsr"
+                && std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+                    .map(|raw| raw.split('\0').any(|argument| argument == "gsr-watchdog"))
+                    .unwrap_or(false)
         })
     }
 
@@ -1993,6 +2001,8 @@ struct DashboardHealth {
     config_path: Option<String>,
     docker_ok: bool,
     gsr_process_seen: bool,
+    gsr_service_installed: bool,
+    gsr_service_active: bool,
     service_installed: bool,
     service_active: bool,
     checks: Vec<DashboardHealthCheck>,
@@ -2122,6 +2132,23 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
         )
     });
     let gsr_process_seen = process_name_running("gitrun-gsr");
+    let (gsr_service_active, gsr_service_installed) = std::thread::scope(|scope| {
+        let active = scope.spawn(|| {
+            command_success_with_timeout(
+                "/usr/bin/systemctl",
+                &["is-active", "--quiet", "gitrun-gsr.service"],
+                Duration::from_secs(3),
+            )
+        });
+        let installed = [
+            "/etc/systemd/system/gitrun-gsr.service",
+            "/usr/lib/systemd/system/gitrun-gsr.service",
+            "/lib/systemd/system/gitrun-gsr.service",
+        ]
+        .iter()
+        .any(|path| std::path::Path::new(path).is_file());
+        (active.join().unwrap_or(false), installed)
+    });
     let service_installed = [
         "/etc/systemd/system/gitrun.service",
         "/usr/lib/systemd/system/gitrun.service",
@@ -2166,9 +2193,25 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
             detail: if docker_ok { "Docker info command succeeded.".into() } else { "Docker is unavailable or the current user cannot access the daemon.".into() },
         },
         DashboardHealthCheck {
+            name: "GSR watchdog service".into(),
+            ok: gsr_service_installed && gsr_service_active,
+            detail: if gsr_service_active {
+                "systemd reports gitrun-gsr.service active.".into()
+            } else if gsr_service_installed {
+                "The GSR unit exists but systemd does not report it as active.".into()
+            } else {
+                "The gitrun-gsr.service unit was not found in known systemd locations; run GitRun setup/reinstall to install it.".into()
+            },
+        },
+        DashboardHealthCheck {
             name: "GSR watchdog process".into(),
             ok: gsr_process_seen,
-            detail: if gsr_process_seen { "A process named gitrun-gsr was detected; enforcement is not fully verified by this check.".into() } else { "No gitrun-gsr process was detected.".into() },
+            detail: if gsr_process_seen {
+                "The dedicated GSR watchdog process was detected."
+            } else {
+                "No GSR watchdog process was detected; verify gitrun-gsr.service and its logs."
+            }
+            .into(),
         },
         DashboardHealthCheck {
             name: "GitVault".into(),
@@ -2198,6 +2241,8 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
         config_path: config_path.map(|path| path.display().to_string()),
         docker_ok,
         gsr_process_seen,
+        gsr_service_installed,
+        gsr_service_active,
         service_installed,
         service_active,
         checks,

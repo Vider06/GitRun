@@ -2605,7 +2605,7 @@ mod internal_lifecycle_command_tests {
                 .expect("internal command must be selected");
             assert!(
                 matches_command(command),
-                "unexpected parsed command for {:?}: {command:?}",
+                "unexpected parsed command for {:?}",
                 arguments
             );
             assert!(

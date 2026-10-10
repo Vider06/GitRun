@@ -2249,13 +2249,11 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         return Err("the official Debian reinstall currently targets Linux x86_64".into());
     }
 
-    // Enforce the official Ed25519 manifest signature and artifact SHA-256.
-    // Supply the built-in trust anchor unless the operator configured one.
-    for (key, value) in update_signing_environment() {
-        if std::env::var_os(&key).is_none() {
-            std::env::set_var(key, value);
-        }
-    }
+    // Auto-reinstall is pinned to the official GitRun trust anchor.
+    // Do not allow transient environment overrides to disable verification.
+    std::env::set_var("GITRUN_UPDATE_PUBLIC_KEY_HEX", DEFAULT_UPDATE_PUBLIC_KEY_HEX);
+    std::env::set_var("GITRUN_UPDATE_PUBLIC_KEY_ID", DEFAULT_UPDATE_PUBLIC_KEY_ID);
+    std::env::set_var("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true");
     let manifest = latest_manifest("Vider06/GitRun")?;
     let version = manifest.version.clone();
     let artifact = manifest.artifact_for("linux-x86_64-deb")?;
@@ -2378,6 +2376,7 @@ fn install_debian_cli_as_service_binary() -> Result<(), Box<dyn std::error::Erro
     Err("the official Debian service entrypoint is Linux-only".into())
 }
 
+#[cfg(target_os = "linux")]
 fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("rebuilding the installed runtime requires administrator privileges".into());

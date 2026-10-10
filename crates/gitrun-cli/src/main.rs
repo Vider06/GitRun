@@ -1225,6 +1225,16 @@ fn main() {
             }
         },
         Command::Doctor => run_doctor(),
+        Command::Uninstall => run_embedded_privileged_helper(
+            "gitrun-uninstall",
+            include_str!("../../../scripts/uninstall.sh"),
+            &mut presenter,
+        ),
+        Command::Reinstall => run_embedded_privileged_helper(
+            "gitrun-reinstall",
+            include_str!("../../../scripts/reinstall-latest.sh"),
+            &mut presenter,
+        ),
         Command::Update {
             manifest_url,
             only_containers,
@@ -1246,8 +1256,23 @@ fn main() {
         Command::RecoveryGtuu => run_recovery_gtuu(&mut presenter),
         Command::RepairService => run_repair_service(),
         Command::InstallRoot { token_path } => run_install_root(&token_path),
-        Command::UninstallRoot => run_uninstall_root(),
+        Command::UninstallRoot => run_uninstall_root(false),
+        Command::UninstallPackageHook => run_uninstall_root(true),
         Command::ReinstallRoot { token_path } => run_reinstall_root(&token_path),
+        Command::ReinstallLatestRoot => match reinstall_latest_root_command() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("GitRun reinstall: FAIL — {error}");
+                1
+            }
+        },
+        Command::ReinstallExistingRoot => match reinstall_existing_root_command() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("GitRun reinstall: runtime rebuild failed — {error}");
+                1
+            }
+        },
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -1282,7 +1307,13 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         // requested release is already installed or otherwise rejected.
         Command::Update { .. } => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
-        Command::UninstallRoot | Command::ReinstallRoot { .. } => ValidationState::Recovering,
+        Command::Uninstall
+        | Command::Reinstall
+        | Command::UninstallRoot
+        | Command::UninstallPackageHook
+        | Command::ReinstallRoot { .. }
+        | Command::ReinstallLatestRoot
+        | Command::ReinstallExistingRoot => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1372,9 +1403,23 @@ enum Command {
         /// Optional manifest URL to inspect instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
+    /// Remove GitRun services, runtime resources, package registration and app data.
+    Uninstall,
+    /// Download, verify and reinstall the latest official GitRun release.
+    Reinstall,
     /// Internal privileged uninstall entry point.
     #[command(name = "--uninstall-root", hide = true)]
     UninstallRoot,
+    /// Internal apt maintainer hook; it must never invoke dpkg itself.
+    #[command(name = "--uninstall-package-hook", hide = true)]
+    UninstallPackageHook,
+
+    /// Internal privileged command that downloads and installs a signed official .deb.
+    #[command(name = "--reinstall-latest-root", hide = true)]
+    ReinstallLatestRoot,
+    /// Internal command that rebuilds runtime resources from the saved configuration.
+    #[command(name = "--reinstall-existing-root", hide = true)]
+    ReinstallExistingRoot,
 
     /// Internal privileged reinstall entry point.
     #[command(name = "--reinstall-root", hide = true)]

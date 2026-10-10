@@ -1032,6 +1032,23 @@ mod tests {
         assert_eq!(config.container_recovery_cooldown, 90);
     }
     #[test]
+    fn example_env_file_parses_and_validates_with_runtime_loader() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../config/config.example.env");
+        let config = Config::from_env_file(&path)
+            .expect("config/config.example.env must parse through the production loader");
+        config
+            .validate()
+            .expect("config/config.example.env must satisfy production validation");
+
+        assert!(!config.repositories.is_empty());
+        assert_eq!(config.runner_network, "gitrun-runner");
+        assert!(config.gsr_docker_socket_hardening);
+        assert!(config.runner_rootfs_read_only);
+        assert_eq!(config.runner_home_backend, "volume");
+    }
+
+    #[test]
     fn invalid_boolean_is_rejected() {
         assert!(parse_bool("TEST", "maybe").is_err());
     }

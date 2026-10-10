@@ -310,6 +310,13 @@ mod tests {
     }
 
     #[test]
+    fn installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog() {
+        assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
+        assert!(SYSTEMD_GSR_SERVICE.contains("ExecStart=/usr/local/bin/gitrun gsr-watchdog"));
+        assert!(SYSTEMD_GSR_SERVICE.contains("After=gitrun.service"));
+    }
+
+    #[test]
     fn bootstrap_resources_include_every_required_source() {
         let paths: Vec<_> = RUNNER_BUILD_FILES
             .iter()

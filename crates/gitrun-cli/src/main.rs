@@ -1121,7 +1121,8 @@ fn run_gsr_watchdog() -> i32 {
     use std::time::Duration;
 
     let stopping = Arc::new(AtomicBool::new(false));
-    if let Err(error) = signal_hook::flag::register(signal_hook::consts::SIGTERM, stopping.clone()) {
+    if let Err(error) = signal_hook::flag::register(signal_hook::consts::SIGTERM, stopping.clone())
+    {
         std::eprintln!("gitrun gsr-watchdog: failed to register SIGTERM handler: {error}");
         return 1;
     }

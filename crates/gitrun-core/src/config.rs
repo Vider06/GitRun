@@ -1033,8 +1033,7 @@ mod tests {
     }
     #[test]
     fn example_env_file_parses_and_validates_with_runtime_loader() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../config/config.example.env");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/config.example.env");
         let config = Config::from_env_file(&path)
             .expect("config/config.example.env must parse through the production loader");
         config

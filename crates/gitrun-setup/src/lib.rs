@@ -1207,7 +1207,8 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let rendered = render_bootstrap_config(&BootstrapAuth::Pat("test-token".into()), "owner/repository");
+        let rendered =
+            render_bootstrap_config(&BootstrapAuth::Pat("test-token".into()), "owner/repository");
         fs::write(&path, &rendered).unwrap();
 
         let config = Config::from_env_file(&path)

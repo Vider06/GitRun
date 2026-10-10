@@ -76,6 +76,89 @@ fn config_path_for_write() -> Result<PathBuf, String> {
         })
 }
 
+fn trusted_system_cli_path() -> Option<PathBuf> {
+    [
+        PathBuf::from("/usr/bin/gitrun"),
+        PathBuf::from("/usr/local/bin/gitrun"),
+    ]
+    .into_iter()
+    .find_map(|path| trusted_privileged_binary(&path))
+}
+
+fn persist_config_as_root(config: &Config) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let pkexec = pkexec_path().ok_or(
+        "Saving system settings requires administrator authorization, but trusted pkexec was not found.",
+    )?;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; system settings cannot be saved safely.",
+    )?;
+    let payload = serde_json::to_vec(config).map_err(|error| error.to_string())?;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-save-config-{}-{unique}.json",
+        std::process::id()
+    ));
+
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&payload).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+
+        let status = std::process::Command::new(&pkexec)
+            .arg(&cli)
+            .arg("--no-cat")
+            .arg("--save-config-root")
+            .arg(&path)
+            .status()
+            .map_err(|error| format!("unable to request administrator authorization: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "administrator-authorized settings save failed with status {status}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// Persists only known settings. On a system installation, the configuration is
+/// root-owned; a desktop-launched dashboard must request authorization rather
+/// than relying on the service's GITRUN_CONFIG_FILE environment.
+fn persist_dashboard_config(config: &Config) -> Result<(), String> {
+    config.validate().map_err(|error| error.to_string())?;
+    let path = config_path_for_write()?;
+
+    match std::fs::OpenOptions::new().write(true).open(&path) {
+        Ok(file) => {
+            drop(file);
+            gitrun_setup::update_env_file(&path, config).map_err(|error| error.to_string())
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+                && path == Path::new("/etc/gitrun/gitrun.env") =>
+        {
+            persist_config_as_root(config)
+        }
+        Err(error) => Err(format!(
+            "cannot write GitRun configuration {}: {error}",
+            path.display()
+        )),
+    }
+}
+
 #[tauri::command]
 fn is_first_run() -> bool {
     matches!(
@@ -1812,8 +1895,7 @@ fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, St
 }
 
 fn persist_zizmor_config(config: &Config) -> Result<(), String> {
-    let path = config_path_for_write()?;
-    gitrun_setup::update_env_file(&path, config).map_err(|e| e.to_string())
+    persist_dashboard_config(config)
 }
 
 /// Turns the zizmor integration back off. Deliberately does NOT clear
@@ -1826,8 +1908,7 @@ fn persist_zizmor_config(config: &Config) -> Result<(), String> {
 fn disable_zizmor() -> Result<(), String> {
     let mut config = load_config()?;
     config.gsr_zizmor_enabled = false;
-    let path = config_path_for_write()?;
-    gitrun_setup::update_env_file(&path, &config).map_err(|e| e.to_string())
+    persist_dashboard_config(&config)
 }
 
 // ---------------------------------------------------------------------
@@ -2665,9 +2746,7 @@ fn save_dashboard_settings(
 /// know about yet) untouched on disk.
 #[tauri::command]
 fn save_config(updated: Config) -> Result<(), String> {
-    updated.validate().map_err(|e| e.to_string())?;
-    let path = config_path_for_write()?;
-    gitrun_setup::update_env_file(&path, &updated).map_err(|e| e.to_string())
+    persist_dashboard_config(&updated)
 }
 
 /// Small bridge module: writing back to the same env-file format

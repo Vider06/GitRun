@@ -461,15 +461,11 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     };
 
     let cleanup_result = (|| -> Result<(), SetupError> {
-        remove_docker_items(
-            &["ps", "-aq", "--filter", "label=gitrun.runner=true"],
-            &["rm", "-f"],
-            "containers",
-        )?;
+        remove_gitrun_runner_containers_and_home_volumes()?;
         remove_docker_items(
             &["volume", "ls", "-q", "--filter", "label=gitrun.shared=true"],
             &["volume", "rm"],
-            "volumes",
+            "shared cache volumes",
         )?;
         remove_docker_items(
             &[
@@ -518,6 +514,76 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     };
     cleanup_result?;
     restore_result
+}
+
+fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> {
+    let output = Command::new("docker")
+        .args(["ps", "-aq", "--filter", "label=gitrun.runner=true"])
+        .output()?;
+    if !output.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to enumerate GitRun runner containers: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    for id in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        // Runner home volumes are named deterministically as
+        // <container-name>-home and do not carry the shared-volume label.
+        // Resolve names before removing containers so these per-runner volumes
+        // do not survive an otherwise successful uninstall.
+        let inspect = Command::new("docker")
+            .args(["inspect", "-f", "{{.Name}}", id])
+            .output()?;
+        let container_name = if inspect.status.success() {
+            String::from_utf8_lossy(&inspect.stdout)
+                .trim()
+                .trim_start_matches('/')
+                .to_owned()
+        } else {
+            String::new()
+        };
+
+        run_command(Command::new("docker").args(["rm", "-f", "-v", id]))?;
+
+        if container_name.starts_with("gitrun-")
+            && !container_name.chars().any(char::is_control)
+        {
+            remove_volume_if_present(&format!("{container_name}-home"))?;
+        }
+    }
+
+    // Catch orphaned runner-home volumes left by prior crashes or older
+    // versions that failed between container removal and volume cleanup.
+    let volumes = Command::new("docker").args(["volume", "ls", "-q"]).output()?;
+    if !volumes.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to enumerate Docker volumes for orphaned GitRun homes: {}",
+            String::from_utf8_lossy(&volumes.stderr).trim()
+        )));
+    }
+    for name in String::from_utf8_lossy(&volumes.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| name.starts_with("gitrun-") && name.ends_with("-home"))
+    {
+        remove_volume_if_present(name)?;
+    }
+    Ok(())
+}
+
+fn remove_volume_if_present(name: &str) -> Result<(), SetupError> {
+    let inspect = Command::new("docker")
+        .args(["volume", "inspect", name])
+        .output()?;
+    if inspect.status.success() {
+        run_command(Command::new("docker").args(["volume", "rm", "-f", name]))?;
+    }
+    Ok(())
 }
 
 fn remove_docker_items(
@@ -1557,6 +1623,8 @@ mod tests {
         assert!(source.contains("label=gitrun.shared=true"));
         assert!(source.contains("label=gitrun.managed=true"));
         assert!(source.contains("reference=gitrun-runner:*"));
+        assert!(source.contains("fn remove_gitrun_runner_containers_and_home_volumes()"));
+        assert!(source.contains('name.ends_with("-home")'));
         assert!(!source.contains("apt-get purge docker"));
         assert!(!source.contains("remove_dir_all(Path::new(\"/var/lib/docker\"))"));
     }

@@ -1158,7 +1158,16 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                     Some(value)
                 }
                 Err(error) => {
-                    warnings.push(format!("{repo}: GitHub runner query failed: {error}"));
+                    let message = if error.contains("403")
+                        || error.to_ascii_lowercase().contains("resource not accessible by integration")
+                    {
+                        format!(
+                            "{repo}: GitHub runner inventory is unavailable (403). The GitHub App needs repository Administration: read permission and its installation permissions must be refreshed; a classic PAT needs repo scope and repository admin access. Runner count remains unknown until GitHub grants this access. Original error: {error}"
+                        )
+                    } else {
+                        format!("{repo}: GitHub runner query failed: {error}")
+                    };
+                    warnings.push(message);
                     None
                 }
             };

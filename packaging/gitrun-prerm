@@ -7,7 +7,7 @@ case "${1:-}" in
     # The hidden hook is intentionally idempotent and never calls dpkg itself.
     for cli in /usr/bin/gitrun /usr/local/bin/gitrun; do
       if [ -x "$cli" ]; then
-        exec "$cli" --uninstall-package-hook
+        exec "$cli" --no-cat --uninstall-package-hook
       fi
     done
     ;;

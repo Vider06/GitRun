@@ -1,4 +1,4 @@
-# Security model — GitRun 1.4.5
+# Security model — GitRun 1.4.6
 
 This document states plainly what GitRun's design trusts, and what an operator is implicitly granting when they run it. It documents the security properties that exist today and the important limits that remain.
 

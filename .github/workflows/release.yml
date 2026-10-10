@@ -208,7 +208,7 @@ jobs:
           root="$RUNNER_TEMP/gitrun-release"
           deb_root="$RUNNER_TEMP/gitrun-deb-root"
           rm -rf "$root" "$deb_root" "$RUNNER_TEMP/server-check"
-          mkdir -p "$root/server" "$deb_root/DEBIAN" "$deb_root/usr/bin" "$deb_root/usr/share/gitrun" "$deb_root/usr/share/doc/gitrun" "$deb_root/usr/share/applications"
+          mkdir -p "$root/server" "$deb_root/DEBIAN" "$deb_root/usr/bin" "$deb_root/usr/libexec/gitrun" "$deb_root/usr/share/gitrun" "$deb_root/usr/share/doc/gitrun" "$deb_root/usr/share/applications"
           deb="GitRun-$VERSION-linux-x86_64-deb.deb"
           server_archive="GitRun-$VERSION-$TARGET-server.tar.gz"
 
@@ -229,6 +229,10 @@ jobs:
           CONTROL
 
           install -m 0755 target/release/gitrun "$deb_root/usr/bin/gitrun"
+          install -m 0755 scripts/reinstall-latest.sh "$deb_root/usr/libexec/gitrun/reinstall-latest.sh"
+          install -m 0755 scripts/uninstall.sh "$deb_root/usr/libexec/gitrun/uninstall.sh"
+          install -m 0755 packaging/gitrun-prerm "$deb_root/DEBIAN/prerm"
+          sh -n "$deb_root/DEBIAN/prerm"
           install -m 0644 version.txt "$deb_root/usr/share/gitrun/version.txt"
           install -m 0644 LICENSE "$deb_root/usr/share/doc/gitrun/LICENSE"
           install -m 0644 README.md "$deb_root/usr/share/doc/gitrun/README.md"
@@ -379,6 +383,11 @@ jobs:
           test -f "$ROOT/cargo-metadata.json" && test -f "$ROOT/provenance.json" && test -f "$ROOT/sbom.spdx.json"
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
           test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun$')" -eq 1
+          dpkg-deb --contents "$deb" | grep -E '/usr/libexec/gitrun/reinstall-latest\.sh$'
+          dpkg-deb --contents "$deb" | grep -E '/usr/libexec/gitrun/uninstall\.sh$'
+          dpkg-deb --control "$deb" "$RUNNER_TEMP/gitrun-deb-control"
+          test -x "$RUNNER_TEMP/gitrun-deb-control/prerm"
+          grep -Fq -- '--uninstall-package-hook' "$RUNNER_TEMP/gitrun-deb-control/prerm"
           if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
             echo "release package contains a retired secondary executable" >&2
             exit 1

@@ -1,5 +1,6 @@
 use gitrun_core::{Config, GitRunSettings};
 use std::{
+    collections::BTreeSet,
     fs,
     io::Write,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -170,88 +171,443 @@ fn write_setup_flag() -> Result<(), SetupError> {
     write_resource(&setup_flag_path(), &content, 0o600)
 }
 
-/// Removes GitRun's installed runtime resources while deliberately keeping the
-/// current `gitrun` executable in place so the dashboard process can offer a
-/// reinstall without requiring a second package download.
+/// Removes GitRun runtime state and fully purges its Debian package, when present.
+/// Only GitRun-owned Docker objects and app-specific user state are removed; Docker
+/// itself and other host workloads are shared dependencies and are not purged.
 pub fn uninstall_linux() -> Result<(), SetupError> {
+    validate_uninstall_host()?;
+    let package_registered = deb_package_registered();
+    cleanup_uninstall_resources(package_registered)?;
+
+    if package_registered {
+        println!("[GitRun uninstall] Purging package registration with dpkg");
+        run_command(Command::new("dpkg").args(["--purge", "gitrun"]))?;
+    }
+
+    // Catch leftovers from previous manual installs and old package layouts.
+    cleanup_residual_paths(false)?;
+    cleanup_user_application_data()?;
+    cleanup_temp_artifacts()?;
+    reload_systemd()?;
+    verify_uninstall_complete()?;
+    println!("GitRun uninstall: PASS — GitRun-owned host artifacts removed");
+    Ok(())
+}
+
+/// Entry point for the .deb maintainer hook. This must not invoke dpkg again:
+/// dpkg owns the package files and removes them immediately after this hook exits.
+pub fn uninstall_linux_package_hook() -> Result<(), SetupError> {
+    validate_uninstall_host()?;
+    cleanup_uninstall_resources(true)?;
+    cleanup_temp_artifacts()?;
+    reload_systemd()?;
+    Ok(())
+}
+
+fn validate_uninstall_host() -> Result<(), SetupError> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
         return Err(SetupError::NotRoot);
     }
+    Ok(())
+}
 
-    println!("[GitRun uninstall] Stopping GitRun services");
-    let _ = Command::new("systemctl")
-        .args(["disable", "--now", "gitrun-gsr.service"])
-        .status();
-    let _ = Command::new("systemctl")
-        .args(["disable", "--now", "gitrun.service"])
-        .status();
+fn deb_package_registered() -> bool {
+    let Ok(output) = Command::new("dpkg-query")
+        .args(["-W", "-f=${db:Status-Status}", "gitrun"])
+        .output()
+    else {
+        return false;
+    };
+    output.status.success()
+        && matches!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "installed"
+                | "config-files"
+                | "unpacked"
+                | "half-installed"
+                | "half-configured"
+                | "triggers-awaited"
+                | "triggers-pending"
+        )
+}
 
-    println!("[GitRun uninstall] Removing managed runner containers");
-    remove_gitrun_docker_resources();
+fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
+    println!("[GitRun uninstall] Stopping and disabling GitRun systemd units");
+    for unit in ["gitrun-gsr.service", "gitrun.service"] {
+        let _ = Command::new("systemctl")
+            .args(["disable", "--now", unit])
+            .status();
+        if Command::new("systemctl")
+            .args(["is-active", "--quiet", unit])
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            run_command(Command::new("systemctl").args(["stop", unit]))?;
+        }
+    }
 
+    println!("[GitRun uninstall] Removing GitRun-owned Docker resources");
+    remove_gitrun_docker_resources()?;
+    cleanup_residual_paths(package_owned_files)?;
+    cleanup_user_application_data()?;
+    Ok(())
+}
+
+fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
     for path in [
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
-        "/usr/share/applications/gitrun.desktop",
+        "/usr/lib/systemd/system/gitrun.service",
+        "/usr/lib/systemd/system/gitrun-gsr.service",
+        "/lib/systemd/system/gitrun.service",
+        "/lib/systemd/system/gitrun-gsr.service",
+        "/run/systemd/system/gitrun.service",
+        "/run/systemd/system/gitrun-gsr.service",
+        "/etc/systemd/system/multi-user.target.wants/gitrun.service",
+        "/etc/systemd/system/multi-user.target.wants/gitrun-gsr.service",
+        "/etc/systemd/system/graphical.target.wants/gitrun.service",
+        "/etc/systemd/system/graphical.target.wants/gitrun-gsr.service",
+        "/etc/systemd/system/default.target.wants/gitrun.service",
+        "/etc/systemd/system/default.target.wants/gitrun-gsr.service",
+        "/usr/local/bin/gitrun",
         "/usr/local/bin/gitrun-recovery",
+        "/usr/bin/gitrun-recovery",
+        "/usr/local/lib/gitrun",
+        "/etc/bash_completion.d/gitrun",
+        "/usr/share/bash-completion/completions/gitrun",
+        "/usr/share/zsh/site-functions/_gitrun",
+        "/usr/share/fish/vendor_completions.d/gitrun.fish",
+        "/usr/share/man/man1/gitrun.1",
+        "/usr/share/man/man1/gitrun.1.gz",
+        "/usr/local/share/man/man1/gitrun.1",
+        "/usr/local/share/man/man1/gitrun.1.gz",
         "/etc/gitrun",
         "/var/lib/gitrun",
         "/var/log/gitrun",
+        "/var/cache/gitrun",
         "/opt/gitrun",
+        "/usr/local/share/gitrun",
         SETUP_FLAG_PATH,
     ] {
         remove_path_if_present(Path::new(path))?;
     }
 
-    println!("[GitRun uninstall] Removing GitRun runner image");
-    let _ = Command::new("docker")
-        .args(["image", "rm", "-f", "gitrun-runner:latest"])
-        .status();
-
-    let _ = Command::new("systemctl").args(["daemon-reload"]).status();
-    println!("GitRun uninstall: PASS");
+    if !package_owned_files {
+        for path in [
+            "/usr/bin/gitrun",
+            "/usr/libexec/gitrun",
+            "/usr/share/gitrun",
+            "/usr/share/doc/gitrun",
+            "/usr/share/applications/gitrun.desktop",
+            "/usr/local/share/applications/gitrun.desktop",
+            "/usr/share/icons/hicolor/32x32/apps/gitrun.png",
+            "/usr/share/icons/hicolor/64x64/apps/gitrun.png",
+            "/usr/share/icons/hicolor/128x128/apps/gitrun.png",
+            "/usr/share/icons/hicolor/256x256/apps/gitrun.png",
+            "/usr/share/icons/hicolor/512x512/apps/gitrun.png",
+        ] {
+            remove_path_if_present(Path::new(path))?;
+        }
+    }
     Ok(())
 }
 
-fn remove_gitrun_docker_resources() {
-    let Ok(output) = Command::new("docker")
+fn cleanup_user_application_data() -> Result<(), SetupError> {
+    const RELATIVE_PATHS: &[&str] = &[
+        ".config/dev.gitrun.dashboard",
+        ".config/gitrun",
+        ".config/GitRun",
+        ".config/autostart/gitrun.desktop",
+        ".config/autostart/dev.gitrun.dashboard.desktop",
+        "Desktop/gitrun.desktop",
+        "Desktop/GitRun.desktop",
+        ".local/share/dev.gitrun.dashboard",
+        ".local/share/gitrun",
+        ".local/share/GitRun",
+        ".local/share/applications/gitrun.desktop",
+        ".local/share/icons/hicolor/32x32/apps/gitrun.png",
+        ".local/share/icons/hicolor/64x64/apps/gitrun.png",
+        ".local/share/icons/hicolor/128x128/apps/gitrun.png",
+        ".local/share/icons/hicolor/256x256/apps/gitrun.png",
+        ".local/share/icons/hicolor/512x512/apps/gitrun.png",
+        ".cache/dev.gitrun.dashboard",
+        ".cache/gitrun",
+        ".cache/GitRun",
+        ".local/state/dev.gitrun.dashboard",
+        ".local/state/gitrun",
+    ];
+
+    // Explicitly enumerate local accounts and delete only paths uniquely owned
+    // by GitRun. No other user files or general caches are touched.
+    let passwd = fs::read_to_string("/etc/passwd")?;
+    let mut homes = BTreeSet::new();
+    for line in passwd.lines() {
+        let fields: Vec<_> = line.split(':').collect();
+        if fields.len() < 7 || fields[5].trim().is_empty() {
+            continue;
+        }
+        if fields[2].parse::<u32>().is_err() {
+            continue;
+        }
+        let home = PathBuf::from(fields[5]);
+        if home.is_absolute() && home != Path::new("/") && home.is_dir() {
+            homes.insert(home);
+        }
+    }
+
+    for home in homes {
+        for relative in RELATIVE_PATHS {
+            remove_path_if_present(&home.join(relative))?;
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_temp_artifacts() -> Result<(), SetupError> {
+    let temp_root = std::env::temp_dir();
+    let entries = match fs::read_dir(&temp_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("gitrun-setup-tauri-")
+            || name.starts_with("gitrun-reinstall-")
+            || name.starts_with("gitrun-uninstall-")
+            || name.starts_with("gitrun-save-config-")
+            || name.starts_with("gitrun-connect-")
+        {
+            remove_path_if_present(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn reload_systemd() -> Result<(), SetupError> {
+    if !command_exists("systemctl") {
+        return Ok(());
+    }
+    run_command(Command::new("systemctl").args(["daemon-reload"]))
+}
+
+fn verify_uninstall_complete() -> Result<(), SetupError> {
+    for path in [
+        "/usr/bin/gitrun",
+        "/usr/local/bin/gitrun",
+        "/usr/share/gitrun",
+        "/usr/share/doc/gitrun",
+        "/usr/libexec/gitrun",
+        "/etc/gitrun",
+        "/var/lib/gitrun",
+        "/var/log/gitrun",
+        "/var/cache/gitrun",
+        "/opt/gitrun",
+        "/etc/systemd/system/gitrun.service",
+        "/etc/systemd/system/gitrun-gsr.service",
+    ] {
+        if Path::new(path).exists() {
+            return Err(SetupError::Command(format!(
+                "uninstall verification failed: {} still exists",
+                path
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
+    if !command_exists("docker") {
+        return Ok(());
+    }
+
+    let daemon_ready = Command::new("docker")
+        .arg("info")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    let docker_was_active = Command::new("systemctl")
+        .args(["is-active", "--quiet", "docker.service"])
+        .status()
+        .is_ok_and(|status| status.success());
+    let started_temporarily = if daemon_ready {
+        false
+    } else {
+        if !command_exists("systemctl") {
+            return Err(SetupError::Command(
+                "Docker daemon is unavailable and systemd cannot start it for cleanup".into(),
+            ));
+        }
+        run_command(Command::new("systemctl").args(["start", "docker.service"]))?;
+        let ready = Command::new("docker")
+            .arg("info")
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if !ready {
+            if !docker_was_active {
+                let _ = Command::new("systemctl")
+                    .args(["stop", "docker.service"])
+                    .status();
+            }
+            return Err(SetupError::Command(
+                "Docker was started but its daemon is still unavailable; GitRun resources were not removed".into(),
+            ));
+        }
+        !docker_was_active
+    };
+
+    let cleanup_result = (|| -> Result<(), SetupError> {
+        remove_gitrun_runner_containers_and_home_volumes()?;
+        remove_docker_items(
+            &["volume", "ls", "-q", "--filter", "label=gitrun.shared=true"],
+            &["volume", "rm"],
+            "shared cache volumes",
+        )?;
+        remove_docker_items(
+            &[
+                "network",
+                "ls",
+                "-q",
+                "--filter",
+                "label=gitrun.managed=true",
+            ],
+            &["network", "rm"],
+            "networks",
+        )?;
+
+        let mut image_ids = BTreeSet::new();
+        for args in [
+            vec!["image", "ls", "-q", "--filter", "label=gitrun.managed=true"],
+            vec!["image", "ls", "-q", "--filter", "reference=gitrun-runner:*"],
+        ] {
+            let output = Command::new("docker").args(args).output()?;
+            if !output.status.success() {
+                return Err(SetupError::Command(format!(
+                    "unable to enumerate GitRun images: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            image_ids.extend(
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+        for image in image_ids {
+            run_command(Command::new("docker").args(["image", "rm", "-f", &image]))?;
+        }
+        Ok(())
+    })();
+
+    // Do not change Docker's pre-existing service state. If Docker was stopped
+    // before uninstall, restore that state even when object cleanup fails.
+    let restore_result = if started_temporarily {
+        run_command(Command::new("systemctl").args(["stop", "docker.service"]))
+    } else {
+        Ok(())
+    };
+    cleanup_result?;
+    restore_result
+}
+
+fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> {
+    let output = Command::new("docker")
         .args(["ps", "-aq", "--filter", "label=gitrun.runner=true"])
-        .output()
-    else {
-        return;
-    };
+        .output()?;
+    if !output.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to enumerate GitRun runner containers: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
 
-    if output.status.success() {
-        for id in String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-        {
-            let _ = Command::new("docker").args(["rm", "-f", id]).status();
+    for id in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        // Runner home volumes are named deterministically as
+        // <container-name>-home and do not carry the shared-volume label.
+        // Resolve names before removing containers so these per-runner volumes
+        // do not survive an otherwise successful uninstall.
+        let inspect = Command::new("docker")
+            .args(["inspect", "-f", "{{.Name}}", id])
+            .output()?;
+        let container_name = if inspect.status.success() {
+            String::from_utf8_lossy(&inspect.stdout)
+                .trim()
+                .trim_start_matches('/')
+                .to_owned()
+        } else {
+            String::new()
+        };
+
+        run_command(Command::new("docker").args(["rm", "-f", "-v", id]))?;
+
+        if container_name.starts_with("gitrun-") && !container_name.chars().any(char::is_control) {
+            remove_volume_if_present(&format!("{container_name}-home"))?;
         }
     }
 
-    let Ok(output) = Command::new("docker")
-        .args(["volume", "ls", "-q", "--filter", "label=gitrun.shared=true"])
-        .output()
-    else {
-        return;
-    };
-
-    if output.status.success() {
-        for volume in String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|volume| !volume.is_empty())
-        {
-            let _ = Command::new("docker")
-                .args(["volume", "rm", volume])
-                .status();
-        }
+    // Catch orphaned runner-home volumes left by prior crashes or older
+    // versions that failed between container removal and volume cleanup.
+    let volumes = Command::new("docker")
+        .args(["volume", "ls", "-q"])
+        .output()?;
+    if !volumes.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to enumerate Docker volumes for orphaned GitRun homes: {}",
+            String::from_utf8_lossy(&volumes.stderr).trim()
+        )));
     }
+    for name in String::from_utf8_lossy(&volumes.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| name.starts_with("gitrun-") && name.ends_with("-home"))
+    {
+        remove_volume_if_present(name)?;
+    }
+    Ok(())
+}
+
+fn remove_volume_if_present(name: &str) -> Result<(), SetupError> {
+    let inspect = Command::new("docker")
+        .args(["volume", "inspect", name])
+        .output()?;
+    if inspect.status.success() {
+        run_command(Command::new("docker").args(["volume", "rm", "-f", name]))?;
+    }
+    Ok(())
+}
+
+fn remove_docker_items(
+    list_args: &[&str],
+    remove_prefix: &[&str],
+    label: &str,
+) -> Result<(), SetupError> {
+    let output = Command::new("docker").args(list_args).output()?;
+    if !output.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to enumerate GitRun Docker {label}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    for id in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        let mut command = Command::new("docker");
+        command.args(remove_prefix).arg(id);
+        run_command(&mut command)?;
+    }
+    Ok(())
 }
 
 fn remove_path_if_present(path: &Path) -> Result<(), SetupError> {
@@ -301,7 +657,7 @@ pub fn reinstall_linux_with_auth(
         .args(["disable", "--now", "gitrun.service"])
         .status();
 
-    remove_gitrun_docker_resources();
+    remove_gitrun_docker_resources()?;
     for path in [
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
@@ -1258,6 +1614,47 @@ mod tests {
         assert!(rendered.contains("GITRUN_UPDATE_SIGNATURE_REQUIRED=true"));
 
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn uninstaller_only_targets_gitrun_owned_docker_resources() {
+        let source = include_str!("lib.rs");
+        let uninstall = source
+            .split("pub fn uninstall_linux()")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap();
+        assert!(uninstall.contains("label=gitrun.runner=true"));
+        assert!(uninstall.contains("label=gitrun.shared=true"));
+        assert!(uninstall.contains("label=gitrun.managed=true"));
+        assert!(uninstall.contains("reference=gitrun-runner:*"));
+        assert!(uninstall.contains("fn remove_gitrun_runner_containers_and_home_volumes()"));
+        assert!(uninstall.contains("name.ends_with(\"-home\")"));
+        assert!(!uninstall.contains("apt-get purge docker"));
+        assert!(!uninstall.contains("remove_dir_all(Path::new(\"/var/lib/docker\"))"));
+    }
+
+    #[test]
+    fn package_hook_does_not_recursively_call_dpkg_purge() {
+        let source = include_str!("lib.rs");
+        let uninstall = source
+            .split("pub fn uninstall_linux()")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap();
+        let hook = source
+            .split("pub fn uninstall_linux_package_hook()")
+            .nth(1)
+            .unwrap()
+            .split("fn validate_uninstall_host()")
+            .next()
+            .unwrap();
+        assert!(!hook.contains("dpkg"));
+        assert!(uninstall.contains("args([\"--purge\", \"gitrun\"])"));
     }
 
     #[test]

@@ -276,6 +276,14 @@ fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
         "/usr/local/bin/gitrun-recovery",
         "/usr/bin/gitrun-recovery",
         "/usr/local/lib/gitrun",
+        "/etc/bash_completion.d/gitrun",
+        "/usr/share/bash-completion/completions/gitrun",
+        "/usr/share/zsh/site-functions/_gitrun",
+        "/usr/share/fish/vendor_completions.d/gitrun.fish",
+        "/usr/share/man/man1/gitrun.1",
+        "/usr/share/man/man1/gitrun.1.gz",
+        "/usr/local/share/man/man1/gitrun.1",
+        "/usr/local/share/man/man1/gitrun.1.gz",
         "/etc/gitrun",
         "/var/lib/gitrun",
         "/var/log/gitrun",
@@ -314,6 +322,8 @@ fn cleanup_user_application_data() -> Result<(), SetupError> {
         ".config/GitRun",
         ".config/autostart/gitrun.desktop",
         ".config/autostart/dev.gitrun.dashboard.desktop",
+        "Desktop/gitrun.desktop",
+        "Desktop/GitRun.desktop",
         ".local/share/dev.gitrun.dashboard",
         ".local/share/gitrun",
         ".local/share/GitRun",
@@ -369,6 +379,8 @@ fn cleanup_temp_artifacts() -> Result<(), SetupError> {
         let name = name.to_string_lossy();
         if name.starts_with("gitrun-setup-tauri-")
             || name.starts_with("gitrun-reinstall-")
+            || name.starts_with("gitrun-uninstall-")
+            || name.starts_with("gitrun-save-config-")
             || name.starts_with("gitrun-connect-")
         {
             remove_path_if_present(&entry.path())?;

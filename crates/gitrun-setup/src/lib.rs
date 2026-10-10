@@ -303,20 +303,6 @@ fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
 }
 
 fn cleanup_user_application_data() -> Result<(), SetupError> {
-    let mut homes = BTreeSet::new();
-    // Clean the account that launched the elevated operation and root's own
-    // GitRun app data. Do not scan/delete arbitrary directories from other users.
-    for variable in ["SUDO_UID", "PKEXEC_UID"] {
-        if let Ok(uid) = std::env::var(variable) {
-            if let Some(home) = home_for_uid(&uid) {
-                homes.insert(home);
-            }
-        }
-    }
-    if let Some(root_home) = home_for_uid("0") {
-        homes.insert(root_home);
-    }
-
     const RELATIVE_PATHS: &[&str] = &[
         ".config/dev.gitrun.dashboard",
         ".config/gitrun",
@@ -338,24 +324,31 @@ fn cleanup_user_application_data() -> Result<(), SetupError> {
         ".local/state/dev.gitrun.dashboard",
         ".local/state/gitrun",
     ];
+
+    // Explicitly enumerate local accounts and delete only paths uniquely owned
+    // by GitRun. No other user files or general caches are touched.
+    let passwd = fs::read_to_string("/etc/passwd")?;
+    let mut homes = BTreeSet::new();
+    for line in passwd.lines() {
+        let fields: Vec<_> = line.split(':').collect();
+        if fields.len() < 7 || fields[5].trim().is_empty() {
+            continue;
+        }
+        if fields[2].parse::<u32>().is_err() {
+            continue;
+        }
+        let home = PathBuf::from(fields[5]);
+        if home.is_absolute() && home != Path::new("/") && home.is_dir() {
+            homes.insert(home);
+        }
+    }
+
     for home in homes {
         for relative in RELATIVE_PATHS {
             remove_path_if_present(&home.join(relative))?;
         }
     }
     Ok(())
-}
-
-fn home_for_uid(uid: &str) -> Option<PathBuf> {
-    let output = Command::new("getent")
-        .args(["passwd", uid])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())?;
-    let line = String::from_utf8(output.stdout).ok()?;
-    let home = line.trim().split(':').nth(5)?;
-    let path = PathBuf::from(home);
-    (path.is_absolute() && path != Path::new("/")).then_some(path)
 }
 
 fn cleanup_temp_artifacts() -> Result<(), SetupError> {

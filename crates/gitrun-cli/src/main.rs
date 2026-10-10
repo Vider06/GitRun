@@ -218,6 +218,73 @@ fn elevate_system_update(
     Ok(status.code().unwrap_or(1))
 }
 
+#[cfg(target_os = "linux")]
+fn run_embedded_privileged_helper(
+    prefix: &str,
+    script: &str,
+    presenter: &mut presenter::CatPresenter,
+) -> i32 {
+    if system_install_paths().is_none() {
+        eprintln!("GitRun: this operation requires the trusted system installation at /usr/bin/gitrun or /usr/local/bin/gitrun.");
+        return 2;
+    }
+
+    use std::os::unix::fs::OpenOptionsExt;
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("GitRun: unable to resolve the installed executable: {error}");
+            return 1;
+        }
+    };
+    let nonce = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(value) => value.as_nanos(),
+        Err(error) => {
+            eprintln!("GitRun: unable to create a private helper name: {error}");
+            return 1;
+        }
+    };
+    let script_path = std::env::temp_dir().join(format!(
+        "{prefix}-{}-{nonce}.sh",
+        std::process::id()
+    ));
+
+    let result = (|| -> Result<i32, Box<dyn std::error::Error>> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o700)
+            .open(&script_path)?;
+        file.write_all(script.as_bytes())?;
+        file.sync_all()?;
+        presenter.prepare_for_external_process();
+        let status = Command::new("bash")
+            .arg(&script_path)
+            .arg(&executable)
+            .status()?;
+        Ok(status.code().unwrap_or(1))
+    })();
+
+    let _ = std::fs::remove_file(&script_path);
+    match result {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("GitRun {prefix}: failed to launch privileged helper: {error}");
+            1
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_embedded_privileged_helper(
+    _prefix: &str,
+    _script: &str,
+    _presenter: &mut presenter::CatPresenter,
+) -> i32 {
+    eprintln!("GitRun uninstall/reinstall currently supports Linux x86_64 only.");
+    2
+}
+
 fn dependency_snapshot() -> Vec<(String, Option<String>)> {
     [
         ("Git", "git"),

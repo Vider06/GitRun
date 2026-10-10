@@ -57,6 +57,7 @@ pub(crate) fn runner_dockerfile_for_profile(profile: &str) -> Result<String, Set
 pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/entrypoint.sh");
 
 pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
+pub(crate) const SYSTEMD_GSR_SERVICE: &str = include_str!("../../../systemd/gitrun-gsr.service");
 
 pub(crate) const SYSTEMD_SERVICE_DIRECT: &str = r#"[Unit]
 Description=GitRun Rust scheduler

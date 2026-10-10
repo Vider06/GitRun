@@ -2579,6 +2579,17 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    #[test]
+    fn dashboard_build_version_matches_workspace_version_txt() {
+        let expected = include_str!("../../../../version.txt").trim();
+        assert_eq!(
+            option_env!("GITRUN_BUILD_VERSION"),
+            Some(expected),
+            "Tauri build.rs must propagate version.txt into the dashboard binary"
+        );
+        assert!(!expected.is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn setup_request_is_created_with_private_permissions() {

@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  remove|deconfigure)
+    # Remove GitRun runtime resources before dpkg removes its owned files.
+    # The hidden hook is intentionally idempotent and never calls dpkg itself.
+    for cli in /usr/bin/gitrun /usr/local/bin/gitrun; do
+      if [ -x "$cli" ]; then
+        exec "$cli" --uninstall-package-hook
+      fi
+    done
+    ;;
+esac
+
+exit 0

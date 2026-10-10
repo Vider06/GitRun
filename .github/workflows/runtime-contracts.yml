@@ -41,7 +41,9 @@ jobs:
           cargo --version
 
       - name: Parse and validate sample configuration with production loader
-        run: cargo test --locked -p gitrun-core example_env_file_parses_and_validates_with_runtime_loader
+        run: |
+          cargo test --locked -p gitrun-core example_env_file_parses_and_validates_with_runtime_loader
+          cargo test --locked -p gitrun-core example_env_keys_have_runtime_consumers_or_explicit_external_owners
 
       - name: Test setup-generated configuration and service contracts
         run: |
@@ -71,7 +73,9 @@ jobs:
           # the real built CLI command rather than failing on a missing path.
           sudo install -Dm0755 target/debug/gitrun /usr/local/bin/gitrun
           sudo install -Dm0600 config/config.example.env /etc/gitrun/gitrun.env
-          systemd-analyze verify systemd/gitrun.service systemd/gitrun-gsr.service
+          sudo install -Dm0644 systemd/gitrun.service /etc/systemd/system/gitrun.service
+          sudo install -Dm0644 systemd/gitrun-gsr.service /etc/systemd/system/gitrun-gsr.service
+          sudo systemd-analyze verify gitrun.service gitrun-gsr.service
           grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service
           grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service
           grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs

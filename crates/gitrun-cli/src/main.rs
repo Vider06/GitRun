@@ -256,7 +256,7 @@ fn run_embedded_privileged_helper(
         file.write_all(script.as_bytes())?;
         file.sync_all()?;
         presenter.prepare_for_external_process();
-        let status = Command::new("bash")
+        let status = std::process::Command::new("bash")
             .arg(&script_path)
             .arg(&executable)
             .status()?;

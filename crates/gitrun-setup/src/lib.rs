@@ -527,13 +527,13 @@ fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {
 
 fn render_bootstrap_config(auth: &BootstrapAuth, repositories: &str) -> String {
     let auth_lines = match auth {
-        BootstrapAuth::Pat(token) => format!("GITHUB_TOKEN={}\\n", token.trim()),
+        BootstrapAuth::Pat(token) => format!("GITHUB_TOKEN={}\n", token.trim()),
         BootstrapAuth::GitHubApp {
             app_id,
             installation_id,
             private_key_path,
         } => format!(
-            "GITRUN_GITHUB_APP_ID={}\\nGITRUN_GITHUB_APP_INSTALLATION_ID={}\\nGITRUN_GITHUB_APP_PRIVATE_KEY_PATH={}\\n",
+            "GITRUN_GITHUB_APP_ID={}\nGITRUN_GITHUB_APP_INSTALLATION_ID={}\nGITRUN_GITHUB_APP_PRIVATE_KEY_PATH={}\n",
             app_id.trim(),
             installation_id.trim(),
             private_key_path.trim(),
@@ -541,7 +541,7 @@ fn render_bootstrap_config(auth: &BootstrapAuth, repositories: &str) -> String {
     };
 
     format!(
-        "{auth_lines}GITRUN_REPOSITORIES={repositories}\\nGITRUN_MIN_RUNNERS=3\\nGITRUN_MAX_RUNNERS=8\\nGITRUN_IDLE_TIMEOUT=120\\nGITRUN_POLL_INTERVAL=5\\nGITRUN_AUTO_CONTAINER_UPDATE=false\\nGITRUN_CONTAINER_UPDATE_TIME=03:00\\nGITRUN_RUNNER_IMAGE=gitrun-runner:latest\\nGITRUN_VAULT_DIR=/var/lib/gitrun/vault\\nGITRUN_RUNNER_LABELS=self-hosted,Linux,X64\\nGITRUN_EPHEMERAL=false\\nGITRUN_DISABLE_UPDATE=false\\nGITRUN_CONTAINER_CPUS=1\\nGITRUN_CONTAINER_MEMORY=1g\\nGITRUN_CONTAINER_PIDS=1024\\nGITRUN_STATE_DIR=/var/lib/gitrun\\nGITRUN_LOG_DIR=/var/log/gitrun\\nGITRUN_SHARED_CACHE_VOLUME=gitrun-runner-shared\\nGITRUN_RUNNER_HOME_SIZE=8g\\nGITRUN_RUNNER_HOME_BACKEND=volume\\nGITRUN_RUNNER_ROOTFS_READ_ONLY=true\\nGITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION=true\\nGITRUN_GITHUB_CONNECT_TIMEOUT=5\\nGITRUN_GITHUB_REQUEST_TIMEOUT=20\\nGITRUN_UPDATE_PUBLIC_KEY_HEX=11cc9eaf0147dada407ffd3497c2cebce17d195e21c06030c1e2e1dc688f41f1\\nGITRUN_UPDATE_PUBLIC_KEY_ID=gitrun-release-ed25519-v1\\nGITRUN_UPDATE_SIGNATURE_REQUIRED=true\\n"
+        "{auth_lines}GITRUN_REPOSITORIES={repositories}\nGITRUN_MIN_RUNNERS=3\nGITRUN_MAX_RUNNERS=8\nGITRUN_IDLE_TIMEOUT=120\nGITRUN_POLL_INTERVAL=5\nGITRUN_AUTO_CONTAINER_UPDATE=false\nGITRUN_CONTAINER_UPDATE_TIME=03:00\nGITRUN_RUNNER_IMAGE=gitrun-runner:latest\nGITRUN_VAULT_DIR=/var/lib/gitrun/vault\nGITRUN_RUNNER_LABELS=self-hosted,Linux,X64\nGITRUN_EPHEMERAL=false\nGITRUN_DISABLE_UPDATE=false\nGITRUN_CONTAINER_CPUS=1\nGITRUN_CONTAINER_MEMORY=1g\nGITRUN_CONTAINER_PIDS=1024\nGITRUN_STATE_DIR=/var/lib/gitrun\nGITRUN_LOG_DIR=/var/log/gitrun\nGITRUN_SHARED_CACHE_VOLUME=gitrun-runner-shared\nGITRUN_RUNNER_HOME_SIZE=8g\nGITRUN_RUNNER_HOME_BACKEND=volume\nGITRUN_RUNNER_ROOTFS_READ_ONLY=true\nGITRUN_RUNNER_WINDOWS_HYPERV_ISOLATION=true\nGITRUN_GITHUB_CONNECT_TIMEOUT=5\nGITRUN_GITHUB_REQUEST_TIMEOUT=20\nGITRUN_UPDATE_PUBLIC_KEY_HEX=11cc9eaf0147dada407ffd3497c2cebce17d195e21c06030c1e2e1dc688f41f1\nGITRUN_UPDATE_PUBLIC_KEY_ID=gitrun-release-ed25519-v1\nGITRUN_UPDATE_SIGNATURE_REQUIRED=true\n"
     )
 }
 
@@ -1209,6 +1209,7 @@ mod tests {
         ));
         let rendered =
             render_bootstrap_config(&BootstrapAuth::Pat("test-token".into()), "owner/repository");
+        assert!(rendered.starts_with("GITHUB_TOKEN=test-token\n"));
         fs::write(&path, &rendered).unwrap();
 
         let config = Config::from_env_file(&path)

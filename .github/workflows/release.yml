@@ -230,6 +230,7 @@ jobs:
 
           install -m 0755 target/release/gitrun "$deb_root/usr/bin/gitrun"
           install -m 0755 scripts/reinstall-latest.sh "$deb_root/usr/libexec/gitrun/reinstall-latest.sh"
+          install -m 0755 scripts/uninstall.sh "$deb_root/usr/libexec/gitrun/uninstall.sh"
           install -m 0755 packaging/gitrun-prerm "$deb_root/DEBIAN/prerm"
           sh -n "$deb_root/DEBIAN/prerm"
           install -m 0644 version.txt "$deb_root/usr/share/gitrun/version.txt"
@@ -381,7 +382,8 @@ jobs:
           test -f "$deb" && test -f "$server" && test -f "$ROOT/release-manifest.json"
           test -f "$ROOT/cargo-metadata.json" && test -f "$ROOT/provenance.json" && test -f "$ROOT/sbom.spdx.json"
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
-          test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun          if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
+          test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun
+          if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
             echo "release package contains a retired secondary executable" >&2
             exit 1
           fi
@@ -426,7 +428,54 @@ jobs:
               --generate-notes
           fi
 )" -eq 1
-          dpkg-deb --contents "$deb" | grep -E '/usr/libexec/gitrun/reinstall-latest\.sh          if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
+          dpkg-deb --contents "$deb" | grep -E '/usr/libexec/gitrun/reinstall-latest\\.sh
+          if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
+            echo "release package contains a retired secondary executable" >&2
+            exit 1
+          fi
+          dpkg-deb --contents "$deb" | grep -E '/usr/share/applications/gitrun\.desktop$'
+          dpkg-deb --contents "$deb" | grep -E '/usr/share/gitrun/version\.txt$'
+
+          rm -rf "$RUNNER_TEMP/server-check"
+          mkdir -p "$RUNNER_TEMP/server-check"
+          tar -xzf "$server" -C "$RUNNER_TEMP/server-check"
+          test -x "$RUNNER_TEMP/server-check/gitrun"
+          test "$(find "$RUNNER_TEMP/server-check" -type f -perm /111 | wc -l)" -eq 1
+          test "$(cat "$RUNNER_TEMP/server-check/version.txt")" = "${VERSION#v}"
+          test "$(target/release/gitrun --version --gitrun)" = "GitRun ${VERSION#v}"
+
+          command -v jq >/dev/null 2>&1
+          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["cargo-metadata", "linux-x86_64-deb", "provenance", "sbom-spdx", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 5) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
+          echo "Release manifest: PASS"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ROOT: ${{ steps.artifacts.outputs.root }}
+          DEB: ${{ steps.artifacts.outputs.deb }}
+          SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            "$ROOT/$DEB"
+            "$ROOT/$SERVER_ARCHIVE"
+            "$ROOT/cargo-metadata.json"
+            "$ROOT/provenance.json"
+            "$ROOT/sbom.spdx.json"
+            "$ROOT/release-manifest.json"
+          )
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${assets[@]}" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "GitRun $VERSION" \
+              --generate-notes
+          fi
+
+          dpkg-deb --contents "$deb" | grep -E '/usr/libexec/gitrun/uninstall\\.sh
+          if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
             echo "release package contains a retired secondary executable" >&2
             exit 1
           fi

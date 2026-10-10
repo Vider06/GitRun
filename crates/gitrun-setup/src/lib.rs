@@ -181,7 +181,10 @@ pub fn uninstall_linux() -> Result<(), SetupError> {
         return Err(SetupError::NotRoot);
     }
 
-    println!("[GitRun uninstall] Stopping GitRun service");
+    println!("[GitRun uninstall] Stopping GitRun services");
+    let _ = Command::new("systemctl")
+        .args(["disable", "--now", "gitrun-gsr.service"])
+        .status();
     let _ = Command::new("systemctl")
         .args(["disable", "--now", "gitrun.service"])
         .status();
@@ -191,6 +194,7 @@ pub fn uninstall_linux() -> Result<(), SetupError> {
 
     for path in [
         "/etc/systemd/system/gitrun.service",
+        "/etc/systemd/system/gitrun-gsr.service",
         "/usr/share/applications/gitrun.desktop",
         "/usr/local/bin/gitrun-recovery",
         "/etc/gitrun",
@@ -289,7 +293,10 @@ pub fn reinstall_linux_with_auth(
     }
     let existing_config = fs::read_to_string(config_path)?;
 
-    println!("[GitRun reinstall] Stopping the existing GitRun service");
+    println!("[GitRun reinstall] Stopping the existing GitRun services");
+    let _ = Command::new("systemctl")
+        .args(["disable", "--now", "gitrun-gsr.service"])
+        .status();
     let _ = Command::new("systemctl")
         .args(["disable", "--now", "gitrun.service"])
         .status();
@@ -297,6 +304,7 @@ pub fn reinstall_linux_with_auth(
     remove_gitrun_docker_resources();
     for path in [
         "/etc/systemd/system/gitrun.service",
+        "/etc/systemd/system/gitrun-gsr.service",
         "/usr/local/bin/gitrun-recovery",
         "/opt/gitrun",
     ] {
@@ -315,6 +323,8 @@ pub fn reinstall_linux_with_auth(
     }
     run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
+    run_command(Command::new("systemctl").args(["restart", "gitrun-gsr.service"]))?;
+    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
 
     println!("GitRun reinstall: PASS");
     Ok(report)
@@ -421,6 +431,11 @@ pub fn bootstrap_linux_with_auth_and_profile(
         service,
         0o644,
     )?;
+    write_resource(
+        Path::new("/etc/systemd/system/gitrun-gsr.service"),
+        resources::SYSTEMD_GSR_SERVICE,
+        0o644,
+    )?;
 
     setup_progress(4, "Writing GitRun configuration");
     let config_path = config_dir.join("gitrun.env");
@@ -472,6 +487,9 @@ pub fn bootstrap_linux_with_auth_and_profile(
     run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
     run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
+    run_command(Command::new("systemctl").args(["enable", "gitrun-gsr.service"]))?;
+    run_command(Command::new("systemctl").args(["restart", "gitrun-gsr.service"]))?;
+    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),

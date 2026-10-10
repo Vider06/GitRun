@@ -550,16 +550,16 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
 
         run_command(Command::new("docker").args(["rm", "-f", "-v", id]))?;
 
-        if container_name.starts_with("gitrun-")
-            && !container_name.chars().any(char::is_control)
-        {
+        if container_name.starts_with("gitrun-") && !container_name.chars().any(char::is_control) {
             remove_volume_if_present(&format!("{container_name}-home"))?;
         }
     }
 
     // Catch orphaned runner-home volumes left by prior crashes or older
     // versions that failed between container removal and volume cleanup.
-    let volumes = Command::new("docker").args(["volume", "ls", "-q"]).output()?;
+    let volumes = Command::new("docker")
+        .args(["volume", "ls", "-q"])
+        .output()?;
     if !volumes.status.success() {
         return Err(SetupError::Command(format!(
             "unable to enumerate Docker volumes for orphaned GitRun homes: {}",

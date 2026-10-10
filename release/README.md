@@ -1,6 +1,6 @@
 # `release`
 
-Release metadata for **GitRun 1.4.4** and later releases.
+Release metadata for **GitRun 1.4.5** and later releases.
 
 This directory contains machine-readable release manifests and schemas. Release tooling uses these files to describe artifacts and validate manifest structure.
 

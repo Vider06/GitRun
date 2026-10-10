@@ -69,7 +69,7 @@ export async function renderRepository(repo, navigate) {
         const text = String(warning);
         const missingRunnerPermission = text.includes("Resource not accessible by integration") && text.includes("/actions/runners");
         const permissionHint = missingRunnerPermission
-          ? '<p>Permission fix: this endpoint requires repository <strong>Administration: read</strong> for a GitHub App or fine-grained token. A classic PAT needs the <code>repo</code> scope and repository-admin access. After changing a GitHub App permission, update/reinstall its repository installation. See <a href="https://docs.github.com/en/rest/actions/self-hosted-runners#list-self-hosted-runners-for-a-repository" target="_blank" rel="noreferrer">GitHub runner API permissions</a>.</p>'
+          ? '<p>Permission fix: this endpoint requires repository <strong>Administration: read</strong> for a GitHub App or fine-grained token. A classic PAT needs the <code>repo</code> scope and repository-admin access. After changing GitHub App permissions, update or reinstall the repository installation. See <a href="https://docs.github.com/en/rest/actions/self-hosted-runners#list-self-hosted-runners-for-a-repository" target="_blank" rel="noreferrer">GitHub runner API permissions</a>.</p>'
           : '';
         return '<p>' + esc(warning) + '</p>' + permissionHint;
       }).join("") + '</div></div>' : '') +

@@ -2461,6 +2461,7 @@ fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
     Err("runtime reinstall currently targets Linux x86_64".into())
 }
 
+#[cfg(target_os = "linux")]
 fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("saving system settings requires administrator privileges".into());
@@ -2497,6 +2498,11 @@ fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::
     gitrun_setup::update_env_file(system_config, &config)?;
     println!("GitRun settings saved successfully.");
     Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn save_config_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system configuration persistence through the privileged helper is Linux-only".into())
 }
 
 fn run_reinstall_root(token_path: &str) -> i32 {

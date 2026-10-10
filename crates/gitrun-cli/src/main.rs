@@ -2183,8 +2183,13 @@ fn run_reinstall_root(token_path: &str) -> i32 {
     }
 }
 
-fn run_uninstall_root() -> i32 {
-    match gitrun_setup::uninstall_linux() {
+fn run_uninstall_root(package_hook: bool) -> i32 {
+    let result = if package_hook {
+        gitrun_setup::uninstall_linux_package_hook()
+    } else {
+        gitrun_setup::uninstall_linux()
+    };
+    match result {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("GitRun uninstall: FAIL — {error}");

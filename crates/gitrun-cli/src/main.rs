@@ -2173,6 +2173,197 @@ fn run_repair_service() -> i32 {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("verified GitRun reinstall requires administrator privileges".into());
+    }
+    if !cfg!(target_arch = "x86_64") {
+        return Err("the official Debian reinstall currently targets Linux x86_64".into());
+    }
+
+    // Enforce the official Ed25519 manifest signature and artifact SHA-256.
+    // Supply the built-in trust anchor unless the operator configured one.
+    for (key, value) in update_signing_environment() {
+        if std::env::var_os(&key).is_none() {
+            std::env::set_var(key, value);
+        }
+    }
+    let manifest = latest_manifest("Vider06/GitRun")?;
+    let version = manifest.version.clone();
+    let artifact = manifest.artifact_for("linux-x86_64-deb")?;
+    let artifact_name = artifact.file.clone();
+    let artifact_sha256 = artifact.sha256.clone();
+    let url = format!(
+        "https://github.com/Vider06/GitRun/releases/download/{}/{}",
+        version, artifact_name
+    );
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let staging = std::env::temp_dir().join(format!(
+        "gitrun-reinstall-{}-{now}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&staging)?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700))?;
+
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let package_file = staging.join(&artifact_name);
+        println!("GitRun reinstall: verified latest release metadata for {version}");
+        download_and_verify(&url, &artifact_sha256, &package_file)?;
+
+        let package_name = Command::new("dpkg-deb")
+            .arg("-f")
+            .arg(&package_file)
+            .arg("Package")
+            .output()?;
+        if !package_name.status.success()
+            || String::from_utf8_lossy(&package_name.stdout).trim() != "gitrun"
+        {
+            return Err("verified release artifact is not the GitRun Debian package".into());
+        }
+        let package_version = Command::new("dpkg-deb")
+            .arg("-f")
+            .arg(&package_file)
+            .arg("Version")
+            .output()?;
+        let expected_version = version.strip_prefix('v').unwrap_or(&version);
+        if !package_version.status.success()
+            || String::from_utf8_lossy(&package_version.stdout).trim() != expected_version
+        {
+            return Err("Debian package version does not match the signed release manifest".into());
+        }
+
+        let installed = Command::new("dpkg-query")
+            .args(["-W", "-f=${db:Status-Status}", "gitrun"])
+            .output()
+            .is_ok_and(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).trim() == "installed"
+            });
+        let mut apt = Command::new("apt-get");
+        apt.args(["install", "--yes", "--no-install-recommends"]);
+        if installed {
+            apt.arg("--reinstall");
+        }
+        let status = apt.arg(&package_file).status()?;
+        if !status.success() {
+            return Err(format!("apt-get failed to install the verified GitRun package ({status})").into());
+        }
+
+        // systemd units use /usr/local/bin/gitrun, while the .deb owns
+        // /usr/bin/gitrun. Atomically refresh the service entrypoint as well.
+        install_debian_cli_as_service_binary()?;
+
+        if Path::new("/etc/gitrun/gitrun.env").is_file() {
+            let status = Command::new("/usr/local/bin/gitrun")
+                .args(["--no-cat", "--reinstall-existing-root"])
+                .status()?;
+            if !status.success() {
+                return Err(format!("latest release installed, but saved runtime configuration could not be rebuilt ({status})").into());
+            }
+        } else {
+            println!("Latest GitRun package installed. No saved configuration was found; run gitrun setup --terminal to configure the host.");
+        }
+        println!("GitRun reinstall: PASS — installed verified release {version}");
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
+#[cfg(not(target_os = "linux"))]
+fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("automatic release reinstall currently targets Linux x86_64".into())
+}
+
+#[cfg(target_os = "linux")]
+fn install_debian_cli_as_service_binary() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+    let source = Path::new("/usr/bin/gitrun");
+    let destination = Path::new("/usr/local/bin/gitrun");
+    if !source.is_file() {
+        return Err("dpkg installed the package but /usr/bin/gitrun is missing".into());
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = destination.with_file_name(format!(
+        ".gitrun-reinstall-{}.tmp",
+        std::process::id()
+    ));
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        std::fs::copy(source, &temporary)?;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::rename(&temporary, destination)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_debian_cli_as_service_binary() -> Result<(), Box<dyn std::error::Error>> {
+    Err("the official Debian service entrypoint is Linux-only".into())
+}
+
+fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("rebuilding the installed runtime requires administrator privileges".into());
+    }
+    let config_path = Path::new("/etc/gitrun/gitrun.env");
+    if !config_path.is_file() {
+        return Err("no saved GitRun configuration exists to rebuild".into());
+    }
+    let raw = std::fs::read_to_string(config_path)?;
+    let mut values = std::collections::BTreeMap::new();
+    for line in raw.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            values.insert(key.trim().to_owned(), value.trim().trim_matches('"').to_owned());
+        }
+    }
+
+    let repositories = values
+        .get("GITRUN_REPOSITORIES")
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| values.get("GITRUN_DEFAULT_REPOSITORY"))
+        .cloned()
+        .ok_or("saved GitRun configuration has no repositories")?;
+    let pat = values.get("GITHUB_TOKEN").filter(|value| !value.trim().is_empty());
+    let auth = if let Some(token) = pat {
+        BootstrapAuth::Pat(token.clone())
+    } else {
+        BootstrapAuth::GitHubApp {
+            app_id: values.get("GITRUN_GITHUB_APP_ID").filter(|v| !v.is_empty()).cloned().ok_or("saved configuration has neither a PAT nor a GitHub App ID")?,
+            installation_id: values.get("GITRUN_GITHUB_APP_INSTALLATION_ID").filter(|v| !v.is_empty()).cloned().ok_or("saved configuration has no GitHub App installation ID")?,
+            private_key_path: values.get("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH").filter(|v| !v.is_empty()).cloned().ok_or("saved configuration has no GitHub App private key path")?,
+        }
+    };
+    let owner_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
+    gitrun_setup::reinstall_linux_with_auth(
+        auth,
+        &repositories,
+        Path::new("/usr/local/bin/gitrun"),
+        owner_uid,
+    )?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("runtime reinstall currently targets Linux x86_64".into())
+}
+
 fn run_reinstall_root(token_path: &str) -> i32 {
     match reinstall_root_command(token_path) {
         Ok(()) => 0,

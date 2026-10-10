@@ -136,9 +136,9 @@ jobs:
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
         run: |
           started="${GITRUN_JOB_STARTED:-$(date +%s)}"
-          echo "secs=$(( $(date +%s) - started ))" >> "$GITHUB_OUTPUT"
-          echo "cache=" >> "$GITHUB_OUTPUT"
           {
+            echo "secs=$(( $(date +%s) - started ))"
+            echo "cache="
             echo "errors<<GITRUN_EOF"
             if [ "$VERIFY_OUTCOME" != success ]; then
               echo "Repository CI variable verification ended with: $VERIFY_OUTCOME"

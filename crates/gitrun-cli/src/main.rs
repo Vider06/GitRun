@@ -1340,6 +1340,13 @@ fn main() {
                 1
             }
         },
+        Command::SaveConfigRoot { input_path } => match save_config_root_command(&input_path) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("GitRun settings save: FAIL — {error}");
+                1
+            }
+        },
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -1380,7 +1387,8 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::UninstallPackageHook
         | Command::ReinstallRoot { .. }
         | Command::ReinstallLatestRoot
-        | Command::ReinstallExistingRoot => ValidationState::Recovering,
+        | Command::ReinstallExistingRoot
+        | Command::SaveConfigRoot { .. } => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1487,6 +1495,12 @@ enum Command {
     /// Internal command that rebuilds runtime resources from the saved configuration.
     #[command(name = "--reinstall-existing-root", hide = true)]
     ReinstallExistingRoot,
+    /// Internal command to persist validated settings to the system env file.
+    #[command(name = "--save-config-root", hide = true)]
+    SaveConfigRoot {
+        /// Private JSON file containing a Config object.
+        input_path: String,
+    },
 
     /// Internal privileged reinstall entry point.
     #[command(name = "--reinstall-root", hide = true)]
@@ -2428,6 +2442,44 @@ fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(not(target_os = "linux"))]
 fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
     Err("runtime reinstall currently targets Linux x86_64".into())
+}
+
+fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("saving system settings requires administrator privileges".into());
+    }
+    use std::os::unix::fs::MetadataExt;
+    let input = Path::new(input_path);
+    let metadata = std::fs::symlink_metadata(input)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("settings payload must be a regular, non-symlink file".into());
+    }
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err("settings payload permissions must be 0600 or stricter".into());
+    }
+    if let Some(expected_uid) = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+    {
+        if metadata.uid() != expected_uid {
+            return Err("settings payload is not owned by the user who requested elevation".into());
+        }
+    }
+    if metadata.len() > 1024 * 1024 {
+        return Err("settings payload exceeds the 1 MiB safety limit".into());
+    }
+
+    let bytes = std::fs::read(input)?;
+    let config: Config = serde_json::from_slice(&bytes)?;
+    config.validate()?;
+    let system_config = Path::new("/etc/gitrun/gitrun.env");
+    if !system_config.is_file() {
+        return Err("system GitRun configuration is missing; run setup first".into());
+    }
+    gitrun_setup::update_env_file(system_config, &config)?;
+    println!("GitRun settings saved successfully.");
+    Ok(())
 }
 
 fn run_reinstall_root(token_path: &str) -> i32 {

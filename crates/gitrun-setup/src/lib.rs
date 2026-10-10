@@ -1210,6 +1210,36 @@ mod tests {
         let rendered =
             render_bootstrap_config(&BootstrapAuth::Pat("test-token".into()), "owner/repository");
         assert!(rendered.starts_with("GITHUB_TOKEN=test-token\n"));
+
+        // Every generated GITRUN_* variable must be consumed by the runtime
+        // Config parser or explicitly owned by the updater.
+        const EXTERNAL_RUNTIME_KEYS: &[&str] = &[
+            "GITRUN_UPDATE_PUBLIC_KEY_HEX",
+            "GITRUN_UPDATE_PUBLIC_KEY_ID",
+            "GITRUN_UPDATE_SIGNATURE_REQUIRED",
+        ];
+        let parser = include_str!("../../gitrun-core/src/config.rs");
+        let consumed_by_config: std::collections::BTreeSet<String> = parser
+            .split("get(\"")
+            .skip(1)
+            .filter_map(|tail| tail.split_once('\"').map(|(key, _)| key.to_owned()))
+            .collect();
+        let external: std::collections::BTreeSet<&str> =
+            EXTERNAL_RUNTIME_KEYS.iter().copied().collect();
+        let unowned: Vec<String> = rendered
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(key, _)| key.trim())
+            .filter(|key| key.starts_with("GITRUN_"))
+            .filter(|key| !consumed_by_config.contains(*key) && !external.contains(*key))
+            .map(str::to_owned)
+            .collect();
+        assert!(
+            unowned.is_empty(),
+            "setup-generated environment contains unowned variables: {unowned:?}"
+        );
+        assert!(!rendered.lines().any(|line| line.starts_with("GITRUN_LOG_LEVEL=")));
+
         fs::write(&path, &rendered).unwrap();
 
         let config = Config::from_env_file(&path)

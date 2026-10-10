@@ -26,20 +26,20 @@ mode="$(stat -c %a -- "$canonical")"
 }
 
 if [[ "$(id -u)" -eq 0 ]]; then
-  exec "$canonical" --uninstall-root
+  exec "$canonical" --no-cat --uninstall-root
 fi
 
 if [[ -t 0 && -x /usr/bin/sudo ]]; then
-  exec /usr/bin/sudo -- "$canonical" --uninstall-root
+  exec /usr/bin/sudo -- "$canonical" --no-cat --uninstall-root
 fi
 
 if [[ -x /usr/bin/pkexec ]]; then
-  exec /usr/bin/pkexec "$canonical" --uninstall-root
+  exec /usr/bin/pkexec "$canonical" --no-cat --uninstall-root
 fi
 
 if [[ -x /usr/bin/sudo ]]; then
   echo "GitRun needs administrator access; sudo will request authorization." >&2
-  exec /usr/bin/sudo -- "$canonical" --uninstall-root
+  exec /usr/bin/sudo -- "$canonical" --no-cat --uninstall-root
 fi
 
 echo "GitRun uninstall needs administrator access. Install sudo or pkexec and retry." >&2

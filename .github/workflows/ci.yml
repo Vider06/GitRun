@@ -2,13 +2,13 @@ name: GitRun CI
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline map (needs):
-#    variables-verification ─► environment
-#                            └► detect ─┬─ cargo-lock · ci-selftest · repository · workflows · shell · powershell
-#            ├─ frontend ─┬─ audit-node
-#            │            └──────────────┐
-#            ├─ cargo-lock ─► rust-lint ─────────────── tauri
-#            ├─ rust-test · rust-build · audit-rust
-#            └─ docker
+#    variables-verification ─┬─► environment
+#                            └─► detect ─► cargo-lock ─┬─ rust-lint · rust-test · rust-build · audit-rust
+#                                                       ├─ security-hardening · runtime-contracts
+#                                                       ├─ ci-selftest · repository · workflows · shell · powershell
+#                                                       ├─ frontend ─► audit-node
+#                                                       └─ docker
+#    rust-lint + frontend ─► tauri · tauri-recovery
 #    everything ─► summary (PR comment + Mermaid map) ─► cache-gc (push only)
 #
 #  Cache namespace:  gitrun-<epoch>-<os>-<arch>-<kind>-<details>-<hash>
@@ -73,8 +73,16 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      secs: ${{ steps.report.outputs.secs }}
+      cache: ${{ steps.report.outputs.cache }}
+      errors: ${{ steps.report.outputs.errors }}
     steps:
+      - name: Start report clock
+        run: echo "GITRUN_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Verify repository variables
+        id: verify
         env:
           GITRUN_CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE }}
           GITRUN_CI_CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR }}
@@ -120,6 +128,23 @@ jobs:
               printf '| `%s` | `%s` |\n' "$name" "$value"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report job status
+        id: report
+        if: always()
+        env:
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        run: |
+          started="${GITRUN_JOB_STARTED:-$(date +%s)}"
+          {
+            echo "secs=$(( $(date +%s) - started ))"
+            echo "cache="
+            echo "errors<<GITRUN_EOF"
+            if [ "$VERIFY_OUTCOME" != success ]; then
+              echo "Repository CI variable verification ended with: $VERIFY_OUTCOME"
+            fi
+            echo "GITRUN_EOF"
+          } >> "$GITHUB_OUTPUT"
   # ───────────────────────────────────────────────────────── environment ──
   environment:
     name: Runner environment
@@ -1735,35 +1760,107 @@ jobs:
   security-hardening:
     name: Security hardening regression gate
     needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     permissions:
       contents: read
+    env:
+      RUST_COMPONENTS: ""
+    outputs: *job_outputs
     steps:
       - *checkout
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          components: rustfmt, clippy
+      - *boot
+      - *rust_keys
+      - *c_tc
+      - *c_reg
+      - *c_tgt
+      - *rust_install
+      - *rust_tnote
       - name: Run security regression suites
         run: |
-          set -euo pipefail
-          cargo test --locked -p gitrun-scheduler dock_registry::tests
-          cargo test --locked -p gitrun-scheduler vm::tests
-          cargo test --locked -p gitrun-scheduler vm_resolution::tests
-          cargo test --locked -p gitrun-gsr
-          cargo test --locked -p gitrun-vault
+          source "$RUNNER_TEMP/ci-lib.sh"
+          rc=0
+          ci_run "Scheduler DockRegistry regression tests" cargo test --locked -p gitrun-scheduler dock_registry::tests || rc=1
+          ci_run "Scheduler VM regression tests" cargo test --locked -p gitrun-scheduler vm::tests || rc=1
+          ci_run "Scheduler VM resolution regression tests" cargo test --locked -p gitrun-scheduler vm_resolution::tests || rc=1
+          ci_run "GSR security tests" cargo test --locked -p gitrun-gsr || rc=1
+          ci_run "Vault security tests" cargo test --locked -p gitrun-vault || rc=1
+          exit "$rc"
       - name: Verify security-sensitive workflow invariants
         run: |
-          set -euo pipefail
-          grep -q 'id-token: write' .github/workflows/release.yml && exit 1
-          grep -q 'aws-actions/configure-aws-credentials@' .github/workflows/release.yml && exit 1
-          grep -q 'ED25519_SHA_512' .github/workflows/release.yml && exit 1
-          grep -q 'GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64' .github/workflows/release.yml
-          grep -q 'GITRUN_UPDATE_SIGNING_KEY_ID' .github/workflows/release.yml
-          grep -q 'GITRUN_UPDATE_SIGNATURE_REQUIRED' crates/gitrun-updater/src/lib.rs
-          grep -q 'GITRUN_RUNNER_NETWORK' config/config.example.env
+          source "$RUNNER_TEMP/ci-lib.sh"
+          verify_security_invariants() {
+            grep -q 'id-token: write' .github/workflows/release.yml && return 1
+            grep -q 'aws-actions/configure-aws-credentials@' .github/workflows/release.yml && return 1
+            grep -q 'ED25519_SHA_512' .github/workflows/release.yml && return 1
+            grep -q 'GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64' .github/workflows/release.yml || return 1
+            grep -q 'GITRUN_UPDATE_SIGNING_KEY_ID' .github/workflows/release.yml || return 1
+            grep -q 'GITRUN_UPDATE_SIGNATURE_REQUIRED' crates/gitrun-updater/src/lib.rs || return 1
+            grep -q 'GITRUN_RUNNER_NETWORK' config/config.example.env || return 1
+          }
+          ci_run "Security-sensitive workflow invariants" verify_security_invariants
+      - *rust_prune
+      - *s_tc
+      - *s_reg
+      - *s_tgt
+      - *report
+      - *logs
+
+  # ───────────────────────────────────────────── runtime contract gate ──
+  runtime-contracts:
+    name: Runtime contracts and configuration integration
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      RUST_COMPONENTS: ""
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - *rust_keys
+      - *c_tc
+      - *c_reg
+      - *c_tgt
+      - *rust_install
+      - *rust_tnote
+      - name: Run runtime and configuration contract tests
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          rc=0
+          ci_run "Example environment parses with the runtime loader" cargo test --locked -p gitrun-core example_env_file_parses_and_validates_with_runtime_loader || rc=1
+          ci_run "Example environment variables have runtime owners" cargo test --locked -p gitrun-core example_env_keys_have_runtime_consumers_or_explicit_external_owners || rc=1
+          ci_run "Setup-generated environment and service contracts" cargo test --locked -p gitrun-setup generated_bootstrap_env_parses_and_validates_with_runtime_loader || rc=1
+          ci_run "Setup installs the shared CLI and GSR watchdog" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
+          ci_run "Partial dashboard repository settings use safe defaults" cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults || rc=1
+          ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt || rc=1
+          ci_run "GSR watchdog and security event tests" cargo test --locked -p gitrun-gsr || rc=1
+          ci_run "Build the packaged CLI entrypoint" cargo build --locked -p gitrun-cli --bin gitrun || rc=1
+          ci_run "Inject a real child-process exit into the GSR watchdog" bash scripts/test-runtime-contracts.sh target/debug/gitrun || rc=1
+
+          validate_systemd_units() {
+            sudo install -Dm0755 target/debug/gitrun /usr/local/bin/gitrun || return 1
+            sudo install -Dm0600 config/config.example.env /etc/gitrun/gitrun.env || return 1
+            sudo install -Dm0644 systemd/gitrun.service /etc/systemd/system/gitrun.service || return 1
+            sudo install -Dm0644 systemd/gitrun-gsr.service /etc/systemd/system/gitrun-gsr.service || return 1
+            sudo systemd-analyze verify gitrun.service gitrun-gsr.service || return 1
+            grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || return 1
+            grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || return 1
+            grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs || return 1
+          }
+          ci_run "Validate systemd unit syntax and service command alignment" validate_systemd_units || rc=1
+          exit "$rc"
+      - *rust_prune
+      - *s_tc
+      - *s_reg
+      - *s_tgt
+      - *report
+      - *logs
 
   # ───────────────────────────────────────────────────────────── rust-test ──
   rust-test:
@@ -2261,6 +2358,7 @@ jobs:
     name: Verification summary
     if: ${{ always() }}
     needs:
+      - variables-verification
       - environment
       - detect
       - cargo-lock
@@ -2275,6 +2373,8 @@ jobs:
       - rust-test
       - rust-build
       - audit-rust
+      - security-hardening
+      - runtime-contracts
       - tauri
       - tauri-recovery
       - docker
@@ -2304,6 +2404,7 @@ jobs:
 
           # id | label | enabled when detect.<flag> is true | extra jobs it waits for
           read -r -d '' JOBLIST <<'JOBS' || true
+          variables-verification|Repository CI variables|always|
           environment|Runner environment|always|
           detect|Detect components|always|
           cargo-lock|Cargo.lock validation|rust|
@@ -2318,6 +2419,8 @@ jobs:
           rust-test|Rust tests|rust|
           rust-build|Rust release build|rust|
           audit-rust|Cargo audit and deny|rust|
+          security-hardening|Security hardening regression gate|rust|
+          runtime-contracts|Runtime contracts and configuration integration|rust|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
@@ -2330,7 +2433,12 @@ jobs:
             [ -n "$id" ] || continue
             order+=("$id"); LABEL[$id]="$label"
             r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"
-            case "$id" in environment|detect|cargo-lock) DEPS[$id]="–" ;; *) DEPS[$id]="cargo-lock${extra:+, ${extra// /, }}" ;; esac
+            case "$id" in
+              variables-verification) DEPS[$id]="–" ;;
+              environment|detect) DEPS[$id]="variables-verification" ;;
+              cargo-lock) DEPS[$id]="detect" ;;
+              *) DEPS[$id]="cargo-lock${extra:+, ${extra// /, }}" ;;
+            esac
             if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; }; then en=1; else en=0; fi
             case "$r" in
               success) STATE[$id]=ok; nok=$((nok + 1)) ;;
@@ -2374,7 +2482,12 @@ jobs:
             printf '  verdict{{"%s"}}:::%s\n' "$head" "$([ "$verdict" = pass ] && echo ok || echo fail)"
             for id in "${order[@]}"; do
               n="${id//-/_}"
-              if [ "$id" = cargo-lock ]; then echo "  detect --> cargo_lock"; elif [ "$id" != environment ] && [ "$id" != detect ]; then echo "  cargo_lock --> $n"; fi
+              case "$id" in
+                variables-verification) ;;
+                environment|detect) echo "  variables_verification --> $n" ;;
+                cargo-lock) echo "  detect --> cargo_lock" ;;
+                *) echo "  cargo_lock --> $n" ;;
+              esac
               [ "$id" = tauri ] && { echo "  rust_lint --> tauri"; echo "  frontend --> tauri"; }
               [ "$id" = tauri-recovery ] && { echo "  rust_lint --> tauri_recovery"; echo "  frontend --> tauri_recovery"; }
               echo "  $n --> verdict"

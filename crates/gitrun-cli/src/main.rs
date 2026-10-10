@@ -1112,7 +1112,59 @@ fn validate_version_flag_order() {
     }
 }
 
+#[cfg(unix)]
+fn run_gsr_watchdog() -> i32 {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+
+    let stopping = Arc::new(AtomicBool::new(false));
+    if let Err(error) = signal_hook::flag::register(signal_hook::consts::SIGTERM, stopping.clone())
+    {
+        std::eprintln!("gitrun gsr-watchdog: failed to register SIGTERM handler: {error}");
+        return 1;
+    }
+    if let Err(error) = signal_hook::flag::register(signal_hook::consts::SIGINT, stopping.clone()) {
+        std::eprintln!("gitrun gsr-watchdog: failed to register SIGINT handler: {error}");
+        return 1;
+    }
+
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(error) => {
+            std::eprintln!("gitrun gsr-watchdog: invalid configuration: {error}");
+            return 2;
+        }
+    };
+    let watch_config = gitrun_gsr::WatchConfig {
+        pid_file: PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid"),
+        events_path: gitrun_gsr::events::default_queue_path(&config.state_dir),
+        poll_interval: Duration::from_secs(5),
+        watched_name: "gitrun-autoscaler".into(),
+    };
+
+    std::println!(
+        "gitrun-gsr: watching {} (pid file: {})",
+        watch_config.watched_name,
+        watch_config.pid_file.display()
+    );
+    gitrun_gsr::run_watchdog(&watch_config, || stopping.load(Ordering::Relaxed));
+    std::println!("gitrun-gsr: stopped");
+    0
+}
+
+#[cfg(not(unix))]
+fn run_gsr_watchdog() -> i32 {
+    std::eprintln!("gitrun gsr-watchdog is currently supported on Unix hosts only");
+    2
+}
+
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("gsr-watchdog")) {
+        std::process::exit(run_gsr_watchdog());
+    }
     validate_version_flag_order();
     let cli = Cli::parse();
     let mut presenter = presenter::CatPresenter::new(cli.no_cat);

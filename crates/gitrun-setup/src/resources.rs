@@ -57,6 +57,7 @@ pub(crate) fn runner_dockerfile_for_profile(profile: &str) -> Result<String, Set
 pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/entrypoint.sh");
 
 pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
+pub(crate) const SYSTEMD_GSR_SERVICE: &str = include_str!("../../../systemd/gitrun-gsr.service");
 
 pub(crate) const SYSTEMD_SERVICE_DIRECT: &str = r#"[Unit]
 Description=GitRun Rust scheduler
@@ -306,6 +307,13 @@ mod tests {
         assert!(
             !include_str!("runner-bootstrap.lock").contains("name = \"gitrun-dashboard-tauri\"")
         );
+    }
+
+    #[test]
+    fn installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog() {
+        assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
+        assert!(SYSTEMD_GSR_SERVICE.contains("ExecStart=/usr/local/bin/gitrun gsr-watchdog"));
+        assert!(SYSTEMD_GSR_SERVICE.contains("After=gitrun.service"));
     }
 
     #[test]

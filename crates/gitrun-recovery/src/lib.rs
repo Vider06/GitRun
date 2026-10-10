@@ -10,6 +10,7 @@ use std::{
 };
 
 const SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun.service");
+const GSR_SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun-gsr.service");
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Severity {
@@ -201,7 +202,7 @@ pub fn inspect() -> RecoveryReport {
             code: "service-invalid".into(),
             severity: Severity::Warning,
             title: "GitRun system service is missing or stale".into(),
-            detail: "The installed service does not use the recovery launcher.".into(),
+            detail: "The scheduler and GSR systemd units must both match the packaged runtime contract; use Repair service to restore them.".into(),
             repairable: true,
         });
     }
@@ -388,10 +389,13 @@ pub fn current_version() -> String {
 }
 
 pub fn service_unit_is_valid() -> bool {
-    let path = Path::new("/etc/systemd/system/gitrun.service");
-    fs::read_to_string(path)
+    let scheduler_valid = fs::read_to_string("/etc/systemd/system/gitrun.service")
         .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun scheduler"))
-        .unwrap_or(false)
+        .unwrap_or(false);
+    let gsr_valid = fs::read_to_string("/etc/systemd/system/gitrun-gsr.service")
+        .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun gsr-watchdog"))
+        .unwrap_or(false);
+    scheduler_valid && gsr_valid
 }
 
 pub fn repair_service_unit() -> Result<(), String> {
@@ -403,6 +407,7 @@ pub fn repair_service_unit() -> Result<(), String> {
     }
 
     let path = Path::new("/etc/systemd/system/gitrun.service");
+    let gsr_path = Path::new("/etc/systemd/system/gitrun-gsr.service");
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_nanos())
@@ -416,9 +421,20 @@ pub fn repair_service_unit() -> Result<(), String> {
     set_file_mode(&temp, 0o644)?;
     fs::rename(&temp, path).map_err(|error| error.to_string())?;
 
+    let gsr_temp = gsr_path.with_file_name(format!(
+        "gitrun-gsr.service.tmp.{}.{}",
+        std::process::id(),
+        nonce
+    ));
+    fs::write(&gsr_temp, GSR_SYSTEMD_UNIT).map_err(|error| error.to_string())?;
+    set_file_mode(&gsr_temp, 0o644)?;
+    fs::rename(&gsr_temp, gsr_path).map_err(|error| error.to_string())?;
+
     run_systemctl("daemon-reload", "gitrun.service")?;
     run_systemctl("enable", "gitrun.service")?;
-    run_systemctl("restart", "gitrun.service")
+    run_systemctl("restart", "gitrun.service")?;
+    run_systemctl("enable", "gitrun-gsr.service")?;
+    run_systemctl("restart", "gitrun-gsr.service")
 }
 
 pub fn is_root_for_ui() -> bool {
@@ -445,8 +461,12 @@ pub fn restart_service() -> Result<(), String> {
 }
 
 fn run_systemctl(action: &str, unit: &str) -> Result<(), String> {
-    let output = Command::new("systemctl")
-        .args([action, unit])
+    let mut command = Command::new("systemctl");
+    command.arg(action);
+    if action != "daemon-reload" {
+        command.arg(unit);
+    }
+    let output = command
         .output()
         .map_err(|error| format!("unable to start systemctl: {error}"))?;
     if output.status.success() {

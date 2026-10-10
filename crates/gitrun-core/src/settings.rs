@@ -200,6 +200,7 @@ impl ApiPolicyOverride {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RepositorySettings {
     pub api_overrides: BTreeMap<GitRunApi, ApiPolicyOverride>,
     pub docker: DockerPolicy,
@@ -448,6 +449,31 @@ mod tests {
         assert!(policy.allows_melt_target("runner"));
         assert!(policy.allows_melt_target("build"));
         assert!(!policy.allows_melt_target("production"));
+    }
+
+    #[test]
+    fn dashboard_partial_repository_settings_deserialize_with_safe_defaults() {
+        // The dashboard creates a new repository policy before every policy
+        // subsection exists. Missing subsections must use Rust defaults rather
+        // than breaking the whole save with "missing field vault".
+        let payload = serde_json::json!({
+            "schema_version": SETTINGS_SCHEMA_VERSION,
+            "global": PolicyMatrix::secure_default(),
+            "repositories": {
+                "owner/repo": {
+                    "api_overrides": {},
+                    "docker": DockerPolicy::default()
+                }
+            }
+        });
+
+        let settings: GitRunSettings = serde_json::from_value(payload)
+            .expect("partial dashboard policy should deserialize safely");
+        let repository = settings.repositories.get("owner/repo").unwrap();
+        assert_eq!(repository.vault, VaultPolicy::default());
+        assert_eq!(repository.storage, SharedStoragePolicy::default());
+        assert_eq!(repository.register, RegisterPolicy::default());
+        assert_eq!(repository.docker, DockerPolicy::default());
     }
 
     #[test]

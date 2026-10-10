@@ -408,53 +408,91 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     if !command_exists("docker") {
         return Ok(());
     }
-    let daemon = Command::new("docker").arg("info").output()?;
-    if !daemon.status.success() {
-        return Err(SetupError::Command(
-            "Docker is installed but its daemon is unavailable; start Docker and retry uninstall so GitRun containers and volumes can be removed".into(),
-        ));
-    }
 
-    remove_docker_items(
-        &["ps", "-aq", "--filter", "label=gitrun.runner=true"],
-        &["rm", "-f"],
-        "containers",
-    )?;
-    remove_docker_items(
-        &["volume", "ls", "-q", "--filter", "label=gitrun.shared=true"],
-        &["volume", "rm"],
-        "volumes",
-    )?;
-    remove_docker_items(
-        &["network", "ls", "-q", "--filter", "label=gitrun.managed=true"],
-        &["network", "rm"],
-        "networks",
-    )?;
-
-    let mut image_ids = BTreeSet::new();
-    for args in [
-        vec!["image", "ls", "-q", "--filter", "label=gitrun.managed=true"],
-        vec!["image", "ls", "-q", "--filter", "reference=gitrun-runner:*"],
-    ] {
-        let output = Command::new("docker").args(args).output()?;
-        if !output.status.success() {
-            return Err(SetupError::Command(format!(
-                "unable to enumerate GitRun images: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )));
+    let daemon_ready = Command::new("docker")
+        .arg("info")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    let docker_was_active = Command::new("systemctl")
+        .args(["is-active", "--quiet", "docker.service"])
+        .status()
+        .is_ok_and(|status| status.success());
+    let started_temporarily = if daemon_ready {
+        false
+    } else {
+        if !command_exists("systemctl") {
+            return Err(SetupError::Command(
+                "Docker daemon is unavailable and systemd cannot start it for cleanup".into(),
+            ));
         }
-        image_ids.extend(
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-                .map(str::to_owned),
-        );
-    }
-    for image in image_ids {
-        run_command(Command::new("docker").args(["image", "rm", "-f", &image]))?;
-    }
-    Ok(())
+        run_command(Command::new("systemctl").args(["start", "docker.service"]))?;
+        let ready = Command::new("docker")
+            .arg("info")
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if !ready {
+            if !docker_was_active {
+                let _ = Command::new("systemctl").args(["stop", "docker.service"]).status();
+            }
+            return Err(SetupError::Command(
+                "Docker was started but its daemon is still unavailable; GitRun resources were not removed".into(),
+            ));
+        }
+        !docker_was_active
+    };
+
+    let cleanup_result = (|| -> Result<(), SetupError> {
+        remove_docker_items(
+            &["ps", "-aq", "--filter", "label=gitrun.runner=true"],
+            &["rm", "-f"],
+            "containers",
+        )?;
+        remove_docker_items(
+            &["volume", "ls", "-q", "--filter", "label=gitrun.shared=true"],
+            &["volume", "rm"],
+            "volumes",
+        )?;
+        remove_docker_items(
+            &["network", "ls", "-q", "--filter", "label=gitrun.managed=true"],
+            &["network", "rm"],
+            "networks",
+        )?;
+
+        let mut image_ids = BTreeSet::new();
+        for args in [
+            vec!["image", "ls", "-q", "--filter", "label=gitrun.managed=true"],
+            vec!["image", "ls", "-q", "--filter", "reference=gitrun-runner:*"],
+        ] {
+            let output = Command::new("docker").args(args).output()?;
+            if !output.status.success() {
+                return Err(SetupError::Command(format!(
+                    "unable to enumerate GitRun images: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            image_ids.extend(
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+        for image in image_ids {
+            run_command(Command::new("docker").args(["image", "rm", "-f", &image]))?;
+        }
+        Ok(())
+    })();
+
+    // Do not change Docker's pre-existing service state. If Docker was stopped
+    // before uninstall, restore that state even when object cleanup fails.
+    let restore_result = if started_temporarily {
+        run_command(Command::new("systemctl").args(["stop", "docker.service"]))
+    } else {
+        Ok(())
+    };
+    cleanup_result?;
+    restore_result
 }
 
 fn remove_docker_items(

@@ -2448,7 +2448,7 @@ fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::
     if !running_as_root() {
         return Err("saving system settings requires administrator privileges".into());
     }
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let input = Path::new(input_path);
     let metadata = std::fs::symlink_metadata(input)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {

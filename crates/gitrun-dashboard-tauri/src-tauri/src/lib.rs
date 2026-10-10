@@ -112,7 +112,8 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
             .mode(0o600)
             .open(&path)
             .map_err(|error| error.to_string())?;
-        file.write_all(&payload).map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
 
         let status = std::process::Command::new(&pkexec)
@@ -815,7 +816,9 @@ async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .spawn()
-                    .map_err(|error| format!("GitRun reinstalled but the dashboard could not restart: {error}"))?;
+                    .map_err(|error| {
+                        format!("GitRun reinstalled but the dashboard could not restart: {error}")
+                    })?;
                 Ok(())
             }
             Ok(status) => {
@@ -830,14 +833,7 @@ async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
                 Err(format!("GitRun reinstall failed with status {status}"))
             }
             Err(error) => {
-                emit_first_setup_event(
-                    &app_for_reinstall,
-                    0,
-                    error.clone(),
-                    "system",
-                    true,
-                    false,
-                );
+                emit_first_setup_event(&app_for_reinstall, 0, error.clone(), "system", true, false);
                 Err(error)
             }
         }
@@ -1242,7 +1238,9 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                 }
                 Err(error) => {
                     let message = if error.contains("403")
-                        || error.to_ascii_lowercase().contains("resource not accessible by integration")
+                        || error
+                            .to_ascii_lowercase()
+                            .contains("resource not accessible by integration")
                     {
                         format!(
                             "{repo}: GitHub runner inventory is unavailable (403). The GitHub App needs repository Administration: read permission and its installation permissions must be refreshed; a classic PAT needs repo scope and repository admin access. Runner count remains unknown until GitHub grants this access. Original error: {error}"

@@ -224,8 +224,13 @@ fn deb_package_registered() -> bool {
     output.status.success()
         && matches!(
             String::from_utf8_lossy(&output.stdout).trim(),
-            "installed" | "config-files" | "unpacked" | "half-installed"
-                | "half-configured" | "triggers-awaited" | "triggers-pending"
+            "installed"
+                | "config-files"
+                | "unpacked"
+                | "half-installed"
+                | "half-configured"
+                | "triggers-awaited"
+                | "triggers-pending"
         )
 }
 
@@ -432,7 +437,9 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
             .is_ok_and(|output| output.status.success());
         if !ready {
             if !docker_was_active {
-                let _ = Command::new("systemctl").args(["stop", "docker.service"]).status();
+                let _ = Command::new("systemctl")
+                    .args(["stop", "docker.service"])
+                    .status();
             }
             return Err(SetupError::Command(
                 "Docker was started but its daemon is still unavailable; GitRun resources were not removed".into(),
@@ -453,7 +460,13 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
             "volumes",
         )?;
         remove_docker_items(
-            &["network", "ls", "-q", "--filter", "label=gitrun.managed=true"],
+            &[
+                "network",
+                "ls",
+                "-q",
+                "--filter",
+                "label=gitrun.managed=true",
+            ],
             &["network", "rm"],
             "networks",
         )?;

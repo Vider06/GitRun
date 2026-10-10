@@ -244,10 +244,8 @@ fn run_embedded_privileged_helper(
             return 1;
         }
     };
-    let script_path = std::env::temp_dir().join(format!(
-        "{prefix}-{}-{nonce}.sh",
-        std::process::id()
-    ));
+    let script_path =
+        std::env::temp_dir().join(format!("{prefix}-{}-{nonce}.sh", std::process::id()));
 
     let result = (|| -> Result<i32, Box<dyn std::error::Error>> {
         let mut file = std::fs::OpenOptions::new()
@@ -2265,7 +2263,10 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
 
     // Auto-reinstall is pinned to the official GitRun trust anchor.
     // Do not allow transient environment overrides to disable verification.
-    std::env::set_var("GITRUN_UPDATE_PUBLIC_KEY_HEX", DEFAULT_UPDATE_PUBLIC_KEY_HEX);
+    std::env::set_var(
+        "GITRUN_UPDATE_PUBLIC_KEY_HEX",
+        DEFAULT_UPDATE_PUBLIC_KEY_HEX,
+    );
     std::env::set_var("GITRUN_UPDATE_PUBLIC_KEY_ID", DEFAULT_UPDATE_PUBLIC_KEY_ID);
     std::env::set_var("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true");
     let manifest = latest_manifest("Vider06/GitRun")?;
@@ -2279,10 +2280,8 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let staging = std::env::temp_dir().join(format!(
-        "gitrun-reinstall-{}-{now}",
-        std::process::id()
-    ));
+    let staging =
+        std::env::temp_dir().join(format!("gitrun-reinstall-{}-{now}", std::process::id()));
     std::fs::create_dir(&staging)?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700))?;
@@ -2328,7 +2327,10 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         }
         let status = apt.arg(&package_file).status()?;
         if !status.success() {
-            return Err(format!("apt-get failed to install the verified GitRun package ({status})").into());
+            return Err(format!(
+                "apt-get failed to install the verified GitRun package ({status})"
+            )
+            .into());
         }
 
         // systemd units use /usr/local/bin/gitrun, while the .deb owns
@@ -2369,10 +2371,8 @@ fn install_debian_cli_as_service_binary() -> Result<(), Box<dyn std::error::Erro
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let temporary = destination.with_file_name(format!(
-        ".gitrun-reinstall-{}.tmp",
-        std::process::id()
-    ));
+    let temporary =
+        destination.with_file_name(format!(".gitrun-reinstall-{}.tmp", std::process::id()));
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         std::fs::copy(source, &temporary)?;
         std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o755))?;
@@ -2406,7 +2406,10 @@ fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         if let Some((key, value)) = line.split_once('=') {
-            values.insert(key.trim().to_owned(), value.trim().trim_matches('"').to_owned());
+            values.insert(
+                key.trim().to_owned(),
+                value.trim().trim_matches('"').to_owned(),
+            );
         }
     }
 
@@ -2416,14 +2419,28 @@ fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| values.get("GITRUN_DEFAULT_REPOSITORY"))
         .cloned()
         .ok_or("saved GitRun configuration has no repositories")?;
-    let pat = values.get("GITHUB_TOKEN").filter(|value| !value.trim().is_empty());
+    let pat = values
+        .get("GITHUB_TOKEN")
+        .filter(|value| !value.trim().is_empty());
     let auth = if let Some(token) = pat {
         BootstrapAuth::Pat(token.clone())
     } else {
         BootstrapAuth::GitHubApp {
-            app_id: values.get("GITRUN_GITHUB_APP_ID").filter(|v| !v.is_empty()).cloned().ok_or("saved configuration has neither a PAT nor a GitHub App ID")?,
-            installation_id: values.get("GITRUN_GITHUB_APP_INSTALLATION_ID").filter(|v| !v.is_empty()).cloned().ok_or("saved configuration has no GitHub App installation ID")?,
-            private_key_path: values.get("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH").filter(|v| !v.is_empty()).cloned().ok_or("saved configuration has no GitHub App private key path")?,
+            app_id: values
+                .get("GITRUN_GITHUB_APP_ID")
+                .filter(|v| !v.is_empty())
+                .cloned()
+                .ok_or("saved configuration has neither a PAT nor a GitHub App ID")?,
+            installation_id: values
+                .get("GITRUN_GITHUB_APP_INSTALLATION_ID")
+                .filter(|v| !v.is_empty())
+                .cloned()
+                .ok_or("saved configuration has no GitHub App installation ID")?,
+            private_key_path: values
+                .get("GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")
+                .filter(|v| !v.is_empty())
+                .cloned()
+                .ok_or("saved configuration has no GitHub App private key path")?,
         }
     };
     let owner_uid = std::env::var("PKEXEC_UID")

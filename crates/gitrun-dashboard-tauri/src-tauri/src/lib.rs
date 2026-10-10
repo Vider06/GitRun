@@ -1817,14 +1817,7 @@ fn persist_zizmor_config(config: &Config) -> Result<(), String> {
 fn disable_zizmor() -> Result<(), String> {
     let mut config = load_config()?;
     config.gsr_zizmor_enabled = false;
-    let path = match std::env::var("GITRUN_CONFIG_FILE") {
-        Ok(path) => PathBuf::from(path),
-        Err(_) => {
-            return Err(
-                "GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into(),
-            )
-        }
-    };
+    let path = config_path_for_write()?;
     gitrun_setup::update_env_file(&path, &config).map_err(|e| e.to_string())
 }
 
@@ -2664,14 +2657,7 @@ fn save_dashboard_settings(
 #[tauri::command]
 fn save_config(updated: Config) -> Result<(), String> {
     updated.validate().map_err(|e| e.to_string())?;
-    let path = match std::env::var("GITRUN_CONFIG_FILE") {
-        Ok(path) => PathBuf::from(path),
-        Err(_) => {
-            return Err(
-                "GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into(),
-            )
-        }
-    };
+    let path = config_path_for_write()?;
     gitrun_setup::update_env_file(&path, &updated).map_err(|e| e.to_string())
 }
 

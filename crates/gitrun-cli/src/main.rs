@@ -2555,69 +2555,63 @@ mod internal_lifecycle_command_tests {
     use super::{Cli, Command};
     use clap::Parser;
 
+    fn parse_internal_command(arguments: &[&str]) -> Command {
+        let cli = Cli::try_parse_from(arguments.iter().copied())
+            .unwrap_or_else(|error| panic!("failed to parse {:?}: {error}", arguments));
+        assert!(
+            cli.no_cat,
+            "--no-cat must remain available before internal commands"
+        );
+        cli.command.expect("internal command must be selected")
+    }
+
     #[test]
     fn privileged_lifecycle_entry_points_parse_as_invoked_by_helpers() {
-        let cases: Vec<(Vec<&str>, fn(&Command) -> bool)> = vec![
-            (vec!["gitrun", "--no-cat", "--uninstall-root"], |command| {
-                matches!(command, Command::UninstallRoot)
-            }),
-            (
-                vec!["gitrun", "--no-cat", "--uninstall-package-hook"],
-                |command| matches!(command, Command::UninstallPackageHook),
-            ),
-            (
-                vec!["gitrun", "--no-cat", "--reinstall-latest-root"],
-                |command| matches!(command, Command::ReinstallLatestRoot),
-            ),
-            (
-                vec!["gitrun", "--no-cat", "--reinstall-existing-root"],
-                |command| matches!(command, Command::ReinstallExistingRoot),
-            ),
-            (
-                vec![
-                    "gitrun",
-                    "--no-cat",
-                    "--save-config-root",
-                    "/tmp/private-settings.json",
-                ],
-                |command| matches!(command, Command::SaveConfigRoot { input_path } if input_path == "/tmp/private-settings.json"),
-            ),
-            (
-                vec![
-                    "gitrun",
-                    "--no-cat",
-                    "--install-root",
-                    "/tmp/private-token.json",
-                ],
-                |command| matches!(command, Command::InstallRoot { token_path } if token_path == "/tmp/private-token.json"),
-            ),
-            (
-                vec![
-                    "gitrun",
-                    "--no-cat",
-                    "--reinstall-root",
-                    "/tmp/private-token.json",
-                ],
-                |command| matches!(command, Command::ReinstallRoot { token_path } if token_path == "/tmp/private-token.json"),
-            ),
-        ];
-
-        for (arguments, matches_command) in cases {
-            let cli = Cli::try_parse_from(arguments.iter().copied())
-                .unwrap_or_else(|error| panic!("failed to parse {:?}: {error}", arguments));
-            let command = cli
-                .command
-                .as_ref()
-                .expect("internal command must be selected");
-            assert!(
-                matches_command(command),
-                "unexpected parsed command for {:?}",
-                arguments
-            );
-            assert!(
-                cli.no_cat,
-                "--no-cat must remain available before internal commands"
-            );
-        }
+        assert!(matches!(
+            parse_internal_command(&["gitrun", "--no-cat", "--uninstall-root"]),
+            Command::UninstallRoot
+        ));
+        assert!(matches!(
+            parse_internal_command(&["gitrun", "--no-cat", "--uninstall-package-hook"]),
+            Command::UninstallPackageHook
+        ));
+        assert!(matches!(
+            parse_internal_command(&["gitrun", "--no-cat", "--reinstall-latest-root"]),
+            Command::ReinstallLatestRoot
+        ));
+        assert!(matches!(
+            parse_internal_command(&["gitrun", "--no-cat", "--reinstall-existing-root"]),
+            Command::ReinstallExistingRoot
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--save-config-root",
+                "/tmp/private-settings.json"
+            ]),
+            Command::SaveConfigRoot { input_path }
+                if input_path == "/tmp/private-settings.json"
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--install-root",
+                "/tmp/private-token.json"
+            ]),
+            Command::InstallRoot { token_path }
+                if token_path == "/tmp/private-token.json"
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--reinstall-root",
+                "/tmp/private-token.json"
+            ]),
+            Command::ReinstallRoot { token_path }
+                if token_path == "/tmp/private-token.json"
+        ));
     }
 }

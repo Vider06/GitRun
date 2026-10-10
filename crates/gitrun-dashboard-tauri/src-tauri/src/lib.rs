@@ -85,6 +85,7 @@ fn trusted_system_cli_path() -> Option<PathBuf> {
     .find_map(|path| trusted_privileged_binary(&path))
 }
 
+#[cfg(target_os = "linux")]
 fn persist_config_as_root(config: &Config) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -133,6 +134,11 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
 
     let _ = std::fs::remove_file(&path);
     result
+}
+
+#[cfg(not(target_os = "linux"))]
+fn persist_config_as_root(_config: &Config) -> Result<(), String> {
+    Err("administrator-authorized system settings persistence is Linux-only".into())
 }
 
 /// Persists only known settings. On a system installation, the configuration is

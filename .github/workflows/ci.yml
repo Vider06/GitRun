@@ -50,6 +50,8 @@ env:
   CARGO_INCREMENTAL: "0"
   CARGO_NET_RETRY: "10"
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # Keep test artifacts smaller while retaining source line tables for diagnostics.
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
   RUST_BACKTRACE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && 'full' || '1' }}
   FORCE_COLOR: "1"
   NPM_CONFIG_FUND: "false"
@@ -1616,10 +1618,13 @@ jobs:
           comps="$(printf '%s' "${RUST_COMPONENTS:-none}" | tr ',' '+')"
           fp="$(ci_image_fp)"
           lock="${LOCK_HASH:-nolock}"
+          profile="$(printf 'dev=%s;test=%s' "${CARGO_PROFILE_DEV_DEBUG:-default}" "${CARGO_PROFILE_TEST_DEBUG:-default}" | sha256sum | cut -c1-8)"
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
             echo "registry=$ns-cargo-registry-${lock}"
-            echo "target=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-${GITHUB_JOB}"
+            # Exact keys encode profile settings; the shared prefix intentionally also restores
+            # older/other-job artifacts, which Cargo invalidates by its own fingerprints.
+            echo "target=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
             echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-"
           } >> "$GITHUB_OUTPUT"
           echo "image fingerprint $fp: target caches are exact per job, with cross-job restore fallback"

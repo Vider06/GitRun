@@ -181,10 +181,6 @@ window.addEventListener("gitrun:config-saved", () => {
   overviewCache = null;
   void loadRepoNav().catch(() => {});
 });
-window.addEventListener("gitrun:reinstall", () => {
-  setupInProgress = true;
-  renderSetup(true, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
-});
 window.addEventListener("gitrun:setup-required", () => {
   setupInProgress = true;
   renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });

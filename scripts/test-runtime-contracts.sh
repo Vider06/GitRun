@@ -63,7 +63,7 @@ fi
 sleep 60 &
 CHILD_PID=$!
 printf '%s\n' "$CHILD_PID" > "$STATE_DIR/gitrun-autoscaler.pid"
-sleep 6
+sleep 11
 kill -0 "$CHILD_PID" 2>/dev/null || {
   cat "$TMP/watchdog.log" >&2
   echo "test child exited before watchdog observed it alive" >&2

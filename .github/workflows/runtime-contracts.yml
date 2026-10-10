@@ -51,6 +51,9 @@ jobs:
       - name: Test partial dashboard repository policy compatibility
         run: cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults
 
+      - name: Test dashboard version propagation from version.txt
+        run: cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt
+
       - name: Test GSR watchdog and security event handling
         run: cargo test --locked -p gitrun-gsr
 

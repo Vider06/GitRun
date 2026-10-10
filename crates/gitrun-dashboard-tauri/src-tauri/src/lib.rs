@@ -57,6 +57,25 @@ fn configured_config_path() -> Option<PathBuf> {
         .flatten()
 }
 
+fn config_path_for_write() -> Result<PathBuf, String> {
+    let explicit = std::env::var_os("GITRUN_CONFIG_FILE");
+    resolve_config_path(explicit.as_deref())?
+        .or_else(|| {
+            // Desktop-launched dashboards don't inherit the scheduler service's
+            // environment. Resolve the standard installation path from disk.
+            let system_path = PathBuf::from("/etc/gitrun/gitrun.env");
+            system_path.is_file().then_some(system_path)
+        })
+        .or_else(|| {
+            let local_path = PathBuf::from("config/gitrun.env");
+            local_path.is_file().then_some(local_path)
+        })
+        .ok_or_else(|| {
+            "No existing GitRun configuration file found. Run GitRun setup before saving settings."
+                .to_owned()
+        })
+}
+
 #[tauri::command]
 fn is_first_run() -> bool {
     matches!(
@@ -1784,14 +1803,7 @@ fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, St
 }
 
 fn persist_zizmor_config(config: &Config) -> Result<(), String> {
-    let path = match std::env::var("GITRUN_CONFIG_FILE") {
-        Ok(path) => PathBuf::from(path),
-        Err(_) => {
-            return Err(
-                "GITRUN_CONFIG_FILE is not set; cannot determine which file to save to".into(),
-            )
-        }
-    };
+    let path = config_path_for_write()?;
     gitrun_setup::update_env_file(&path, config).map_err(|e| e.to_string())
 }
 

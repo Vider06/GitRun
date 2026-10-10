@@ -1,0 +1,70 @@
+name: Runtime contract tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.99.0"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  runtime-contracts:
+    name: Runtime contracts and configuration integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install Tauri and Rust build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential curl file pkg-config libssl-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libwebkit2gtk-4.1-dev patchelf xdg-utils
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy --component rustfmt
+          rustup default "$RUST_VERSION"
+          rustc --version
+          cargo --version
+
+      - name: Parse and validate sample configuration with production loader
+        run: cargo test --locked -p gitrun-core example_env_file_parses_and_validates_with_runtime_loader
+
+      - name: Test setup-generated configuration and service contracts
+        run: |
+          cargo test --locked -p gitrun-setup generated_bootstrap_env_parses_and_validates_with_runtime_loader
+          cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog
+
+      - name: Test partial dashboard repository policy compatibility
+        run: cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults
+
+      - name: Test GSR watchdog and security event handling
+        run: cargo test --locked -p gitrun-gsr
+
+      - name: Build the actual packaged CLI entrypoint
+        run: cargo build --locked -p gitrun-cli --bin gitrun
+
+      - name: Launch GSR watchdog and inject a real process exit
+        run: bash scripts/test-runtime-contracts.sh target/debug/gitrun
+
+      - name: Validate systemd unit syntax and command alignment
+        run: |
+          set -euo pipefail
+          systemd-analyze verify systemd/gitrun.service systemd/gitrun-gsr.service
+          grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service
+          grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service
+          grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs
+          grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs

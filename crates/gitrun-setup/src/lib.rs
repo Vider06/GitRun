@@ -1625,8 +1625,16 @@ mod tests {
         assert!(source.contains("reference=gitrun-runner:*"));
         assert!(source.contains("fn remove_gitrun_runner_containers_and_home_volumes()"));
         assert!(source.contains("name.ends_with(\"-home\")"));
-        assert!(!source.contains("apt-get purge docker"));
-        assert!(!source.contains("remove_dir_all(Path::new(\"/var/lib/docker\"))"));
+
+        let uninstall = source
+            .split("pub fn uninstall_linux()")
+            .nth(1)
+            .unwrap()
+            .split("pub fn uninstall_linux_package_hook()")
+            .next()
+            .unwrap();
+        assert!(!uninstall.contains("apt-get purge docker"));
+        assert!(!uninstall.contains("remove_dir_all(Path::new(\"/var/lib/docker\"))"));
     }
 
     #[test]

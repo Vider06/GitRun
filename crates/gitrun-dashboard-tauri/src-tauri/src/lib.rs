@@ -572,7 +572,7 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
             &app_for_uninstall,
             &pkexec,
             &cli,
-            &["--uninstall-root".to_owned()],
+            &["--no-cat".to_owned(), "--uninstall-root".to_owned()],
         );
         match result {
             Ok(status) if status.success() => {

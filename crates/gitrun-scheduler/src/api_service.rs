@@ -1296,7 +1296,7 @@ impl ApiExecutionBackend {
             pid,
             Some(source_handle.as_raw_fd()),
             target,
-            MountAction::Bind { read_only: false },
+            MountAction::Bind,
         ) {
             if mountinfo_by_target(pid, target).ok().flatten().is_some() {
                 if execute_mount_namespace(pid, None, target, MountAction::Unmount).is_err() {
@@ -1510,6 +1510,432 @@ impl ApiExecutionBackend {
             "GitDockRun MELT: PASS\nsource={source}\ntarget={target_name}\nid={target_id}\n"
         )))
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MountAction {
+    Bind,
+    RemountReadOnly,
+    Unmount,
+}
+
+#[derive(Debug, Clone)]
+struct MountInfo {
+    id: u32,
+    target: String,
+}
+
+fn new_mount_id() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut random| random.read_exact(&mut bytes))
+        .map_err(|error| format!("generate mount identifier: {error}"))?;
+    let mut encoded = String::with_capacity(32);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").map_err(|error| error.to_string())?;
+    }
+    Ok(format!("gm-{encoded}"))
+}
+
+#[cfg(target_os = "linux")]
+fn open_path_handle(path: &Path, no_follow: bool) -> Result<fs::File, String> {
+    use std::os::unix::ffi::OsStrExt;
+    let value = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| "filesystem path contains a NUL byte".to_owned())?;
+    let mut flags = libc::O_PATH | libc::O_CLOEXEC;
+    if no_follow {
+        flags |= libc::O_NOFOLLOW;
+    }
+    let fd = unsafe { libc::open(value.as_ptr(), flags) };
+    if fd < 0 {
+        return Err(format!(
+            "open filesystem path {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(target_os = "linux")]
+fn open_mount_source(source: &Path) -> Result<fs::File, String> {
+    let handle = open_path_handle(source, true)?;
+    let metadata = handle.metadata().map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || (!metadata.is_file() && !metadata.is_dir()) {
+        return Err("mount source must be a regular file or directory, not a symlink or special file".into());
+    }
+    let fd_path = PathBuf::from(format!("/proc/self/fd/{}", handle.as_raw_fd()));
+    let opened_source = fs::canonicalize(&fd_path)
+        .map_err(|error| format!("verify opened mount source: {error}"))?;
+    if opened_source != source {
+        return Err("mount source changed while it was being opened".into());
+    }
+    Ok(handle)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_mount_source(_source: &Path) -> Result<fs::File, String> {
+    Err("dynamic GitDockRun mounts are currently supported only on Linux".into())
+}
+
+#[cfg(target_os = "linux")]
+fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
+    if container_id.len() != 64
+        || !container_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("mount target is not an immutable Docker container ID".into());
+    }
+    let output = Command::new("docker")
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_TLS_VERIFY")
+        .env_remove("DOCKER_CERT_PATH")
+        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
+        .args(["inspect", "--format", "{{.State.Pid}}", container_id])
+        .output()
+        .map_err(|error| format!("inspect mount target container: {error}"))?;
+    if !output.status.success() {
+        return Err("Docker could not inspect the bound mount target".into());
+    }
+    let pid = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<i32>()
+        .map_err(|_| "Docker returned an invalid container PID".to_owned())?;
+    if pid <= 1 {
+        return Err("mount target container is not running".into());
+    }
+    let cgroup = fs::read_to_string(format!("/proc/{pid}/cgroup"))
+        .map_err(|error| format!("verify mount target cgroup: {error}"))?;
+    if !cgroup
+        .split(|character: char| !character.is_ascii_hexdigit())
+        .any(|part| part.eq_ignore_ascii_case(container_id))
+    {
+        return Err("mount target PID no longer belongs to the bound Docker container".into());
+    }
+    Ok(pid)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn container_pid_for_mount(_container_id: &str) -> Result<i32, String> {
+    Err("dynamic GitDockRun mounts are currently supported only on Linux".into())
+}
+
+fn validate_mount_target(pid: i32, target: &str, source_is_dir: bool) -> Result<(), String> {
+    let path = Path::new(target);
+    if !path.is_absolute()
+        || target.ends_with('/')
+        || target.contains("//")
+        || path.components().any(|component| matches!(
+            component,
+            Component::ParentDir | Component::CurDir | Component::Prefix(_)
+        ))
+    {
+        return Err("mount target must be a clean absolute container path".into());
+    }
+    let allowed_prefixes = [
+        "/workspace/",
+        "/home/runner/actions-runner/_work/",
+        "/tmp/gitrun-mounts/",
+        "/var/lib/gitrun/shared/",
+    ];
+    if !allowed_prefixes.iter().any(|prefix| target.starts_with(prefix)) {
+        return Err("mount targets are limited to workspace and GitRun data directories".into());
+    }
+
+    let root_path = PathBuf::from(format!("/proc/{pid}/root"));
+    let mut host_path = root_path.clone();
+    let components: Vec<_> = path.components().collect();
+    let normal_components: Vec<_> = components.iter().filter_map(|component| match component {
+        Component::Normal(name) => Some(*name),
+        _ => None,
+    }).collect();
+    if normal_components.is_empty() {
+        return Err("mount target cannot be the container root".into());
+    }
+
+    let mut final_metadata = None;
+    for (index, name) in normal_components.iter().enumerate() {
+        host_path.push(name);
+        let current = fs::symlink_metadata(&host_path)
+            .map_err(|error| format!("mount target component does not exist: {error}"))?;
+        if current.file_type().is_symlink() {
+            return Err("mount target path must not contain symlinks".into());
+        }
+        if index + 1 != normal_components.len() && !current.is_dir() {
+            return Err("mount target parent is not a directory".into());
+        }
+        final_metadata = Some(current);
+    }
+    let metadata = final_metadata.ok_or_else(|| "mount target cannot be the container root".to_owned())?;
+    if source_is_dir != metadata.is_dir() {
+        return Err("mount source and target must both be directories or both be files".into());
+    }
+    if source_is_dir {
+        let mut entries = fs::read_dir(&host_path)
+            .map_err(|error| format!("inspect mount target directory: {error}"))?;
+        if entries.next().transpose().map_err(|error| error.to_string())?.is_some() {
+            return Err("directory mount targets must be empty to avoid hiding existing files".into());
+        }
+    }
+    Ok(())
+}
+
+fn decode_mountinfo_path(path: &str) -> String {
+    path.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+}
+
+fn mountinfo_entries(pid: i32) -> Result<Vec<MountInfo>, String> {
+    let raw = fs::read_to_string(format!("/proc/{pid}/mountinfo"))
+        .map_err(|error| format!("read target mount namespace: {error}"))?;
+    let mut entries = Vec::new();
+    for line in raw.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(id) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let _parent = fields.next();
+        let _device = fields.next();
+        let _root = fields.next();
+        let Some(target) = fields.next() else {
+            continue;
+        };
+        entries.push(MountInfo {
+            id,
+            target: decode_mountinfo_path(target),
+        });
+    }
+    Ok(entries)
+}
+
+fn mountinfo_by_target(pid: i32, target: &str) -> Result<Option<MountInfo>, String> {
+    Ok(mountinfo_entries(pid)?
+        .into_iter()
+        .find(|mount| mount.target == target))
+}
+
+fn mountinfo_by_id(pid: i32, mount_id: u32) -> Result<Option<MountInfo>, String> {
+    Ok(mountinfo_entries(pid)?
+        .into_iter()
+        .find(|mount| mount.id == mount_id))
+}
+
+#[cfg(target_os = "linux")]
+fn execute_mount_namespace(
+    pid: i32,
+    source_fd: Option<i32>,
+    target: &str,
+    action: MountAction,
+) -> Result<(), String> {
+    let mount_namespace = fs::File::open(format!("/proc/{pid}/ns/mnt"))
+        .map_err(|error| format!("open target mount namespace: {error}"))?;
+    let pid_namespace = fs::File::open(format!("/proc/{pid}/ns/pid"))
+        .map_err(|error| format!("open target PID namespace: {error}"))?;
+    let container_root = open_path_handle(&PathBuf::from(format!("/proc/{pid}/root")), false)?;
+    let target_c = CString::new(target)
+        .map_err(|_| "mount target contains a NUL byte".to_owned())?;
+    let source_c = source_fd
+        .map(|fd| CString::new(format!("/proc/self/fd/{fd}")))
+        .transpose()
+        .map_err(|_| "invalid mount source file descriptor".to_owned())?;
+    if matches!(action, MountAction::Bind) && source_c.is_none() {
+        return Err("mount source descriptor was not provided".into());
+    }
+    let source_ptr = source_c.as_ref().map_or(std::ptr::null(), |value| value.as_ptr());
+
+    // Pin the namespaces and root before fork so a reused PID can never redirect
+    // the mount operation to a replacement container.
+    let outer_pid = unsafe { libc::fork() };
+    if outer_pid < 0 {
+        return Err(format!("fork mount namespace worker: {}", std::io::Error::last_os_error()));
+    }
+    if outer_pid == 0 {
+        unsafe {
+            if libc::setns(mount_namespace.as_raw_fd(), libc::CLONE_NEWNS) != 0 {
+                libc::_exit(41);
+            }
+            // Joining the PID namespace affects only children, so fork again.
+            if libc::setns(pid_namespace.as_raw_fd(), libc::CLONE_NEWPID) != 0 {
+                libc::_exit(42);
+            }
+            let inner_pid = libc::fork();
+            if inner_pid < 0 {
+                libc::_exit(43);
+            }
+            if inner_pid == 0 {
+                if libc::fchdir(container_root.as_raw_fd()) != 0
+                    || libc::chroot(b".\0".as_ptr().cast()) != 0
+                    || libc::chdir(b"/\0".as_ptr().cast()) != 0
+                {
+                    libc::_exit(44);
+                }
+                match action {
+                    MountAction::Bind => {
+                        if libc::mount(
+                            source_ptr,
+                            target_c.as_ptr(),
+                            std::ptr::null(),
+                            libc::MS_BIND,
+                            std::ptr::null(),
+                        ) != 0 {
+                            libc::_exit(45);
+                        }
+                        libc::_exit(0);
+                    }
+                    MountAction::RemountReadOnly => {
+                        if libc::mount(
+                            std::ptr::null(),
+                            target_c.as_ptr(),
+                            std::ptr::null(),
+                            libc::MS_BIND
+                                | libc::MS_REMOUNT
+                                | libc::MS_RDONLY
+                                | libc::MS_NOSUID
+                                | libc::MS_NODEV,
+                            std::ptr::null(),
+                        ) != 0 {
+                            libc::_exit(46);
+                        }
+                        libc::_exit(0);
+                    }
+                    MountAction::Unmount => {
+                        if libc::umount2(target_c.as_ptr(), 0) != 0 {
+                            libc::_exit(47);
+                        }
+                        libc::_exit(0);
+                    }
+                }
+            }
+            let mut status: libc::c_int = 0;
+            if libc::waitpid(inner_pid, &mut status, 0) < 0 {
+                libc::_exit(48);
+            }
+            if libc::WIFEXITED(status) {
+                libc::_exit(libc::WEXITSTATUS(status));
+            }
+            libc::_exit(49);
+        }
+    }
+
+    let mut status: libc::c_int = 0;
+    let waited = unsafe { libc::waitpid(outer_pid, &mut status, 0) };
+    if waited < 0 {
+        return Err(format!("wait for mount namespace worker: {}", std::io::Error::last_os_error()));
+    }
+    if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
+        let code = if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { -1 };
+        let stage = match code {
+            41 => "enter mount namespace",
+            42 => "enter PID namespace",
+            43 => "fork inside PID namespace",
+            44 => "enter container root",
+            45 => "bind source",
+            46 => "enforce read-only mount",
+            47 => "unmount target",
+            48 => "wait for namespace operation",
+            _ => "complete namespace operation",
+        };
+        return Err(format!("failed to {stage} (helper status {code})"));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn execute_mount_namespace(
+    _pid: i32,
+    _source_fd: Option<i32>,
+    _target: &str,
+    _action: MountAction,
+) -> Result<(), String> {
+    Err("dynamic GitDockRun mounts are currently supported only on Linux".into())
+}
+
+#[cfg(target_os = "linux")]
+fn reconcile_completed_mounts(
+    client: &GitHubClient,
+    state_dir: &Path,
+    repository: &str,
+) -> Result<(), String> {
+    let _guard = GITDOCK_MOUNT_LOCK
+        .lock()
+        .map_err(|_| "GitDockRun mount registry lock is poisoned".to_owned())?;
+    let mut registry = MountRegistry::load(state_dir)?;
+    let snapshot = registry.mounts.clone();
+    let mut remove_ids = Vec::new();
+
+    for record in snapshot.iter().filter(|record| record.repository == repository) {
+        let job = match client.find_workflow_job(repository, record.run_id, &record.job) {
+            Ok(Some(job)) => job,
+            Ok(None) => {
+                remove_ids.push(record.id.clone());
+                continue;
+            }
+            Err(error) => {
+                eprintln!("gitrun-api: cannot verify job {} for mount {}: {error}", record.job, record.id);
+                continue;
+            }
+        };
+        if job.status.eq_ignore_ascii_case("in_progress") && job.conclusion.is_none() {
+            continue;
+        }
+
+        match docker::container_id(&record.container) {
+            Ok(Some(current_id)) if current_id == record.container_id => {
+                let pid = match container_pid_for_mount(&record.container_id) {
+                    Ok(pid) => pid,
+                    Err(_) => {
+                        // A stopped container has already lost its private
+                        // mount namespace; a later start gets a fresh namespace.
+                        if docker::container_status(&record.container).ok().flatten().is_some() {
+                            remove_ids.push(record.id.clone());
+                        }
+                        continue;
+                    }
+                };
+                let mount = match record.kernel_mount_id {
+                    Some(id) => mountinfo_by_id(pid, id)?,
+                    None => mountinfo_by_target(pid, &record.target)?,
+                };
+                if let Some(mount) = mount {
+                    if let Err(error) = execute_mount_namespace(
+                        pid,
+                        None,
+                        &mount.target,
+                        MountAction::Unmount,
+                    ) {
+                        eprintln!("gitrun-api: could not clean mount {} after job completion: {error}", record.id);
+                        continue;
+                    }
+                }
+                remove_ids.push(record.id.clone());
+            }
+            Ok(None) => remove_ids.push(record.id.clone()),
+            Ok(Some(_different_id)) => {
+                // Never apply an old record to a replacement container.
+                remove_ids.push(record.id.clone());
+            }
+            Err(error) => {
+                eprintln!("gitrun-api: cannot inspect mount container {}: {error}", record.container);
+            }
+        }
+    }
+
+    if !remove_ids.is_empty() {
+        registry.mounts.retain(|record| !remove_ids.contains(&record.id));
+        registry.save(state_dir)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn reconcile_completed_mounts(
+    _client: &GitHubClient,
+    _state_dir: &Path,
+    _repository: &str,
+) -> Result<(), String> {
+    Ok(())
 }
 
 fn success(stdout: String) -> ExecutionResult {

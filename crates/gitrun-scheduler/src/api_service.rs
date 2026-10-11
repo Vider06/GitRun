@@ -18,9 +18,12 @@ use gitrun_vault::{Scope, Vault};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
+#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "linux")]
@@ -38,9 +41,12 @@ use std::os::unix::net::{UnixListener, UnixStream};
 const DOCK_ONLY_MARKER: &str = "/home/runner/actions-runner/.gitrun-dock-only";
 const API_MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_VAULT_WRITE_BYTES: usize = 1024 * 1024;
+#[cfg(target_os = "linux")]
 const MOUNT_REGISTRY_FILE: &str = "gitdock-mount-registry.json";
+#[cfg(target_os = "linux")]
 static GITDOCK_MOUNT_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct MountRecord {
     id: String,
@@ -60,6 +66,7 @@ struct MountRecord {
     created_at: u64,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct MountRegistry {
@@ -1203,6 +1210,7 @@ impl ApiExecutionBackend {
             .map(|binding| binding.container_id)
     }
 
+    #[cfg(target_os = "linux")]
     fn dock_mount(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         let _guard = GITDOCK_MOUNT_LOCK
             .lock()
@@ -1239,7 +1247,7 @@ impl ApiExecutionBackend {
         let current_id = docker::container_id(&binding.container)
             .map_err(|error| failed(error.to_string()))?
             .ok_or_else(|| failed("GitDockRun target container disappeared"))?;
-        if current_id != binding.container_id || current_id != self.caller_container_id {
+        if current_id != binding.container_id {
             return Err(failed(
                 "GitDockRun target container identity changed before mount",
             ));
@@ -1363,6 +1371,7 @@ impl ApiExecutionBackend {
         )))
     }
 
+    #[cfg(target_os = "linux")]
     fn dock_unmount(
         &self,
         request: &AuthorizedOperation,
@@ -1390,7 +1399,7 @@ impl ApiExecutionBackend {
         let current_id = docker::container_id(&binding.container)
             .map_err(|error| failed(error.to_string()))?
             .ok_or_else(|| failed("GitDockRun target container disappeared"))?;
-        if current_id != record.container_id || current_id != self.caller_container_id {
+        if current_id != record.container_id {
             return Err(failed(
                 "GitDockRun target container identity changed before unmount",
             ));
@@ -1422,6 +1431,16 @@ impl ApiExecutionBackend {
             "GitDockRun UNMOUNT: PASS\nmount_id={mount_id}\ntarget={}\n",
             record.target
         )))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn dock_mount(&self, _request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        Err(failed("dynamic GitDockRun mounts are currently supported only on Linux local Docker hosts"))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn dock_unmount(&self, _request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        Err(failed("dynamic GitDockRun mounts are currently supported only on Linux local Docker hosts"))
     }
 
     fn dock_melt(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
@@ -1512,6 +1531,7 @@ impl ApiExecutionBackend {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy)]
 enum MountAction {
     Bind,
@@ -1519,12 +1539,14 @@ enum MountAction {
     Unmount,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 struct MountInfo {
     id: u32,
     target: String,
 }
 
+#[cfg(target_os = "linux")]
 fn new_mount_id() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     fs::File::open("/dev/urandom")
@@ -1621,6 +1643,7 @@ fn container_pid_for_mount(_container_id: &str) -> Result<i32, String> {
     Err("dynamic GitDockRun mounts are currently supported only on Linux".into())
 }
 
+#[cfg(target_os = "linux")]
 fn validate_mount_target(pid: i32, target: &str, source_is_dir: bool) -> Result<(), String> {
     let path = Path::new(target);
     if !path.is_absolute()
@@ -1697,6 +1720,7 @@ fn validate_mount_target(pid: i32, target: &str, source_is_dir: bool) -> Result<
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn decode_mountinfo_path(path: &str) -> String {
     path.replace("\\040", " ")
         .replace("\\011", "\t")
@@ -1704,6 +1728,7 @@ fn decode_mountinfo_path(path: &str) -> String {
         .replace("\\134", "\\")
 }
 
+#[cfg(target_os = "linux")]
 fn mountinfo_entries(pid: i32) -> Result<Vec<MountInfo>, String> {
     let raw = fs::read_to_string(format!("/proc/{pid}/mountinfo"))
         .map_err(|error| format!("read target mount namespace: {error}"))?;
@@ -1727,12 +1752,14 @@ fn mountinfo_entries(pid: i32) -> Result<Vec<MountInfo>, String> {
     Ok(entries)
 }
 
+#[cfg(target_os = "linux")]
 fn mountinfo_by_target(pid: i32, target: &str) -> Result<Option<MountInfo>, String> {
     Ok(mountinfo_entries(pid)?
         .into_iter()
         .find(|mount| mount.target == target))
 }
 
+#[cfg(target_os = "linux")]
 fn mountinfo_by_id(pid: i32, mount_id: u32) -> Result<Option<MountInfo>, String> {
     Ok(mountinfo_entries(pid)?
         .into_iter()

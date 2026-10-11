@@ -224,7 +224,10 @@ mod tests {
 
         let events = read_last(&path, 2).unwrap();
         assert_eq!(
-            events.iter().map(|event| event.message.as_str()).collect::<Vec<_>>(),
+            events
+                .iter()
+                .map(|event| event.message.as_str())
+                .collect::<Vec<_>>(),
             vec!["third", "fourth"]
         );
         assert!(read_last(&path, 0).unwrap().is_empty());
@@ -248,7 +251,10 @@ mod tests {
 
         let events = read_last(&path, 2).unwrap();
         assert_eq!(
-            events.iter().map(|event| event.message.as_str()).collect::<Vec<_>>(),
+            events
+                .iter()
+                .map(|event| event.message.as_str())
+                .collect::<Vec<_>>(),
             vec!["second", "third"]
         );
         let _ = std::fs::remove_file(&path);

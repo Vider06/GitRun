@@ -1763,8 +1763,8 @@ fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent
     let config = load_config()?;
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let limit = limit.unwrap_or(500).clamp(1, 500);
-    let mut events = gitrun_gsr::events::read_last(&events_path, limit)
-        .map_err(|error| error.to_string())?;
+    let mut events =
+        gitrun_gsr::events::read_last(&events_path, limit).map_err(|error| error.to_string())?;
     events.reverse(); // most recent first
     Ok(events)
 }

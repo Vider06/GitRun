@@ -439,6 +439,63 @@ mod tests {
         assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Melt, &args,).is_ok());
     }
     #[test]
+    fn mount_and_unmount_are_explicit_gitdockrun_operations() {
+        assert!(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Mount));
+        assert!(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Unmount));
+        assert!(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Mount));
+        assert!(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Unmount));
+    }
+
+    #[test]
+    fn mount_requires_source_target_and_boolean_mode() {
+        let good = BTreeMap::from([
+            ("source".into(), "/srv/shared".into()),
+            ("target".into(), "/workspace/shared".into()),
+            ("read_only".into(), "true".into()),
+        ]);
+        assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Mount, &good).is_ok());
+
+        for args in [
+            BTreeMap::from([
+                ("source".into(), "/srv/shared".into()),
+                ("read_only".into(), "true".into()),
+            ]),
+            BTreeMap::from([
+                ("source".into(), "/srv/shared".into()),
+                ("target".into(), "/workspace/shared".into()),
+                ("read_only".into(), "maybe".into()),
+            ]),
+            BTreeMap::from([
+                ("source".into(), "/srv/shared".into()),
+                ("target".into(), "/workspace/shared".into()),
+                ("read_only".into(), "true".into()),
+                ("extra".into(), "not-allowed".into()),
+            ]),
+        ] {
+            assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Mount, &args).is_err());
+        }
+    }
+
+    #[test]
+    fn unmount_requires_only_a_mount_id() {
+        let good = BTreeMap::from([("mount_id".into(), "gm-0123456789abcdef".into())]);
+        assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Unmount, &good).is_ok());
+        assert!(validate_arguments(
+            GitRunApi::GitDockRun,
+            GitRunOperation::Unmount,
+            &BTreeMap::new(),
+        ).is_err());
+        assert!(validate_arguments(
+            GitRunApi::GitDockRun,
+            GitRunOperation::Unmount,
+            &BTreeMap::from([
+                ("mount_id".into(), "gm-123".into()),
+                ("target".into(), "/workspace/x".into()),
+            ]),
+        ).is_err());
+    }
+
+    #[test]
     fn api_names_are_stable() {
         assert_eq!(GitRunApi::GitDockRun.as_str(), "GitDockRun");
         assert_eq!(GitRunApi::GitVaultRun.as_str(), "GitVaultRun");

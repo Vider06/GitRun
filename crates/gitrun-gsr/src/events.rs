@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -102,6 +102,65 @@ pub fn read_all(path: &Path) -> Result<Vec<SecurityEvent>> {
     }
 }
 
+/// Reads only the newest limit records by seeking from the end of the JSONL
+/// queue. This keeps dashboard log rendering bounded even when the durable
+/// event queue has grown over months of operation.
+pub fn read_last(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut position = file.metadata()?.len();
+    if position == 0 {
+        return Ok(Vec::new());
+    }
+
+    // A final newline terminates the newest record; it is not an extra record.
+    let mut last_byte = [0_u8; 1];
+    file.seek(SeekFrom::Start(position - 1))?;
+    file.read_exact(&mut last_byte)?;
+    let trailing_newline = last_byte[0] == b'\n';
+    let separators_before_cutoff = limit.saturating_sub(1) + usize::from(trailing_newline);
+
+    const CHUNK_SIZE: u64 = 64 * 1024;
+    let mut separators = 0usize;
+    let mut reversed = Vec::new();
+    while position > 0 {
+        let chunk_len = position.min(CHUNK_SIZE) as usize;
+        position -= chunk_len as u64;
+        file.seek(SeekFrom::Start(position))?;
+        let mut chunk = vec![0_u8; chunk_len];
+        file.read_exact(&mut chunk)?;
+
+        let mut reached_cutoff = false;
+        for byte in chunk.iter().rev() {
+            if *byte == b'\n' && separators >= separators_before_cutoff {
+                reached_cutoff = true;
+                break;
+            }
+            if *byte == b'\n' {
+                separators += 1;
+            }
+            reversed.push(*byte);
+        }
+        if reached_cutoff {
+            break;
+        }
+    }
+
+    reversed.reverse();
+    let raw = String::from_utf8_lossy(&reversed);
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).map_err(EventError::from))
+        .collect()
+}
+
 /// Default path for the shared event queue, under a state directory (the
 /// same `state_dir` concept used elsewhere in GitRun's config).
 pub fn default_queue_path(state_dir: &str) -> PathBuf {
@@ -152,6 +211,46 @@ mod tests {
         assert_eq!(events[0].message, "first");
         assert_eq!(events[1].message, "second");
         assert_eq!(events[1].severity, Severity::Critical);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_last_returns_newest_records_in_file_order() {
+        let path = temp_path("tail");
+        let _ = std::fs::remove_file(&path);
+        for message in ["first", "second", "third", "fourth"] {
+            emit(&path, &SecurityEvent::new("test", Severity::Info, message)).unwrap();
+        }
+
+        let events = read_last(&path, 2).unwrap();
+        assert_eq!(
+            events.iter().map(|event| event.message.as_str()).collect::<Vec<_>>(),
+            vec!["third", "fourth"]
+        );
+        assert!(read_last(&path, 0).unwrap().is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_last_handles_a_file_without_a_trailing_newline() {
+        let path = temp_path("tail-no-newline");
+        let _ = std::fs::remove_file(&path);
+        let raw = [
+            SecurityEvent::new("test", Severity::Info, "first"),
+            SecurityEvent::new("test", Severity::Info, "second"),
+            SecurityEvent::new("test", Severity::Info, "third"),
+        ]
+        .into_iter()
+        .map(|event| serde_json::to_string(&event).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+        std::fs::write(&path, raw).unwrap();
+
+        let events = read_last(&path, 2).unwrap();
+        assert_eq!(
+            events.iter().map(|event| event.message.as_str()).collect::<Vec<_>>(),
+            vec!["second", "third"]
+        );
         let _ = std::fs::remove_file(&path);
     }
 

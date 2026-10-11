@@ -1,6 +1,6 @@
 import { invoke, content, esc, heading, metric, panel, pill, empty, errorView, toast, setFooter } from "../lib.js";
 
-export async function renderOverview(navigate, cachedOverview = null, backgroundRefresh = false) {
+export async function renderOverview(navigate, cachedOverview = null, backgroundRefresh = false, resolvedSnapshots = null) {
   const generation = window.__gitrunNavigationGeneration;
   if (!backgroundRefresh) {
     content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Reading the local control plane…</p></div>';
@@ -16,20 +16,22 @@ export async function renderOverview(navigate, cachedOverview = null, background
   }
   if (generation !== window.__gitrunNavigationGeneration) return;
 
-  const snapshotPromise = Promise.all([
+  const snapshotPromise = resolvedSnapshots ? Promise.resolve(resolvedSnapshots) : Promise.all([
     invoke("get_runner_snapshot", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[String(error)]})),
     invoke("get_repository_activity", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[String(error)]})),
     invoke("get_host_resource_snapshot", {forceRefresh}).catch((error) => ({sampled_at:0,stale:true,error:String(error)}))
   ]);
-  let timeoutId;
-  // Static watchdog only: the callback, delay and resolved value are
-  // constants; no HTTP response, repository name or user-controlled string
-  // is evaluated or passed to the timer.
-  const timeoutPromise = new Promise((resolve) => {
-    timeoutId = window.setTimeout(() => resolve(null), 1200);
-  });
-  const snapshots = await Promise.race([snapshotPromise, timeoutPromise]);
-  clearTimeout(timeoutId);
+  let snapshots = resolvedSnapshots;
+  if (!snapshots) {
+    // Avoid blocking the first paint on slow GitHub requests; retain the
+    // original promise so its result can be rendered without fetching again.
+    let timeoutId;
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutId = window.setTimeout(() => resolve(null), 1200);
+    });
+    snapshots = await Promise.race([snapshotPromise, timeoutPromise]);
+    clearTimeout(timeoutId);
+  }
   if (generation !== window.__gitrunNavigationGeneration) return;
   if (snapshots) {
     [runnerSnapshot, activitySnapshot, resourceSnapshot] = snapshots;
@@ -39,9 +41,9 @@ export async function renderOverview(navigate, cachedOverview = null, background
     runnerSnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[]};
     activitySnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[]};
     resourceSnapshot = {sampled_at:0,stale:true,error:"Resource sample is still loading."};
-    snapshotPromise.then(() => {
+    snapshotPromise.then((resolved) => {
       if (generation === window.__gitrunNavigationGeneration) {
-        void renderOverview(navigate, data, true);
+        void renderOverview(navigate, data, true, resolved);
       }
     }).catch(() => {});
   }

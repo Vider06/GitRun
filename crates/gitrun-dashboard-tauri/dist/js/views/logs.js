@@ -6,6 +6,8 @@ let eventError = null;
 let cachedJournal = [];
 let journalError = null;
 let journalSource = "all";
+let journalLoaded = false;
+let journalLoading = null;
 let activePane = "security";
 
 function sourceLabel(source) {
@@ -45,6 +47,10 @@ function renderSecurityRows() {
 function renderJournalRows() {
   const target = document.getElementById("journal-log-rows");
   if (!target) return;
+  if (!journalLoaded) {
+    target.innerHTML = empty("Journal not loaded", "Open the Service journal tab to fetch recent service output.");
+    return;
+  }
   if (journalError) {
     target.innerHTML = '<div class="notice danger"><div><strong>Service journal unavailable</strong><p>' + esc(journalError) + '</p><p>On Linux, check that the dashboard user can read the systemd journal.</p></div></div>';
     return;
@@ -60,13 +66,17 @@ function renderPanes() {
 
 export async function renderLogs() {
   const generation = window.__gitrunNavigationGeneration;
-  content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Loading GitRun security and service logs…</p></div>';
-  const results = await Promise.allSettled([invoke("list_gsr_events", { limit: 500 }), invoke("list_service_logs", { source: journalSource, limit: 200 })]);
+  journalLoaded = false;
+  journalLoading = null;
+  content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Loading GitRun security events…</p></div>';
+  try {
+    cachedEvents = (await invoke("list_gsr_events", { limit: 500 })) || [];
+    eventError = null;
+  } catch (error) {
+    cachedEvents = [];
+    eventError = String(error || "Unknown event queue error");
+  }
   if (generation !== window.__gitrunNavigationGeneration) return;
-  if (results[0].status === "fulfilled") { cachedEvents = results[0].value || []; eventError = null; }
-  else { cachedEvents = []; eventError = String(results[0].reason || "Unknown event queue error"); }
-  if (results[1].status === "fulfilled") { cachedJournal = results[1].value || []; journalError = null; }
-  else { cachedJournal = []; journalError = String(results[1].reason || "Unknown journal error"); }
   content.innerHTML = heading("OPERATIONS", "Logs", "Security event history and systemd output for GitRun. GitVault event records never contain secret values.", '<button class="btn" data-action="refresh-view">↻ Refresh</button>') +
     '<div class="tabs log-tabs"><button class="tab" data-log-pane="security">Security events</button><button class="tab" data-log-pane="journal">Service journal</button></div>' +
     '<section id="security-log-pane" class="section"><div class="toolbar"><div><h2>GSR event queue</h2><p class="section-description">Persistent JSONL records from GitVault, the watchdog, host poller and runner-side enforcement.</p></div><span id="security-log-count" class="pill info"></span></div>' +
@@ -75,25 +85,45 @@ export async function renderLogs() {
     '<section id="journal-log-pane" class="section" hidden><div class="toolbar"><div><h2>Systemd journal</h2><p class="section-description">Service stdout/stderr, separate from structured security events.</p></div><div class="heading-actions"><select id="journal-source" aria-label="Service journal source"><option value="all">Scheduler + GSR</option><option value="scheduler">Scheduler (gitrun.service)</option><option value="gsr">GSR (gitrun-gsr.service)</option></select><button class="btn" id="refresh-journal">↻ Reload journal</button></div></div><div id="journal-log-rows" class="card-list"></div></section>';
   activePane = "security";
   renderPanes(); renderSecurityRows(); renderJournalRows();
-  document.querySelectorAll("[data-log-pane]").forEach((button) => button.addEventListener("click", () => { activePane = button.dataset.logPane; renderPanes(); }));
+  document.querySelectorAll("[data-log-pane]").forEach((button) => button.addEventListener("click", () => {
+    activePane = button.dataset.logPane;
+    renderPanes();
+    if (activePane === "journal" && !journalLoaded) void loadJournal(generation);
+  }));
   document.getElementById("logs-source").addEventListener("change", renderSecurityRows);
   document.getElementById("logs-severity").addEventListener("change", renderSecurityRows);
   document.getElementById("logs-search").addEventListener("input", renderSecurityRows);
   document.getElementById("journal-source").value = journalSource;
-  document.getElementById("journal-source").addEventListener("change", async (event) => { journalSource = event.target.value; await loadJournal(generation); });
-  document.getElementById("refresh-journal").addEventListener("click", () => loadJournal(generation));
+  document.getElementById("journal-source").addEventListener("change", async (event) => { journalSource = event.target.value; journalLoaded = false; await loadJournal(generation); });
+  document.getElementById("refresh-journal").addEventListener("click", () => { journalLoaded = false; void loadJournal(generation); });
 }
 
 async function loadJournal(generation) {
+  if (journalLoading) return journalLoading;
+  const source = journalSource;
   const target = document.getElementById("journal-log-rows");
   if (target) target.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Reading service journal…</p></div>';
-  try {
-    const rows = await invoke("list_service_logs", { source: journalSource, limit: 200 });
-    if (generation !== window.__gitrunNavigationGeneration) return;
-    cachedJournal = rows || []; journalError = null;
-  } catch (error) {
-    if (generation !== window.__gitrunNavigationGeneration) return;
-    cachedJournal = []; journalError = String(error);
-  }
-  renderJournalRows();
+  // Start in a microtask so journalLoading is assigned before request handlers run.
+  const request = Promise.resolve().then(async () => {
+    try {
+      const rows = await invoke("list_service_logs", { source, limit: 200 });
+      if (generation !== window.__gitrunNavigationGeneration || source !== journalSource) return;
+      cachedJournal = rows || [];
+      journalError = null;
+      journalLoaded = true;
+    } catch (error) {
+      if (generation !== window.__gitrunNavigationGeneration || source !== journalSource) return;
+      cachedJournal = [];
+      journalError = String(error);
+      journalLoaded = true;
+    } finally {
+      if (journalLoading === request) journalLoading = null;
+      if (generation === window.__gitrunNavigationGeneration) {
+        if (source !== journalSource) void loadJournal(generation);
+        renderJournalRows();
+      }
+    }
+  });
+  journalLoading = request;
+  return request;
 }

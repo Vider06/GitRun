@@ -1762,11 +1762,10 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
 fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
     let config = load_config()?;
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
-    let mut events = gitrun_gsr::events::read_all(&events_path).map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(500).clamp(1, 500);
+    let mut events = gitrun_gsr::events::read_last(&events_path, limit)
+        .map_err(|error| error.to_string())?;
     events.reverse(); // most recent first
-    if let Some(limit) = limit {
-        events.truncate(limit);
-    }
     Ok(events)
 }
 
@@ -2665,6 +2664,8 @@ fn save_dashboard_settings(
     updated: Config,
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
+    expected_config: Config,
+    expected_settings: GitRunSettings,
 ) -> Result<(), String> {
     updated.validate().map_err(|error| error.to_string())?;
     let current_config = load_config()?;
@@ -2685,6 +2686,12 @@ fn save_dashboard_settings(
     let settings_path = gitrun_settings_path(&updated);
     let current_settings = GitRunSettings::load_or_default(gitrun_settings_path(&current_config))
         .map_err(|error| error.to_string())?;
+    if current_config != expected_config {
+        return Err("GitRun configuration changed since this screen was loaded. Refresh the view and retry.".into());
+    }
+    if current_settings != expected_settings {
+        return Err("GitRun security settings changed since this screen was loaded. Refresh the view and retry.".into());
+    }
     let socket_opt_out = settings.repositories.iter().any(|(name, repository)| {
         repository.docker.direct_socket_enabled
             && !current_settings

@@ -252,6 +252,8 @@ pub struct LogicContainerPolicy {
     pub write: bool,
     pub execute: bool,
     pub melt: bool,
+    /// Legacy compatibility field. No current GitDockRun operation consumes mountable;
+    /// the dashboard must not present it as an enforced runtime capability.
     pub mountable: bool,
     /// Logical names this source container may be melted into. The special
     /// value "runner" means the requesting runner's container. Empty means
@@ -278,9 +280,10 @@ impl LogicContainerPolicy {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MountPolicy {
-    /// Explicit deny-by-default mount policy. A rule may then permit a host
-    /// file, directory, filesystem, volume, or other source according to the
-    /// resource identity resolved by GitRun.
+    /// Legacy stored policy only. The current closed GitDockRun API defines no
+    /// mount operation, so these fields are not runtime enforcement and must
+    /// never be treated as a security boundary. They remain deserializable to
+    /// preserve existing settings files until a real mount API is designed.
     pub enabled: bool,
     pub rules: Vec<MountRule>,
 }

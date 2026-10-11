@@ -7,7 +7,7 @@ const apiOps = {
   GitInstallRun:["Install","Remove","Update"], GitReadRun:["Read"],
   GitWriteRun:["Write"], GitVerifyRun:["Verify"], GitStatusRun:["Status"]
 };
-const logicOps = ["connect","read","write","execute","melt","mountable"];
+const logicOps = ["connect","read","write","execute","melt"];
 
 export async function renderRepository(repo, navigate) {
   const generation = window.__gitrunNavigationGeneration;
@@ -32,7 +32,6 @@ export async function renderRepository(repo, navigate) {
   const repoSettings = (settings.repositories || {})[repo] || {};
   const docker = repoSettings.docker || detail.docker_policy || {};
   const logic = docker.logic_containers || {};
-  const mounts = docker.allowed_mounts || {enabled:false,rules:[]};
   const overrides = repoSettings.api_overrides || {};
   const ruleList = detail.logic_rules || [];
   const repoRunners = (runnerSnapshot.runners || []).filter((runner) => runner.repository === repo);
@@ -48,7 +47,6 @@ export async function renderRepository(repo, navigate) {
     const selected = operationMode === "inherit" ? (globalPolicy.allowed_operations || []) : override.allowed_operations;
     return '<tr><td class="mono">' + esc(api) + '</td><td><select data-api-enabled="' + esc(api) + '"><option value="inherit" ' + (enabled === "inherit" ? "selected" : "") + '>Inherit</option><option value="allow" ' + (enabled === "allow" ? "selected" : "") + '>Allow</option><option value="deny" ' + (enabled === "deny" ? "selected" : "") + '>Deny</option></select></td><td><div class="field"><select data-api-op-mode="' + esc(api) + '"><option value="inherit" ' + (operationMode === "inherit" ? "selected" : "") + '>Inherit global operations</option><option value="custom" ' + (operationMode === "custom" ? "selected" : "") + '>Use explicit operation allowlist</option></select></div><div class="chip-row">' + apiOps[api].map((op) => '<label class="checkbox-row"><input type="checkbox" data-api-op="' + esc(api + "|" + op) + '" ' + (selected.includes(op) ? "checked" : "") + '><span>' + esc(op) + '</span></label>').join("") + '</div></td></tr>';
   }).join("");
-  const mountRows = (mounts.rules || []).map((rule, index) => mountCard(rule, index)).join("");
   content.innerHTML = heading("REPOSITORY", repo, "Repository operations, execution boundaries and repository-specific policy.", '<button class="btn" data-view="overview">← Overview</button><button class="btn btn-primary" id="save-repo-policy">Save changes</button>') +
     '<div class="grid metrics-grid">' +
       '<article class="panel metric-card"><div class="metric-top">GitVault groups</div><div class="metric-value">' + (detail.vault_groups || []).length + '</div><div class="metric-foot">Configured secret scopes</div></article>' +
@@ -78,7 +76,7 @@ export async function renderRepository(repo, navigate) {
       (ruleList.length ? '<div class="card-list">' + ruleList.map((rule,index) => '<div class="list-row"><div class="list-row-main"><strong>' + esc(rule.name) + '</strong><small>Labels: ' + esc((rule.match_labels || []).join(", ")) + ' · Image: ' + esc(rule.image) + ' · Backend: ' + esc(rule.backend && rule.backend.Vm ? "VM " + rule.backend.Vm.vm_name : "Local Linux") + '</small></div><button class="btn btn-danger" data-delete-rule="' + index + '">Remove</button></div>').join("") + '</div>' : empty("No matching rules","Dynamic jobs use the default image until a rule matches.")) +
     '</div>' +
     '<div class="two-col section">' +
-      panel("Docker execution boundary", '<p class="section-description">Direct socket access is a high-risk compatibility exception. GitDockRun should use its authorization boundary instead.</p><label class="checkbox-row"><input type="checkbox" id="repo-direct-socket" ' + (docker.direct_socket_enabled ? "checked" : "") + '><span><strong>Direct Docker socket access</strong>Allows workflows in this repository to reach the Docker daemon directly.</span></label><div class="field"><label for="repo-allowed-jobs">Allowed GitDockRun job names</label><input id="repo-allowed-jobs" value="' + esc((docker.allowed_job_names || []).join(", ")) + '" placeholder="* or specific job names"></div><div class="field"><label for="repo-allowed-containers">Allowed logical containers</label><input id="repo-allowed-containers" value="' + esc((docker.allowed_container_names || []).join(", ")) + '" placeholder="runner, build-cache"></div><label class="checkbox-row"><input type="checkbox" id="mount-enabled" ' + (mounts.enabled ? "checked" : "") + '><span><strong>Enable mount allowlist</strong>Only explicitly allowed host paths may be mounted.</span></label><div id="mount-rules-list" class="card-list">' + mountRows + '</div><button class="btn" id="add-mount-rule">＋ Add mount rule</button>') +
+      panel("Docker execution boundary", '<p class="section-description">Direct socket access is a high-risk compatibility exception. GitDockRun should use its authorization boundary instead.</p><label class="checkbox-row"><input type="checkbox" id="repo-direct-socket" ' + (docker.direct_socket_enabled ? "checked" : "") + '><span><strong>Direct Docker socket access</strong>Allows workflows in this repository to reach the Docker daemon directly.</span></label><div class="field"><label for="repo-allowed-jobs">Allowed GitDockRun job names</label><input id="repo-allowed-jobs" value="' + esc((docker.allowed_job_names || []).join(", ")) + '" placeholder="* or specific job names"></div><div class="field"><label for="repo-allowed-containers">Allowed logical containers</label><input id="repo-allowed-containers" value="' + esc((docker.allowed_container_names || []).join(", ")) + '" placeholder="runner, build-cache"></div><div class="notice warn"><div><strong>Mount restrictions are not enforced</strong>The current GitDockRun API has no mount operation. Legacy mount settings are preserved for compatibility but do not restrict actual mounts; direct Docker socket access is outside this API boundary.</div></div>') +
       panel("GitVault access scopes", '<div class="chip-row">' + ((detail.vault_groups || []).length ? detail.vault_groups.map((group) => pill(group,"info")).join("") : '<span class="muted">No GitVault groups configured</span>') + '</div><p class="section-description mt-12">Secret scope membership is shown here; plaintext secret values are never exposed.</p><div class="kv-grid"><div class="kv"><small>Repository scope</small><strong>' + esc(repo) + '</strong></div><div class="kv"><small>Global scope</small><strong>Shared only when explicitly authorized</strong></div></div>')
     + '</div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Workflow API overrides</h2><span class="pill info">Repository-scoped</span></div><p class="section-description">Inherit the global policy by default. An explicit deny can only reduce access; the effective backend policy remains authoritative.</p><div class="table-wrap"><table><thead><tr><th>API</th><th>Policy</th><th>Operation override</th></tr></thead><tbody>' + apiRows + '</tbody></table></div></div>' +
@@ -122,14 +120,6 @@ export async function renderRepository(repo, navigate) {
     createdPolicy.querySelector("[data-remove-logic-policy]").addEventListener("click", () => createdPolicy.remove());
     logic[key] = {connect:true,read:true,write:true,execute:false,melt:false,mountable:false,allowed_melt_targets:["runner"]};
   });
-  document.getElementById("add-mount-rule").addEventListener("click", () => {
-    const list = document.getElementById("mount-rules-list");
-    const index = list.querySelectorAll("[data-mount-index]").length;
-    list.insertAdjacentHTML("beforeend",mountCard({source:"",recursive:false,read_only:true,allow:true},index));
-    const createdMount = list.lastElementChild;
-    createdMount.querySelector("[data-remove-mount]").addEventListener("click", () => createdMount.remove());
-  });
-  content.querySelectorAll("[data-remove-mount]").forEach((button) => button.addEventListener("click", () => button.closest("[data-mount-index]")?.remove()));
   content.querySelectorAll("[data-remove-logic-policy]").forEach((button) => button.addEventListener("click", () => button.closest("[data-logic-policy]")?.remove()));
   content.querySelectorAll("[data-runner-settings]").forEach((button) => button.addEventListener("click", () => {
     const runner = repoRunners.find((item) => item.name === button.dataset.runnerSettings);
@@ -156,20 +146,11 @@ export async function renderRepository(repo, navigate) {
     updatedRepo.docker.logic_containers = {};
     content.querySelectorAll("[data-logic-policy]").forEach((card) => {
       const name = card.dataset.logicPolicy;
-      const policy = {};
+      const policy = { mountable: Boolean(logic[name] && logic[name].mountable) };
       logicOps.forEach((op) => { policy[op] = Boolean(card.querySelector('[data-logic-op="' + CSS.escape(op) + '"]')?.checked); });
       policy.allowed_melt_targets = (card.querySelector("[data-logic-targets]")?.value || "").split(",").map((value)=>value.trim()).filter(Boolean);
       updatedRepo.docker.logic_containers[name] = policy;
     });
-    updatedRepo.docker.allowed_mounts = {
-      enabled: document.getElementById("mount-enabled").checked,
-      rules: Array.from(content.querySelectorAll("[data-mount-index]")).map((card) => ({
-        source: card.querySelector("[data-mount-source]").value.trim(),
-        recursive: card.querySelector("[data-mount-recursive]").checked,
-        read_only: card.querySelector("[data-mount-readonly]").checked,
-        allow: card.querySelector("[data-mount-allow]").checked
-      }))
-    };
     for (const api of Object.keys(apiOps)) {
       const value = content.querySelector('[data-api-enabled="' + CSS.escape(api) + '"]').value;
       const opMode = content.querySelector('[data-api-op-mode="' + CSS.escape(api) + '"]').value;
@@ -186,7 +167,7 @@ export async function renderRepository(repo, navigate) {
     const status = document.getElementById("repo-save-status");
     status.textContent = "Validating and saving…";
     try {
-      await invoke("save_dashboard_settings",{updated:config,settings:next,confirmSocketOptOut});
+      await invoke("save_dashboard_settings",{updated:config,settings:next,confirmSocketOptOut,expectedConfig:config,expectedSettings:settings});
       toast("Repository policy saved.");
       status.textContent = "Saved successfully · " + new Date().toLocaleTimeString();
     } catch (error) {
@@ -199,10 +180,6 @@ export async function renderRepository(repo, navigate) {
 function logicCard(name, policy) {
   return '<div class="panel panel-pad" data-logic-policy="' + esc(name) + '"><div class="section-heading"><strong class="mono">' + esc(name) + '</strong><button class="btn btn-danger" data-remove-logic-policy>Remove</button></div><div class="chip-row">' + logicOps.map((op) => '<label class="checkbox-row"><input type="checkbox" data-logic-op="' + op + '" ' + (policy[op] ? "checked" : "") + '><span>' + op + '</span></label>').join("") + '</div><div class="field mt-10"><label>Allowed melt targets</label><input data-logic-targets value="' + esc((policy.allowed_melt_targets || []).join(", ")) + '" placeholder="runner, build-cache"></div></div>';
 }
-function mountCard(rule,index) {
-  return '<div class="panel panel-pad" data-mount-index="' + index + '"><div class="field"><label>Host source path</label><input data-mount-source value="' + esc(rule.source || "") + '" placeholder="/srv/build-cache"></div><div class="chip-row"><label class="checkbox-row"><input type="checkbox" data-mount-recursive ' + (rule.recursive ? "checked" : "") + '><span>Recursive</span></label><label class="checkbox-row"><input type="checkbox" data-mount-readonly ' + (rule.read_only ? "checked" : "") + '><span>Read-only</span></label><label class="checkbox-row"><input type="checkbox" data-mount-allow ' + (rule.allow ? "checked" : "") + '><span>Allow</span></label><button class="btn btn-danger" data-remove-mount>Remove</button></div></div>';
-}
-
 function openRuleModal(existingRules, repo, navigate) {
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop";

@@ -29,7 +29,7 @@ The workflow-facing API is a closed operation set. Policy can disable operations
 
 Authorization is fail-closed. Workflow-visible `GITHUB_*` values are claims only. The host maps the Unix peer to the current Docker runner, rejects stale/PID-reused cgroup identities, requires an in-progress GitHub job, resolves authoritative workflow/run information, and applies repository/resource policy before creating an `AuthorizedOperation`.
 
-GitDockRun adds an exact persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. `connect`/`disconnect` cannot select an arbitrary other job. Read/write/execute/melt operations revalidate the binding immediately before privileged execution, preventing container-name reuse/TOCTOU authorization.
+GitDockRun adds an exact persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. `connect`/`disconnect` cannot select an arbitrary other job. Disconnect drops the active job's binding without deleting its live runner; normal scheduler lifecycle owns cleanup after the job exits. Read/write/execute/melt/mount/unmount operations revalidate the binding immediately before privileged execution, preventing stale container-name bindings from authorizing a replacement container.
 
 A successful request therefore requires authenticated transport identity **and** authoritative workload binding; policy alone is never treated as proof of identity.
 

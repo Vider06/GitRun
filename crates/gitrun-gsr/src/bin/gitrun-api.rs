@@ -242,6 +242,37 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                     i += 1;
                 }
             }
+            "--mount" => {
+                operation = Some(GitRunOperation::Mount);
+                i += 1;
+                if i < args.len() {
+                    values.insert("source".into(), args[i].clone());
+                    i += 1;
+                }
+            }
+            "--target" => {
+                i += 1;
+                if i < args.len() {
+                    values.insert("target".into(), args[i].clone());
+                    i += 1;
+                }
+            }
+            "--read-only" => {
+                values.insert("read_only".into(), "true".into());
+                i += 1;
+            }
+            "--read-write" => {
+                values.insert("read_only".into(), "false".into());
+                i += 1;
+            }
+            "--unmount" => {
+                operation = Some(GitRunOperation::Unmount);
+                i += 1;
+                if i < args.len() {
+                    values.insert("mount_id".into(), args[i].clone());
+                    i += 1;
+                }
+            }
             "--file" => {
                 operation = Some(GitRunOperation::File);
                 i += 1;
@@ -334,6 +365,13 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
 
     let operation = operation.ok_or_else(|| "no GitRun API operation was specified".to_owned())?;
 
+    if api == GitRunApi::GitDockRun && operation == GitRunOperation::Mount {
+        values.entry("read_only".into()).or_insert_with(|| "true".into());
+        if !values.contains_key("target") {
+            return Err("--mount requires --target <container-path>".into());
+        }
+    }
+
     if api == GitRunApi::GitDockRun
         && matches!(
             operation,
@@ -341,6 +379,8 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 | GitRunOperation::Write
                 | GitRunOperation::Execute
                 | GitRunOperation::Melt
+                | GitRunOperation::Mount
+                | GitRunOperation::Unmount
         )
         && resource.is_none()
     {

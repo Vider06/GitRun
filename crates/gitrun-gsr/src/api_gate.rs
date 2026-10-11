@@ -333,10 +333,14 @@ fn authorize_dock(
                     detail: "missing docked resource".into(),
                 })?;
             if !effective.docker.allows_container(container) {
-                return Err(ApiGateError::ResourceDenied { resource: container.to_owned() });
+                return Err(ApiGateError::ResourceDenied {
+                    resource: container.to_owned(),
+                });
             }
             let logic = effective.docker.logic_container(container).ok_or_else(|| {
-                ApiGateError::ResourceDenied { resource: container.to_owned() }
+                ApiGateError::ResourceDenied {
+                    resource: container.to_owned(),
+                }
             })?;
             if !logic.mountable {
                 return Err(ApiGateError::PolicyDenied {
@@ -344,8 +348,12 @@ fn authorize_dock(
                 });
             }
             let source = required_argument(GitRunApi::GitDockRun, operation, arguments, "source")?;
-            let read_only = required_argument(GitRunApi::GitDockRun, operation, arguments, "read_only")? == "true";
-            effective.docker.allowed_mounts
+            let read_only =
+                required_argument(GitRunApi::GitDockRun, operation, arguments, "read_only")?
+                    == "true";
+            effective
+                .docker
+                .allowed_mounts
                 .authorize_source(std::path::Path::new(source), read_only)
                 .map_err(|reason| ApiGateError::PolicyDenied { reason })?;
             Ok(())
@@ -364,7 +372,9 @@ fn authorize_dock(
                 // after the administrator has disabled new mounts.
                 Ok(())
             } else {
-                Err(ApiGateError::ResourceDenied { resource: container.to_owned() })
+                Err(ApiGateError::ResourceDenied {
+                    resource: container.to_owned(),
+                })
             }
         }
         GitRunOperation::Read

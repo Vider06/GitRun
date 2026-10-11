@@ -366,7 +366,9 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
     let operation = operation.ok_or_else(|| "no GitRun API operation was specified".to_owned())?;
 
     if api == GitRunApi::GitDockRun && operation == GitRunOperation::Mount {
-        values.entry("read_only".into()).or_insert_with(|| "true".into());
+        values
+            .entry("read_only".into())
+            .or_insert_with(|| "true".into());
         if !values.contains_key("target") {
             return Err("--mount requires --target <container-path>".into());
         }

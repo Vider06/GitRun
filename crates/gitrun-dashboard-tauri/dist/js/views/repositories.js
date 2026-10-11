@@ -2,12 +2,12 @@ import { invoke, content, esc, heading, panel, pill, empty, errorView, toast, co
 
 const apiOps = {
   GitVaultRun:["Read","Write","Exists","Delete","List"],
-  GitDockRun:["Connect","Disconnect","Read","Write","Execute","Melt"],
+  GitDockRun:["Connect","Disconnect","Read","Write","Execute","Melt","Mount","Unmount"],
   GitSaveRun:["File","Logs"], GitRegisterRun:["Register"],
   GitInstallRun:["Install","Remove","Update"], GitReadRun:["Read"],
   GitWriteRun:["Write"], GitVerifyRun:["Verify"], GitStatusRun:["Status"]
 };
-const logicOps = ["connect","read","write","execute","melt"];
+const logicOps = ["connect","read","write","execute","melt","mountable"];
 
 export async function renderRepository(repo, navigate) {
   const generation = window.__gitrunNavigationGeneration;
@@ -32,6 +32,7 @@ export async function renderRepository(repo, navigate) {
   let repoSettings = (settings.repositories || {})[repo] || {};
   const docker = repoSettings.docker || detail.docker_policy || {};
   const logic = docker.logic_containers || {};
+  const mounts = docker.allowed_mounts || {enabled:false,rules:[]};
   const overrides = repoSettings.api_overrides || {};
   const ruleList = detail.logic_rules || [];
   const repoRunners = (runnerSnapshot.runners || []).filter((runner) => runner.repository === repo);
@@ -39,6 +40,7 @@ export async function renderRepository(repo, navigate) {
   const workflowSummary = (runnerSnapshot.workflow_runs || []).find((item) => item.repository === repo);
   const runnerRows = repoRunners.map((runner) => '<tr><td><strong>' + esc(runner.name) + '</strong><div class="subtle mono">ID ' + esc(runner.id) + '</div></td><td>' + pill(runner.online ? "Online" : runner.status, runner.online ? "good" : "bad") + '</td><td>' + pill(runner.busy ? "Busy" : "Idle", runner.busy ? "warn" : "neutral") + '</td><td>' + pill(runner.kind, runner.kind === "Permanent" ? "info" : runner.kind === "Dynamic" ? "good" : "warn") + '</td><td>' + esc(runner.container_status || "Unknown") + '</td><td>' + (runner.kind === "Permanent" ? '<button class="icon-action" data-runner-settings="' + esc(runner.name) + '" title="Permanent runner settings" aria-label="Permanent runner settings">⚙</button>' : '<span class="subtle">—</span>') + '</td></tr>').join("");
   const logicPolicyCards = Object.entries(logic).map(([name, policy]) => logicCard(name, policy)).join("");
+  const mountRows = (mounts.rules || []).map((rule, index) => mountCard(rule, index)).join("");
   const apiRows = Object.keys(apiOps).map((api) => {
     const override = overrides[api] || {enabled:null,allowed_operations:null};
     const globalPolicy = settings.global && settings.global.apis && settings.global.apis[api] || {enabled:false,allowed_operations:[]};
@@ -76,7 +78,7 @@ export async function renderRepository(repo, navigate) {
       (ruleList.length ? '<div class="card-list">' + ruleList.map((rule,index) => '<div class="list-row"><div class="list-row-main"><strong>' + esc(rule.name) + '</strong><small>Labels: ' + esc((rule.match_labels || []).join(", ")) + ' · Image: ' + esc(rule.image) + ' · Backend: ' + esc(rule.backend && rule.backend.Vm ? "VM " + rule.backend.Vm.vm_name : "Local Linux") + '</small></div><button class="btn btn-danger" data-delete-rule="' + index + '">Remove</button></div>').join("") + '</div>' : empty("No matching rules","Dynamic jobs use the default image until a rule matches.")) +
     '</div>' +
     '<div class="two-col section">' +
-      panel("Docker execution boundary", '<p class="section-description">Direct socket access is a high-risk compatibility exception. GitDockRun should use its authorization boundary instead.</p><label class="checkbox-row"><input type="checkbox" id="repo-direct-socket" ' + (docker.direct_socket_enabled ? "checked" : "") + '><span><strong>Direct Docker socket access</strong>Allows workflows in this repository to reach the Docker daemon directly.</span></label><div class="field"><label for="repo-allowed-jobs">Allowed GitDockRun job names</label><input id="repo-allowed-jobs" value="' + esc((docker.allowed_job_names || []).join(", ")) + '" placeholder="* or specific job names"></div><div class="field"><label for="repo-allowed-containers">Allowed logical containers</label><input id="repo-allowed-containers" value="' + esc((docker.allowed_container_names || []).join(", ")) + '" placeholder="runner, build-cache"></div><div class="notice warn"><div><strong>Mount restrictions are not enforced</strong>The current GitDockRun API has no mount operation. Legacy mount settings are preserved for compatibility but do not restrict actual mounts; direct Docker socket access is outside this API boundary.</div></div>') +
+      panel("Docker execution boundary", '<p class="section-description">Direct socket access is a high-risk compatibility exception. Prefer GitDockRun's policy-gated API. Dynamic host mounts currently require a Linux local Docker host.</p><label class="checkbox-row"><input type="checkbox" id="repo-direct-socket" ' + (docker.direct_socket_enabled ? "checked" : "") + '><span><strong>Direct Docker socket access</strong>Allows workflows in this repository to reach the Docker daemon directly.</span></label><div class="field"><label for="repo-allowed-jobs">Allowed GitDockRun job names</label><input id="repo-allowed-jobs" value="' + esc((docker.allowed_job_names || []).join(", ")) + '" placeholder="* or specific job names"></div><div class="field"><label for="repo-allowed-containers">Allowed logical containers</label><input id="repo-allowed-containers" value="' + esc((docker.allowed_container_names || []).join(", ")) + '" placeholder="runner, build-cache"></div><hr><label class="checkbox-row"><input type="checkbox" id="mount-enabled" ' + (mounts.enabled ? "checked" : "") + '><span><strong>Enable GitDockRun host mounts</strong>Disable by default. Only listed host sources can be mounted into explicitly mountable Logic Containers.</span></label><div id="mount-rules-list" class="card-list">' + mountRows + '</div><button class="btn" id="add-mount-rule">＋ Add host source rule</button><p class="field-hint">Rules restrict the host source path. Read-only rules cannot be mounted writable. Explicit Deny rules take precedence. Target paths must already exist and directory targets must be empty.</p>') +
       panel("GitVault access scopes", '<div class="chip-row">' + ((detail.vault_groups || []).length ? detail.vault_groups.map((group) => pill(group,"info")).join("") : '<span class="muted">No GitVault groups configured</span>') + '</div><p class="section-description mt-12">Secret scope membership is shown here; plaintext secret values are never exposed.</p><div class="kv-grid"><div class="kv"><small>Repository scope</small><strong>' + esc(repo) + '</strong></div><div class="kv"><small>Global scope</small><strong>Shared only when explicitly authorized</strong></div></div>')
     + '</div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Workflow API overrides</h2><span class="pill info">Repository-scoped</span></div><p class="section-description">Inherit the global policy by default. A repository-level Allow cannot re-enable an API disabled globally; enable it in Privacy & Security first. The effective backend policy remains authoritative.</p><div class="table-wrap"><table><thead><tr><th>API</th><th>Policy</th><th>Operation override</th></tr></thead><tbody>' + apiRows + '</tbody></table></div></div>' +
@@ -109,6 +111,17 @@ export async function renderRepository(repo, navigate) {
     try { await invoke("save_logic_rules",{rules:ruleList.filter((_,i)=>i!==index)}); toast("Logic Containers rule removed."); await navigate("repo:"+repo); }
     catch (error) { toast("Could not remove rule: " + error,"error"); }
   }));
+  document.getElementById("add-mount-rule").addEventListener("click", () => {
+    const list = document.getElementById("mount-rules-list");
+    const index = list.querySelectorAll("[data-mount-index]").length;
+    list.insertAdjacentHTML("beforeend", mountCard({source:"",recursive:false,read_only:true,allow:true}, index));
+    bindMountRemoval(list.lastElementChild);
+  });
+  content.querySelectorAll("[data-remove-mount]").forEach((button) => button.addEventListener("click", () => button.closest("[data-mount-index]")?.remove()));
+  function bindMountRemoval(card) {
+    card.querySelector("[data-remove-mount]")?.addEventListener("click", () => card.remove());
+  }
+
   document.getElementById("add-logic-policy").addEventListener("click", () => {
     const name = prompt("Logical container name:");
     if (!name || !name.trim()) return;
@@ -142,6 +155,15 @@ export async function renderRepository(repo, navigate) {
     updatedRepo.docker.direct_socket_enabled = document.getElementById("repo-direct-socket").checked;
     updatedRepo.docker.allowed_job_names = document.getElementById("repo-allowed-jobs").value.split(",").map((value)=>value.trim()).filter(Boolean);
     updatedRepo.docker.allowed_container_names = document.getElementById("repo-allowed-containers").value.split(",").map((value)=>value.trim()).filter(Boolean);
+    updatedRepo.docker.allowed_mounts = {
+      enabled: document.getElementById("mount-enabled").checked,
+      rules: Array.from(content.querySelectorAll("[data-mount-index]")).map((card) => ({
+        source: card.querySelector("[data-mount-source]").value.trim(),
+        recursive: card.querySelector("[data-mount-recursive]").checked,
+        read_only: card.querySelector("[data-mount-readonly]").checked,
+        allow: card.querySelector("[data-mount-allow]").checked
+      })).filter((rule) => rule.source.length > 0)
+    };
     updatedRepo.docker.logic_containers = {};
     content.querySelectorAll("[data-logic-policy]").forEach((card) => {
       const name = card.dataset.logicPolicy;
@@ -180,6 +202,9 @@ export async function renderRepository(repo, navigate) {
 
 function logicCard(name, policy) {
   return '<div class="panel panel-pad" data-logic-policy="' + esc(name) + '"><div class="section-heading"><strong class="mono">' + esc(name) + '</strong><button class="btn btn-danger" data-remove-logic-policy>Remove</button></div><div class="chip-row">' + logicOps.map((op) => '<label class="checkbox-row"><input type="checkbox" data-logic-op="' + op + '" ' + (policy[op] ? "checked" : "") + '><span>' + op + '</span></label>').join("") + '</div><div class="field mt-10"><label>Allowed melt targets</label><input data-logic-targets value="' + esc((policy.allowed_melt_targets || []).join(", ")) + '" placeholder="runner, build-cache"></div></div>';
+}
+function mountCard(rule, index) {
+  return '<div class="panel panel-pad" data-mount-index="' + index + '"><div class="field"><label>Host source path</label><input data-mount-source value="' + esc(rule.source || "") + '" placeholder="/srv/gitrun/shared"></div><div class="chip-row"><label class="checkbox-row"><input type="checkbox" data-mount-recursive ' + (rule.recursive ? "checked" : "") + '><span>Allow descendants</span></label><label class="checkbox-row"><input type="checkbox" data-mount-readonly ' + (rule.read_only !== false ? "checked" : "") + '><span>Read-only only</span></label><label class="checkbox-row"><input type="checkbox" data-mount-allow ' + (rule.allow !== false ? "checked" : "") + '><span>Allow</span></label><button class="btn btn-danger" data-remove-mount>Remove</button></div></div>';
 }
 function openRuleModal(existingRules, repo, navigate) {
   const backdrop = document.createElement("div");

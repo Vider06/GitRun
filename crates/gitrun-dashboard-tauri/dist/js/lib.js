@@ -32,7 +32,7 @@ export function empty(title, detail, action = "") {
   return '<div class="empty-state"><strong>' + esc(title) + '</strong><span>' + esc(detail || "") + '</span>' + action + '</div>';
 }
 export function errorView(error, retryAction = "refresh-view") {
-  return '<div class="notice danger"><div><strong>Could not load this view</strong><span>' + esc(error) + '</span><div style="margin-top:12px"><button class="btn" data-action="' + esc(retryAction) + '">Try again</button></div></div></div>';
+  return '<div class="notice danger" role="alert"><div><strong>Could not load this view</strong><span class="error-detail">' + esc(error) + '</span><div class="error-actions"><button class="btn" data-action="' + esc(retryAction) + '">Try again</button></div></div></div>';
 }
 export function confirmModal(title, detail, confirmLabel = "Confirm", danger = false) {
   return new Promise((resolve) => {

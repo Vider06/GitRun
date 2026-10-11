@@ -202,11 +202,12 @@ if (localStorage.getItem("gitrun-sidebar-collapsed") === "true") document.body.c
       void invoke("get_dashboard_health").then((health) => {
         const footerVersion = document.getElementById("footer-version");
         if (footerVersion) {
-          footerVersion.textContent = "VERSION " + String(health.version || "UNKNOWN").toUpperCase();
+          const version = health.version == null ? "" : String(health.version).trim();
+          footerVersion.textContent = version ? "Version " + version : "Version unavailable";
         }
       }).catch(() => {
         const footerVersion = document.getElementById("footer-version");
-        if (footerVersion) footerVersion.textContent = "VERSION UNKNOWN";
+        if (footerVersion) footerVersion.textContent = "Version unavailable";
       });
     }
   } catch (error) {

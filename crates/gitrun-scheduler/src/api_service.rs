@@ -2001,6 +2001,129 @@ fn reconcile_completed_mounts(
     Ok(())
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod mount_runtime_tests {
+    use super::*;
+    use std::process::Command;
+
+    struct TemporaryContainer(String);
+
+    impl Drop for TemporaryContainer {
+        fn drop(&mut self) {
+            let _ = Command::new("docker")
+                .args(["rm", "-f", self.0.as_str()])
+                .output();
+        }
+    }
+
+    struct TemporaryDirectory(PathBuf);
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn privileged_mount_namespace_bind_unmount_smoke_test() {
+        if std::env::var("GITRUN_ENABLE_PRIVILEGED_MOUNT_TESTS").ok().as_deref() != Some("1") {
+            // The default workspace suite must not mutate the host mount table.
+            return;
+        }
+        assert_eq!(
+            unsafe { libc::geteuid() },
+            0,
+            "the privileged namespace test must run as root"
+        );
+
+        let suffix = format!("{}-{}", std::process::id(), now());
+        let name = format!("gitrun-mount-smoke-{suffix}");
+        let container_guard = TemporaryContainer(name.clone());
+        let source_dir = std::env::temp_dir().join(format!("gitrun-mount-src-{suffix}"));
+        let source_guard = TemporaryDirectory(source_dir.clone());
+        fs::create_dir_all(&source_dir).expect("create host source");
+        fs::write(source_dir.join("payload.txt"), b"mount-payload\n")
+            .expect("write host source file");
+        let target = format!("/workspace/gitrun-mount-{suffix}");
+        let image = std::env::var("GITRUN_MOUNT_TEST_IMAGE")
+            .unwrap_or_else(|_| "alpine:3.21".into());
+        let output = Command::new("docker")
+            .args([
+                "run",
+                "-d",
+                "--name",
+                name.as_str(),
+                image.as_str(),
+                "sh",
+                "-c",
+                &format!("mkdir -p '{target}' && sleep 300"),
+            ])
+            .output()
+            .expect("invoke Docker for disposable mount target");
+        assert!(
+            output.status.success(),
+            "could not start disposable container: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let container_id = docker::container_id(&name)
+            .expect("inspect Docker container")
+            .expect("container ID");
+        let pid = container_pid_for_mount(&container_id).expect("resolve container PID");
+        validate_mount_target(pid, &target, true).expect("validate empty directory target");
+        assert!(mountinfo_by_target(pid, &target)
+            .expect("read mount table before mounting")
+            .is_none());
+
+        let source = open_mount_source(&fs::canonicalize(&source_dir).unwrap())
+            .expect("open canonical host source");
+        execute_mount_namespace(
+            pid,
+            Some(std::os::fd::AsRawFd::as_raw_fd(&source)),
+            &target,
+            MountAction::Bind,
+        )
+        .expect("bind mount into target namespace");
+
+        let before = mountinfo_by_target(pid, &target)
+            .expect("read mount table after bind")
+            .expect("bind mount should appear");
+        execute_mount_namespace(pid, None, &target, MountAction::RemountReadOnly)
+            .expect("make bind mount read-only");
+
+        let read = Command::new("docker")
+            .args(["exec", name.as_str(), "cat", &format!("{target}/payload.txt")])
+            .output()
+            .expect("read mounted file from target container");
+        assert!(read.status.success(), "mounted file is not readable: {}", String::from_utf8_lossy(&read.stderr));
+        assert_eq!(read.stdout, b"mount-payload\n");
+
+        let write = Command::new("docker")
+            .args([
+                "exec",
+                name.as_str(),
+                "sh",
+                "-c",
+                &format!("printf changed > '{target}/payload.txt'"),
+            ])
+            .output()
+            .expect("attempt write to read-only mount");
+        assert!(!write.status.success(), "write unexpectedly succeeded on read-only mount");
+
+        execute_mount_namespace(pid, None, &target, MountAction::Unmount)
+            .expect("unmount from target namespace");
+        assert!(mountinfo_by_id(pid, before.id)
+            .expect("read mount table after unmount")
+            .is_none());
+        assert!(mountinfo_by_target(pid, &target)
+            .expect("verify target no longer mounted")
+            .is_none());
+
+        drop(container_guard);
+        drop(source_guard);
+    }
+}
+
 fn success(stdout: String) -> ExecutionResult {
     ExecutionResult {
         exit_code: 0,

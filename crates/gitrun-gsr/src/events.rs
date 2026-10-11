@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -100,6 +100,30 @@ pub fn read_all(path: &Path) -> Result<Vec<SecurityEvent>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error.into()),
     }
+}
+
+/// Counts critical events at or after a timestamp using a streaming reader.
+/// The whole durable queue is scanned to preserve exact counts, but only one
+/// record is held in memory at a time.
+pub fn count_critical_since(path: &Path, cutoff: u64) -> Result<u32> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+
+    let mut count = 0_u32;
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event: SecurityEvent = serde_json::from_str(&line)?;
+        if event.severity == Severity::Critical && event.timestamp >= cutoff {
+            count = count.saturating_add(1);
+        }
+    }
+    Ok(count)
 }
 
 /// Reads only the newest limit records by seeking from the end of the JSONL
@@ -211,6 +235,18 @@ mod tests {
         assert_eq!(events[0].message, "first");
         assert_eq!(events[1].message, "second");
         assert_eq!(events[1].severity, Severity::Critical);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn count_critical_since_counts_only_matching_events() {
+        let path = temp_path("critical-count");
+        let _ = std::fs::remove_file(&path);
+        emit(&path, &SecurityEvent::new("test", Severity::Info, "ordinary")).unwrap();
+        emit(&path, &SecurityEvent::new("test", Severity::Critical, "critical")).unwrap();
+
+        assert_eq!(count_critical_since(&path, 0).unwrap(), 1);
+        assert_eq!(count_critical_since(&path, u64::MAX).unwrap(), 0);
         let _ = std::fs::remove_file(&path);
     }
 

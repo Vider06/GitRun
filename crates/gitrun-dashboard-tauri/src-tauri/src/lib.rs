@@ -1039,20 +1039,14 @@ fn get_overview() -> Result<OverviewData, String> {
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let cutoff = recent_event_cutoff();
     let mut warnings = Vec::new();
-    let recent_critical_events = match gitrun_gsr::events::read_all(&events_path) {
-        Ok(events) => Some(
-            events
-                .iter()
-                .filter(|event| {
-                    event.severity == gitrun_gsr::Severity::Critical && event.timestamp >= cutoff
-                })
-                .count() as u32,
-        ),
-        Err(error) => {
-            warnings.push(format!("Critical-event queue could not be read: {error}"));
-            None
-        }
-    };
+    let recent_critical_events =
+        match gitrun_gsr::events::count_critical_since(&events_path, cutoff) {
+            Ok(count) => Some(count),
+            Err(error) => {
+                warnings.push(format!("Critical-event queue could not be read: {error}"));
+                None
+            }
+        };
     let gsr_watching = process_name_running("gitrun-gsr");
 
     Ok(OverviewData {

@@ -242,8 +242,16 @@ mod tests {
     fn count_critical_since_counts_only_matching_events() {
         let path = temp_path("critical-count");
         let _ = std::fs::remove_file(&path);
-        emit(&path, &SecurityEvent::new("test", Severity::Info, "ordinary")).unwrap();
-        emit(&path, &SecurityEvent::new("test", Severity::Critical, "critical")).unwrap();
+        emit(
+            &path,
+            &SecurityEvent::new("test", Severity::Info, "ordinary"),
+        )
+        .unwrap();
+        emit(
+            &path,
+            &SecurityEvent::new("test", Severity::Critical, "critical"),
+        )
+        .unwrap();
 
         assert_eq!(count_critical_since(&path, 0).unwrap(), 1);
         assert_eq!(count_critical_since(&path, u64::MAX).unwrap(), 0);

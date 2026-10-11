@@ -73,6 +73,8 @@ impl GitRunApi {
                     | GitRunOperation::Write
                     | GitRunOperation::Execute
                     | GitRunOperation::Melt
+                    | GitRunOperation::Mount
+                    | GitRunOperation::Unmount
             ),
             Self::GitSaveRun => matches!(operation, GitRunOperation::File | GitRunOperation::Logs),
             Self::GitRegisterRun => matches!(operation, GitRunOperation::Register),
@@ -110,6 +112,8 @@ pub fn validate_arguments(
         (GitRunApi::GitVaultRun, GitRunOperation::List) => &[],
         (GitRunApi::GitDockRun, GitRunOperation::Connect)
         | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => &["job"],
+        (GitRunApi::GitDockRun, GitRunOperation::Mount) => &["source", "target", "read_only"],
+        (GitRunApi::GitDockRun, GitRunOperation::Unmount) => &["mount_id"],
         (GitRunApi::GitDockRun, GitRunOperation::Read)
         | (GitRunApi::GitDockRun, GitRunOperation::Write)
         | (GitRunApi::GitDockRun, GitRunOperation::Execute)
@@ -136,6 +140,13 @@ pub fn validate_arguments(
         }
     }
 
+    if (api, operation) == (GitRunApi::GitDockRun, GitRunOperation::Mount) {
+        let mode = arguments.get("read_only").map(String::as_str).unwrap_or("");
+        if mode != "true" && mode != "false" {
+            return Err("read_only must be true or false".into());
+        }
+    }
+
     let allowed: &[&str] = match (api, operation) {
         (GitRunApi::GitVaultRun, GitRunOperation::Read)
         | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
@@ -148,6 +159,8 @@ pub fn validate_arguments(
         (GitRunApi::GitDockRun, GitRunOperation::Write) => &["path", "value"],
         (GitRunApi::GitDockRun, GitRunOperation::Execute) => &["command"],
         (GitRunApi::GitDockRun, GitRunOperation::Melt) => &["target"],
+        (GitRunApi::GitDockRun, GitRunOperation::Mount) => &["source", "target", "read_only"],
+        (GitRunApi::GitDockRun, GitRunOperation::Unmount) => &["mount_id"],
         (GitRunApi::GitSaveRun, GitRunOperation::File) => &["path"],
         (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &["namefile"],
         (GitRunApi::GitRegisterRun, GitRunOperation::Register) => &["name", "entry", "permanent"],
@@ -182,6 +195,8 @@ pub enum GitRunOperation {
     Disconnect,
     Execute,
     Melt,
+    Mount,
+    Unmount,
     File,
     Logs,
     Register,
@@ -204,6 +219,8 @@ impl GitRunOperation {
             Self::Disconnect => "disconnect",
             Self::Execute => "execute",
             Self::Melt => "melt",
+            Self::Mount => "mount",
+            Self::Unmount => "unmount",
             Self::File => "file",
             Self::Logs => "logs",
             Self::Register => "register",

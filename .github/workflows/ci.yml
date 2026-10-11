@@ -1872,7 +1872,7 @@ jobs:
             ci_warn "GitDockRun privileged mount integration test skipped: this runner cannot run the test as root."
             exit 0
           fi
-          ci_run "Build scheduler mount integration test" cargo test --locked -p gitrun-scheduler --no-run
+          ci_run "Build scheduler mount integration test" cargo test --locked -p gitrun-scheduler --lib --no-run
           test_bin="$(find "${CARGO_TARGET_DIR:-target}/debug/deps" -maxdepth 1 -type f -executable -name 'gitrun_scheduler-*' -print -quit)"
           if [ -z "$test_bin" ]; then
             ci_err "Could not locate the gitrun-scheduler unit test binary"

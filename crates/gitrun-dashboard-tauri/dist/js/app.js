@@ -32,11 +32,26 @@ function setConnection(kind, label, detail) {
 }
 function setNavigation(view) {
   currentView = view;
-  document.querySelectorAll("[data-view]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === view || (view.startsWith("repo:") && button.dataset.view === view));
+  document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
+    const active = item.dataset.view === view;
+    item.classList.toggle("active", active);
+    if (active) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
   });
   const label = view.startsWith("repo:") ? view.slice(5) : (names[view] || view);
   document.getElementById("page-crumb").textContent = label;
+}
+
+function setSidebarCollapsed(collapsed) {
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+  const toggle = document.getElementById("toggle-sidebar");
+  if (!toggle) return;
+  const expanded = !collapsed;
+  const label = expanded ? "Collapse sidebar" : "Expand sidebar";
+  toggle.setAttribute("aria-expanded", String(expanded));
+  toggle.setAttribute("aria-label", label);
+  toggle.title = label;
+  toggle.textContent = expanded ? "⇤" : "⇥";
 }
 async function loadRepoNav() {
   try {
@@ -171,8 +186,9 @@ document.getElementById("refresh-repositories").addEventListener("click", async 
   toast("Repository list refreshed.");
 });
 document.getElementById("toggle-sidebar").addEventListener("click", () => {
-  document.body.classList.toggle("sidebar-collapsed");
-  localStorage.setItem("gitrun-sidebar-collapsed", document.body.classList.contains("sidebar-collapsed") ? "true" : "false");
+  const collapsed = !document.body.classList.contains("sidebar-collapsed");
+  setSidebarCollapsed(collapsed);
+  localStorage.setItem("gitrun-sidebar-collapsed", String(collapsed));
 });
 window.addEventListener("gitrun:navigate", (event) => navigate(event.detail));
 window.addEventListener("gitrun:mascot-state", (event) => setCatExpression(event.detail));
@@ -187,7 +203,7 @@ window.addEventListener("gitrun:setup-required", () => {
 });
 
 applySavedPreferences();
-if (localStorage.getItem("gitrun-sidebar-collapsed") === "true") document.body.classList.add("sidebar-collapsed");
+setSidebarCollapsed(localStorage.getItem("gitrun-sidebar-collapsed") === "true");
 (async () => {
   try {
     const firstRun = await invoke("is_first_run");

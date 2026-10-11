@@ -2026,7 +2026,11 @@ mod mount_runtime_tests {
 
     #[test]
     fn privileged_mount_namespace_bind_unmount_smoke_test() {
-        if std::env::var("GITRUN_ENABLE_PRIVILEGED_MOUNT_TESTS").ok().as_deref() != Some("1") {
+        if std::env::var("GITRUN_ENABLE_PRIVILEGED_MOUNT_TESTS")
+            .ok()
+            .as_deref()
+            != Some("1")
+        {
             // The default workspace suite must not mutate the host mount table.
             return;
         }
@@ -2045,8 +2049,8 @@ mod mount_runtime_tests {
         fs::write(source_dir.join("payload.txt"), b"mount-payload\n")
             .expect("write host source file");
         let target = format!("/workspace/gitrun-mount-{suffix}");
-        let image = std::env::var("GITRUN_MOUNT_TEST_IMAGE")
-            .unwrap_or_else(|_| "alpine:3.21".into());
+        let image =
+            std::env::var("GITRUN_MOUNT_TEST_IMAGE").unwrap_or_else(|_| "alpine:3.21".into());
         let output = Command::new("docker")
             .args([
                 "run",
@@ -2092,10 +2096,19 @@ mod mount_runtime_tests {
             .expect("make bind mount read-only");
 
         let read = Command::new("docker")
-            .args(["exec", name.as_str(), "cat", &format!("{target}/payload.txt")])
+            .args([
+                "exec",
+                name.as_str(),
+                "cat",
+                &format!("{target}/payload.txt"),
+            ])
             .output()
             .expect("read mounted file from target container");
-        assert!(read.status.success(), "mounted file is not readable: {}", String::from_utf8_lossy(&read.stderr));
+        assert!(
+            read.status.success(),
+            "mounted file is not readable: {}",
+            String::from_utf8_lossy(&read.stderr)
+        );
         assert_eq!(read.stdout, b"mount-payload\n");
 
         let write = Command::new("docker")
@@ -2108,7 +2121,10 @@ mod mount_runtime_tests {
             ])
             .output()
             .expect("attempt write to read-only mount");
-        assert!(!write.status.success(), "write unexpectedly succeeded on read-only mount");
+        assert!(
+            !write.status.success(),
+            "write unexpectedly succeeded on read-only mount"
+        );
 
         execute_mount_namespace(pid, None, &target, MountAction::Unmount)
             .expect("unmount from target namespace");

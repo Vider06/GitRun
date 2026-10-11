@@ -51,7 +51,7 @@ GitDockRun --mount HOST_SOURCE --target CONTAINER_PATH --docked runner [--read-o
 GitDockRun --unmount MOUNT_ID --docked runner
 ```
 
-`connect` records a persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. The special resource alias `runner` resolves to the authenticated runner's own binding; it is not an arbitrary Docker selector.
+`connect` records a persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. The special resource alias `runner` resolves to the authenticated runner's own binding; it is not an arbitrary Docker selector. Use `--disconnect --job "$GITHUB_JOB"` during the active job to drop the binding. Disconnect does not kill the runner that is still executing the workflow; normal scheduler lifecycle cleanup owns that container after the job exits.
 
 Read/write/execute/melt/mount/unmount operations must match an authorized binding. The host revalidates the immutable Docker ID before privileged operations. `melt` is a filesystem transfer into a target followed by source-container removal; it is not a live mount.
 

@@ -1780,8 +1780,8 @@ fn execute_mount_namespace(
         .strip_prefix('/')
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "mount target must be a non-root absolute path".to_owned())?;
-    let target_relative_c = CString::new(target_relative)
-        .map_err(|_| "mount target contains a NUL byte".to_owned())?;
+    let target_relative_c =
+        CString::new(target_relative).map_err(|_| "mount target contains a NUL byte".to_owned())?;
     let source_c = source_fd
         .map(|fd| CString::new(format!("/proc/self/fd/{fd}")))
         .transpose()

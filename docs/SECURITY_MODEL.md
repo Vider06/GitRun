@@ -33,6 +33,14 @@ GitDockRun adds an exact persistent binding over repository, workflow run, job, 
 
 A successful request therefore requires authenticated transport identity **and** authoritative workload binding; policy alone is never treated as proof of identity.
 
+## GitDockRun live host mounts
+
+GitDockRun's `mount` and `unmount` operations are a separate, privileged capability and are implemented only for a local Linux Docker daemon. A mount is accepted only if the global GitDockRun API policy, repository container allowlist, target Logic Container's `mountable` capability and repository host-source `MountPolicy` all allow it. The host source is canonicalized and opened before the namespace operation; explicit matching deny rules win. The default CLI mode is read-only, and a policy marked `read_only: true` cannot be used for a writable mount.
+
+The runtime pins the target using the immutable Docker container ID, checks the host PID against the container cgroup, validates a restricted existing target path, and performs the bind/remount/unmount inside that container's mount namespace. Mount leases are stored in a private persistent registry before the privileged side effect, then updated with the observed kernel mount ID. `unmount` requires the lease ID to match the repository, run, job, requester and container identity. The scheduler reconciles leases when jobs complete; the integration test exercises a disposable real container, a read-only bind, and unmount.
+
+This is not a blanket filesystem sandbox: host paths are highly sensitive, write mounts permit host-file modification, and a runner with direct Docker socket access can exercise separate host-level authority. The helper requires host privileges and must be validated on the deployment's Linux kernel/runtime. Windows, macOS, and remote/VM Docker daemons are not supported by this live-mount implementation and must fail closed. Mount target paths must exist before the request; directory targets must be empty to avoid hiding existing content.
+
 ## Filesystem isolation
 
 Linux runner containers mount their root filesystem read-only by default. Writable state is explicitly provided through:

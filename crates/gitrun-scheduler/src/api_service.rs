@@ -1060,21 +1060,12 @@ impl ApiExecutionBackend {
             ));
         }
 
-        if binding.dynamic {
-            let job_info = self
-                .github
-                .find_workflow_job(&request.repository, run_id, job)
-                .map_err(|error| failed(error.to_string()))?
-                .ok_or_else(|| failed(format!("workflow job {job} could not be verified")))?;
-            let completed =
-                job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
-            if !completed {
-                return Err(failed(
-                    "GitDockRun --disconnect cannot remove a Dynamic container while its source job is running",
-                ));
-            }
-        }
-
+        // The API service has already verified that this invocation comes
+        // from the active job. Disconnect must therefore drop the binding,
+        // not try to delete that job's live runner (or require an impossible
+        // post-completion API call). Scheduler cleanup owns the dynamic
+        // container lifecycle after the job exits; mount leases are reconciled
+        // independently from the mount registry.
         let binding = registry
             .remove(&request.repository, run_id, job)
             .ok_or_else(|| failed(format!("no GitDockRun binding exists for job {job}")))?;
@@ -1082,9 +1073,7 @@ impl ApiExecutionBackend {
             .save(&self.state_dir)
             .map_err(|error| failed(error.to_string()))?;
 
-        if binding.dynamic {
-            let _ = docker::remove_container(&binding.container_id);
-        } else if docker_container_has_marker(&binding.container_id)? {
+        if !binding.dynamic && docker_container_has_marker(&binding.container_id)? {
             restore_runner(&binding.container_id)?;
         }
 

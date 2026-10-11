@@ -476,7 +476,8 @@ fn request_id(caller: &VerifiedCaller, api: GitRunApi, operation: GitRunOperatio
 mod tests {
     use super::*;
     use gitrun_core::{
-        ApiPolicy, DockerPolicy, GitRunOperation, LogicContainerPolicy, RepositorySettings,
+        ApiPolicy, DockerPolicy, GitRunOperation, LogicContainerPolicy, MountPolicy, MountRule,
+        RepositorySettings,
     };
 
     fn settings_for_dock() -> GitRunSettings {
@@ -594,6 +595,95 @@ mod tests {
             Some(&policy),
         );
         assert!(matches!(result, Err(ApiGateError::CommandDenied { .. })));
+    }
+
+    fn enable_mount_operations(settings: &mut GitRunSettings) {
+        let mut policy = settings.global.get(GitRunApi::GitDockRun);
+        policy.allowed_operations.insert(GitRunOperation::Mount);
+        policy.allowed_operations.insert(GitRunOperation::Unmount);
+        settings.global.set(GitRunApi::GitDockRun, policy);
+    }
+
+    #[test]
+    fn mount_is_denied_when_logic_container_is_not_mountable() {
+        let mut settings = settings_for_dock();
+        enable_mount_operations(&mut settings);
+        let dir = std::env::temp_dir().join(format!("gitrun-gate-mount-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("payload.txt");
+        std::fs::write(&source, "safe").unwrap();
+        let repo = settings.repositories.get_mut("owner/repo").unwrap();
+        repo.docker.allowed_mounts = MountPolicy {
+            enabled: true,
+            rules: vec![MountRule {
+                source: dir.to_string_lossy().into_owned(),
+                recursive: true,
+                read_only: true,
+                allow: true,
+            }],
+        };
+        // settings_for_dock deliberately leaves mountable=false.
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let result = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Mount,
+            Some("cache"),
+            BTreeMap::from([
+                ("source".into(), source.to_string_lossy().into_owned()),
+                ("target".into(), "/workspace/shared".into()),
+                ("read_only".into(), "true".into()),
+            ]),
+            None,
+        );
+        assert!(matches!(result, Err(ApiGateError::PolicyDenied { .. })));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mount_enforces_enabled_allowlist_and_read_only_mode() {
+        let mut settings = settings_for_dock();
+        enable_mount_operations(&mut settings);
+        let dir = std::env::temp_dir().join(format!("gitrun-gate-mount-policy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("payload.txt");
+        std::fs::write(&source, "safe").unwrap();
+        let repo = settings.repositories.get_mut("owner/repo").unwrap();
+        repo.docker.logic_containers.get_mut("cache").unwrap().mountable = true;
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+
+        let args = |read_only: &str| BTreeMap::from([
+            ("source".into(), source.to_string_lossy().into_owned()),
+            ("target".into(), "/workspace/shared".into()),
+            ("read_only".into(), read_only.into()),
+        ]);
+        let disabled = authorize(
+            &settings, &caller, GitRunApi::GitDockRun, GitRunOperation::Mount,
+            Some("cache"), args("true"), None,
+        );
+        assert!(matches!(disabled, Err(ApiGateError::PolicyDenied { .. })));
+
+        repo.docker.allowed_mounts = MountPolicy {
+            enabled: true,
+            rules: vec![MountRule {
+                source: dir.to_string_lossy().into_owned(),
+                recursive: true,
+                read_only: true,
+                allow: true,
+            }],
+        };
+        let writable = authorize(
+            &settings, &caller, GitRunApi::GitDockRun, GitRunOperation::Mount,
+            Some("cache"), args("false"), None,
+        );
+        assert!(matches!(writable, Err(ApiGateError::PolicyDenied { .. })));
+        let read_only = authorize(
+            &settings, &caller, GitRunApi::GitDockRun, GitRunOperation::Mount,
+            Some("cache"), args("true"), None,
+        );
+        assert!(read_only.is_ok());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -149,7 +149,7 @@ The API commands are intentionally explicit:
 | API | Purpose |
 |---|---|
 | `GitVaultRun` | Scoped secret read/write/list/exists/delete |
-| `GitDockRun` | Connect to a job's runner, inspect/write/execute/detach/melt a docked container |
+| `GitDockRun` | Connect to a job runner; read/write/execute/melt docked containers; mount/unmount approved host paths on local Linux Docker |
 | `GitSaveRun` | Save a workflow file or retrieve named logs |
 | `GitRegisterRun` | Register a workflow path for the current run |
 | `GitInstallRun` | Install/remove/update an allowed package |

@@ -1822,6 +1822,19 @@ fn execute_mount_namespace(
                         {
                             libc::_exit(45);
                         }
+                        // Do not propagate this bind into peer mount namespaces
+                        // even if the host source has shared propagation flags.
+                        if libc::mount(
+                            std::ptr::null(),
+                            target_c.as_ptr(),
+                            std::ptr::null(),
+                            libc::MS_PRIVATE,
+                            std::ptr::null(),
+                        ) != 0
+                        {
+                            let _ = libc::umount2(target_c.as_ptr(), 0);
+                            libc::_exit(50);
+                        }
                         libc::_exit(0);
                     }
                     MountAction::RemountReadOnly => {

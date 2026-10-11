@@ -29,7 +29,7 @@ export async function renderRepository(repo, navigate) {
     return;
   }
   if (generation !== window.__gitrunNavigationGeneration) return;
-  const repoSettings = (settings.repositories || {})[repo] || {};
+  let repoSettings = (settings.repositories || {})[repo] || {};
   const docker = repoSettings.docker || detail.docker_policy || {};
   const logic = docker.logic_containers || {};
   const overrides = repoSettings.api_overrides || {};
@@ -167,6 +167,8 @@ export async function renderRepository(repo, navigate) {
     status.textContent = "Validating and saving…";
     try {
       await invoke("save_dashboard_settings",{updated:config,settings:next,confirmSocketOptOut,expectedConfig:config,expectedSettings:settings});
+      settings = next;
+      repoSettings = (settings.repositories || {})[repo] || {};
       toast("Repository policy saved.");
       status.textContent = "Saved successfully · " + new Date().toLocaleTimeString();
     } catch (error) {

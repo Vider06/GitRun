@@ -65,6 +65,7 @@ export async function renderSecurity() {
     }
     try {
       await invoke("save_dashboard_settings", { updated: config, settings: nextSettings, confirmSocketOptOut, expectedConfig: config, expectedSettings: settings });
+      settings = nextSettings;
       toast("Global API policy saved.");
     } catch (error) { toast("Could not save API policy: " + error, "error"); }
   });
@@ -91,7 +92,7 @@ export async function renderSecurity() {
       gsr_violation_action: document.getElementById("sec-violation-action").value,
       gsr_workflow_validation_enabled: document.getElementById("sec-workflow-validation").checked
     };
-    try { await invoke("save_config",{updated:next}); toast("Runtime security policy saved. Active enforcement remains a separate verification."); }
+    try { await invoke("save_config",{updated:next}); config = next; toast("Runtime security policy saved. Active enforcement remains a separate verification."); }
     catch (error) { toast("Could not save runtime policy: " + error,"error"); }
   });
   document.getElementById("save-danger-settings").addEventListener("click", async () => {
@@ -100,7 +101,7 @@ export async function renderSecurity() {
       const ok = await confirmModal("Disable Docker socket hardening?", "This weakens the host boundary for socket-enabled runners. The unsafe-runner gate must also be enabled. Continue only if you accept this risk.", "Disable hardening", true);
       if (!ok) return;
     }
-    try { await invoke("save_config", {updated: next}); toast("Security configuration saved. Runtime enforcement remains unverified."); }
+    try { await invoke("save_config", {updated: next}); config = next; toast("Security configuration saved. Runtime enforcement remains unverified."); }
     catch (error) { toast("Save failed: " + error, "error"); }
   });
 }

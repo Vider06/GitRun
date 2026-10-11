@@ -1143,10 +1143,10 @@ impl ApiExecutionBackend {
         run_docker_command(container.as_str(), &["sh", "-c", command])
     }
 
-    fn require_dock_binding(
+    fn require_dock_binding_record(
         &self,
         request: &AuthorizedOperation,
-    ) -> Result<String, ExecutionError> {
+    ) -> Result<DockBinding, ExecutionError> {
         let requested_container = request
             .resource
             .as_deref()
@@ -1157,17 +1157,27 @@ impl ApiExecutionBackend {
         }
         let registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
-        let binding = registry
-            .binding_for_authorized_container(
+        let binding = if requested_container == "runner" {
+            registry.bindings.iter().find(|binding| {
+                binding.repository == request.repository
+                    && binding.run_id == run_id
+                    && binding.job == request.job
+                    && binding.requester_runner == self.caller.runner
+                    && binding.container == self.caller.runner
+                    && binding.container_id == self.caller_container_id
+            })
+        } else {
+            registry.binding_for_authorized_container(
                 &request.repository,
                 run_id,
                 &request.job,
                 &self.caller.runner,
                 requested_container,
             )
-            .ok_or_else(|| {
-                failed("GitDockRun resource is not bound to this runner/workflow/job")
-            })?;
+        }
+        .ok_or_else(|| {
+            failed("GitDockRun resource is not bound to this runner/workflow/job")
+        })?;
 
         if binding.container_id.is_empty() {
             return Err(failed(
@@ -1184,7 +1194,15 @@ impl ApiExecutionBackend {
             ));
         }
 
-        Ok(binding.container_id.clone())
+        Ok(binding.clone())
+    }
+
+    fn require_dock_binding(
+        &self,
+        request: &AuthorizedOperation,
+    ) -> Result<String, ExecutionError> {
+        self.require_dock_binding_record(request)
+            .map(|binding| binding.container_id)
     }
 
     fn dock_mount(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {

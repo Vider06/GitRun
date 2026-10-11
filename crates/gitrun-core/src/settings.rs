@@ -305,10 +305,12 @@ impl MountPolicy {
             return Err("GitDockRun host mounts are disabled for this repository".into());
         }
         if !source.is_absolute()
-            || source.components().any(|part| matches!(
-                part,
-                std::path::Component::ParentDir | std::path::Component::CurDir
-            ))
+            || source.components().any(|part| {
+                matches!(
+                    part,
+                    std::path::Component::ParentDir | std::path::Component::CurDir
+                )
+            })
         {
             return Err("mount source must be a clean absolute path".into());
         }
@@ -336,7 +338,9 @@ impl MountPolicy {
             }
         }
 
-        let Some((rule, _)) = matches.into_iter().max_by_key(|(_, root)| root.components().count())
+        let Some((rule, _)) = matches
+            .into_iter()
+            .max_by_key(|(_, root)| root.components().count())
         else {
             return Err("mount source does not match an allowed host-path rule".into());
         };
@@ -432,10 +436,14 @@ mod tests {
             }],
         };
         assert_eq!(
-            policy.authorize_source(&dir.join("nested/file.txt"), true).unwrap(),
+            policy
+                .authorize_source(&dir.join("nested/file.txt"), true)
+                .unwrap(),
             fs::canonicalize(dir.join("nested/file.txt")).unwrap()
         );
-        assert!(policy.authorize_source(&dir.join("nested/file.txt"), false).is_err());
+        assert!(policy
+            .authorize_source(&dir.join("nested/file.txt"), false)
+            .is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -462,13 +470,16 @@ mod tests {
                 },
             ],
         };
-        assert!(policy.authorize_source(&dir.join("private/file.txt"), true).is_err());
+        assert!(policy
+            .authorize_source(&dir.join("private/file.txt"), true)
+            .is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn mount_policy_rejects_symlink_escape_outside_allowed_tree() {
-        let base = std::env::temp_dir().join(format!("gitrun-mount-symlink-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("gitrun-mount-symlink-{}", std::process::id()));
         let allowed = base.join("allowed");
         let outside = base.join("outside");
         let _ = fs::remove_dir_all(&base);
@@ -487,7 +498,9 @@ mod tests {
             }],
         };
         #[cfg(unix)]
-        assert!(policy.authorize_source(&allowed.join("escape/secret.txt"), true).is_err());
+        assert!(policy
+            .authorize_source(&allowed.join("escape/secret.txt"), true)
+            .is_err());
         let _ = fs::remove_dir_all(&base);
     }
 

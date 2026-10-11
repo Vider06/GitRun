@@ -73,6 +73,7 @@ struct MountRegistry {
     mounts: Vec<MountRecord>,
 }
 
+#[cfg(target_os = "linux")]
 impl MountRegistry {
     fn path(state_dir: &Path) -> PathBuf {
         state_dir.join(MOUNT_REGISTRY_FILE)
@@ -1609,11 +1610,6 @@ fn open_mount_source(source: &Path) -> Result<fs::File, String> {
     Ok(handle)
 }
 
-#[cfg(not(target_os = "linux"))]
-fn open_mount_source(_source: &Path) -> Result<fs::File, String> {
-    Err("dynamic GitDockRun mounts are currently supported only on Linux".into())
-}
-
 #[cfg(target_os = "linux")]
 fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
     if container_id.len() != 64 || !container_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -1646,11 +1642,6 @@ fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
         return Err("mount target PID no longer belongs to the bound Docker container".into());
     }
     Ok(pid)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn container_pid_for_mount(_container_id: &str) -> Result<i32, String> {
-    Err("dynamic GitDockRun mounts are currently supported only on Linux".into())
 }
 
 #[cfg(target_os = "linux")]
@@ -1910,16 +1901,6 @@ fn execute_mount_namespace(
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
-fn execute_mount_namespace(
-    _pid: i32,
-    _source_fd: Option<i32>,
-    _target: &str,
-    _action: MountAction,
-) -> Result<(), String> {
-    Err("dynamic GitDockRun mounts are currently supported only on Linux".into())
-}
-
 #[cfg(target_os = "linux")]
 fn reconcile_completed_mounts(
     client: &GitHubClient,
@@ -1937,12 +1918,11 @@ fn reconcile_completed_mounts(
         .iter()
         .filter(|record| record.repository == repository)
     {
-        let job = match client.find_workflow_job(repository, record.run_id, &record.job) {
-            Ok(Some(job)) => job,
-            Ok(None) => {
-                remove_ids.push(record.id.clone());
-                continue;
+        let job_completed = match client.find_workflow_job(repository, record.run_id, &record.job) {
+            Ok(Some(job)) => {
+                !(job.status.eq_ignore_ascii_case("in_progress") && job.conclusion.is_none())
             }
+            Ok(None) => true,
             Err(error) => {
                 eprintln!(
                     "gitrun-api: cannot verify job {} for mount {}: {error}",
@@ -1951,7 +1931,7 @@ fn reconcile_completed_mounts(
                 continue;
             }
         };
-        if job.status.eq_ignore_ascii_case("in_progress") && job.conclusion.is_none() {
+        if !job_completed {
             continue;
         }
 

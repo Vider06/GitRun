@@ -938,6 +938,8 @@ impl ApiExecutionBackend {
             GitRunOperation::Write => self.dock_write(request),
             GitRunOperation::Execute => self.dock_execute(request),
             GitRunOperation::Melt => self.dock_melt(request),
+            GitRunOperation::Mount => self.dock_mount(request),
+            GitRunOperation::Unmount => self.dock_unmount(request),
             _ => Err(failed("unsupported GitDockRun operation")),
         }
     }
@@ -1183,6 +1185,216 @@ impl ApiExecutionBackend {
         }
 
         Ok(binding.container_id.clone())
+    }
+
+    fn dock_mount(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        let _guard = GITDOCK_MOUNT_LOCK
+            .lock()
+            .map_err(|_| failed("GitDockRun mount registry lock is poisoned"))?;
+        let binding = self.require_dock_binding_record(request)?;
+        let source = arg(request, "source")?;
+        let target = arg(request, "target")?;
+        let read_only = match arg(request, "read_only")? {
+            "true" => true,
+            "false" => false,
+            _ => return Err(failed("read_only must be true or false")),
+        };
+
+        let settings = GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(
+            &self.state_dir,
+        ))
+        .map_err(|error| failed(error.to_string()))?;
+        let mount_policy = settings
+            .effective_for_repository(&request.repository)
+            .docker
+            .allowed_mounts;
+        let canonical_source = mount_policy
+            .authorize_source(Path::new(source), read_only)
+            .map_err(failed)?;
+        let source_handle = open_mount_source(&canonical_source).map_err(failed)?;
+        let source_metadata = source_handle
+            .metadata()
+            .map_err(|error| failed(format!("inspect mount source: {error}")))?;
+        if !source_metadata.is_file() && !source_metadata.is_dir() {
+            return Err(failed("only regular files and directories can be mounted"));
+        }
+
+        let pid = container_pid_for_mount(&binding.container_id).map_err(failed)?;
+        validate_mount_target(pid, target, source_metadata.is_dir()).map_err(failed)?;
+        let current_id = docker::container_id(&binding.container)
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed("GitDockRun target container disappeared"))?;
+        if current_id != binding.container_id || current_id != self.caller_container_id {
+            return Err(failed("GitDockRun target container identity changed before mount"));
+        }
+        if mountinfo_by_target(pid, target).map_err(failed)?.is_some() {
+            return Err(failed("mount target is already a mount point"));
+        }
+
+        let mut registry = MountRegistry::load(&self.state_dir).map_err(failed)?;
+        let mut changed_stale = false;
+        let existing = registry.mounts.clone();
+        for record in existing.iter().filter(|record| {
+            record.container_id == binding.container_id && record.target == target
+        }) {
+            let mounted = match record.kernel_mount_id {
+                Some(id) => mountinfo_by_id(pid, id).map_err(failed)?,
+                None => mountinfo_by_target(pid, target).map_err(failed)?,
+            };
+            if mounted.is_some() {
+                return Err(failed("a GitDockRun mount is already registered at this target"));
+            }
+            registry.mounts.retain(|item| item.id != record.id);
+            changed_stale = true;
+        }
+        if changed_stale {
+            registry.save(&self.state_dir).map_err(failed)?;
+        }
+
+        let mount_id = new_mount_id().map_err(failed)?;
+        let mut record = MountRecord {
+            id: mount_id.clone(),
+            repository: request.repository.clone(),
+            run_id: request_run_id(request),
+            job: request.job.clone(),
+            requester_runner: self.caller.runner.clone(),
+            container: binding.container.clone(),
+            container_id: binding.container_id.clone(),
+            source: canonical_source.to_string_lossy().into_owned(),
+            target: target.to_owned(),
+            read_only,
+            kernel_mount_id: None,
+            state: "preparing".into(),
+            created_at: now(),
+        };
+        registry.mounts.push(record.clone());
+        // Persist intent before the privileged side effect so recovery can
+        // identify and roll back a partially-created mount.
+        registry.save(&self.state_dir).map_err(failed)?;
+
+        if let Err(error) = execute_mount_namespace(
+            pid,
+            Some(source_handle.as_raw_fd()),
+            target,
+            MountAction::Bind { read_only: false },
+        ) {
+            if mountinfo_by_target(pid, target).ok().flatten().is_some() {
+                if execute_mount_namespace(pid, None, target, MountAction::Unmount).is_err() {
+                    record.state = "cleanup-required".into();
+                    registry.mounts.retain(|item| item.id != mount_id);
+                    registry.mounts.push(record);
+                    let _ = registry.save(&self.state_dir);
+                    return Err(failed(format!(
+                        "mount failed and rollback failed; mount {mount_id} is registered for cleanup: {error}"
+                    )));
+                }
+            }
+            registry.mounts.retain(|item| item.id != mount_id);
+            let _ = registry.save(&self.state_dir);
+            return Err(failed(error));
+        }
+
+        if read_only {
+            if let Err(error) = execute_mount_namespace(
+                pid,
+                None,
+                target,
+                MountAction::RemountReadOnly,
+            ) {
+                if execute_mount_namespace(pid, None, target, MountAction::Unmount).is_err() {
+                    record.state = "cleanup-required".into();
+                    record.kernel_mount_id = mountinfo_by_target(pid, target)
+                        .ok()
+                        .flatten()
+                        .map(|mount| mount.id);
+                    registry.mounts.retain(|item| item.id != mount_id);
+                    registry.mounts.push(record);
+                    let _ = registry.save(&self.state_dir);
+                    return Err(failed(format!(
+                        "read-only remount failed and rollback failed; mount {mount_id} is registered for cleanup: {error}"
+                    )));
+                }
+                registry.mounts.retain(|item| item.id != mount_id);
+                let _ = registry.save(&self.state_dir);
+                return Err(failed(format!("could not enforce read-only mount: {error}")));
+            }
+        }
+
+        let mount_info = mountinfo_by_target(pid, target)
+            .map_err(failed)?
+            .ok_or_else(|| failed("mount command returned success but no matching mount appeared"))?;
+        record.kernel_mount_id = Some(mount_info.id);
+        record.state = "mounted".into();
+        registry.mounts.retain(|item| item.id != mount_id);
+        registry.mounts.push(record);
+        registry.save(&self.state_dir).map_err(|error| {
+            failed(format!(
+                "mount succeeded but registry update failed; mount {mount_id} remains in the preparing record: {error}"
+            ))
+        })?;
+
+        Ok(success(format!(
+            "GitDockRun MOUNT: PASS\nmount_id={mount_id}\ncontainer={}\nsource={}\ntarget={}\nread_only={}\n",
+            binding.container,
+            canonical_source.display(),
+            target,
+            read_only
+        )))
+    }
+
+    fn dock_unmount(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        let _guard = GITDOCK_MOUNT_LOCK
+            .lock()
+            .map_err(|_| failed("GitDockRun mount registry lock is poisoned"))?;
+        let binding = self.require_dock_binding_record(request)?;
+        let mount_id = arg(request, "mount_id")?;
+        let mut registry = MountRegistry::load(&self.state_dir).map_err(failed)?;
+        let Some(index) = registry.mounts.iter().position(|record| {
+            record.id == mount_id
+                && record.repository == request.repository
+                && record.run_id == request_run_id(request)
+                && record.job == request.job
+                && record.requester_runner == self.caller.runner
+                && record.container_id == binding.container_id
+        }) else {
+            return Err(failed("mount ID is not registered to this workflow and container"));
+        };
+        let record = registry.mounts[index].clone();
+
+        let current_id = docker::container_id(&binding.container)
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed("GitDockRun target container disappeared"))?;
+        if current_id != record.container_id || current_id != self.caller_container_id {
+            return Err(failed("GitDockRun target container identity changed before unmount"));
+        }
+        let pid = container_pid_for_mount(&record.container_id).map_err(failed)?;
+        let mount_info = match record.kernel_mount_id {
+            Some(id) => mountinfo_by_id(pid, id).map_err(failed)?,
+            None => mountinfo_by_target(pid, &record.target).map_err(failed)?,
+        };
+        if let Some(mount_info) = mount_info {
+            execute_mount_namespace(
+                pid,
+                None,
+                &mount_info.target,
+                MountAction::Unmount,
+            )
+            .map_err(failed)?;
+            let still_present = match record.kernel_mount_id {
+                Some(id) => mountinfo_by_id(pid, id).map_err(failed)?.is_some(),
+                None => mountinfo_by_target(pid, &record.target).map_err(failed)?.is_some(),
+            };
+            if still_present {
+                return Err(failed("kernel still reports the GitDockRun mount after unmount"));
+            }
+        }
+
+        registry.mounts.retain(|item| item.id != mount_id);
+        registry.save(&self.state_dir).map_err(failed)?;
+        Ok(success(format!(
+            "GitDockRun UNMOUNT: PASS\nmount_id={mount_id}\ntarget={}\n",
+            record.target
+        )))
     }
 
     fn dock_melt(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {

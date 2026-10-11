@@ -1547,6 +1547,14 @@ struct MountInfo {
 }
 
 #[cfg(target_os = "linux")]
+#[repr(C)]
+struct OpenHow {
+    flags: u64,
+    mode: u64,
+    resolve: u64,
+}
+
+#[cfg(target_os = "linux")]
 fn new_mount_id() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     fs::File::open("/dev/urandom")
@@ -1768,8 +1776,12 @@ fn execute_mount_namespace(
     let pid_namespace = fs::File::open(format!("/proc/{pid}/ns/pid"))
         .map_err(|error| format!("open target PID namespace: {error}"))?;
     let container_root = open_path_handle(&PathBuf::from(format!("/proc/{pid}/root")), false)?;
-    let target_c =
-        CString::new(target).map_err(|_| "mount target contains a NUL byte".to_owned())?;
+    let target_relative = target
+        .strip_prefix('/')
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "mount target must be a non-root absolute path".to_owned())?;
+    let target_relative_c = CString::new(target_relative)
+        .map_err(|_| "mount target contains a NUL byte".to_owned())?;
     let source_c = source_fd
         .map(|fd| CString::new(format!("/proc/self/fd/{fd}")))
         .transpose()
@@ -1810,11 +1822,78 @@ fn execute_mount_namespace(
                 {
                     libc::_exit(44);
                 }
+
+                // Mount changes must remain private to the runner namespace.
+                // This is performed before resolving the target so a bind
+                // cannot propagate to a peer namespace.
+                if matches!(action, MountAction::Bind)
+                    && libc::mount(
+                        std::ptr::null(),
+                        b"/\0".as_ptr().cast(),
+                        std::ptr::null(),
+                        libc::MS_REC | libc::MS_PRIVATE,
+                        std::ptr::null(),
+                    ) != 0
+                {
+                    libc::_exit(50);
+                }
+
+                let root_fd = libc::open(
+                    b"/\0".as_ptr().cast(),
+                    libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                );
+                if root_fd < 0 {
+                    libc::_exit(51);
+                }
+                let how = OpenHow {
+                    flags: (libc::O_PATH | libc::O_CLOEXEC | libc::O_NOFOLLOW) as u64,
+                    mode: 0,
+                    // RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH.
+                    resolve: 0x02 | 0x04 | 0x08,
+                };
+                let target_fd = libc::syscall(
+                    libc::SYS_openat2,
+                    root_fd,
+                    target_relative_c.as_ptr(),
+                    &how as *const OpenHow,
+                    std::mem::size_of::<OpenHow>(),
+                ) as libc::c_int;
+                let _ = libc::close(root_fd);
+                if target_fd < 0 {
+                    // Includes kernels without openat2: fail closed instead of
+                    // falling back to raceable string-path resolution.
+                    libc::_exit(52);
+                }
+
+                let mut target_stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+                if libc::fstat(target_fd, target_stat.as_mut_ptr()) != 0 {
+                    libc::_exit(53);
+                }
+                let target_stat = target_stat.assume_init();
+                let target_type = target_stat.st_mode & libc::S_IFMT;
+                if target_type != libc::S_IFDIR && target_type != libc::S_IFREG {
+                    libc::_exit(54);
+                }
+
+                // Address the pinned target inode through a procfs magic link.
+                // openat2 refuses symlink/magic-link path components, and the
+                // descriptor keeps the mount target stable if its name changes.
+                let mut target_link = [0 as libc::c_char; 64];
+                let target_link_len = libc::snprintf(
+                    target_link.as_mut_ptr(),
+                    target_link.len(),
+                    b"/proc/self/fd/%d\0".as_ptr().cast(),
+                    target_fd,
+                );
+                if target_link_len < 0 || target_link_len as usize >= target_link.len() {
+                    libc::_exit(55);
+                }
+                let target_ptr = target_link.as_ptr();
                 match action {
                     MountAction::Bind => {
                         if libc::mount(
                             source_ptr,
-                            target_c.as_ptr(),
+                            target_ptr,
                             std::ptr::null(),
                             libc::MS_BIND,
                             std::ptr::null(),
@@ -1822,25 +1901,12 @@ fn execute_mount_namespace(
                         {
                             libc::_exit(45);
                         }
-                        // Do not propagate this bind into peer mount namespaces
-                        // even if the host source has shared propagation flags.
-                        if libc::mount(
-                            std::ptr::null(),
-                            target_c.as_ptr(),
-                            std::ptr::null(),
-                            libc::MS_PRIVATE,
-                            std::ptr::null(),
-                        ) != 0
-                        {
-                            let _ = libc::umount2(target_c.as_ptr(), 0);
-                            libc::_exit(50);
-                        }
                         libc::_exit(0);
                     }
                     MountAction::RemountReadOnly => {
                         if libc::mount(
                             std::ptr::null(),
-                            target_c.as_ptr(),
+                            target_ptr,
                             std::ptr::null(),
                             libc::MS_BIND
                                 | libc::MS_REMOUNT
@@ -1855,7 +1921,7 @@ fn execute_mount_namespace(
                         libc::_exit(0);
                     }
                     MountAction::Unmount => {
-                        if libc::umount2(target_c.as_ptr(), 0) != 0 {
+                        if libc::umount2(target_ptr, 0) != 0 {
                             libc::_exit(47);
                         }
                         libc::_exit(0);
@@ -1896,6 +1962,12 @@ fn execute_mount_namespace(
             46 => "enforce read-only mount",
             47 => "unmount target",
             48 => "wait for namespace operation",
+            50 => "make target mount namespace private",
+            51 => "open container root for target resolution",
+            52 => "resolve target without symlinks (kernel openat2 support is required)",
+            53 => "inspect pinned mount target",
+            54 => "reject special-file mount target",
+            55 => "prepare pinned target path",
             _ => "complete namespace operation",
         };
         return Err(format!("failed to {stage} (helper status {code})"));

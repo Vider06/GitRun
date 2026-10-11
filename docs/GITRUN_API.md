@@ -1,4 +1,4 @@
-# Git*Run API reference — 1.4.6
+# Git*Run API reference — 1.5.0
 
 GitRun exposes a closed set of workflow-facing APIs. These are named executables, not a generic shell wrapper.
 
@@ -38,20 +38,35 @@ Vault resolution follows repository > group > global scope.
 
 ### GitDockRun
 
-Operations: `connect`, `disconnect`, `read`, `write`, `execute`, `melt`.
+Operations: `connect`, `disconnect`, `read`, `write`, `execute`, `melt`, `mount` and `unmount`.
 
 ```text
-GitDockRun --connect --job JOB
-GitDockRun --disconnect --job JOB
+GitDockRun --connect --job "$GITHUB_JOB"
+GitDockRun --disconnect --job "$GITHUB_JOB"
 GitDockRun --read PATH --docked CONTAINER
 GitDockRun --write PATH VALUE --docked CONTAINER
 GitDockRun --execute COMMAND --docked CONTAINER
 GitDockRun --melt [TARGET] --docked SOURCE
+GitDockRun --mount HOST_SOURCE --target CONTAINER_PATH --docked runner [--read-only | --read-write]
+GitDockRun --unmount MOUNT_ID --docked runner
 ```
 
-`connect` and `disconnect` are restricted to the caller's current workflow job; a caller cannot select another job. A successful connection records a persistent binding containing repository, workflow run, job, requester runner and immutable Docker container identity.
+`connect` records a persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. The special resource alias `runner` resolves to the authenticated runner's own binding; it is not an arbitrary Docker selector.
 
-Read/write/execute/melt operations must match that binding. The scheduler revalidates the current Docker container ID immediately before privileged mutation to prevent container-name reuse/TOCTOU attacks. `melt` also requires the source and target to remain inside the caller's exact trust binding.
+Read/write/execute/melt/mount/unmount operations must match an authorized binding. The host revalidates the immutable Docker ID before privileged operations. `melt` is a filesystem transfer into a target followed by source-container removal; it is not a live mount.
+
+### Host mounts (Linux local Docker only)
+
+Mounts are a separate, privileged capability. A mount request must pass the global GitDockRun API policy, the repository's allowed-container list, the target Logic Container's `mountable` capability, and `docker.allowed_mounts`.
+
+- `HOST_SOURCE` must be an existing absolute host path to a regular file or directory. The path must match an enabled `MountPolicy` rule. An explicit matching deny rule wins; recursive rules match descendant paths.
+- The rule's `read_only: true` means the source can only be mounted read-only. Requests default to read-only. `--read-write` requires a matching rule whose `read_only` is false.
+- `CONTAINER_PATH` must already exist in the bound container, be under `/workspace/`, `/home/runner/actions-runner/_work/`, `/tmp/gitrun-mounts/` or `/var/lib/gitrun/shared/`, contain no symlink path components, and be empty when it is a directory. File sources require file targets; directory sources require directory targets.
+- A successful mount returns a generated `mount_id`. Use that ID with `--unmount`; the backend verifies ownership by repository/run/job/requester/container before removing the mount.
+- The host keeps a private mount registry and reconciles records after workflow jobs complete. The runtime mechanism uses Linux mount namespaces and requires the GitRun service to have the necessary host privileges.
+- **Not supported in v1:** Windows, macOS, and remote/VM Docker daemons. The service fails closed outside a local Linux Docker host. A container with direct Docker socket access remains a separate host-level authority boundary.
+
+Mount policy fields alone are not sufficient: the operation must be globally enabled and the destination Logic Container must have `mountable: true`.
 
 ### GitSaveRun
 

@@ -1939,15 +1939,24 @@ fn reconcile_completed_mounts(
             Ok(Some(current_id)) if current_id == record.container_id => {
                 let pid = match container_pid_for_mount(&record.container_id) {
                     Ok(pid) => pid,
-                    Err(_) => {
-                        // A stopped container has already lost its private
-                        // mount namespace; a later start gets a fresh namespace.
-                        if docker::container_status(&record.container)
-                            .ok()
-                            .flatten()
-                            .is_some()
-                        {
-                            remove_ids.push(record.id.clone());
+                    Err(error) => {
+                        // Only discard the lease once Docker confirms that the
+                        // container is gone or stopped. If it is still running,
+                        // keep the record so a transient PID/cgroup inspection
+                        // failure cannot orphan a live mount.
+                        match docker::container_status(&record.container) {
+                            Ok(Some(status)) if status != "running" => {
+                                remove_ids.push(record.id.clone());
+                            }
+                            Ok(None) => remove_ids.push(record.id.clone()),
+                            Ok(Some(_)) => eprintln!(
+                                "gitrun-api: preserving mount lease {} because its running container could not be inspected: {error}",
+                                record.id
+                            ),
+                            Err(status_error) => eprintln!(
+                                "gitrun-api: preserving mount lease {} because container status could not be verified: {error}; {status_error}",
+                                record.id
+                            ),
                         }
                         continue;
                     }

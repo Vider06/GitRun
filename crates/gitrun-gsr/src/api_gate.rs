@@ -649,8 +649,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("payload.txt");
         std::fs::write(&source, "safe").unwrap();
-        let repo = settings.repositories.get_mut("owner/repo").unwrap();
-        repo.docker.logic_containers.get_mut("cache").unwrap().mountable = true;
+        {
+            let repo = settings.repositories.get_mut("owner/repo").unwrap();
+            repo.docker.logic_containers.get_mut("cache").unwrap().mountable = true;
+        }
         let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
 
         let args = |read_only: &str| BTreeMap::from([
@@ -664,15 +666,18 @@ mod tests {
         );
         assert!(matches!(disabled, Err(ApiGateError::PolicyDenied { .. })));
 
-        repo.docker.allowed_mounts = MountPolicy {
-            enabled: true,
-            rules: vec![MountRule {
-                source: dir.to_string_lossy().into_owned(),
-                recursive: true,
-                read_only: true,
-                allow: true,
-            }],
-        };
+        {
+            let repo = settings.repositories.get_mut("owner/repo").unwrap();
+            repo.docker.allowed_mounts = MountPolicy {
+                enabled: true,
+                rules: vec![MountRule {
+                    source: dir.to_string_lossy().into_owned(),
+                    recursive: true,
+                    read_only: true,
+                    allow: true,
+                }],
+            };
+        }
         let writable = authorize(
             &settings, &caller, GitRunApi::GitDockRun, GitRunOperation::Mount,
             Some("cache"), args("false"), None,

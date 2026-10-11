@@ -288,13 +288,17 @@ pub struct MountPolicy {
     pub rules: Vec<MountRule>,
 }
 
+/// Legacy serialized mount-rule data only. These fields are currently
+/// not consumed by a GitDockRun mount operation, because the closed API has
+/// no mount operation. Do not use this type as evidence of enforced access.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MountRule {
     pub source: String,
-    /// When true the source may be mounted recursively; when false the
-    /// enforcement layer should require an exact source match.
+    /// Legacy requested behavior; not enforced by the current runtime.
     pub recursive: bool,
+    /// Legacy requested behavior; not enforced by the current runtime.
     pub read_only: bool,
+    /// Legacy requested behavior; not enforced by the current runtime.
     pub allow: bool,
 }
 

@@ -21,6 +21,19 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Serializes dashboard-side writes to the shared config/settings files.
+/// The snapshot check alone is vulnerable to two Tauri commands checking the
+/// same old state before either one writes it.
+static DASHBOARD_SETTINGS_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+fn dashboard_settings_write_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    DASHBOARD_SETTINGS_WRITE_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .map_err(|_| "dashboard settings write lock is poisoned; refusing to save".to_owned())
+}
+
 fn resolve_config_path(explicit: Option<&std::ffi::OsStr>) -> Result<Option<PathBuf>, String> {
     if let Some(path) = explicit {
         let path = PathBuf::from(path);
@@ -145,6 +158,7 @@ fn persist_config_as_root(_config: &Config) -> Result<(), String> {
 /// root-owned; a desktop-launched dashboard must request authorization rather
 /// than relying on the service's GITRUN_CONFIG_FILE environment.
 fn persist_dashboard_config(config: &Config) -> Result<(), String> {
+    let _write_guard = dashboard_settings_write_guard()?;
     config.validate().map_err(|error| error.to_string())?;
     let path = config_path_for_write()?;
 
@@ -2037,6 +2051,7 @@ fn save_gitrun_settings(
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
 ) -> Result<(), String> {
+    let _write_guard = dashboard_settings_write_guard()?;
     let config = load_config()?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
         return Err(format!(
@@ -2661,6 +2676,7 @@ fn save_dashboard_settings(
     expected_config: Config,
     expected_settings: GitRunSettings,
 ) -> Result<(), String> {
+    let _write_guard = dashboard_settings_write_guard()?;
     updated.validate().map_err(|error| error.to_string())?;
     let current_config = load_config()?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
@@ -2807,6 +2823,30 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashboard_settings_write_guard_serializes_concurrent_writers() {
+        let guard = dashboard_settings_write_guard().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let _worker_guard = dashboard_settings_write_guard().unwrap();
+            finished_tx.send(()).unwrap();
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker should start");
+        assert!(finished_rx.recv_timeout(Duration::from_millis(50)).is_err());
+
+        drop(guard);
+        finished_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("writer should continue after the lock is released");
+        worker.join().unwrap();
+    }
 
     #[test]
     fn dashboard_build_version_matches_workspace_version_txt() {

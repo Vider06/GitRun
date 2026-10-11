@@ -324,6 +324,49 @@ fn authorize_dock(
                 })
             }
         }
+        GitRunOperation::Mount => {
+            let container = resource
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| ApiGateError::InvalidArguments {
+                    api: GitRunApi::GitDockRun,
+                    operation,
+                    detail: "missing docked resource".into(),
+                })?;
+            if !effective.docker.allows_container(container) {
+                return Err(ApiGateError::ResourceDenied { resource: container.to_owned() });
+            }
+            let logic = effective.docker.logic_container(container).ok_or_else(|| {
+                ApiGateError::ResourceDenied { resource: container.to_owned() }
+            })?;
+            if !logic.mountable {
+                return Err(ApiGateError::PolicyDenied {
+                    reason: format!("mounting is disabled for logic container {container}"),
+                });
+            }
+            let source = required_argument(GitRunApi::GitDockRun, operation, arguments, "source")?;
+            let read_only = required_argument(GitRunApi::GitDockRun, operation, arguments, "read_only")? == "true";
+            effective.docker.allowed_mounts
+                .authorize_source(std::path::Path::new(source), read_only)
+                .map_err(|reason| ApiGateError::PolicyDenied { reason })?;
+            Ok(())
+        }
+        GitRunOperation::Unmount => {
+            let container = resource
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| ApiGateError::InvalidArguments {
+                    api: GitRunApi::GitDockRun,
+                    operation,
+                    detail: "missing docked resource".into(),
+                })?;
+            if effective.docker.allows_container(container) {
+                // The execution backend validates mount ownership, resource
+                // identity and the mount ID again. Keep cleanup possible even
+                // after the administrator has disabled new mounts.
+                Ok(())
+            } else {
+                Err(ApiGateError::ResourceDenied { resource: container.to_owned() })
+            }
+        }
         GitRunOperation::Read
         | GitRunOperation::Write
         | GitRunOperation::Execute

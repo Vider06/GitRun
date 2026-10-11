@@ -2,7 +2,7 @@ import { invoke, content, esc, heading, panel, pill, empty, errorView, toast, co
 
 const apiOps = {
   GitVaultRun: ["Read","Write","Exists","Delete","List"],
-  GitDockRun: ["Connect","Disconnect","Read","Write","Execute","Melt"],
+  GitDockRun: ["Connect","Disconnect","Read","Write","Execute","Melt","Mount","Unmount"],
   GitSaveRun: ["File","Logs"],
   GitRegisterRun: ["Register"],
   GitInstallRun: ["Install","Remove","Update"],

@@ -19,8 +19,16 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::Command;
+
+#[cfg(target_os = "linux")]
+use std::ffi::CString;
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStrExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -30,6 +38,81 @@ use std::os::unix::net::{UnixListener, UnixStream};
 const DOCK_ONLY_MARKER: &str = "/home/runner/actions-runner/.gitrun-dock-only";
 const API_MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_VAULT_WRITE_BYTES: usize = 1024 * 1024;
+const MOUNT_REGISTRY_FILE: &str = "gitdock-mount-registry.json";
+static GITDOCK_MOUNT_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct MountRecord {
+    id: String,
+    repository: String,
+    run_id: u64,
+    job: String,
+    requester_runner: String,
+    container: String,
+    container_id: String,
+    source: String,
+    target: String,
+    read_only: bool,
+    #[serde(default)]
+    kernel_mount_id: Option<u32>,
+    #[serde(default)]
+    state: String,
+    created_at: u64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct MountRegistry {
+    mounts: Vec<MountRecord>,
+}
+
+impl MountRegistry {
+    fn path(state_dir: &Path) -> PathBuf {
+        state_dir.join(MOUNT_REGISTRY_FILE)
+    }
+
+    fn load(state_dir: &Path) -> Result<Self, String> {
+        match fs::read_to_string(Self::path(state_dir)) {
+            Ok(raw) => serde_json::from_str(&raw)
+                .map_err(|error| format!("decode GitDockRun mount registry: {error}")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(format!("read GitDockRun mount registry: {error}")),
+        }
+    }
+
+    fn save(&self, state_dir: &Path) -> Result<(), String> {
+        fs::create_dir_all(state_dir)
+            .map_err(|error| format!("create mount registry directory: {error}"))?;
+        let path = Self::path(state_dir);
+        let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let raw = serde_json::to_vec_pretty(self)
+            .map_err(|error| format!("encode GitDockRun mount registry: {error}"))?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)
+            .map_err(|error| format!("create temporary mount registry: {error}"))?;
+        if let Err(error) = file.write_all(&raw).and_then(|()| file.sync_all()) {
+            let _ = fs::remove_file(&temp);
+            return Err(format!("write mount registry: {error}"));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))
+                .map_err(|error| format!("secure mount registry permissions: {error}"))?;
+        }
+        if let Err(error) = fs::rename(&temp, &path) {
+            let _ = fs::remove_file(&temp);
+            return Err(format!("commit mount registry: {error}"));
+        }
+        Ok(())
+    }
+}
 
 pub fn spawn(
     config: Config,
@@ -129,6 +212,9 @@ pub(crate) fn reconcile_dock_bindings(
     state_dir: &Path,
     repository: &str,
 ) -> Result<(), String> {
+    if let Err(error) = reconcile_completed_mounts(client, state_dir, repository) {
+        eprintln!("gitrun-api: mount cleanup reconciliation failed: {error}");
+    }
     let mut registry = DockRegistry::load(state_dir)
         .map_err(|error| format!("load GitDockRun registry: {error}"))?;
     let mut changed = false;

@@ -1434,13 +1434,23 @@ impl ApiExecutionBackend {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn dock_mount(&self, _request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        Err(failed("dynamic GitDockRun mounts are currently supported only on Linux local Docker hosts"))
+    fn dock_mount(
+        &self,
+        _request: &AuthorizedOperation,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        Err(failed(
+            "dynamic GitDockRun mounts are currently supported only on Linux local Docker hosts",
+        ))
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn dock_unmount(&self, _request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        Err(failed("dynamic GitDockRun mounts are currently supported only on Linux local Docker hosts"))
+    fn dock_unmount(
+        &self,
+        _request: &AuthorizedOperation,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        Err(failed(
+            "dynamic GitDockRun mounts are currently supported only on Linux local Docker hosts",
+        ))
     }
 
     fn dock_melt(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {

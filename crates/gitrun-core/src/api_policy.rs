@@ -472,7 +472,9 @@ mod tests {
                 ("extra".into(), "not-allowed".into()),
             ]),
         ] {
-            assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Mount, &args).is_err());
+            assert!(
+                validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Mount, &args).is_err()
+            );
         }
     }
 
@@ -484,7 +486,8 @@ mod tests {
             GitRunApi::GitDockRun,
             GitRunOperation::Unmount,
             &BTreeMap::new(),
-        ).is_err());
+        )
+        .is_err());
         assert!(validate_arguments(
             GitRunApi::GitDockRun,
             GitRunOperation::Unmount,
@@ -492,7 +495,8 @@ mod tests {
                 ("mount_id".into(), "gm-123".into()),
                 ("target".into(), "/workspace/x".into()),
             ]),
-        ).is_err());
+        )
+        .is_err());
     }
 
     #[test]

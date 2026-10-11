@@ -18,10 +18,10 @@ use gitrun_vault::{Scope, Vault};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::process::Command;
 
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
@@ -94,7 +94,8 @@ impl MountRegistry {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&temp)
+        let mut file = options
+            .open(&temp)
             .map_err(|error| format!("create temporary mount registry: {error}"))?;
         if let Err(error) = file.write_all(&raw).and_then(|()| file.sync_all()) {
             let _ = fs::remove_file(&temp);

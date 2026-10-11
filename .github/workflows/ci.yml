@@ -1860,6 +1860,27 @@ jobs:
           }
           ci_run "Validate systemd unit syntax and service command alignment" validate_systemd_units || rc=1
           exit "$rc"
+      - name: Verify live GitDockRun mount namespace behavior
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/ci-lib.sh"
+          if ! command -v docker >/dev/null 2>&1 || [ ! -S /var/run/docker.sock ] || ! docker info >/dev/null 2>&1; then
+            ci_warn "GitDockRun privileged mount integration test skipped: this runner has no usable local Docker daemon."
+            exit 0
+          fi
+          if ! sudo -n true >/dev/null 2>&1; then
+            ci_warn "GitDockRun privileged mount integration test skipped: this runner cannot run the test as root."
+            exit 0
+          fi
+          ci_run "Build scheduler mount integration test" cargo test --locked -p gitrun-scheduler --no-run
+          test_bin="$(find "${CARGO_TARGET_DIR:-target}/debug/deps" -maxdepth 1 -type f -executable -name 'gitrun_scheduler-*' -print -quit)"
+          if [ -z "$test_bin" ]; then
+            ci_err "Could not locate the gitrun-scheduler unit test binary"
+            exit 1
+          fi
+          ci_run "Bind, read-only enforcement, and unmount in a live container namespace" \
+            sudo env GITRUN_ENABLE_PRIVILEGED_MOUNT_TESTS=1 "$test_bin" \
+              --exact api_service::mount_runtime_tests::privileged_mount_namespace_bind_unmount_smoke_test --nocapture
       - *rust_prune
       - *s_tc
       - *s_reg

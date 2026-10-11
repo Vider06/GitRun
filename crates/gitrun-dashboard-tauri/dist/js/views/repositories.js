@@ -118,7 +118,6 @@ export async function renderRepository(repo, navigate) {
     list.insertAdjacentHTML("beforeend",logicCard(key,{connect:true,read:true,write:true,execute:false,melt:false,mountable:false,allowed_melt_targets:["runner"]}));
     const createdPolicy = list.lastElementChild;
     createdPolicy.querySelector("[data-remove-logic-policy]").addEventListener("click", () => createdPolicy.remove());
-    logic[key] = {connect:true,read:true,write:true,execute:false,melt:false,mountable:false,allowed_melt_targets:["runner"]};
   });
   content.querySelectorAll("[data-remove-logic-policy]").forEach((button) => button.addEventListener("click", () => button.closest("[data-logic-policy]")?.remove()));
   content.querySelectorAll("[data-runner-settings]").forEach((button) => button.addEventListener("click", () => {

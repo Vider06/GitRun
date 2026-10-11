@@ -1762,7 +1762,7 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
 fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
     let config = load_config()?;
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
-    let limit = limit.unwrap_or(500).clamp(1, 500);
+    let limit = limit.unwrap_or(500).min(500);
     let mut events =
         gitrun_gsr::events::read_last(&events_path, limit).map_err(|error| error.to_string())?;
     events.reverse(); // most recent first

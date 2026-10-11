@@ -120,7 +120,7 @@ async function loadJournal(generation) {
       if (journalLoading === request) journalLoading = null;
       if (generation === window.__gitrunNavigationGeneration) {
         if (source !== journalSource) void loadJournal(generation);
-        renderJournalRows();
+        else renderJournalRows();
       }
     }
   });

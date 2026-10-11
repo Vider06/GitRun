@@ -149,7 +149,7 @@ pub fn read_last(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
     file.seek(SeekFrom::Start(position - 1))?;
     file.read_exact(&mut last_byte)?;
     let trailing_newline = last_byte[0] == b'\n';
-    let separators_before_cutoff = limit.saturating_sub(1) + usize::from(trailing_newline);
+    let separators_before_cutoff = limit.saturating_sub(1) + if trailing_newline { 1 } else { 0 };
 
     const CHUNK_SIZE: u64 = 64 * 1024;
     let mut separators = 0usize;

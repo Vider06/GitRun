@@ -1563,7 +1563,10 @@ fn open_mount_source(source: &Path) -> Result<fs::File, String> {
     let handle = open_path_handle(source, true)?;
     let metadata = handle.metadata().map_err(|error| error.to_string())?;
     if metadata.file_type().is_symlink() || (!metadata.is_file() && !metadata.is_dir()) {
-        return Err("mount source must be a regular file or directory, not a symlink or special file".into());
+        return Err(
+            "mount source must be a regular file or directory, not a symlink or special file"
+                .into(),
+        );
     }
     let fd_path = PathBuf::from(format!("/proc/self/fd/{}", handle.as_raw_fd()));
     let opened_source = fs::canonicalize(&fd_path)
@@ -1581,9 +1584,7 @@ fn open_mount_source(_source: &Path) -> Result<fs::File, String> {
 
 #[cfg(target_os = "linux")]
 fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
-    if container_id.len() != 64
-        || !container_id.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
+    if container_id.len() != 64 || !container_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("mount target is not an immutable Docker container ID".into());
     }
     let output = Command::new("docker")
@@ -1625,10 +1626,12 @@ fn validate_mount_target(pid: i32, target: &str, source_is_dir: bool) -> Result<
     if !path.is_absolute()
         || target.ends_with('/')
         || target.contains("//")
-        || path.components().any(|component| matches!(
-            component,
-            Component::ParentDir | Component::CurDir | Component::Prefix(_)
-        ))
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::CurDir | Component::Prefix(_)
+            )
+        })
     {
         return Err("mount target must be a clean absolute container path".into());
     }
@@ -1638,17 +1641,23 @@ fn validate_mount_target(pid: i32, target: &str, source_is_dir: bool) -> Result<
         "/tmp/gitrun-mounts/",
         "/var/lib/gitrun/shared/",
     ];
-    if !allowed_prefixes.iter().any(|prefix| target.starts_with(prefix)) {
+    if !allowed_prefixes
+        .iter()
+        .any(|prefix| target.starts_with(prefix))
+    {
         return Err("mount targets are limited to workspace and GitRun data directories".into());
     }
 
     let root_path = PathBuf::from(format!("/proc/{pid}/root"));
     let mut host_path = root_path.clone();
     let components: Vec<_> = path.components().collect();
-    let normal_components: Vec<_> = components.iter().filter_map(|component| match component {
-        Component::Normal(name) => Some(*name),
-        _ => None,
-    }).collect();
+    let normal_components: Vec<_> = components
+        .iter()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(*name),
+            _ => None,
+        })
+        .collect();
     if normal_components.is_empty() {
         return Err("mount target cannot be the container root".into());
     }
@@ -1666,15 +1675,23 @@ fn validate_mount_target(pid: i32, target: &str, source_is_dir: bool) -> Result<
         }
         final_metadata = Some(current);
     }
-    let metadata = final_metadata.ok_or_else(|| "mount target cannot be the container root".to_owned())?;
+    let metadata =
+        final_metadata.ok_or_else(|| "mount target cannot be the container root".to_owned())?;
     if source_is_dir != metadata.is_dir() {
         return Err("mount source and target must both be directories or both be files".into());
     }
     if source_is_dir {
         let mut entries = fs::read_dir(&host_path)
             .map_err(|error| format!("inspect mount target directory: {error}"))?;
-        if entries.next().transpose().map_err(|error| error.to_string())?.is_some() {
-            return Err("directory mount targets must be empty to avoid hiding existing files".into());
+        if entries
+            .next()
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err(
+                "directory mount targets must be empty to avoid hiding existing files".into(),
+            );
         }
     }
     Ok(())
@@ -1734,8 +1751,8 @@ fn execute_mount_namespace(
     let pid_namespace = fs::File::open(format!("/proc/{pid}/ns/pid"))
         .map_err(|error| format!("open target PID namespace: {error}"))?;
     let container_root = open_path_handle(&PathBuf::from(format!("/proc/{pid}/root")), false)?;
-    let target_c = CString::new(target)
-        .map_err(|_| "mount target contains a NUL byte".to_owned())?;
+    let target_c =
+        CString::new(target).map_err(|_| "mount target contains a NUL byte".to_owned())?;
     let source_c = source_fd
         .map(|fd| CString::new(format!("/proc/self/fd/{fd}")))
         .transpose()
@@ -1743,13 +1760,18 @@ fn execute_mount_namespace(
     if matches!(action, MountAction::Bind) && source_c.is_none() {
         return Err("mount source descriptor was not provided".into());
     }
-    let source_ptr = source_c.as_ref().map_or(std::ptr::null(), |value| value.as_ptr());
+    let source_ptr = source_c
+        .as_ref()
+        .map_or(std::ptr::null(), |value| value.as_ptr());
 
     // Pin the namespaces and root before fork so a reused PID can never redirect
     // the mount operation to a replacement container.
     let outer_pid = unsafe { libc::fork() };
     if outer_pid < 0 {
-        return Err(format!("fork mount namespace worker: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "fork mount namespace worker: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     if outer_pid == 0 {
         unsafe {
@@ -1779,7 +1801,8 @@ fn execute_mount_namespace(
                             std::ptr::null(),
                             libc::MS_BIND,
                             std::ptr::null(),
-                        ) != 0 {
+                        ) != 0
+                        {
                             libc::_exit(45);
                         }
                         libc::_exit(0);
@@ -1795,7 +1818,8 @@ fn execute_mount_namespace(
                                 | libc::MS_NOSUID
                                 | libc::MS_NODEV,
                             std::ptr::null(),
-                        ) != 0 {
+                        ) != 0
+                        {
                             libc::_exit(46);
                         }
                         libc::_exit(0);
@@ -1822,10 +1846,17 @@ fn execute_mount_namespace(
     let mut status: libc::c_int = 0;
     let waited = unsafe { libc::waitpid(outer_pid, &mut status, 0) };
     if waited < 0 {
-        return Err(format!("wait for mount namespace worker: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "wait for mount namespace worker: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
-        let code = if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { -1 };
+        let code = if libc::WIFEXITED(status) {
+            libc::WEXITSTATUS(status)
+        } else {
+            -1
+        };
         let stage = match code {
             41 => "enter mount namespace",
             42 => "enter PID namespace",
@@ -1865,7 +1896,10 @@ fn reconcile_completed_mounts(
     let snapshot = registry.mounts.clone();
     let mut remove_ids = Vec::new();
 
-    for record in snapshot.iter().filter(|record| record.repository == repository) {
+    for record in snapshot
+        .iter()
+        .filter(|record| record.repository == repository)
+    {
         let job = match client.find_workflow_job(repository, record.run_id, &record.job) {
             Ok(Some(job)) => job,
             Ok(None) => {
@@ -1873,7 +1907,10 @@ fn reconcile_completed_mounts(
                 continue;
             }
             Err(error) => {
-                eprintln!("gitrun-api: cannot verify job {} for mount {}: {error}", record.job, record.id);
+                eprintln!(
+                    "gitrun-api: cannot verify job {} for mount {}: {error}",
+                    record.job, record.id
+                );
                 continue;
             }
         };
@@ -1888,7 +1925,11 @@ fn reconcile_completed_mounts(
                     Err(_) => {
                         // A stopped container has already lost its private
                         // mount namespace; a later start gets a fresh namespace.
-                        if docker::container_status(&record.container).ok().flatten().is_some() {
+                        if docker::container_status(&record.container)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                        {
                             remove_ids.push(record.id.clone());
                         }
                         continue;
@@ -1899,13 +1940,13 @@ fn reconcile_completed_mounts(
                     None => mountinfo_by_target(pid, &record.target)?,
                 };
                 if let Some(mount) = mount {
-                    if let Err(error) = execute_mount_namespace(
-                        pid,
-                        None,
-                        &mount.target,
-                        MountAction::Unmount,
-                    ) {
-                        eprintln!("gitrun-api: could not clean mount {} after job completion: {error}", record.id);
+                    if let Err(error) =
+                        execute_mount_namespace(pid, None, &mount.target, MountAction::Unmount)
+                    {
+                        eprintln!(
+                            "gitrun-api: could not clean mount {} after job completion: {error}",
+                            record.id
+                        );
                         continue;
                     }
                 }
@@ -1917,13 +1958,18 @@ fn reconcile_completed_mounts(
                 remove_ids.push(record.id.clone());
             }
             Err(error) => {
-                eprintln!("gitrun-api: cannot inspect mount container {}: {error}", record.container);
+                eprintln!(
+                    "gitrun-api: cannot inspect mount container {}: {error}",
+                    record.container
+                );
             }
         }
     }
 
     if !remove_ids.is_empty() {
-        registry.mounts.retain(|record| !remove_ids.contains(&record.id));
+        registry
+            .mounts
+            .retain(|record| !remove_ids.contains(&record.id));
         registry.save(state_dir)?;
     }
     Ok(())

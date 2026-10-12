@@ -1849,7 +1849,8 @@ fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
         }
     }
     let cap_sys_admin = 1u64 << 21;
-    let effective = effective.ok_or_else(|| "container CapEff was missing or invalid".to_owned())?;
+    let effective =
+        effective.ok_or_else(|| "container CapEff was missing or invalid".to_owned())?;
     let bounding = bounding.ok_or_else(|| "container CapBnd was missing or invalid".to_owned())?;
     if effective & cap_sys_admin != 0 || bounding & cap_sys_admin != 0 {
         return Err(
@@ -2009,9 +2010,8 @@ unsafe fn mount_id_from_fd(fd: libc::c_int) -> Option<u32> {
     if mask & STATX_MNT_ID_MASK == 0 {
         return None;
     }
-    let mount_id = unsafe {
-        std::ptr::read_unaligned(bytes.add(STATX_MNT_ID_OFFSET).cast::<u64>())
-    };
+    let mount_id =
+        unsafe { std::ptr::read_unaligned(bytes.add(STATX_MNT_ID_OFFSET).cast::<u64>()) };
     u32::try_from(mount_id).ok()
 }
 

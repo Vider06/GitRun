@@ -2089,7 +2089,7 @@ fn execute_mount_namespace(
             42 => "enter PID namespace",
             43 => "fork inside PID namespace",
             44 => "enter container root",
-            45 => "bind source",
+            45 => "attach detached source mount",
             46 => "enforce read-only mount",
             47 => "unmount target",
             48 => "wait for namespace operation",
@@ -2099,6 +2099,9 @@ fn execute_mount_namespace(
             53 => "inspect pinned mount target",
             54 => "reject special-file mount target",
             55 => "prepare pinned target path",
+            56 => "create private source mount staging namespace or bind source",
+            57 => "clone staged source mount tree",
+            58 => "detach temporary source mount",
             _ => "complete namespace operation",
         };
         return Err(format!("failed to {stage} (helper status {code})"));
@@ -2348,6 +2351,81 @@ mod mount_runtime_tests {
         assert!(mountinfo_by_target(pid, &target)
             .expect("verify target no longer mounted")
             .is_none());
+
+        // Also exercise a regular-file source/target. The source path is a
+        // host-only path, so this catches regressions in namespace handoff
+        // that a directory-only test can miss.
+        let source_file = source_dir.join("source-file.txt");
+        fs::write(&source_file, b"file-payload\n").expect("write host source file");
+        let target_file = format!("{target}-file.txt");
+        let prepare_file_target = Command::new("docker")
+            .args([
+                "exec",
+                name.as_str(),
+                "sh",
+                "-c",
+                &format!("printf initial > '{target_file}'"),
+            ])
+            .output()
+            .expect("create file mount target");
+        assert!(
+            prepare_file_target.status.success(),
+            "could not create file mount target: {}",
+            String::from_utf8_lossy(&prepare_file_target.stderr)
+        );
+        validate_mount_target(pid, &target_file, false)
+            .expect("validate regular-file mount target");
+        let source_file_handle =
+            open_mount_source(&fs::canonicalize(&source_file).unwrap())
+                .expect("open canonical host source file");
+        execute_mount_namespace(
+            pid,
+            Some(source_file_handle.as_raw_fd()),
+            &target_file,
+            MountAction::Bind,
+        )
+        .expect("bind regular file into target namespace");
+        let file_read = Command::new("docker")
+            .args(["exec", name.as_str(), "cat", target_file.as_str()])
+            .output()
+            .expect("read mounted file from target container");
+        assert!(
+            file_read.status.success(),
+            "mounted regular file is not readable: {}",
+            String::from_utf8_lossy(&file_read.stderr)
+        );
+        assert_eq!(file_read.stdout, b"file-payload\n");
+        let file_write = Command::new("docker")
+            .args([
+                "exec",
+                name.as_str(),
+                "sh",
+                "-c",
+                &format!("printf updated > '{target_file}'"),
+            ])
+            .output()
+            .expect("write to read-write file mount");
+        assert!(
+            file_write.status.success(),
+            "write unexpectedly failed on read-write mount: {}",
+            String::from_utf8_lossy(&file_write.stderr)
+        );
+        assert_eq!(fs::read_to_string(&source_file).unwrap(), "updated");
+        let file_mount = mountinfo_by_target(pid, &target_file)
+            .expect("read file mount table")
+            .expect("file bind mount should appear");
+        execute_mount_namespace(pid, None, &target_file, MountAction::Unmount)
+            .expect("unmount regular file from target namespace");
+        assert!(
+            mountinfo_by_id(pid, file_mount.id)
+                .expect("read mount table after file unmount")
+                .is_none()
+        );
+        assert!(
+            mountinfo_by_target(pid, &target_file)
+                .expect("verify file target no longer mounted")
+                .is_none()
+        );
 
         drop(container_guard);
         drop(source_guard);

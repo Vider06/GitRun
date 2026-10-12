@@ -311,7 +311,7 @@ pub(crate) fn reconcile_dock_bindings(
             continue;
         }
 
-        let completed = job.status.eq_ignore_ascii_case("completed") || job.conclusion.is_some();
+        let completed = workflow_job_is_completed(&job.status, job.conclusion.as_deref());
 
         if completed {
             make_dock_only(&binding.container_id, state_dir).map_err(|error| {
@@ -354,8 +354,7 @@ pub(crate) fn reconcile_dock_target_containers(
             continue;
         };
 
-        let completed =
-            job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
+        let completed = workflow_job_is_completed(&job_info.status, job_info.conclusion.as_deref());
         if completed
             && container.status.eq_ignore_ascii_case("running")
             && container.container_is_dynamic()
@@ -1050,8 +1049,7 @@ impl ApiExecutionBackend {
         let dynamic = !docker::container_is_permanent(&runner_name)
             .map_err(|error| failed(error.to_string()))?;
 
-        let completed =
-            job_info.status.eq_ignore_ascii_case("completed") || job_info.conclusion.is_some();
+        let completed = workflow_job_is_completed(&job_info.status, job_info.conclusion.as_deref());
 
         if dynamic
             && docker::container_status(&runner_name)
@@ -2852,7 +2850,6 @@ fn cleanup_mount_record(record: &MountRecord) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn workflow_job_is_completed(status: &str, _conclusion: Option<&str>) -> bool {
     // The status is authoritative; a conclusion-like field must never override
     // an in-progress/queued state and cause the mount to disappear early.

@@ -338,14 +338,21 @@ impl MountPolicy {
             }
         }
 
-        let Some((rule, _)) = matches
-            .into_iter()
-            .max_by_key(|(_, root)| root.components().count())
+        let Some(max_specificity) = matches
+            .iter()
+            .map(|(_, root)| root.components().count())
+            .max()
         else {
             return Err("mount source does not match an allowed host-path rule".into());
         };
-        if rule.read_only && !requested_read_only {
-            return Err("mount rule permits read-only access only".into());
+        // If multiple allow rules canonicalize to the same most-specific
+        // root, combine their restrictions conservatively: any read-only rule
+        // at that specificity prevents a writable mount.
+        let most_specific_requires_read_only = matches.iter().any(|(rule, root)| {
+            root.components().count() == max_specificity && rule.read_only
+        });
+        if most_specific_requires_read_only && !requested_read_only {
+            return Err("most-specific mount rules permit read-only access only".into());
         }
         Ok(canonical_source)
     }
@@ -444,6 +451,38 @@ mod tests {
         assert!(policy
             .authorize_source(&dir.join("nested/file.txt"), false)
             .is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn equally_specific_mount_rules_combine_read_only_restrictions() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-tied-rules-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("source.txt"), "payload").unwrap();
+        let rule_source = dir.to_string_lossy().into_owned();
+        let policy = MountPolicy {
+            enabled: true,
+            rules: vec![
+                MountRule {
+                    source: rule_source.clone(),
+                    recursive: true,
+                    read_only: false,
+                    allow: true,
+                },
+                MountRule {
+                    source: rule_source,
+                    recursive: true,
+                    read_only: true,
+                    allow: true,
+                },
+            ],
+        };
+        assert!(policy.authorize_source(&dir.join("source.txt"), false).is_err());
+        assert!(policy.authorize_source(&dir.join("source.txt"), true).is_ok());
         let _ = fs::remove_dir_all(&dir);
     }
 

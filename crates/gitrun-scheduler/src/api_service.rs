@@ -5238,6 +5238,90 @@ mod api_socket_identity_integration_tests {
     }
 
     #[test]
+    fn runner_claim_mismatch_is_rejected_before_github_lookups() {
+        let mut invocation = status_invocation();
+        invocation.runner = "untrusted-runner".into();
+
+        let result = invoke_socket_request("runner-mismatch", invocation, valid_provider());
+
+        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&result.responses));
+        assert!(matches!(
+            result.responses.as_slice(),
+            [WireResponse::Error { message }]
+                if message.contains("identity does not match the managed container")
+        ));
+        assert_eq!(result.calls, vec!["peer_identity"]);
+    }
+
+    #[test]
+    fn missing_run_id_is_rejected_before_github_lookups() {
+        let mut invocation = status_invocation();
+        invocation.run_id = None;
+
+        let result = invoke_socket_request("missing-run-id", invocation, valid_provider());
+
+        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&result.responses));
+        assert!(matches!(
+            result.responses.as_slice(),
+            [WireResponse::Error { message }]
+                if message.contains("GITHUB_RUN_ID is required")
+        ));
+        assert_eq!(result.calls, vec!["peer_identity"]);
+    }
+
+    #[test]
+    fn unbound_container_uses_authoritative_active_job_lookup() {
+        let mut provider = valid_provider();
+        let identity = provider.identity.as_mut().unwrap();
+        identity.workflow_job = None;
+        identity.workflow_run_id = None;
+        provider.active_job = Some(WorkflowJobInfo {
+            id: 99,
+            name: "build".into(),
+            status: "in_progress".into(),
+            conclusion: None,
+            runner_name: Some("runner-1".into()),
+        });
+
+        let result = invoke_socket_request("active-job-fallback", status_invocation(), provider);
+
+        assert!(result.handler_result.is_ok(), "handler failed: {result:?}");
+        assert!(contains_acceptance(&result.responses));
+        assert_eq!(
+            result.calls,
+            vec!["peer_identity", "active_job", "workflow_job", "workflow_run"]
+        );
+    }
+
+    #[test]
+    fn active_job_fallback_rejects_a_different_job_name() {
+        let mut provider = valid_provider();
+        let identity = provider.identity.as_mut().unwrap();
+        identity.workflow_job = None;
+        identity.workflow_run_id = None;
+        provider.active_job = Some(WorkflowJobInfo {
+            id: 99,
+            name: "deploy".into(),
+            status: "in_progress".into(),
+            conclusion: None,
+            runner_name: Some("runner-1".into()),
+        });
+
+        let result = invoke_socket_request("active-job-mismatch", status_invocation(), provider);
+
+        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&result.responses));
+        assert!(matches!(
+            result.responses.as_slice(),
+            [WireResponse::Error { message }]
+                if message.contains("not the active job assigned to this runner")
+        ));
+        assert_eq!(result.calls, vec!["peer_identity", "active_job"]);
+    }
+
+    #[test]
     fn github_lookup_error_fails_closed_without_accepting_or_executing() {
         let mut provider = valid_provider();
         provider.failure_at = Some("workflow_job");

@@ -93,7 +93,11 @@ impl QueueLock {
             .read(true)
             .write(true)
             .open(PathBuf::from(lock_name))?;
-        let mode = if exclusive { libc::LOCK_EX } else { libc::LOCK_SH };
+        let mode = if exclusive {
+            libc::LOCK_EX
+        } else {
+            libc::LOCK_SH
+        };
         // SAFETY: flock operates on the live descriptor owned by lock.
         if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), mode) } == -1 {
             return Err(std::io::Error::last_os_error().into());
@@ -129,7 +133,10 @@ fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
     };
     for entry in entries {
         let entry = entry?;
-        if entry.file_name().to_str().is_some_and(|name| name.starts_with(&prefix))
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(&prefix))
             && entry.file_type()?.is_file()
         {
             archives.push(entry.path());
@@ -164,7 +171,9 @@ fn rotate_queue(path: &Path) -> Result<()> {
     let sequence = ARCHIVE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let archive = path.with_file_name(format!(
         "{}.archive-{timestamp:020}-{:010}-{sequence:010}",
-        path.file_name().and_then(|name| name.to_str()).unwrap_or("events"),
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("events"),
         std::process::id()
     ));
     std::fs::rename(path, archive)?;

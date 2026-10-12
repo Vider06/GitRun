@@ -1291,13 +1291,14 @@ impl ApiExecutionBackend {
         if let Err(error) = execute_mount_namespace(
             pid,
             Some(source_handle.as_raw_fd()),
+            Some(&canonical_source),
             target,
             MountAction::Bind,
         ) {
             match mountinfo_by_target(pid, target) {
                 Ok(Some(mount)) => {
                     if let Err(rollback_error) =
-                        execute_mount_namespace(pid, None, target, MountAction::Unmount)
+                        execute_mount_namespace(pid, None, None, target, MountAction::Unmount)
                     {
                         record.state = "cleanup-required".into();
                         record.kernel_mount_id = Some(mount.id);
@@ -1330,9 +1331,9 @@ impl ApiExecutionBackend {
 
         if read_only {
             if let Err(error) =
-                execute_mount_namespace(pid, None, target, MountAction::RemountReadOnly)
+                execute_mount_namespace(pid, None, None, target, MountAction::RemountReadOnly)
             {
-                if execute_mount_namespace(pid, None, target, MountAction::Unmount).is_err() {
+                if execute_mount_namespace(pid, None, None, target, MountAction::Unmount).is_err() {
                     record.state = "cleanup-required".into();
                     record.kernel_mount_id = mountinfo_by_target(pid, target)
                         .ok()
@@ -1416,7 +1417,7 @@ impl ApiExecutionBackend {
             None => mountinfo_by_target(pid, &record.target).map_err(failed)?,
         };
         if let Some(mount_info) = mount_info {
-            execute_mount_namespace(pid, None, &mount_info.target, MountAction::Unmount)
+            execute_mount_namespace(pid, None, None, &mount_info.target, MountAction::Unmount)
                 .map_err(failed)?;
             let still_present = match record.kernel_mount_id {
                 Some(id) => mountinfo_by_id(pid, id).map_err(failed)?.is_some(),
@@ -1818,6 +1819,7 @@ fn mountinfo_by_id(pid: i32, mount_id: u32) -> Result<Option<MountInfo>, String>
 fn execute_mount_namespace(
     pid: i32,
     source_fd: Option<i32>,
+    source_path: Option<&Path>,
     target: &str,
     action: MountAction,
 ) -> Result<(), String> {
@@ -1870,8 +1872,10 @@ fn execute_mount_namespace(
             path: path.clone(),
             is_dir,
         };
-        let source_path = CString::new(format!("/proc/self/fd/{source_fd}"))
-            .map_err(|_| "invalid mount source descriptor".to_owned())?;
+        let source_path = source_path
+            .ok_or_else(|| "mount source path was not provided".to_owned())?;
+        let source_path = CString::new(source_path.as_os_str().as_bytes())
+            .map_err(|_| "invalid mount source path".to_owned())?;
         let staging_path = CString::new(path.as_os_str().as_bytes())
             .map_err(|_| "invalid temporary mount staging path".to_owned())?;
         Some((guard, source_path, staging_path))
@@ -1917,6 +1921,28 @@ fn execute_mount_namespace(
                 ) != 0
                 {
                     libc::_exit(58);
+                }
+                // The canonical path is reopened inside the cloned host
+                // namespace. Compare its mounted inode with the original
+                // pinned source FD to detect path replacement races.
+                let Some(source_fd) = source_fd else {
+                    libc::_exit(61);
+                };
+                let mut original_stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+                let mut staged_stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+                if libc::fstat(source_fd, original_stat.as_mut_ptr()) != 0
+                    || libc::stat(staging_path.as_ptr(), staged_stat.as_mut_ptr()) != 0
+                {
+                    libc::_exit(61);
+                }
+                let original_stat = original_stat.assume_init();
+                let staged_stat = staged_stat.assume_init();
+                if original_stat.st_dev != staged_stat.st_dev
+                    || original_stat.st_ino != staged_stat.st_ino
+                    || (original_stat.st_mode & libc::S_IFMT)
+                        != (staged_stat.st_mode & libc::S_IFMT)
+                {
+                    libc::_exit(62);
                 }
                 let tree_fd = libc::syscall(
                     libc::SYS_open_tree,
@@ -2126,6 +2152,8 @@ fn execute_mount_namespace(
             58 => "bind source into staging mountpoint",
             59 => "clone staged source mount tree",
             60 => "detach temporary source mount",
+            61 => "inspect staged source identity",
+            62 => "reject source path replacement during mount staging",
             _ => "complete namespace operation",
         };
         return Err(format!("failed to {stage} (helper status {code})"));
@@ -2199,7 +2227,7 @@ fn reconcile_completed_mounts(
                 };
                 if let Some(mount) = mount {
                     if let Err(error) =
-                        execute_mount_namespace(pid, None, &mount.target, MountAction::Unmount)
+                        execute_mount_namespace(pid, None, None, &mount.target, MountAction::Unmount)
                     {
                         eprintln!(
                             "gitrun-api: could not clean mount {} after job completion: {error}",
@@ -2343,11 +2371,12 @@ mod mount_runtime_tests {
         assert!(validate_mount_target(pid, &symlink_target, true).is_err());
         assert!(validate_mount_target(pid, &nonempty_target, true).is_err());
 
-        let source = open_mount_source(&fs::canonicalize(&source_dir).unwrap())
-            .expect("open canonical host source");
+        let canonical_source = fs::canonicalize(&source_dir).unwrap();
+        let source = open_mount_source(&canonical_source).expect("open canonical host source");
         execute_mount_namespace(
             pid,
             Some(std::os::fd::AsRawFd::as_raw_fd(&source)),
+            Some(&canonical_source),
             &target,
             MountAction::Bind,
         )
@@ -2423,11 +2452,13 @@ mod mount_runtime_tests {
         validate_mount_target(pid, &target_file, false)
             .expect("validate regular-file mount target");
         assert!(validate_mount_target(pid, &target_file, true).is_err());
-        let source_file_handle = open_mount_source(&fs::canonicalize(&source_file).unwrap())
-            .expect("open canonical host source file");
+        let canonical_source_file = fs::canonicalize(&source_file).unwrap();
+        let source_file_handle =
+            open_mount_source(&canonical_source_file).expect("open canonical host source file");
         execute_mount_namespace(
             pid,
             Some(source_file_handle.as_raw_fd()),
+            Some(&canonical_source_file),
             &target_file,
             MountAction::Bind,
         )

@@ -2826,22 +2826,12 @@ mod mount_runtime_tests {
 
         let source = dir.join("source.txt");
         let enabled = make_settings(true, true, true);
-        assert!(authorize_live_mount_source(
-            &enabled,
-            "owner/repo",
-            "runner",
-            &source,
-            true
-        )
-        .is_ok());
-        assert!(authorize_live_mount_source(
-            &enabled,
-            "owner/repo",
-            "runner",
-            &source,
-            false
-        )
-        .is_err());
+        assert!(
+            authorize_live_mount_source(&enabled, "owner/repo", "runner", &source, true).is_ok()
+        );
+        assert!(
+            authorize_live_mount_source(&enabled, "owner/repo", "runner", &source, false).is_err()
+        );
         assert!(authorize_live_mount_source(
             &make_settings(false, true, true),
             "owner/repo",

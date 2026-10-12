@@ -547,12 +547,107 @@ fn read_api_request_with_timeout(
 }
 
 #[cfg(unix)]
+trait ApiIdentityProvider: Send + Sync {
+    fn runner_for_peer_pid(
+        &self,
+        peer_pid: i32,
+    ) -> Result<Option<docker::ApiRunnerIdentity>, String>;
+
+    fn find_active_workflow_job_for_runner(
+        &self,
+        repository: &str,
+        runner_name: &str,
+    ) -> Result<Option<crate::github::WorkflowJobInfo>, String>;
+
+    fn find_workflow_job(
+        &self,
+        repository: &str,
+        run_id: u64,
+        job_name: &str,
+    ) -> Result<Option<crate::github::WorkflowJobInfo>, String>;
+
+    fn find_workflow_run(
+        &self,
+        repository: &str,
+        run_id: u64,
+    ) -> Result<Option<crate::github::WorkflowRunInfo>, String>;
+}
+
+#[cfg(unix)]
+struct SystemApiIdentityProvider {
+    github: Arc<GitHubClient>,
+}
+
+#[cfg(unix)]
+impl ApiIdentityProvider for SystemApiIdentityProvider {
+    fn runner_for_peer_pid(
+        &self,
+        peer_pid: i32,
+    ) -> Result<Option<docker::ApiRunnerIdentity>, String> {
+        identity_provider.runner_for_peer_pid(peer_pid).map_err(|error| error.to_string())
+    }
+
+    fn find_active_workflow_job_for_runner(
+        &self,
+        repository: &str,
+        runner_name: &str,
+    ) -> Result<Option<crate::github::WorkflowJobInfo>, String> {
+        self.github
+            .find_active_workflow_job_for_runner(repository, runner_name)
+            .map_err(|error| error.to_string())
+    }
+
+    fn find_workflow_job(
+        &self,
+        repository: &str,
+        run_id: u64,
+        job_name: &str,
+    ) -> Result<Option<crate::github::WorkflowJobInfo>, String> {
+        self.github
+            .find_workflow_job(repository, run_id, job_name)
+            .map_err(|error| error.to_string())
+    }
+
+    fn find_workflow_run(
+        &self,
+        repository: &str,
+        run_id: u64,
+    ) -> Result<Option<crate::github::WorkflowRunInfo>, String> {
+        self.github
+            .find_workflow_run(repository, run_id)
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(unix)]
 fn handle_stream(
+    stream: UnixStream,
+    config: Config,
+    github: Arc<GitHubClient>,
+    state_dir: std::path::PathBuf,
+    execution_authority: Arc<ExecutionAuthority>,
+) -> Result<(), String> {
+    let identity_provider = SystemApiIdentityProvider {
+        github: Arc::clone(&github),
+    };
+    handle_stream_with_identity_provider(
+        stream,
+        config,
+        github,
+        state_dir,
+        execution_authority,
+        &identity_provider,
+    )
+}
+
+#[cfg(unix)]
+fn handle_stream_with_identity_provider(
     mut stream: UnixStream,
     config: Config,
     github: Arc<GitHubClient>,
     state_dir: std::path::PathBuf,
     execution_authority: Arc<ExecutionAuthority>,
+    identity_provider: &dyn ApiIdentityProvider,
 ) -> Result<(), String> {
     let encoded = match read_api_request(&stream) {
         Ok(Some(encoded)) => encoded,
@@ -601,7 +696,7 @@ fn handle_stream(
     let run_id = binding.run_id;
 
     if binding.requires_active_job_lookup {
-        let Some(active_job) = github
+        let Some(active_job) = identity_provider
             .find_active_workflow_job_for_runner(&request.invocation.repository, &identity.name)
             .map_err(|error| format!("verify active workflow job: {error}"))?
         else {
@@ -621,7 +716,7 @@ fn handle_stream(
     }
 
     let job = request.invocation.job.clone();
-    let current_job = github
+    let current_job = identity_provider
         .find_workflow_job(&request.invocation.repository, run_id, &job)
         .map_err(|error| format!("verify current workflow job: {error}"))?;
     let Some(current_job) = current_job else {
@@ -644,7 +739,7 @@ fn handle_stream(
         return Ok(());
     }
 
-    let workflow_run = github
+    let workflow_run = identity_provider
         .find_workflow_run(&request.invocation.repository, run_id)
         .map_err(|error| format!("verify authoritative workflow run: {error}"))?;
     let Some(workflow_run) = workflow_run else {

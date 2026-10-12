@@ -2448,14 +2448,19 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
 }
 
 #[cfg(target_os = "linux")]
+fn mount_cleanup_status_is_terminal(status: &str) -> bool {
+    matches!(status.to_ascii_lowercase().as_str(), "created" | "dead" | "exited")
+}
+
+#[cfg(target_os = "linux")]
 fn cleanup_mount_record(record: &MountRecord) -> Result<(), String> {
     match container_pid_for_mount(&record.container_id) {
         Ok(pid) => cleanup_mount_lease_in_namespace(pid, record),
         Err(pid_error) => match docker::container_status(&record.container_id) {
-            Ok(Some(status)) if status != "running" => Ok(()),
+            Ok(Some(status)) if mount_cleanup_status_is_terminal(&status) => Ok(()),
             Ok(None) => Ok(()),
-            Ok(Some(_)) => Err(format!(
-                "original container is still running but its mount namespace cannot be inspected: {pid_error}"
+            Ok(Some(status)) => Err(format!(
+                "original container reports status {status:?}; preserve mount lease because its namespace cannot be inspected: {pid_error}"
             )),
             Err(status_error) => Err(format!(
                 "cannot safely determine whether original container is gone: {pid_error}; {status_error}"
@@ -2565,6 +2570,16 @@ mod mount_runtime_tests {
     impl Drop for TemporaryDirectory {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn cleanup_requires_an_explicit_terminal_container_status() {
+        for status in ["created", "dead", "exited", "CREATED", "Exited"] {
+            assert!(mount_cleanup_status_is_terminal(status), "{status}");
+        }
+        for status in ["running", "paused", "restarting", "removing", "unknown"] {
+            assert!(!mount_cleanup_status_is_terminal(status), "{status}");
         }
     }
 

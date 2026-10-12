@@ -1351,6 +1351,7 @@ impl ApiExecutionBackend {
         registry.save(&self.state_dir).map_err(failed)?;
 
         if let Err(error) = execute_mount_namespace(
+            &binding.container_id,
             pid,
             Some(source_handle.as_raw_fd()),
             Some(&canonical_source),
@@ -1407,6 +1408,7 @@ impl ApiExecutionBackend {
         registry.mounts.push(record.clone());
         if let Err(persist_error) = registry.save(&self.state_dir) {
             if execute_mount_namespace(
+                &binding.container_id,
                 pid,
                 None,
                 None,
@@ -1435,6 +1437,7 @@ impl ApiExecutionBackend {
 
         if read_only {
             if let Err(error) = execute_mount_namespace(
+                &binding.container_id,
                 pid,
                 None,
                 None,
@@ -1444,6 +1447,7 @@ impl ApiExecutionBackend {
                 },
             ) {
                 if let Err(rollback_error) = execute_mount_namespace(
+                    &binding.container_id,
                     pid,
                     None,
                     None,
@@ -2012,7 +2016,20 @@ fn containing_mountpoint(pid: i32, target: &str) -> Result<String, String> {
 }
 
 #[cfg(target_os = "linux")]
+fn same_file_identity(left: &fs::File, right: &fs::File) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt;
+    let left = left
+        .metadata()
+        .map_err(|error| format!("inspect pinned namespace descriptor: {error}"))?;
+    let right = right
+        .metadata()
+        .map_err(|error| format!("re-inspect namespace descriptor: {error}"))?;
+    Ok(left.dev() == right.dev() && left.ino() == right.ino())
+}
+
+#[cfg(target_os = "linux")]
 fn execute_mount_namespace(
+    expected_container_id: &str,
     pid: i32,
     source_fd: Option<i32>,
     source_path: Option<&Path>,
@@ -2024,6 +2041,26 @@ fn execute_mount_namespace(
     let pid_namespace = fs::File::open(format!("/proc/{pid}/ns/pid"))
         .map_err(|error| format!("open target PID namespace: {error}"))?;
     let container_root = open_path_handle(&PathBuf::from(format!("/proc/{pid}/root")), false)?;
+
+    // Docker's PID can be recycled or the same container can restart between
+    // inspect and opening /proc/PID/ns/* and /proc/PID/root. Re-resolve the
+    // immutable container ID, then compare fresh proc handles to the pinned
+    // descriptors before forking. Any mismatch fails closed.
+    if container_pid_for_mount(expected_container_id)? != pid {
+        return Err("bound container PID changed while pinning its namespaces".into());
+    }
+    let current_mount_namespace = fs::File::open(format!("/proc/{pid}/ns/mnt"))
+        .map_err(|error| format!("recheck target mount namespace: {error}"))?;
+    let current_pid_namespace = fs::File::open(format!("/proc/{pid}/ns/pid"))
+        .map_err(|error| format!("recheck target PID namespace: {error}"))?;
+    let current_root = open_path_handle(&PathBuf::from(format!("/proc/{pid}/root")), false)?;
+    if !same_file_identity(&mount_namespace, &current_mount_namespace)?
+        || !same_file_identity(&pid_namespace, &current_pid_namespace)?
+        || !same_file_identity(&container_root, &current_root)?
+    {
+        return Err("target container namespace or root changed while being pinned".into());
+    }
+
     let target_relative = target
         .strip_prefix('/')
         .filter(|value| !value.is_empty())
@@ -2394,6 +2431,7 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
     })?;
     if let Some(mount) = mountinfo_by_id(pid, expected_mount_id)? {
         execute_mount_namespace(
+            &record.container_id,
             pid,
             None,
             None,
@@ -2626,6 +2664,7 @@ mod mount_runtime_tests {
         let canonical_source = fs::canonicalize(&source_dir).unwrap();
         let source = open_mount_source(&canonical_source).expect("open canonical host source");
         execute_mount_namespace(
+            &container_id,
             pid,
             Some(std::os::fd::AsRawFd::as_raw_fd(&source)),
             Some(&canonical_source),
@@ -2639,6 +2678,7 @@ mod mount_runtime_tests {
             .expect("bind mount should appear");
         let wrong_mount_id = before.id.wrapping_add(1);
         assert!(execute_mount_namespace(
+            &container_id,
             pid,
             None,
             None,
@@ -2652,6 +2692,7 @@ mod mount_runtime_tests {
             .expect("verify identity mismatch did not remove the mount")
             .is_some());
         execute_mount_namespace(
+            &container_id,
             pid,
             None,
             None,
@@ -2694,6 +2735,7 @@ mod mount_runtime_tests {
         );
 
         assert!(execute_mount_namespace(
+            &container_id,
             pid,
             None,
             None,
@@ -2707,6 +2749,7 @@ mod mount_runtime_tests {
             .expect("verify identity mismatch left mount intact")
             .is_some());
         execute_mount_namespace(
+            &container_id,
             pid,
             None,
             None,
@@ -2751,6 +2794,7 @@ mod mount_runtime_tests {
         let source_file_handle =
             open_mount_source(&canonical_source_file).expect("open canonical host source file");
         execute_mount_namespace(
+            &container_id,
             pid,
             Some(source_file_handle.as_raw_fd()),
             Some(&canonical_source_file),
@@ -2788,6 +2832,7 @@ mod mount_runtime_tests {
             .expect("read file mount table")
             .expect("file bind mount should appear");
         execute_mount_namespace(
+            &container_id,
             pid,
             None,
             None,

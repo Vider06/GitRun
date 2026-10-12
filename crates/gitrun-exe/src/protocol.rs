@@ -264,6 +264,64 @@ mod tests {
     }
 
     #[test]
+    fn malformed_nonce_is_rejected_without_consuming_the_valid_nonce() {
+        let key = ChannelKey::generate().unwrap();
+        let signed = SignedRequest::sign(request(), &key).unwrap();
+        let mut malformed = signed.clone();
+        malformed.nonce.pop();
+
+        let mut replay = ReplayGuard::default();
+        assert!(matches!(
+            malformed.verify(&key, DEFAULT_MAX_CLOCK_SKEW_SECS, &mut replay),
+            Err(ChannelAuthError::InvalidNonce)
+        ));
+
+        // The invalid envelope must fail before the nonce enters the replay cache.
+        assert!(signed
+            .verify(&key, DEFAULT_MAX_CLOCK_SKEW_SECS, &mut replay)
+            .is_ok());
+    }
+
+    #[test]
+    fn expired_past_timestamp_is_rejected() {
+        let key = ChannelKey::generate().unwrap();
+        let mut signed = SignedRequest::sign(request(), &key).unwrap();
+        signed.timestamp = now().saturating_sub(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
+
+        let mut replay = ReplayGuard::default();
+        assert!(matches!(
+            signed.verify(&key, DEFAULT_MAX_CLOCK_SKEW_SECS, &mut replay),
+            Err(ChannelAuthError::Expired)
+        ));
+    }
+
+    #[test]
+    fn expired_future_timestamp_is_rejected() {
+        let key = ChannelKey::generate().unwrap();
+        let mut signed = SignedRequest::sign(request(), &key).unwrap();
+        signed.timestamp = now().saturating_add(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
+
+        let mut replay = ReplayGuard::default();
+        assert!(matches!(
+            signed.verify(&key, DEFAULT_MAX_CLOCK_SKEW_SECS, &mut replay),
+            Err(ChannelAuthError::Expired)
+        ));
+    }
+
+    #[test]
+    fn timestamp_mutation_inside_clock_window_fails_mac_verification() {
+        let key = ChannelKey::generate().unwrap();
+        let mut signed = SignedRequest::sign(request(), &key).unwrap();
+        signed.timestamp = signed.timestamp.saturating_add(1);
+
+        let mut replay = ReplayGuard::default();
+        assert!(matches!(
+            signed.verify(&key, DEFAULT_MAX_CLOCK_SKEW_SECS, &mut replay),
+            Err(ChannelAuthError::Authentication)
+        ));
+    }
+
+    #[test]
     fn invalid_signed_request_does_not_consume_nonce() {
         let key = ChannelKey::generate().unwrap();
         let mut signed = SignedRequest::sign(request(), &key).unwrap();

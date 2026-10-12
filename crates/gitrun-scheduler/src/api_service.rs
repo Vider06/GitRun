@@ -8,7 +8,7 @@
 use crate::dock_registry::{DockBinding, DockRegistry};
 use crate::docker;
 use crate::GitHubClient;
-use gitrun_core::{Config, GitRunApi, GitRunOperation, GitRunSettings};
+use gitrun_core::{api_policy::parse_boolean_argument, Config, GitRunApi, GitRunOperation, GitRunSettings};
 use gitrun_exe::{
     ipc::{WireRequest, WireResponse, DEFAULT_SOCKET_PATH},
     ApiInvocation, AuthorizedOperation, ExecutionBackend, ExecutionError, ExecutionEvent,
@@ -1103,7 +1103,8 @@ impl ApiExecutionBackend {
     fn register(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         let name = arg(request, "name")?;
         let entry = arg(request, "entry")?;
-        let permanent = arg(request, "permanent")? == "true";
+        let permanent = parse_boolean_argument(arg(request, "permanent")?)
+            .ok_or_else(|| failed("permanent must be true or false"))?;
 
         ensure_safe_logical_name(name)?;
         ensure_safe_runner_path(entry)?;

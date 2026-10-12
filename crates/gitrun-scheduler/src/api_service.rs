@@ -2009,15 +2009,14 @@ fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
 
     // umount2 requires a pathname, so an identity check on the init process
     // alone is insufficient: another process/thread in the container could
-    // race it if its capability bounding set permits CAP_SYS_ADMIN. Inspect
-    // every currently visible process in this immutable container cgroup and
-    // every thread's CapBnd. Bounding sets can only shrink, so requiring the
-    // capability to be absent everywhere prevents descendants from acquiring
-    // it after this check. If a matching process cannot be inspected, fail
-    // closed rather than treating the init process as representative.
-    if container_has_cap_sys_admin_in_bounding_set(container_id)? {
+    // race the expected-mount-ID check. Inspect every visible thread's current
+    // effective, permitted, inheritable, ambient and bounding capability sets.
+    // Checking CapBnd alone is insufficient because dropping a capability from
+    // that set does not revoke it from CapEff/CapPrm or necessarily from exec
+    // inheritance. If any matching thread cannot be inspected, fail closed.
+    if container_has_mount_admin_capability(container_id)? {
         return Err(
-            "live GitDockRun mounts are refused because a process in the container can obtain CAP_SYS_ADMIN"
+            "live GitDockRun mounts are refused because a process in the container holds or can acquire CAP_SYS_ADMIN"
                 .into(),
         );
     }
@@ -2025,8 +2024,7 @@ fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn container_has_cap_sys_admin_in_bounding_set(container_id: &str) -> Result<bool, String> {
-    let cap_sys_admin = 1u64 << 21;
+fn container_has_mount_admin_capability(container_id: &str) -> Result<bool, String> {
     let proc_entries = fs::read_dir("/proc")
         .map_err(|error| format!("enumerate processes for mount capability check: {error}"))?;
     for entry in proc_entries {
@@ -2079,14 +2077,30 @@ fn container_has_cap_sys_admin_in_bounding_set(container_id: &str) -> Result<boo
                     ));
                 }
             };
-            let bounding = status
-                .lines()
-                .find_map(|line| line.strip_prefix("CapBnd:"))
-                .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
-                .ok_or_else(|| format!("thread {tid} has missing or invalid CapBnd"))?;
-            if bounding & cap_sys_admin != 0 {
+            if status_has_mount_admin_capability(&status)
+                .map_err(|error| format!("inspect capabilities for thread {tid}: {error}"))?
+            {
                 return Ok(true);
             }
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn status_has_mount_admin_capability(status: &str) -> Result<bool, String> {
+    const CAP_SYS_ADMIN: u64 = 1u64 << 21;
+    const CAPABILITY_FIELDS: [&str; 5] = ["CapEff:", "CapPrm:", "CapInh:", "CapAmb:", "CapBnd:"];
+
+    for field in CAPABILITY_FIELDS {
+        let value = status
+            .lines()
+            .find_map(|line| line.strip_prefix(field))
+            .ok_or_else(|| format!("missing {field} capability mask"))?;
+        let mask = u64::from_str_radix(value.trim(), 16)
+            .map_err(|_| format!("invalid {field} capability mask"))?;
+        if mask & CAP_SYS_ADMIN != 0 {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -3083,6 +3097,32 @@ mod mount_runtime_tests {
     }
 
     #[test]
+    fn mount_capability_check_rejects_effective_and_reacquirable_sys_admin() {
+        let fields = ["CapEff:", "CapPrm:", "CapInh:", "CapAmb:", "CapBnd:"];
+        let sys_admin = format!("{:016x}", 1u64 << 21);
+
+        let base_status = || {
+            fields
+                .iter()
+                .map(|field| format!("{field} 0000000000000000"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(!status_has_mount_admin_capability(&base_status()).unwrap());
+
+        for field in fields {
+            let mut status = base_status();
+            status.push_str(&format!("\n{field} {sys_admin}"));
+            assert!(
+                status_has_mount_admin_capability(&status).unwrap(),
+                "{field} containing CAP_SYS_ADMIN must block live mounts"
+            );
+        }
+
+        assert!(status_has_mount_admin_capability("Name:\\tworker").is_err());
+    }
+
+    #[test]
     fn workflow_mount_cleanup_requires_completed_job_status() {
         assert!(!workflow_job_is_completed("queued", None));
         assert!(!workflow_job_is_completed("waiting", None));
@@ -3594,6 +3634,8 @@ mod mount_runtime_tests {
             .expect("verify file target no longer mounted")
             .is_none());
 
+        drop(_nested_source_mount_guard);
+        drop(_nested_overlay_guard);
         drop(container_guard);
         drop(source_guard);
     }

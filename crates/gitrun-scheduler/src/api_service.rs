@@ -2941,18 +2941,10 @@ mod mount_runtime_tests {
             .expect("verify target no longer mounted")
             .is_none());
 
-        // Simulate a service crash after the bind but before the kernel mount
-        // ID was saved. Recovery must find the exact source inode and remove
-        // the mount, rather than unmounting by target name alone.
-        execute_mount_namespace(
-            &container_id,
-            pid,
-            Some(source.as_raw_fd()),
-            Some(&canonical_source),
-            &target,
-            MountAction::Bind,
-        )
-        .expect("recreate mount for interrupted-lease recovery");
+        // Simulate a service crash on both sides of the bind syscall. An
+        // intent-only lease with no mount at its target should be safely
+        // discarded; a lease pointing at an unrelated source must never
+        // unmount a live mount, even when a kernel mount ID is present.
         let source_metadata = fs::metadata(&canonical_source).unwrap();
         let interrupted_lease = MountRecord {
             id: "gm-interrupted-recovery-test".into(),
@@ -2972,7 +2964,33 @@ mod mount_runtime_tests {
             created_at: now(),
         };
         cleanup_mount_lease_in_namespace(pid, &interrupted_lease)
-            .expect("recover incomplete mount by unique source identity");
+            .expect("clean intent-only lease without a mount");
+        assert!(mountinfo_by_target(pid, &target)
+            .expect("verify no mount was created")
+            .is_none());
+
+        execute_mount_namespace(
+            &container_id,
+            pid,
+            Some(source.as_raw_fd()),
+            Some(&canonical_source),
+            &target,
+            MountAction::Bind,
+        )
+        .expect("recreate mount for interrupted-lease recovery");
+        let recovered_candidate = mountinfo_by_target(pid, &target)
+            .expect("inspect recreated interrupted mount")
+            .expect("recreated source bind should be present");
+        let mut wrong_identity_lease = interrupted_lease.clone();
+        wrong_identity_lease.kernel_mount_id = Some(recovered_candidate.id);
+        wrong_identity_lease.source_inode = Some(source_metadata.ino().wrapping_add(1));
+        assert!(cleanup_mount_lease_in_namespace(pid, &wrong_identity_lease).is_err());
+        assert!(mountinfo_by_id(pid, recovered_candidate.id)
+            .expect("verify source mismatch did not unmount")
+            .is_some());
+
+        cleanup_mount_lease_in_namespace(pid, &interrupted_lease)
+            .expect("recover incomplete mount by exact target and source identity");
         assert!(mountinfo_by_target(pid, &target)
             .expect("read mount table after interrupted-lease recovery")
             .is_none());

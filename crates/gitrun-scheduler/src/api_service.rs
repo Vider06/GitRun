@@ -2385,7 +2385,7 @@ mod mount_runtime_tests {
         let before = mountinfo_by_target(pid, &target)
             .expect("read mount table after bind")
             .expect("bind mount should appear");
-        execute_mount_namespace(pid, None, &target, MountAction::RemountReadOnly)
+        execute_mount_namespace(pid, None, None, &target, MountAction::RemountReadOnly)
             .expect("make bind mount read-only");
 
         let read = Command::new("docker")
@@ -2419,7 +2419,7 @@ mod mount_runtime_tests {
             "write unexpectedly succeeded on read-only mount"
         );
 
-        execute_mount_namespace(pid, None, &target, MountAction::Unmount)
+        execute_mount_namespace(pid, None, None, &target, MountAction::Unmount)
             .expect("unmount from target namespace");
         assert!(mountinfo_by_id(pid, before.id)
             .expect("read mount table after unmount")
@@ -2492,7 +2492,7 @@ mod mount_runtime_tests {
         let file_mount = mountinfo_by_target(pid, &target_file)
             .expect("read file mount table")
             .expect("file bind mount should appear");
-        execute_mount_namespace(pid, None, &target_file, MountAction::Unmount)
+        execute_mount_namespace(pid, None, None, &target_file, MountAction::Unmount)
             .expect("unmount regular file from target namespace");
         assert!(mountinfo_by_id(pid, file_mount.id)
             .expect("read mount table after file unmount")

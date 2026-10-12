@@ -2449,7 +2449,10 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
 
 #[cfg(target_os = "linux")]
 fn mount_cleanup_status_is_terminal(status: &str) -> bool {
-    matches!(status.to_ascii_lowercase().as_str(), "created" | "dead" | "exited")
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "created" | "dead" | "exited"
+    )
 }
 
 #[cfg(target_os = "linux")]

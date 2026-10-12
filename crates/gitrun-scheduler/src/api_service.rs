@@ -2571,6 +2571,19 @@ fn execute_mount_namespace(
 
 #[cfg(target_os = "linux")]
 fn mount_target_is_allowed(target: &str) -> bool {
+    let path = Path::new(target);
+    if !path.is_absolute()
+        || target.ends_with('/')
+        || target.contains("//")
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::CurDir | Component::Prefix(_)
+            )
+        })
+    {
+        return false;
+    }
     [
         "/workspace/",
         "/home/runner/actions-runner/_work/",
@@ -2586,14 +2599,6 @@ fn recover_mount_id_by_source_identity(
     pid: i32,
     record: &MountRecord,
 ) -> Result<Option<u32>, String> {
-    let (Some(source_device), Some(source_inode)) = (record.source_device, record.source_inode)
-    else {
-        return Err(format!(
-            "mount lease {} has no recorded source identity; automatic recovery is unsafe",
-            record.id
-        ));
-    };
-
     // Only look at the exact destination captured in the durable intent. A
     // global scan by inode could otherwise select an unrelated mount of the
     // same directory elsewhere in this container.
@@ -2616,6 +2621,13 @@ fn recover_mount_id_by_source_identity(
                 record.id
             ));
         }
+    };
+    let (Some(source_device), Some(source_inode)) = (record.source_device, record.source_inode)
+    else {
+        return Err(format!(
+            "mount lease {} has no recorded source identity; automatic recovery is unsafe",
+            record.id
+        ));
     };
     let mounted_path = PathBuf::from(format!("/proc/{pid}/root{}", record.target));
     let metadata = fs::metadata(&mounted_path)
@@ -2718,8 +2730,10 @@ fn cleanup_mount_record(record: &MountRecord) -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
-fn workflow_job_is_completed(status: &str, conclusion: Option<&str>) -> bool {
-    status.eq_ignore_ascii_case("completed") || conclusion.is_some()
+fn workflow_job_is_completed(status: &str, _conclusion: Option<&str>) -> bool {
+    // The status is authoritative; a conclusion-like field must never override
+    // an in-progress/queued state and cause the mount to disappear early.
+    status.eq_ignore_ascii_case("completed")
 }
 
 #[cfg(target_os = "linux")]
@@ -2927,7 +2941,7 @@ mod mount_runtime_tests {
         assert!(!workflow_job_is_completed("waiting", None));
         assert!(!workflow_job_is_completed("in_progress", None));
         assert!(workflow_job_is_completed("completed", None));
-        assert!(workflow_job_is_completed("in_progress", Some("cancelled")));
+        assert!(!workflow_job_is_completed("in_progress", Some("cancelled")));
         assert!(workflow_job_is_completed("COMPLETED", Some("success")));
     }
 

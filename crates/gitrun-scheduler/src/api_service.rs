@@ -5244,7 +5244,10 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("runner-mismatch", invocation, valid_provider());
 
-        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(
+            result.handler_result.is_ok(),
+            "expected a wire-level denial: {result:?}"
+        );
         assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
             result.responses.as_slice(),
@@ -5261,7 +5264,10 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("missing-run-id", invocation, valid_provider());
 
-        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(
+            result.handler_result.is_ok(),
+            "expected a wire-level denial: {result:?}"
+        );
         assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
             result.responses.as_slice(),
@@ -5291,7 +5297,12 @@ mod api_socket_identity_integration_tests {
         assert!(contains_acceptance(&result.responses));
         assert_eq!(
             result.calls,
-            vec!["peer_identity", "active_job", "workflow_job", "workflow_run"]
+            vec![
+                "peer_identity",
+                "active_job",
+                "workflow_job",
+                "workflow_run"
+            ]
         );
     }
 
@@ -5311,7 +5322,10 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("active-job-mismatch", status_invocation(), provider);
 
-        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(
+            result.handler_result.is_ok(),
+            "expected a wire-level denial: {result:?}"
+        );
         assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
             result.responses.as_slice(),

@@ -2480,7 +2480,10 @@ fn mount_target_is_allowed(target: &str) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn recover_mount_id_by_source_identity(pid: i32, record: &MountRecord) -> Result<u32, String> {
+fn recover_mount_id_by_source_identity(
+    pid: i32,
+    record: &MountRecord,
+) -> Result<Option<u32>, String> {
     let (Some(source_device), Some(source_inode)) = (record.source_device, record.source_inode)
     else {
         return Err(format!(
@@ -2502,11 +2505,15 @@ fn recover_mount_id_by_source_identity(pid: i32, record: &MountRecord) -> Result
         .into_iter()
         .filter(|mount| mount.target == record.target)
         .collect();
-    let [mount] = matching_entries.as_slice() else {
-        return Err(format!(
-            "mount lease {} does not have exactly one mount entry at its recorded target; preserving it for manual recovery",
-            record.id
-        ));
+    let mount = match matching_entries.as_slice() {
+        [] => return Ok(None), // A crash may happen after persisting intent but before bind.
+        [mount] => mount,
+        _ => {
+            return Err(format!(
+                "mount lease {} has multiple mount entries at its recorded target; preserving it for manual recovery",
+                record.id
+            ));
+        }
     };
     let mounted_path = PathBuf::from(format!("/proc/{pid}/root{}", record.target));
     let metadata = fs::metadata(&mounted_path)
@@ -2517,7 +2524,7 @@ fn recover_mount_id_by_source_identity(pid: i32, record: &MountRecord) -> Result
             record.id
         ));
     }
-    Ok(mount.id)
+    Ok(Some(mount.id))
 }
 
 #[cfg(target_os = "linux")]
@@ -2527,8 +2534,13 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
     // durable target and original source device/inode. Never fall back to
     // unmounting by target path alone; ambiguous or legacy leases are preserved.
     let expected_mount_id = match record.kernel_mount_id {
-        Some(mount_id) => mount_id,
+        Some(mount_id) => Some(mount_id),
         None => recover_mount_id_by_source_identity(pid, record)?,
+    };
+    let Some(expected_mount_id) = expected_mount_id else {
+        // No mount existed at the lease's target. This is the normal recovery
+        // path for a process crash after persisting "preparing" but before bind.
+        return Ok(());
     };
     let Some(mount) = mountinfo_by_id(pid, expected_mount_id)? else {
         // The exact kernel mount ID is already absent: cleanup has succeeded.

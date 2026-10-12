@@ -3294,6 +3294,10 @@ mod mount_runtime_tests {
         let before = mountinfo_by_target(pid, &target)
             .expect("read mount table after bind")
             .expect("bind mount should appear");
+        assert!(
+            validate_mount_target(pid, &target, true).is_err(),
+            "an existing mountpoint must not be accepted as a new mount target"
+        );
         let pre_remount_write = Command::new("docker")
             .args([
                 "exec",

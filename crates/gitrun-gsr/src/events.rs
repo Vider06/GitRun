@@ -126,7 +126,7 @@ fn archive_prefix(path: &Path) -> Option<String> {
     Some(format!("{}.archive-", path.file_name()?.to_str()?))
 }
 
-/// Returns archive paths in oldest-to-newest lexical order.
+/// Returns archive paths oldest-first, using modification time and a stable path tie-breaker.
 fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
     let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
     let Some(prefix) = archive_prefix(path) else {

@@ -30,8 +30,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::ffi::CString;
 #[cfg(target_os = "linux")]
 use std::os::fd::{AsRawFd, FromRawFd};
-#[cfg(target_os = "linux")]
-use std::os::unix::ffi::OsStrExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -1296,16 +1294,16 @@ impl ApiExecutionBackend {
             target,
             MountAction::Bind,
         ) {
-            if mountinfo_by_target(pid, target).ok().flatten().is_some() {
-                if execute_mount_namespace(pid, None, target, MountAction::Unmount).is_err() {
-                    record.state = "cleanup-required".into();
-                    registry.mounts.retain(|item| item.id != mount_id);
-                    registry.mounts.push(record);
-                    let _ = registry.save(&self.state_dir);
-                    return Err(failed(format!(
-                        "mount failed and rollback failed; mount {mount_id} is registered for cleanup: {error}"
-                    )));
-                }
+            if mountinfo_by_target(pid, target).ok().flatten().is_some()
+                && execute_mount_namespace(pid, None, target, MountAction::Unmount).is_err()
+            {
+                record.state = "cleanup-required".into();
+                registry.mounts.retain(|item| item.id != mount_id);
+                registry.mounts.push(record);
+                let _ = registry.save(&self.state_dir);
+                return Err(failed(format!(
+                    "mount failed and rollback failed; mount {mount_id} is registered for cleanup: {error}"
+                )));
             }
             registry.mounts.retain(|item| item.id != mount_id);
             let _ = registry.save(&self.state_dir);
@@ -1555,6 +1553,15 @@ struct OpenHow {
 }
 
 #[cfg(target_os = "linux")]
+#[repr(C)]
+struct MountAttr {
+    attr_set: u64,
+    attr_clr: u64,
+    propagation: u64,
+    userns_fd: u64,
+}
+
+#[cfg(target_os = "linux")]
 fn new_mount_id() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     fs::File::open("/dev/urandom")
@@ -1782,16 +1789,33 @@ fn execute_mount_namespace(
         .ok_or_else(|| "mount target must be a non-root absolute path".to_owned())?;
     let target_relative_c =
         CString::new(target_relative).map_err(|_| "mount target contains a NUL byte".to_owned())?;
-    let source_c = source_fd
-        .map(|fd| CString::new(format!("/proc/self/fd/{fd}")))
-        .transpose()
-        .map_err(|_| "invalid mount source file descriptor".to_owned())?;
-    if matches!(action, MountAction::Bind) && source_c.is_none() {
-        return Err("mount source descriptor was not provided".into());
-    }
-    let source_ptr = source_c
-        .as_ref()
-        .map_or(std::ptr::null(), |value| value.as_ptr());
+    // Clone the source mount while its original mount namespace is still
+    // active. A raw source FD opened on the host is not necessarily a path in
+    // the container's mount namespace; mounting a procfs FD path after
+    // setns/chroot can fail for legitimate host-only source paths.
+    // A detached mount tree can be moved into the target namespace by FD.
+    let source_tree = if matches!(action, MountAction::Bind) {
+        let source_fd = source_fd
+            .ok_or_else(|| "mount source descriptor was not provided".to_owned())?;
+        let tree_fd = unsafe {
+            libc::syscall(
+                libc::SYS_open_tree,
+                source_fd,
+                c"".as_ptr(),
+                libc::AT_EMPTY_PATH | libc::O_CLOEXEC | 1, // OPEN_TREE_CLONE
+            ) as libc::c_int
+        };
+        if tree_fd < 0 {
+            return Err(format!(
+                "clone mount source tree: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Some(unsafe { fs::File::from_raw_fd(tree_fd) })
+    } else {
+        None
+    };
+    let source_tree_fd = source_tree.as_ref().map(AsRawFd::as_raw_fd);
 
     // Pin the namespaces and root before fork so a reused PID can never redirect
     // the mount operation to a replacement container.
@@ -1817,8 +1841,8 @@ fn execute_mount_namespace(
             }
             if inner_pid == 0 {
                 if libc::fchdir(container_root.as_raw_fd()) != 0
-                    || libc::chroot(b".\0".as_ptr().cast()) != 0
-                    || libc::chdir(b"/\0".as_ptr().cast()) != 0
+                    || libc::chroot(c".".as_ptr()) != 0
+                    || libc::chdir(c"/".as_ptr()) != 0
                 {
                     libc::_exit(44);
                 }
@@ -1829,7 +1853,7 @@ fn execute_mount_namespace(
                 if matches!(action, MountAction::Bind)
                     && libc::mount(
                         std::ptr::null(),
-                        b"/\0".as_ptr().cast(),
+                        c"/".as_ptr(),
                         std::ptr::null(),
                         libc::MS_REC | libc::MS_PRIVATE,
                         std::ptr::null(),
@@ -1839,7 +1863,7 @@ fn execute_mount_namespace(
                 }
 
                 let root_fd = libc::open(
-                    b"/\0".as_ptr().cast(),
+                    c"/".as_ptr(),
                     libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
                 );
                 if root_fd < 0 {
@@ -1882,7 +1906,7 @@ fn execute_mount_namespace(
                 let target_link_len = libc::snprintf(
                     target_link.as_mut_ptr(),
                     target_link.len(),
-                    b"/proc/self/fd/%d\0".as_ptr().cast(),
+                    c"/proc/self/fd/%d".as_ptr(),
                     target_fd,
                 );
                 if target_link_len < 0 || target_link_len as usize >= target_link.len() {
@@ -1891,31 +1915,55 @@ fn execute_mount_namespace(
                 let target_ptr = target_link.as_ptr();
                 match action {
                     MountAction::Bind => {
-                        if libc::mount(
-                            source_ptr,
-                            target_ptr,
-                            std::ptr::null(),
-                            libc::MS_BIND,
-                            std::ptr::null(),
-                        ) != 0
-                        {
+                        let Some(source_tree_fd) = source_tree_fd else {
+                            libc::_exit(45);
+                        };
+                        // Both ends are addressed by pinned FDs. This avoids
+                        // resolving a host-only source path inside the
+                        // container namespace and avoids path replacement
+                        // races between validation and the actual bind.
+                        let moved = libc::syscall(
+                            libc::SYS_move_mount,
+                            source_tree_fd,
+                            c"".as_ptr(),
+                            target_fd,
+                            c"".as_ptr(),
+                            0x04 | 0x40, // MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH
+                        );
+                        if moved != 0 {
                             libc::_exit(45);
                         }
                         libc::_exit(0);
                     }
                     MountAction::RemountReadOnly => {
-                        if libc::mount(
-                            std::ptr::null(),
-                            target_ptr,
-                            std::ptr::null(),
-                            libc::MS_BIND
-                                | libc::MS_REMOUNT
-                                | libc::MS_RDONLY
-                                | libc::MS_NOSUID
-                                | libc::MS_NODEV,
-                            std::ptr::null(),
-                        ) != 0
-                        {
+                        // Re-open the path after the bind so the FD refers to
+                        // the mounted filesystem, not the covered old target.
+                        let mounted_fd = libc::syscall(
+                            libc::SYS_openat2,
+                            root_fd,
+                            target_relative_c.as_ptr(),
+                            &how as *const OpenHow,
+                            std::mem::size_of::<OpenHow>(),
+                        ) as libc::c_int;
+                        if mounted_fd < 0 {
+                            libc::_exit(46);
+                        }
+                        let attr = MountAttr {
+                            attr_set: 0x01 | 0x02 | 0x04, // RDONLY | NOSUID | NODEV
+                            attr_clr: 0,
+                            propagation: 0,
+                            userns_fd: 0,
+                        };
+                        let changed = libc::syscall(
+                            libc::SYS_mount_setattr,
+                            mounted_fd,
+                            c"".as_ptr(),
+                            libc::AT_EMPTY_PATH,
+                            &attr as *const MountAttr,
+                            std::mem::size_of::<MountAttr>(),
+                        );
+                        let _ = libc::close(mounted_fd);
+                        if changed != 0 {
                             libc::_exit(46);
                         }
                         libc::_exit(0);

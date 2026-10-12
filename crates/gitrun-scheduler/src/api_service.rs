@@ -1137,11 +1137,13 @@ impl ApiExecutionBackend {
             cleanup_owned_mounts_for_disconnect(
                 &mut mount_registry,
                 &self.state_dir,
-                &request.repository,
-                run_id,
-                job,
-                &binding.container_id,
-                &self.caller.runner,
+                MountCleanupOwner {
+                    repository: &request.repository,
+                    run_id,
+                    job,
+                    container_id: &binding.container_id,
+                    requester_runner: &self.caller.runner,
+                },
                 cleanup_mount_record,
             )
             .map_err(failed)?;
@@ -2841,14 +2843,19 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
 }
 
 #[cfg(target_os = "linux")]
+struct MountCleanupOwner<'a> {
+    repository: &'a str,
+    run_id: u64,
+    job: &'a str,
+    container_id: &'a str,
+    requester_runner: &'a str,
+}
+
+#[cfg(target_os = "linux")]
 fn cleanup_owned_mounts_for_disconnect<F>(
     registry: &mut MountRegistry,
     state_dir: &Path,
-    repository: &str,
-    run_id: u64,
-    job: &str,
-    container_id: &str,
-    requester_runner: &str,
+    owner: MountCleanupOwner<'_>,
     mut cleanup: F,
 ) -> Result<(), String>
 where
@@ -2858,11 +2865,11 @@ where
         .mounts
         .iter()
         .filter(|mount| {
-            mount.repository == repository
-                && mount.run_id == run_id
-                && mount.job == job
-                && mount.container_id == container_id
-                && mount.requester_runner == requester_runner
+            mount.repository == owner.repository
+                && mount.run_id == owner.run_id
+                && mount.job == owner.job
+                && mount.container_id == owner.container_id
+                && mount.requester_runner == owner.requester_runner
         })
         .cloned()
         .collect();
@@ -2882,11 +2889,11 @@ where
 
     if !owned_mounts.is_empty() {
         registry.mounts.retain(|mount| {
-            mount.repository != repository
-                || mount.run_id != run_id
-                || mount.job != job
-                || mount.container_id != container_id
-                || mount.requester_runner != requester_runner
+            mount.repository != owner.repository
+                || mount.run_id != owner.run_id
+                || mount.job != owner.job
+                || mount.container_id != owner.container_id
+                || mount.requester_runner != owner.requester_runner
         });
         registry.save(state_dir)?;
     }
@@ -3232,11 +3239,13 @@ mod mount_runtime_tests {
         let failed = cleanup_owned_mounts_for_disconnect(
             &mut registry,
             &dir,
-            "owner/repo",
-            42,
-            "build",
-            "test-container-id",
-            "runner-a",
+            MountCleanupOwner {
+                repository: "owner/repo",
+                run_id: 42,
+                job: "build",
+                container_id: "test-container-id",
+                requester_runner: "runner-a",
+            },
             |mount| {
                 cleaned.push(mount.id.clone());
                 if mount.id == "owned-b" {
@@ -3267,11 +3276,13 @@ mod mount_runtime_tests {
         cleanup_owned_mounts_for_disconnect(
             &mut registry,
             &dir,
-            "owner/repo",
-            42,
-            "build",
-            "test-container-id",
-            "runner-a",
+            MountCleanupOwner {
+                repository: "owner/repo",
+                run_id: 42,
+                job: "build",
+                container_id: "test-container-id",
+                requester_runner: "runner-a",
+            },
             |mount| {
                 cleaned_after_retry.push(mount.id.clone());
                 Ok(())

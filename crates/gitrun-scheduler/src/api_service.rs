@@ -2104,6 +2104,12 @@ fn validate_mount_target(pid: i32, target: &str, source_is_dir: bool) -> Result<
     if source_is_dir != metadata.is_dir() {
         return Err("mount source and target must both be directories or both be files".into());
     }
+    // Do not stack a GitRun mount over a target that is already a mountpoint.
+    // Besides avoiding ambiguous mount-ID lookup, this makes a pre-existing
+    // mount an explicit policy failure rather than relying on syscall ordering.
+    if mountinfo_by_target(pid, target)?.is_some() {
+        return Err("mount target is already a mount point".into());
+    }
     if source_is_dir {
         let mut entries = fs::read_dir(&host_path)
             .map_err(|error| format!("inspect mount target directory: {error}"))?;
@@ -2279,6 +2285,9 @@ fn execute_mount_namespace(
     // Create a private-namespace bind of the source at a temporary, matching
     // mountpoint, clone that mount tree, then move the detached tree into the
     // target namespace. The staging mount never propagates into the host.
+    // The source bind is intentionally non-recursive (MS_BIND, not MS_REC):
+    // nested source mountpoints are not transferred. Read-only attributes are
+    // applied recursively to the mount tree that was actually cloned.
     let staging = if matches!(action, MountAction::Bind { .. }) {
         use std::os::unix::ffi::OsStrExt;
         let source_fd =
@@ -2843,7 +2852,7 @@ fn reconcile_completed_mounts(
         // or legacy leases remain for manual recovery.
         if matches!(
             record.state.as_str(),
-            "preparing" | "read-only-pending" | "cleanup-required"
+            "preparing" | "attaching" | "read-only-pending" | "cleanup-required"
         ) {
             match cleanup_mount_record(record) {
                 Ok(()) => remove_ids.push(record.id.clone()),
@@ -3323,6 +3332,16 @@ mod mount_runtime_tests {
         assert!(mountinfo_by_target(pid, &target)
             .expect("verify no mount was created")
             .is_none());
+
+        // Once the durable state says the privileged attach may have begun,
+        // absence at the original pathname is ambiguous (for example, the
+        // target may have been renamed). Never discard this lease automatically.
+        let mut attaching_lease = interrupted_lease.clone();
+        attaching_lease.state = "attaching".into();
+        assert!(
+            cleanup_mount_lease_in_namespace(pid, &attaching_lease).is_err(),
+            "an attaching lease without a discoverable mount must be preserved"
+        );
 
         execute_mount_namespace(
             &container_id,

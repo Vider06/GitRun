@@ -1512,6 +1512,38 @@ impl ApiExecutionBackend {
                 )));
             }
         };
+
+        // mountinfo at the original pathname is not enough if a workflow
+        // replaced the target while the helper was attaching by pinned FD.
+        // Confirm that the visible target resolves to the original source
+        // device/inode before adopting its kernel mount ID into the lease.
+        let visible_target = PathBuf::from(format!("/proc/{pid}/root{target}"));
+        let visible_metadata = match fs::metadata(&visible_target) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                record.state = "cleanup-required".into();
+                registry.mounts.retain(|item| item.id != mount_id);
+                registry.mounts.push(record);
+                let persistence = registry.save(&self.state_dir);
+                return Err(failed(format!(
+                    "bind completed but its visible target could not be verified; lease {mount_id} retained: {error}; registry: {}",
+                    persistence.err().map(|save_error| save_error.to_string()).unwrap_or_else(|| "saved".into())
+                )));
+            }
+        };
+        if visible_metadata.dev() != source_metadata.dev()
+            || visible_metadata.ino() != source_metadata.ino()
+        {
+            record.state = "cleanup-required".into();
+            registry.mounts.retain(|item| item.id != mount_id);
+            registry.mounts.push(record);
+            let persistence = registry.save(&self.state_dir);
+            return Err(failed(format!(
+                "bind completed but the visible target no longer matches the pinned source identity; lease {mount_id} retained for recovery; registry: {}",
+                persistence.err().map(|save_error| save_error.to_string()).unwrap_or_else(|| "saved".into())
+            )));
+        }
+
         record.kernel_mount_id = Some(mount_info.id);
         record.state = if read_only {
             "read-only-pending"

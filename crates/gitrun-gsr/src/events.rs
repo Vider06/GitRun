@@ -98,7 +98,11 @@ impl QueueLock {
             .open(PathBuf::from(lock_name))?;
         #[cfg(unix)]
         {
-            let mode = if exclusive { libc::LOCK_EX } else { libc::LOCK_SH };
+            let mode = if exclusive {
+                libc::LOCK_EX
+            } else {
+                libc::LOCK_SH
+            };
             // SAFETY: flock operates on the live descriptor owned by lock.
             if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), mode) } == -1 {
                 return Err(std::io::Error::last_os_error().into());
@@ -128,7 +132,10 @@ fn archive_prefix(path: &Path) -> Option<String> {
 
 /// Returns archive paths oldest-first, using modification time and a stable path tie-breaker.
 fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let Some(prefix) = archive_prefix(path) else {
         return Ok(Vec::new());
     };
@@ -150,9 +157,15 @@ fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
         }
     }
     archives.sort_by(|left, right| {
-        let left_modified = std::fs::metadata(left).and_then(|metadata| metadata.modified()).unwrap_or(UNIX_EPOCH);
-        let right_modified = std::fs::metadata(right).and_then(|metadata| metadata.modified()).unwrap_or(UNIX_EPOCH);
-        left_modified.cmp(&right_modified).then_with(|| left.cmp(right))
+        let left_modified = std::fs::metadata(left)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        let right_modified = std::fs::metadata(right)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        left_modified
+            .cmp(&right_modified)
+            .then_with(|| left.cmp(right))
     });
     Ok(archives)
 }

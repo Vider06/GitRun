@@ -4854,13 +4854,13 @@ mod gsr_execution_boundary_tests {
             responses.get(1),
             Some(WireResponse::Event(ExecutionEvent::Started))
         ));
-        assert!(result.responses.iter().any(|response| matches!(
+        assert!(responses.iter().any(|response| matches!(
             response,
             WireResponse::Event(ExecutionEvent::Stdout(output))
                 if output == "recorded execution"
         )));
         assert!(matches!(
-            result.responses.last(),
+            responses.last(),
             Some(WireResponse::Event(ExecutionEvent::Finished {
                 exit_code: 0
             }))
@@ -5069,6 +5069,7 @@ mod api_socket_identity_integration_tests {
         }
     }
 
+    #[derive(Debug)]
     struct SocketTestResult {
         handler_result: Result<(), String>,
         responses: Vec<WireResponse>,
@@ -5202,10 +5203,10 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("inactive-job", status_invocation(), provider);
 
-        assert!(result.is_ok(), "expected a wire-level denial: {result:?}");
-        assert!(!contains_acceptance(&responses));
+        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
-            responses.as_slice(),
+            result.responses.as_slice(),
             [WireResponse::Error { message }]
                 if message.contains("active runner for this workflow job")
         ));
@@ -5219,10 +5220,10 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("workflow-mismatch", invocation, valid_provider());
 
-        assert!(result.is_ok(), "expected a wire-level denial: {result:?}");
-        assert!(!contains_acceptance(&responses));
+        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
-            responses.as_slice(),
+            result.responses.as_slice(),
             [WireResponse::Error { message }]
                 if message.contains("workflow identity claim does not match")
         ));

@@ -1411,6 +1411,41 @@ impl ApiExecutionBackend {
         // identify and roll back a partially-created mount.
         registry.save(&self.state_dir).map_err(failed)?;
 
+        // Settings can change after GSR has authorized the request and while
+        // the target/source are being inspected. Re-read the current effective
+        // policy immediately before the namespace syscall; if the source now
+        // resolves differently, the previously pinned file descriptor is not
+        // allowed to bypass that change.
+        let current_settings = GitRunSettings::load_or_default(
+            GitRunSettings::path_for_state_dir(&self.state_dir),
+        )
+        .map_err(|error| failed(format!("reload GitDockRun mount policy before attach: {error}")))?;
+        let final_authorization = authorize_live_mount_source(
+            &current_settings,
+            &request.repository,
+            resource,
+            Path::new(&record.source),
+            read_only,
+        )
+        .and_then(|current_source| {
+            if current_source == canonical_source {
+                Ok(())
+            } else {
+                Err("mount source canonical identity changed after initial authorization".into())
+            }
+        });
+        if let Err(policy_error) = final_authorization {
+            registry.mounts.retain(|item| item.id != mount_id);
+            registry.save(&self.state_dir).map_err(|save_error| {
+                failed(format!(
+                    "mount was blocked because policy changed before attach, but its intent lease could not be removed: {policy_error}; {save_error}"
+                ))
+            })?;
+            return Err(failed(format!(
+                "mount was blocked because its effective policy changed before attach: {policy_error}"
+            )));
+        }
+
         if let Err(error) = execute_mount_namespace(
             &binding.container_id,
             pid,

@@ -808,7 +808,8 @@ mod tests {
             None,
             args("false"),
             None,
-        ).is_ok());
+        )
+        .is_ok());
 
         assert!(matches!(
             authorize(
@@ -824,19 +825,22 @@ mod tests {
         ));
 
         for value in ["TRUE", "False", "yes", "1"] {
-            assert!(matches!(
-                authorize(
-                    &settings,
-                    &caller,
-                    GitRunApi::GitRegisterRun,
-                    GitRunOperation::Register,
-                    None,
-                    args(value),
-                    None,
+            assert!(
+                matches!(
+                    authorize(
+                        &settings,
+                        &caller,
+                        GitRunApi::GitRegisterRun,
+                        GitRunOperation::Register,
+                        None,
+                        args(value),
+                        None,
+                    ),
+                    Err(ApiGateError::InvalidArguments { detail, .. })
+                        if detail.contains("permanent must be true or false")
                 ),
-                Err(ApiGateError::InvalidArguments { detail, .. })
-                    if detail.contains("permanent must be true or false")
-            ), "non-canonical boolean {value:?} must be rejected");
+                "non-canonical boolean {value:?} must be rejected"
+            );
         }
     }
 

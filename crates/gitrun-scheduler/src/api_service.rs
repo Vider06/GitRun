@@ -8,7 +8,9 @@
 use crate::dock_registry::{DockBinding, DockRegistry};
 use crate::docker;
 use crate::GitHubClient;
-use gitrun_core::{api_policy::parse_boolean_argument, Config, GitRunApi, GitRunOperation, GitRunSettings};
+use gitrun_core::{
+    api_policy::parse_boolean_argument, Config, GitRunApi, GitRunOperation, GitRunSettings,
+};
 use gitrun_exe::{
     ipc::{WireRequest, WireResponse, DEFAULT_SOCKET_PATH},
     ApiInvocation, AuthorizedOperation, ExecutionBackend, ExecutionError, ExecutionEvent,

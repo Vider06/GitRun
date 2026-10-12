@@ -549,7 +549,8 @@ mod tests {
                     ("entry".into(), "/opt/tool".into()),
                     ("permanent".into(), value.into()),
                 ]),
-            ).is_ok());
+            )
+            .is_ok());
         }
 
         for value in ["TRUE", "False", "yes", "1", ""] {

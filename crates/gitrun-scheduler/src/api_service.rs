@@ -1874,6 +1874,22 @@ fn mountinfo_by_id(pid: i32, mount_id: u32) -> Result<Option<MountInfo>, String>
 }
 
 #[cfg(target_os = "linux")]
+fn containing_mountpoint(pid: i32, target: &str) -> Result<String, String> {
+    mountinfo_entries(pid)?
+        .into_iter()
+        .filter(|mount| {
+            mount.target == target
+                || (mount.target == "/" && target.starts_with('/'))
+                || target
+                    .strip_prefix(&mount.target)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        })
+        .max_by_key(|mount| mount.target.len())
+        .map(|mount| mount.target)
+        .ok_or_else(|| "could not identify mount containing GitDockRun target".to_owned())
+}
+
+#[cfg(target_os = "linux")]
 fn execute_mount_namespace(
     pid: i32,
     source_fd: Option<i32>,
@@ -1892,6 +1908,15 @@ fn execute_mount_namespace(
         .ok_or_else(|| "mount target must be a non-root absolute path".to_owned())?;
     let target_relative_c =
         CString::new(target_relative).map_err(|_| "mount target contains a NUL byte".to_owned())?;
+    let private_mountpoint = if matches!(action, MountAction::Bind) {
+        let mountpoint = containing_mountpoint(pid, target)?;
+        Some(
+            CString::new(mountpoint)
+                .map_err(|_| "container mountpoint contains a NUL byte".to_owned())?,
+        )
+    } else {
+        None
+    };
     // A source file/directory is not necessarily itself a mount point, so
     // open_tree(OPEN_TREE_CLONE) cannot be applied directly to its O_PATH FD.
     // Create a private-namespace bind of the source at a temporary, matching
@@ -2088,19 +2113,23 @@ fn execute_mount_namespace(
                     libc::_exit(55);
                 }
                 let target_ptr = target_link.as_ptr();
-                // Isolate the mount that contains this target rather than
-                // changing propagation for every mount in the container.
-                // The bind must not propagate into a peer namespace.
-                if matches!(action, MountAction::Bind)
-                    && libc::mount(
+                // Make only the mount that contains this target private.
+                // This prevents propagation to peer namespaces without
+                // recursively changing every mount in the container.
+                if matches!(action, MountAction::Bind) {
+                    let Some(private_mountpoint) = private_mountpoint.as_ref() else {
+                        libc::_exit(50);
+                    };
+                    if libc::mount(
                         std::ptr::null(),
-                        target_ptr,
+                        private_mountpoint.as_ptr(),
                         std::ptr::null(),
                         libc::MS_PRIVATE,
                         std::ptr::null(),
                     ) != 0
-                {
-                    libc::_exit(50);
+                    {
+                        libc::_exit(50);
+                    }
                 }
                 match action {
                     MountAction::Bind => {

@@ -348,9 +348,9 @@ impl MountPolicy {
         // If multiple allow rules canonicalize to the same most-specific
         // root, combine their restrictions conservatively: any read-only rule
         // at that specificity prevents a writable mount.
-        let most_specific_requires_read_only = matches.iter().any(|(rule, root)| {
-            root.components().count() == max_specificity && rule.read_only
-        });
+        let most_specific_requires_read_only = matches
+            .iter()
+            .any(|(rule, root)| root.components().count() == max_specificity && rule.read_only);
         if most_specific_requires_read_only && !requested_read_only {
             return Err("most-specific mount rules permit read-only access only".into());
         }
@@ -456,10 +456,8 @@ mod tests {
 
     #[test]
     fn equally_specific_mount_rules_combine_read_only_restrictions() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-mount-tied-rules-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-mount-tied-rules-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("source.txt"), "payload").unwrap();
@@ -481,8 +479,12 @@ mod tests {
                 },
             ],
         };
-        assert!(policy.authorize_source(&dir.join("source.txt"), false).is_err());
-        assert!(policy.authorize_source(&dir.join("source.txt"), true).is_ok());
+        assert!(policy
+            .authorize_source(&dir.join("source.txt"), false)
+            .is_err());
+        assert!(policy
+            .authorize_source(&dir.join("source.txt"), true)
+            .is_ok());
         let _ = fs::remove_dir_all(&dir);
     }
 

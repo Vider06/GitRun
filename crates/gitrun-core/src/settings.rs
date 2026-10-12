@@ -401,6 +401,15 @@ pub struct RegisterPolicy {
     pub allowed_entries: Vec<String>,
 }
 
+impl RegisterPolicy {
+    /// A registration entry must match an exact allowlist value; "*" is an
+    /// explicit opt-in for every entry that passes the execution backend's
+    /// independent path validation.
+    pub fn allows_entry(&self, entry: &str) -> bool {
+        logical_name_allowed(&self.allowed_entries, entry)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveRepositorySettings {
     pub api_policy: PolicyMatrix,
@@ -671,6 +680,25 @@ mod tests {
         assert_eq!(repository.storage, SharedStoragePolicy::default());
         assert_eq!(repository.register, RegisterPolicy::default());
         assert_eq!(repository.docker, DockerPolicy::default());
+    }
+
+    #[test]
+    fn register_entries_are_deny_by_default_and_allow_exact_or_explicit_wildcard() {
+        let empty = RegisterPolicy::default();
+        assert!(!empty.allows_entry("/home/runner/tool"));
+
+        let exact = RegisterPolicy {
+            allowed_entries: vec!["/home/runner/tool".into()],
+            ..RegisterPolicy::default()
+        };
+        assert!(exact.allows_entry("/home/runner/tool"));
+        assert!(!exact.allows_entry("/home/runner/other"));
+
+        let wildcard = RegisterPolicy {
+            allowed_entries: vec!["*".into()],
+            ..RegisterPolicy::default()
+        };
+        assert!(wildcard.allows_entry("/home/runner/any-safe-entry"));
     }
 
     #[test]

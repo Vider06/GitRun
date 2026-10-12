@@ -1795,8 +1795,8 @@ fn execute_mount_namespace(
     // setns/chroot can fail for legitimate host-only source paths.
     // A detached mount tree can be moved into the target namespace by FD.
     let source_tree = if matches!(action, MountAction::Bind) {
-        let source_fd = source_fd
-            .ok_or_else(|| "mount source descriptor was not provided".to_owned())?;
+        let source_fd =
+            source_fd.ok_or_else(|| "mount source descriptor was not provided".to_owned())?;
         let tree_fd = unsafe {
             libc::syscall(
                 libc::SYS_open_tree,

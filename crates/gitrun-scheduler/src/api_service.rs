@@ -2970,6 +2970,42 @@ mod mount_runtime_tests {
     }
 
     #[test]
+    fn mount_registry_lock_serializes_independent_openers() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-lock-concurrency-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let first = MountRegistryLock::acquire(&dir).expect("acquire initial mount lock");
+        let worker_dir = dir.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let second = MountRegistryLock::acquire(&worker_dir)
+                .expect("acquire second mount lock after first is released");
+            acquired_tx.send(()).unwrap();
+            drop(second);
+        });
+
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("second lock requester started");
+        assert!(matches!(
+            acquired_rx.recv_timeout(std::time::Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ), "second opener acquired the registry lock while it was held");
+
+        drop(first);
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("second opener acquires the lock after release");
+        worker.join().expect("lock requester thread must complete");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn privileged_mount_namespace_bind_unmount_smoke_test() {
         if std::env::var("GITRUN_ENABLE_PRIVILEGED_MOUNT_TESTS")
             .ok()

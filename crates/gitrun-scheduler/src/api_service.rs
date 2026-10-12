@@ -3190,7 +3190,7 @@ mod mount_runtime_tests {
             job: job.into(),
             requester_runner: runner.into(),
             container: "runner-container".into(),
-            container_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            container_id: "test-container-id".into(),
             source: "/tmp/source".into(),
             target: "/workspace/mount".into(),
             read_only: true,
@@ -3237,7 +3237,10 @@ mod mount_runtime_tests {
         assert!(failed
             .expect_err("failed mount cleanup must abort disconnect")
             .contains("owned-b"));
-        assert_eq!(cleaned.iter().map(String::as_str).collect::<Vec<_>>(), vec!["owned-a", "owned-b"]);
+        assert_eq!(
+            cleaned.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["owned-a", "owned-b"]
+        );
         assert_eq!(registry.mounts.len(), 5);
         assert_eq!(
             MountRegistry::load(&dir)
@@ -3262,7 +3265,13 @@ mod mount_runtime_tests {
             },
         )
         .expect("successful cleanup removes only this runner's leases");
-        assert_eq!(cleaned_after_retry.iter().map(String::as_str).collect::<Vec<_>>(), vec!["owned-a", "owned-b"]);
+        assert_eq!(
+            cleaned_after_retry
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["owned-a", "owned-b"]
+        );
         let persisted = MountRegistry::load(&dir).expect("load leases after successful cleanup");
         let remaining: Vec<&str> = persisted
             .mounts

@@ -773,18 +773,19 @@ fn validate_runner_invocation_binding(
         .run_id
         .ok_or("GITHUB_RUN_ID is required for every GitRun API invocation")?;
 
-    let requires_active_job_lookup = match (identity.workflow_run_id, identity.workflow_job.as_deref()) {
-        (Some(bound_run), Some(bound_job))
-            if bound_run != run_id || bound_job != invocation.job =>
-        {
-            return Err("workflow job identity does not match the runner container binding");
-        }
-        (Some(_), None) | (None, Some(_)) => {
-            return Err("runner container has incomplete workflow binding metadata");
-        }
-        (Some(_), Some(_)) => false,
-        (None, None) => true,
-    };
+    let requires_active_job_lookup =
+        match (identity.workflow_run_id, identity.workflow_job.as_deref()) {
+            (Some(bound_run), Some(bound_job))
+                if bound_run != run_id || bound_job != invocation.job =>
+            {
+                return Err("workflow job identity does not match the runner container binding");
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err("runner container has incomplete workflow binding metadata");
+            }
+            (Some(_), Some(_)) => false,
+            (None, None) => true,
+        };
 
     Ok(RunnerInvocationBinding {
         run_id,

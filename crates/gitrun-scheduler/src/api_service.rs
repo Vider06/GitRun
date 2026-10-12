@@ -584,7 +584,9 @@ impl ApiIdentityProvider for SystemApiIdentityProvider {
         &self,
         peer_pid: i32,
     ) -> Result<Option<docker::ApiRunnerIdentity>, String> {
-        identity_provider.runner_for_peer_pid(peer_pid).map_err(|error| error.to_string())
+        identity_provider
+            .runner_for_peer_pid(peer_pid)
+            .map_err(|error| error.to_string())
     }
 
     fn find_active_workflow_job_for_runner(

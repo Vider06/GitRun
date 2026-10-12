@@ -1407,8 +1407,11 @@ impl ApiExecutionBackend {
             created_at: now(),
         };
         registry.mounts.push(record.clone());
-        // Persist intent before the privileged side effect so recovery can
-        // identify and roll back a partially-created mount.
+        // Persist intent before the privileged side effect. "preparing" means
+        // the bind syscall has not been entered; after the durable transition
+        // to "attaching", a crash may have happened on either side of the
+        // kernel side effect and an absent pathname is no longer proof that no
+        // mount exists.
         registry.save(&self.state_dir).map_err(failed)?;
 
         // Settings can change after GSR has authorized the request and while
@@ -1448,6 +1451,17 @@ impl ApiExecutionBackend {
                 "mount was blocked because its effective policy changed before attach: {policy_error}"
             )));
         }
+
+        // Durably mark the uncertainty boundary immediately before entering
+        // the privileged worker. If the service dies during the syscall, the
+        // recovery path must not infer "no mount" merely because the original
+        // pathname is now absent or was replaced.
+        record.state = "attaching".into();
+        registry.mounts.retain(|item| item.id != mount_id);
+        registry.mounts.push(record.clone());
+        registry.save(&self.state_dir).map_err(|error| {
+            failed(format!("cannot persist mount attaching state; refusing bind: {error}"))
+        })?;
 
         if let Err(error) = execute_mount_namespace(
             &binding.container_id,
@@ -1952,31 +1966,82 @@ fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
         return Err("mount target PID no longer belongs to the bound Docker container".into());
     }
 
-    // A process with CAP_SYS_ADMIN can race path-based umount2 by altering the
-    // target namespace itself. Fail closed for privileged containers and for
-    // containers whose capability bounding set permits that capability.
-    let process_status = fs::read_to_string(format!("/proc/{pid}/status"))
-        .map_err(|error| format!("inspect mount target capabilities: {error}"))?;
-    let mut effective = None;
-    let mut bounding = None;
-    for line in process_status.lines() {
-        if let Some(value) = line.strip_prefix("CapEff:") {
-            effective = u64::from_str_radix(value.trim(), 16).ok();
-        } else if let Some(value) = line.strip_prefix("CapBnd:") {
-            bounding = u64::from_str_radix(value.trim(), 16).ok();
-        }
-    }
-    let cap_sys_admin = 1u64 << 21;
-    let effective =
-        effective.ok_or_else(|| "container CapEff was missing or invalid".to_owned())?;
-    let bounding = bounding.ok_or_else(|| "container CapBnd was missing or invalid".to_owned())?;
-    if effective & cap_sys_admin != 0 || bounding & cap_sys_admin != 0 {
+    // umount2 requires a pathname, so an identity check on the init process
+    // alone is insufficient: another process/thread in the container could
+    // race it if its capability bounding set permits CAP_SYS_ADMIN. Inspect
+    // every currently visible process in this immutable container cgroup and
+    // every thread's CapBnd. Bounding sets can only shrink, so requiring the
+    // capability to be absent everywhere prevents descendants from acquiring
+    // it after this check. If a matching process cannot be inspected, fail
+    // closed rather than treating the init process as representative.
+    if container_has_cap_sys_admin_in_bounding_set(container_id)? {
         return Err(
-            "live GitDockRun mounts are refused for containers with CAP_SYS_ADMIN effective or available in CapBnd"
+            "live GitDockRun mounts are refused because a process in the container can obtain CAP_SYS_ADMIN"
                 .into(),
         );
     }
     Ok(pid)
+}
+
+#[cfg(target_os = "linux")]
+fn container_has_cap_sys_admin_in_bounding_set(container_id: &str) -> Result<bool, String> {
+    let cap_sys_admin = 1u64 << 21;
+    let proc_entries = fs::read_dir("/proc")
+        .map_err(|error| format!("enumerate processes for mount capability check: {error}"))?;
+    for entry in proc_entries {
+        let entry = entry.map_err(|error| format!("enumerate processes: {error}"))?;
+        let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let process_root = entry.path();
+        let cgroup_path = process_root.join("cgroup");
+        let cgroup = match fs::read_to_string(&cgroup_path) {
+            Ok(cgroup) => cgroup,
+            // Processes can exit while /proc is enumerated. If the directory
+            // still exists but cannot be inspected, do not silently skip a
+            // process whose cgroup identity cannot be established.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!("inspect cgroup for process {pid}: {error}"));
+            }
+        };
+        let belongs_to_container = cgroup
+            .split(|character: char| !character.is_ascii_hexdigit())
+            .any(|part| part.eq_ignore_ascii_case(container_id));
+        if !belongs_to_container {
+            continue;
+        }
+
+        let tasks = match fs::read_dir(process_root.join("task")) {
+            Ok(tasks) => tasks,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!("enumerate threads for container process {pid}: {error}"));
+            }
+        };
+        for task in tasks {
+            let task = task.map_err(|error| format!("enumerate container threads: {error}"))?;
+            let tid = task.file_name().to_string_lossy().into_owned();
+            let status_path = task.path().join("status");
+            let status = match fs::read_to_string(&status_path) {
+                Ok(status) => status,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(format!("inspect capability status for thread {tid}: {error}"));
+                }
+            };
+            let bounding = status
+                .lines()
+                .find_map(|line| line.strip_prefix("CapBnd:"))
+                .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
+                .ok_or_else(|| format!("thread {tid} has missing or invalid CapBnd"))?;
+            if bounding & cap_sys_admin != 0 {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(target_os = "linux")]
@@ -2651,9 +2716,18 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
         None => recover_mount_id_by_source_identity(pid, record)?,
     };
     let Some(expected_mount_id) = expected_mount_id else {
-        // No mount existed at the lease's target. This is the normal recovery
-        // path for a process crash after persisting "preparing" but before bind.
-        return Ok(());
+        // Only the durable "preparing" state proves that the bind worker had
+        // not yet been entered. Once state is "attaching" (or a later recovery
+        // state), the mount may have landed on a renamed target or the service
+        // may have crashed before its mount ID was persisted. Preserve the
+        // lease for manual recovery instead of deleting the only journal entry.
+        if record.state == "preparing" {
+            return Ok(());
+        }
+        return Err(format!(
+            "mount lease {} has no identifiable mount at its recorded target; preserving the lease because attach may have raced a target rename",
+            record.id
+        ));
     };
     let Some(mount) = mountinfo_by_id(pid, expected_mount_id)? else {
         // The exact kernel mount ID is already absent: cleanup has succeeded.

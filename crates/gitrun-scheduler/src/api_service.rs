@@ -1430,12 +1430,13 @@ impl ApiExecutionBackend {
         // the target/source are being inspected. Reload the effective policy
         // after the durable state write, as close as possible to the namespace
         // operation; a previously pinned source cannot bypass a policy change.
-        let current_settings =
-            match GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(&self.state_dir)) {
-                Ok(settings) => settings,
-                Err(error) => {
-                    registry.mounts.retain(|item| item.id != mount_id);
-                    return match registry.save(&self.state_dir) {
+        let current_settings = match GitRunSettings::load_or_default(
+            GitRunSettings::path_for_state_dir(&self.state_dir),
+        ) {
+            Ok(settings) => settings,
+            Err(error) => {
+                registry.mounts.retain(|item| item.id != mount_id);
+                return match registry.save(&self.state_dir) {
                         Ok(()) => Err(failed(format!(
                             "reload GitDockRun mount policy before attach: {error}"
                         ))),
@@ -1443,8 +1444,8 @@ impl ApiExecutionBackend {
                             "reload GitDockRun mount policy before attach: {error}; failed to remove pre-attach intent: {save_error}"
                         ))),
                     };
-                }
-            };
+            }
+        };
         let final_authorization = authorize_live_mount_source(
             &current_settings,
             &request.repository,

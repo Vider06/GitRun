@@ -4854,13 +4854,13 @@ mod gsr_execution_boundary_tests {
             responses.get(1),
             Some(WireResponse::Event(ExecutionEvent::Started))
         ));
-        assert!(responses.iter().any(|response| matches!(
+        assert!(result.responses.iter().any(|response| matches!(
             response,
             WireResponse::Event(ExecutionEvent::Stdout(output))
                 if output == "recorded execution"
         )));
         assert!(matches!(
-            responses.last(),
+            result.responses.last(),
             Some(WireResponse::Event(ExecutionEvent::Finished {
                 exit_code: 0
             }))
@@ -5070,11 +5070,17 @@ mod api_socket_identity_integration_tests {
         }
     }
 
+    struct SocketTestResult {
+        handler_result: Result<(), String>,
+        responses: Vec<WireResponse>,
+        calls: Vec<&'static str>,
+    }
+
     fn invoke_socket_request(
         tag: &str,
         invocation: ApiInvocation,
         provider: FakeApiIdentityProvider,
-    ) -> (Result<(), String>, Vec<WireResponse>, Vec<&'static str>) {
+    ) -> SocketTestResult {
         let state_dir = std::env::temp_dir().join(format!(
             "gitrun-api-socket-integration-{}-{tag}",
             std::process::id()
@@ -5128,7 +5134,11 @@ mod api_socket_identity_integration_tests {
         let calls = calls.lock().unwrap().clone();
         let _ = fs::remove_dir_all(&state_dir);
 
-        (handler_result, responses, calls)
+        SocketTestResult {
+            handler_result,
+            responses,
+            calls,
+        }
     }
 
     fn contains_acceptance(responses: &[WireResponse]) -> bool {
@@ -5139,13 +5149,12 @@ mod api_socket_identity_integration_tests {
 
     #[test]
     fn full_unix_socket_path_accepts_only_after_identity_github_and_gsr_checks() {
-        let (result, responses, calls) =
-            invoke_socket_request("accepted", status_invocation(), valid_provider());
+        let result = invoke_socket_request("accepted", status_invocation(), valid_provider());
 
-        assert!(result.is_ok(), "handler failed: {result:?}");
-        assert!(contains_acceptance(&responses));
+        assert!(result.handler_result.is_ok(), "handler failed: {result:?}");
+        assert!(contains_acceptance(&result.responses));
         assert!(matches!(
-            responses.get(1),
+            result.responses.get(1),
             Some(WireResponse::Event(ExecutionEvent::Started))
         ));
         assert!(responses.iter().any(|response| matches!(
@@ -5157,7 +5166,7 @@ mod api_socket_identity_integration_tests {
             responses.last(),
             Some(WireResponse::Event(ExecutionEvent::Finished { exit_code: 0 }))
         ));
-        assert_eq!(calls, ["peer_identity", "workflow_job", "workflow_run"]);
+        assert_eq!(result.calls, vec!["peer_identity", "workflow_job", "workflow_run"]);
     }
 
     #[test]
@@ -5165,17 +5174,16 @@ mod api_socket_identity_integration_tests {
         let mut provider = valid_provider();
         provider.identity = None;
 
-        let (result, responses, calls) =
-            invoke_socket_request("unmanaged-peer", status_invocation(), provider);
+        let result = invoke_socket_request("unmanaged-peer", status_invocation(), provider);
 
-        assert!(result.is_ok(), "expected a wire-level denial: {result:?}");
-        assert!(!contains_acceptance(&responses));
+        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
-            responses.as_slice(),
+            result.responses.as_slice(),
             [WireResponse::Error { message }]
                 if message.contains("not a managed runner container")
         ));
-        assert_eq!(calls, ["peer_identity"]);
+        assert_eq!(result.calls, vec!["peer_identity"]);
     }
 
     #[test]
@@ -5185,8 +5193,7 @@ mod api_socket_identity_integration_tests {
         job.status = "completed".into();
         job.conclusion = Some("success".into());
 
-        let (result, responses, calls) =
-            invoke_socket_request("inactive-job", status_invocation(), provider);
+        let result = invoke_socket_request("inactive-job", status_invocation(), provider);
 
         assert!(result.is_ok(), "expected a wire-level denial: {result:?}");
         assert!(!contains_acceptance(&responses));
@@ -5195,7 +5202,7 @@ mod api_socket_identity_integration_tests {
             [WireResponse::Error { message }]
                 if message.contains("active runner for this workflow job")
         ));
-        assert_eq!(calls, ["peer_identity", "workflow_job"]);
+        assert_eq!(result.calls, vec!["peer_identity", "workflow_job"]);
     }
 
     #[test]
@@ -5203,8 +5210,7 @@ mod api_socket_identity_integration_tests {
         let mut invocation = status_invocation();
         invocation.workflow = "untrusted-workflow".into();
 
-        let (result, responses, calls) =
-            invoke_socket_request("workflow-mismatch", invocation, valid_provider());
+        let result = invoke_socket_request("workflow-mismatch", invocation, valid_provider());
 
         assert!(result.is_ok(), "expected a wire-level denial: {result:?}");
         assert!(!contains_acceptance(&responses));
@@ -5213,7 +5219,7 @@ mod api_socket_identity_integration_tests {
             [WireResponse::Error { message }]
                 if message.contains("workflow identity claim does not match")
         ));
-        assert_eq!(calls, ["peer_identity", "workflow_job", "workflow_run"]);
+        assert_eq!(result.calls, vec!["peer_identity", "workflow_job", "workflow_run"]);
     }
 
     #[test]
@@ -5221,12 +5227,11 @@ mod api_socket_identity_integration_tests {
         let mut provider = valid_provider();
         provider.failure_at = Some("workflow_job");
 
-        let (result, responses, calls) =
-            invoke_socket_request("github-error", status_invocation(), provider);
+        let result = invoke_socket_request("github-error", status_invocation(), provider);
 
-        assert!(matches!(result, Err(message) if message.contains("verify current workflow job")));
-        assert!(!contains_acceptance(&responses));
-        assert!(responses.is_empty());
-        assert_eq!(calls, ["peer_identity", "workflow_job"]);
+        assert!(matches!(result.handler_result, Err(ref message) if message.contains("verify current workflow job")));
+        assert!(!contains_acceptance(&result.responses));
+        assert!(result.responses.is_empty());
+        assert_eq!(result.calls, vec!["peer_identity", "workflow_job"]);
     }
 }

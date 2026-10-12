@@ -1308,11 +1308,13 @@ impl ApiExecutionBackend {
             .iter()
             .filter(|record| record.container_id == binding.container_id && record.target == target)
         {
-            let mounted = match record.kernel_mount_id {
-                Some(id) => mountinfo_by_id(pid, id).map_err(failed)?,
-                None => mountinfo_by_target(pid, target).map_err(failed)?,
+            let Some(kernel_mount_id) = record.kernel_mount_id else {
+                return Err(failed(format!(
+                    "mount lease {} has no kernel mount ID; it is preserved for manual recovery rather than guessing from a path",
+                    record.id
+                )));
             };
-            if mounted.is_some() {
+            if mountinfo_by_id(pid, kernel_mount_id).map_err(failed)?.is_some() {
                 return Err(failed(
                     "a GitDockRun mount is already registered at this target",
                 ));
@@ -1352,44 +1354,19 @@ impl ApiExecutionBackend {
             target,
             MountAction::Bind,
         ) {
-            match mountinfo_by_target(pid, target) {
-                Ok(Some(mount)) => {
-                    if let Err(rollback_error) = execute_mount_namespace(
-                        pid,
-                        None,
-                        None,
-                        target,
-                        MountAction::Unmount {
-                            expected_mount_id: mount.id,
-                        },
-                    ) {
-                        record.state = "cleanup-required".into();
-                        record.kernel_mount_id = Some(mount.id);
-                        registry.mounts.retain(|item| item.id != mount_id);
-                        registry.mounts.push(record);
-                        let _ = registry.save(&self.state_dir);
-                        return Err(failed(format!(
-                            "mount failed and rollback failed; mount {mount_id} is registered for cleanup: {error}; rollback: {rollback_error}"
-                        )));
-                    }
-                }
-                Ok(None) => {}
-                Err(inspect_error) => {
-                    // If mount state cannot be inspected, keep a durable
-                    // cleanup lease rather than deleting the only recovery
-                    // record and potentially orphaning a live mount.
-                    record.state = "cleanup-required".into();
-                    registry.mounts.retain(|item| item.id != mount_id);
-                    registry.mounts.push(record);
-                    let _ = registry.save(&self.state_dir);
-                    return Err(failed(format!(
-                        "mount failed and rollback state could not be inspected; mount {mount_id} is registered for cleanup: {error}; inspect: {inspect_error}"
-                    )));
-                }
-            }
+            // A worker can be interrupted after the kernel side effect but
+            // before returning success. Without an identity returned by that
+            // worker, a pathname lookup cannot prove ownership. Keep the
+            // intent lease and refuse to unmount whatever happens to occupy
+            // the target; recovery can inspect it without risking another mount.
+            record.state = "cleanup-required".into();
             registry.mounts.retain(|item| item.id != mount_id);
-            let _ = registry.save(&self.state_dir);
-            return Err(failed(error));
+            registry.mounts.push(record);
+            let persistence = registry.save(&self.state_dir);
+            return Err(failed(format!(
+                "bind did not report successful completion; mount lease {mount_id} retained without unsafe pathname rollback: {error}; registry: {}",
+                persistence.err().map(|save_error| save_error.to_string()).unwrap_or_else(|| "saved".into())
+            )));
         }
 
         // Capture and durably record the kernel mount ID immediately after
@@ -2300,7 +2277,7 @@ fn execute_mount_namespace(
                         // The path may have been replaced after the parent
                         // inspected mountinfo. Never change attributes on a
                         // different mount that happens to occupy this target.
-                        if unsafe { mount_id_from_fd(mounted_fd) } != Some(expected_mount_id) {
+                        if mount_id_from_fd(mounted_fd) != Some(expected_mount_id) {
                             let _ = libc::close(mounted_fd);
                             libc::_exit(63);
                         }
@@ -2327,7 +2304,7 @@ fn execute_mount_namespace(
                     MountAction::Unmount { expected_mount_id } => {
                         // Check mount identity inside the pinned target
                         // namespace, immediately before the unmount operation.
-                        if unsafe { mount_id_from_fd(target_fd) } != Some(expected_mount_id) {
+                        if mount_id_from_fd(target_fd) != Some(expected_mount_id) {
                             let _ = libc::close(target_fd);
                             libc::_exit(63);
                         }
@@ -2657,6 +2634,20 @@ mod mount_runtime_tests {
         let before = mountinfo_by_target(pid, &target)
             .expect("read mount table after bind")
             .expect("bind mount should appear");
+        let wrong_mount_id = before.id.wrapping_add(1);
+        assert!(execute_mount_namespace(
+            pid,
+            None,
+            None,
+            &target,
+            MountAction::RemountReadOnly {
+                expected_mount_id: wrong_mount_id,
+            },
+        )
+        .is_err());
+        assert!(mountinfo_by_id(pid, before.id)
+            .expect("verify identity mismatch did not remove the mount")
+            .is_some());
         execute_mount_namespace(
             pid,
             None,
@@ -2699,6 +2690,19 @@ mod mount_runtime_tests {
             "write unexpectedly succeeded on read-only mount"
         );
 
+        assert!(execute_mount_namespace(
+            pid,
+            None,
+            None,
+            &target,
+            MountAction::Unmount {
+                expected_mount_id: wrong_mount_id,
+            },
+        )
+        .is_err());
+        assert!(mountinfo_by_id(pid, before.id)
+            .expect("verify identity mismatch left mount intact")
+            .is_some());
         execute_mount_namespace(
             pid,
             None,

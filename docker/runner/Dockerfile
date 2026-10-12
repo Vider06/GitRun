@@ -28,7 +28,7 @@ RUN --mount=type=cache,id=gitrun-runner-cargo-registry-v11,target=/usr/local/car
     && test -x /usr/src/gitrun/gitrun-gsr-agent \
     && test -x /usr/src/gitrun/gitrun-api
 
-FROM node:26.10.0-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6
+FROM node:26.11.1-bookworm@sha256:f1233c415b41ffcf237c717b3dea92e9d4ea006e0e4c71edcb790605d74f5404
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

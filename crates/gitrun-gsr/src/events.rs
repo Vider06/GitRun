@@ -127,7 +127,7 @@ fn archive_prefix(path: &Path) -> Option<String> {
 
 /// Returns archive paths in oldest-to-newest lexical order.
 fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
     let Some(prefix) = archive_prefix(path) else {
         return Ok(Vec::new());
     };
@@ -148,7 +148,11 @@ fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
             archives.push(entry.path());
         }
     }
-    archives.sort();
+    archives.sort_by(|left, right| {
+        let left_modified = std::fs::metadata(left).and_then(|metadata| metadata.modified()).unwrap_or(UNIX_EPOCH);
+        let right_modified = std::fs::metadata(right).and_then(|metadata| metadata.modified()).unwrap_or(UNIX_EPOCH);
+        left_modified.cmp(&right_modified).then_with(|| left.cmp(right))
+    });
     Ok(archives)
 }
 

@@ -61,10 +61,18 @@ impl MountRegistryLock {
         {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
         }
         let file = options
             .open(&path)
             .map_err(|error| format!("open mount registry lock: {error}"))?;
+        if !file
+            .metadata()
+            .map_err(|error| format!("inspect mount registry lock: {error}"))?
+            .is_file()
+        {
+            return Err("mount registry lock path is not a regular file".into());
+        }
         #[cfg(unix)]
         file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|error| format!("secure mount registry lock permissions: {error}"))?;
@@ -2339,6 +2347,21 @@ mod mount_runtime_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn mount_registry_lock_file_is_private() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-lock-test-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let lock = MountRegistryLock::acquire(&dir).expect("acquire mount registry lock");
+        let metadata = fs::metadata(dir.join(MOUNT_REGISTRY_LOCK_FILE)).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        drop(lock);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

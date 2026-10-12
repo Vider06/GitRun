@@ -2992,10 +2992,13 @@ mod mount_runtime_tests {
         started_rx
             .recv_timeout(std::time::Duration::from_secs(1))
             .expect("second lock requester started");
-        assert!(matches!(
-            acquired_rx.recv_timeout(std::time::Duration::from_millis(100)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-        ), "second opener acquired the registry lock while it was held");
+        assert!(
+            matches!(
+                acquired_rx.recv_timeout(std::time::Duration::from_millis(100)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ),
+            "second opener acquired the registry lock while it was held"
+        );
 
         drop(first);
         acquired_rx

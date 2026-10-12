@@ -30,6 +30,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::ffi::CString;
 #[cfg(target_os = "linux")]
 use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::MetadataExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -106,6 +108,10 @@ struct MountRecord {
     source: String,
     target: String,
     read_only: bool,
+    #[serde(default)]
+    source_device: Option<u64>,
+    #[serde(default)]
+    source_inode: Option<u64>,
     #[serde(default)]
     kernel_mount_id: Option<u32>,
     #[serde(default)]
@@ -1341,6 +1347,8 @@ impl ApiExecutionBackend {
             source: canonical_source.to_string_lossy().into_owned(),
             target: target.to_owned(),
             read_only,
+            source_device: Some(source_metadata.dev()),
+            source_inode: Some(source_metadata.ino()),
             kernel_mount_id: None,
             state: "preparing".into(),
             created_at: now(),
@@ -1860,16 +1868,7 @@ fn validate_mount_target(pid: i32, target: &str, source_is_dir: bool) -> Result<
     {
         return Err("mount target must be a clean absolute container path".into());
     }
-    let allowed_prefixes = [
-        "/workspace/",
-        "/home/runner/actions-runner/_work/",
-        "/tmp/gitrun-mounts/",
-        "/var/lib/gitrun/shared/",
-    ];
-    if !allowed_prefixes
-        .iter()
-        .any(|prefix| target.starts_with(prefix))
-    {
+    if !mount_target_is_allowed(target) {
         return Err("mount targets are limited to workspace and GitRun data directories".into());
     }
 
@@ -2422,13 +2421,65 @@ fn execute_mount_namespace(
 }
 
 #[cfg(target_os = "linux")]
-fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<(), String> {
-    let expected_mount_id = record.kernel_mount_id.ok_or_else(|| {
-        format!(
-            "mount lease {} has no kernel mount ID; refusing to unmount by pathname",
+fn mount_target_is_allowed(target: &str) -> bool {
+    [
+        "/workspace/",
+        "/home/runner/actions-runner/_work/",
+        "/tmp/gitrun-mounts/",
+        "/var/lib/gitrun/shared/",
+    ]
+    .iter()
+    .any(|prefix| target.starts_with(prefix))
+}
+
+#[cfg(target_os = "linux")]
+fn recover_mount_id_by_source_identity(pid: i32, record: &MountRecord) -> Result<u32, String> {
+    let (Some(source_device), Some(source_inode)) = (record.source_device, record.source_inode)
+    else {
+        return Err(format!(
+            "mount lease {} has no recorded source identity; automatic recovery is unsafe",
             record.id
-        )
-    })?;
+        ));
+    };
+
+    let mut candidates = Vec::new();
+    for mount in mountinfo_entries(pid)? {
+        if !mount_target_is_allowed(&mount.target) {
+            continue;
+        }
+        let mounted_path = PathBuf::from(format!("/proc/{pid}/root{}", mount.target));
+        let metadata = match fs::metadata(&mounted_path) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if metadata.dev() == source_device && metadata.ino() == source_inode {
+            candidates.push(mount.id);
+        }
+    }
+
+    match candidates.as_slice() {
+        [mount_id] => Ok(*mount_id),
+        [] => Err(format!(
+            "mount lease {} has no mount matching the recorded source inode; preserving it for manual recovery",
+            record.id
+        )),
+        _ => Err(format!(
+            "mount lease {} matches multiple mounts by source inode; refusing ambiguous recovery",
+            record.id
+        )),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<(), String> {
+    // If the service crashed after the kernel bind but before persisting its
+    // mount ID, recover only when exactly one allowed mountpoint resolves to
+    // the original source device/inode. Never fall back to unmounting by target
+    // path alone; ambiguous or legacy leases remain for manual inspection.
+    let expected_mount_id = match record.kernel_mount_id {
+        Some(mount_id) => mount_id,
+        None => recover_mount_id_by_source_identity(pid, record)?,
+    };
     if let Some(mount) = mountinfo_by_id(pid, expected_mount_id)? {
         execute_mount_namespace(
             &record.container_id,
@@ -2436,7 +2487,9 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
             None,
             None,
             &mount.target,
-            MountAction::Unmount { expected_mount_id },
+            MountAction::Unmount {
+                expected_mount_id,
+            },
         )?;
         if mountinfo_by_id(pid, expected_mount_id)?.is_some() {
             return Err(format!(
@@ -2782,6 +2835,42 @@ mod mount_runtime_tests {
             .is_none());
         assert!(mountinfo_by_target(pid, &target)
             .expect("verify target no longer mounted")
+            .is_none());
+
+        // Simulate a service crash after the bind but before the kernel mount
+        // ID was saved. Recovery must find the exact source inode and remove
+        // the mount, rather than unmounting by target name alone.
+        execute_mount_namespace(
+            &container_id,
+            pid,
+            Some(source.as_raw_fd()),
+            Some(&canonical_source),
+            &target,
+            MountAction::Bind,
+        )
+        .expect("recreate mount for interrupted-lease recovery");
+        let source_metadata = fs::metadata(&canonical_source).unwrap();
+        let interrupted_lease = MountRecord {
+            id: "gm-interrupted-recovery-test".into(),
+            repository: "owner/repo".into(),
+            run_id: 1,
+            job: "test".into(),
+            requester_runner: "test-runner".into(),
+            container: name.clone(),
+            container_id: container_id.clone(),
+            source: canonical_source.to_string_lossy().into_owned(),
+            target: target.clone(),
+            read_only: true,
+            source_device: Some(source_metadata.dev()),
+            source_inode: Some(source_metadata.ino()),
+            kernel_mount_id: None,
+            state: "preparing".into(),
+            created_at: now(),
+        };
+        cleanup_mount_lease_in_namespace(pid, &interrupted_lease)
+            .expect("recover incomplete mount by unique source identity");
+        assert!(mountinfo_by_target(pid, &target)
+            .expect("read mount table after interrupted-lease recovery")
             .is_none());
 
         // Also exercise a regular-file source/target. The source path is a

@@ -686,7 +686,7 @@ mod tests {
             .is_ok());
         }
 
-        for value in ["TRUE", "False", "yes", "1", ""] {
+        for value in ["TRUE", "False", "yes", "1"] {
             assert_eq!(parse_boolean_argument(value), None);
             assert!(matches!(
                 validate_arguments(
@@ -701,6 +701,20 @@ mod tests {
                 Err(error) if error.contains("permanent must be true or false")
             ));
         }
+
+        assert_eq!(parse_boolean_argument(""), None);
+        assert!(matches!(
+            validate_arguments(
+                GitRunApi::GitRegisterRun,
+                GitRunOperation::Register,
+                &BTreeMap::from([
+                    ("name".into(), "tool".into()),
+                    ("entry".into(), "/opt/tool".into()),
+                    ("permanent".into(), String::new()),
+                ]),
+            ),
+            Err(error) if error.contains("missing argument: permanent")
+        ));
     }
 
     #[test]

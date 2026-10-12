@@ -93,6 +93,7 @@ impl QueueLock {
         lock_name.push(".lock");
         let lock = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(PathBuf::from(lock_name))?;

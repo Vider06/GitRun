@@ -8,6 +8,18 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Parse a public boolean modifier using the canonical API spelling.
+/// This deliberately rejects mixed-case and alternate representations so
+/// authorization and the execution backend cannot interpret one value
+/// differently.
+pub fn parse_boolean_argument(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
 /// Closed set of workflow-facing GitRun APIs.
 ///
 /// Adding a new API is an explicit source-level change so the security
@@ -144,6 +156,13 @@ pub fn validate_arguments(
         let mode = arguments.get("read_only").map(String::as_str).unwrap_or("");
         if mode != "true" && mode != "false" {
             return Err("read_only must be true or false".into());
+        }
+    }
+
+    if (api, operation) == (GitRunApi::GitRegisterRun, GitRunOperation::Register) {
+        let permanent = arguments.get("permanent").map(String::as_str).unwrap_or("");
+        if parse_boolean_argument(permanent).is_none() {
+            return Err("permanent must be true or false".into());
         }
     }
 
@@ -516,6 +535,38 @@ mod tests {
             ]),
         )
         .is_ok());
+    }
+
+    #[test]
+    fn register_permanent_modifier_requires_canonical_boolean_spelling() {
+        for value in ["true", "false"] {
+            assert_eq!(parse_boolean_argument(value), Some(value == "true"));
+            assert!(validate_arguments(
+                GitRunApi::GitRegisterRun,
+                GitRunOperation::Register,
+                &BTreeMap::from([
+                    ("name".into(), "tool".into()),
+                    ("entry".into(), "/opt/tool".into()),
+                    ("permanent".into(), value.into()),
+                ]),
+            ).is_ok());
+        }
+
+        for value in ["TRUE", "False", "yes", "1", ""] {
+            assert_eq!(parse_boolean_argument(value), None);
+            assert!(matches!(
+                validate_arguments(
+                    GitRunApi::GitRegisterRun,
+                    GitRunOperation::Register,
+                    &BTreeMap::from([
+                        ("name".into(), "tool".into()),
+                        ("entry".into(), "/opt/tool".into()),
+                        ("permanent".into(), value.into()),
+                    ]),
+                ),
+                Err(error) if error.contains("permanent must be true or false")
+            ));
+        }
     }
 
     #[test]

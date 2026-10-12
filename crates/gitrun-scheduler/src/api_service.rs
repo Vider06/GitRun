@@ -1882,7 +1882,6 @@ fn execute_mount_namespace(
                     &how as *const OpenHow,
                     std::mem::size_of::<OpenHow>(),
                 ) as libc::c_int;
-                let _ = libc::close(root_fd);
                 if target_fd < 0 {
                     // Includes kernels without openat2: fail closed instead of
                     // falling back to raceable string-path resolution.

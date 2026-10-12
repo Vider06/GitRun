@@ -4595,27 +4595,17 @@ mod gsr_execution_boundary_tests {
         let caller = caller();
         let base = invocation(GitRunApi::GitStatusRun, GitRunOperation::Status);
 
-        let mutations: [(&str, Box<dyn Fn(&mut ApiInvocation)>); 5] = [
-            (
-                "repository",
-                Box::new(|request| request.repository = "other/repo".into()),
-            ),
-            (
-                "workflow",
-                Box::new(|request| request.workflow = "untrusted.yml".into()),
-            ),
-            ("run ID", Box::new(|request| request.run_id = Some(99))),
-            ("job", Box::new(|request| request.job = "deploy".into())),
-            (
-                "runner",
-                Box::new(|request| request.runner = "other-runner".into()),
-            ),
-        ];
-
-        for (claim, mutate) in mutations {
+        for claim in ["repository", "workflow", "run ID", "job", "runner"] {
             let backend = RecordingBackend::default();
             let mut request = base.clone();
-            mutate(&mut request);
+            match claim {
+                "repository" => request.repository = "other/repo".into(),
+                "workflow" => request.workflow = "untrusted.yml".into(),
+                "run ID" => request.run_id = Some(99),
+                "job" => request.job = "deploy".into(),
+                "runner" => request.runner = "other-runner".into(),
+                _ => unreachable!("claim comes from the fixed test matrix"),
+            }
             let mut responses = Vec::new();
 
             execute_gsr_authorized_stream(

@@ -139,7 +139,11 @@ impl MountRegistry {
         fs::create_dir_all(state_dir)
             .map_err(|error| format!("create mount registry directory: {error}"))?;
         let path = Self::path(state_dir);
-        let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let temp = path.with_extension(format!(
+            "json.{}.{}.tmp",
+            std::process::id(),
+            new_mount_id()?
+        ));
         let raw = serde_json::to_vec_pretty(self)
             .map_err(|error| format!("encode GitDockRun mount registry: {error}"))?;
         let mut options = fs::OpenOptions::new();
@@ -166,6 +170,9 @@ impl MountRegistry {
             let _ = fs::remove_file(&temp);
             return Err(format!("commit mount registry: {error}"));
         }
+        fs::File::open(state_dir)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("sync mount registry directory: {error}"))?;
         Ok(())
     }
 }
@@ -1415,7 +1422,7 @@ impl ApiExecutionBackend {
         registry.mounts.push(record);
         registry.save(&self.state_dir).map_err(|error| {
             failed(format!(
-                "mount succeeded but registry update failed; mount {mount_id} remains in the preparing record: {error}"
+                "mount succeeded but registry durability could not be confirmed; mount {mount_id} remains registered for recovery: {error}"
             ))
         })?;
 

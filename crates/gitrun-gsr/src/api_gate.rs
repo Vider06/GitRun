@@ -6,7 +6,7 @@
 //! before it can be converted into an AuthorizedOperation for gitrun-exe.
 
 use gitrun_core::{
-    api_policy::{validate_arguments, GitRunApi, GitRunOperation},
+    api_policy::{parse_boolean_argument, validate_arguments, GitRunApi, GitRunOperation},
     command_policy::{CommandPolicy, Decision},
     settings::EffectiveRepositorySettings,
     GitRunSettings,
@@ -242,18 +242,14 @@ fn authorize_resource_scope(
                 });
             }
 
-            let permanent = match arguments.get("permanent").map(String::as_str) {
-                None => false,
-                Some(value) if value.eq_ignore_ascii_case("true") => true,
-                Some(value) if value.eq_ignore_ascii_case("false") => false,
-                Some(_) => {
-                    return Err(ApiGateError::InvalidArguments {
-                        api: GitRunApi::GitRegisterRun,
-                        operation: GitRunOperation::Register,
-                        detail: "permanent must be true or false".into(),
-                    })
-                }
-            };
+            let permanent = arguments
+                .get("permanent")
+                .and_then(|value| parse_boolean_argument(value))
+                .ok_or_else(|| ApiGateError::InvalidArguments {
+                    api: GitRunApi::GitRegisterRun,
+                    operation: GitRunOperation::Register,
+                    detail: "permanent must be true or false".into(),
+                })?;
             if permanent && effective.register.allow_permanent {
                 return Ok(());
             }
@@ -790,6 +786,58 @@ mod tests {
             },
         );
         settings
+    }
+
+    #[test]
+    fn register_permanent_values_use_the_shared_canonical_boolean_parser() {
+        let settings = settings_for_register(vec!["*".into()]);
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let args = |permanent: &str| {
+            BTreeMap::from([
+                ("name".into(), "tool".into()),
+                ("entry".into(), "/home/runner/tool".into()),
+                ("permanent".into(), permanent.into()),
+            ])
+        };
+
+        assert!(authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            None,
+            args("false"),
+            None,
+        ).is_ok());
+
+        assert!(matches!(
+            authorize(
+                &settings,
+                &caller,
+                GitRunApi::GitRegisterRun,
+                GitRunOperation::Register,
+                None,
+                args("true"),
+                None,
+            ),
+            Err(ApiGateError::PolicyDenied { .. })
+        ));
+
+        for value in ["TRUE", "False", "yes", "1"] {
+            assert!(matches!(
+                authorize(
+                    &settings,
+                    &caller,
+                    GitRunApi::GitRegisterRun,
+                    GitRunOperation::Register,
+                    None,
+                    args(value),
+                    None,
+                ),
+                Err(ApiGateError::InvalidArguments { detail, .. })
+                    if detail.contains("permanent must be true or false")
+            ), "non-canonical boolean {value:?} must be rejected");
+        }
     }
 
     #[test]

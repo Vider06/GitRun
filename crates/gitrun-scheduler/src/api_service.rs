@@ -4858,7 +4858,7 @@ mod gsr_execution_boundary_tests {
                 if output == "recorded execution"
         )));
         assert!(matches!(
-            result.responses.last(),
+            responses.last(),
             Some(WireResponse::Event(ExecutionEvent::Finished {
                 exit_code: 0
             }))

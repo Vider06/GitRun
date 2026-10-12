@@ -1314,7 +1314,10 @@ impl ApiExecutionBackend {
                     record.id
                 )));
             };
-            if mountinfo_by_id(pid, kernel_mount_id).map_err(failed)?.is_some() {
+            if mountinfo_by_id(pid, kernel_mount_id)
+                .map_err(failed)?
+                .is_some()
+            {
                 return Err(failed(
                     "a GitDockRun mount is already registered at this target",
                 ));

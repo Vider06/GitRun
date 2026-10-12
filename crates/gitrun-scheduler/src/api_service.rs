@@ -584,9 +584,7 @@ impl ApiIdentityProvider for SystemApiIdentityProvider {
         &self,
         peer_pid: i32,
     ) -> Result<Option<docker::ApiRunnerIdentity>, String> {
-        identity_provider
-            .runner_for_peer_pid(peer_pid)
-            .map_err(|error| error.to_string())
+        docker::runner_for_peer_pid(peer_pid).map_err(|error| error.to_string())
     }
 
     fn find_active_workflow_job_for_runner(
@@ -670,7 +668,7 @@ fn handle_stream_with_identity_provider(
 
     let peer_pid =
         peer_pid(&stream).map_err(|error| format!("read API socket peer credentials: {error}"))?;
-    let identity = match docker::runner_for_peer_pid(peer_pid) {
+    let identity = match identity_provider.runner_for_peer_pid(peer_pid) {
         Ok(Some(identity)) => identity,
         Ok(None) => {
             send_error(
@@ -5163,7 +5161,7 @@ mod api_socket_identity_integration_tests {
                 if output.contains("GitRun API STATUS")
         )));
         assert!(matches!(
-            responses.last(),
+            result.responses.last(),
             Some(WireResponse::Event(ExecutionEvent::Finished {
                 exit_code: 0
             }))

@@ -2336,7 +2336,7 @@ fn execute_mount_namespace(
                         libc::SYS_mount_setattr,
                         tree_fd,
                         c"".as_ptr(),
-                        libc::AT_EMPTY_PATH,
+                        libc::AT_EMPTY_PATH | 0x8000, // AT_EMPTY_PATH | AT_RECURSIVE
                         &attr as *const MountAttr,
                         std::mem::size_of::<MountAttr>(),
                     );
@@ -2477,7 +2477,7 @@ fn execute_mount_namespace(
                             libc::SYS_mount_setattr,
                             mounted_fd,
                             c"".as_ptr(),
-                            libc::AT_EMPTY_PATH,
+                            libc::AT_EMPTY_PATH | 0x8000, // AT_EMPTY_PATH | AT_RECURSIVE
                             &attr as *const MountAttr,
                             std::mem::size_of::<MountAttr>(),
                         );
@@ -2774,8 +2774,9 @@ fn reconcile_completed_mounts(
 
         let job_completed = match client.find_workflow_job(repository, record.run_id, &record.job) {
             Ok(Some(job)) => workflow_job_is_completed(&job.status, job.conclusion.as_deref()),
-            // A missing job is considered completed only when the API call itself succeeded.
-            Ok(None) => true,
+            // A missing job does not prove completion: preserve the mount until
+            // the workflow API can positively confirm a terminal job state.
+            Ok(None) => false,
             Err(error) => {
                 eprintln!(
                     "gitrun-api: cannot verify job {} for mount {}: {error}",

@@ -1872,8 +1872,8 @@ fn execute_mount_namespace(
             path: path.clone(),
             is_dir,
         };
-        let source_path = source_path
-            .ok_or_else(|| "mount source path was not provided".to_owned())?;
+        let source_path =
+            source_path.ok_or_else(|| "mount source path was not provided".to_owned())?;
         let source_path = CString::new(source_path.as_os_str().as_bytes())
             .map_err(|_| "invalid mount source path".to_owned())?;
         let staging_path = CString::new(path.as_os_str().as_bytes())
@@ -2226,9 +2226,13 @@ fn reconcile_completed_mounts(
                     None => mountinfo_by_target(pid, &record.target)?,
                 };
                 if let Some(mount) = mount {
-                    if let Err(error) =
-                        execute_mount_namespace(pid, None, None, &mount.target, MountAction::Unmount)
-                    {
+                    if let Err(error) = execute_mount_namespace(
+                        pid,
+                        None,
+                        None,
+                        &mount.target,
+                        MountAction::Unmount,
+                    ) {
                         eprintln!(
                             "gitrun-api: could not clean mount {} after job completion: {error}",
                             record.id

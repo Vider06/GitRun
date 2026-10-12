@@ -21,10 +21,14 @@ use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::time::Duration;
 
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
@@ -40,7 +44,39 @@ use std::os::unix::net::{UnixListener, UnixStream};
 
 const DOCK_ONLY_MARKER: &str = "/home/runner/actions-runner/.gitrun-dock-only";
 const API_MAX_REQUEST_BYTES: usize = 1024 * 1024;
+#[cfg(unix)]
+const MAX_API_REQUESTS: usize = 64;
+#[cfg(unix)]
+const API_READ_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(unix)]
+const API_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_VAULT_WRITE_BYTES: usize = 1024 * 1024;
+
+#[cfg(unix)]
+static ACTIVE_API_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
+/// Bounds the number of request threads that can be kept alive by socket peers.
+#[cfg(unix)]
+struct ApiRequestPermit;
+
+#[cfg(unix)]
+impl ApiRequestPermit {
+    fn try_acquire() -> Option<Self> {
+        ACTIVE_API_REQUESTS
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                (active < MAX_API_REQUESTS).then_some(active + 1)
+            })
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ApiRequestPermit {
+    fn drop(&mut self) {
+        ACTIVE_API_REQUESTS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 #[cfg(target_os = "linux")]
 const MOUNT_REGISTRY_FILE: &str = "gitdock-mount-registry.json";
 #[cfg(target_os = "linux")]
@@ -231,7 +267,28 @@ pub fn spawn(
             .spawn(move || {
                 while !thread_stopping.load(Ordering::Relaxed) {
                     match listener.accept() {
-                        Ok((stream, _)) => {
+                        Ok((mut stream, _)) => {
+                            // A local peer must not be able to pin a worker indefinitely
+                            // with a partial request or a client that never reads replies.
+                            let timeout_result = stream
+                                .set_read_timeout(Some(API_READ_TIMEOUT))
+                                .and_then(|()| stream.set_write_timeout(Some(API_WRITE_TIMEOUT)));
+                            if let Err(error) = timeout_result {
+                                eprintln!("gitrun-api: unable to set socket deadlines: {error}");
+                                continue;
+                            }
+
+                            // Enforce backpressure before spawning: the service has a
+                            // fixed upper bound on request threads, even under a local
+                            // connection flood.
+                            let Some(permit) = ApiRequestPermit::try_acquire() else {
+                                let _ = send_error(
+                                    &mut stream,
+                                    "GitRun API is busy; concurrent request limit reached",
+                                );
+                                continue;
+                            };
+
                             let service_config = config.clone();
                             let service_github = Arc::clone(&github);
                             let service_state = state_dir.clone();
@@ -239,6 +296,7 @@ pub fn spawn(
                             std::thread::Builder::new()
                                 .name("gitrun-api-request".into())
                                 .spawn(move || {
+                                    let _permit = permit;
                                     if let Err(error) = handle_stream(
                                         stream,
                                         service_config,
@@ -4172,4 +4230,25 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
         .unwrap_or(0)
+}
+
+
+#[cfg(all(test, unix))]
+mod api_request_capacity_tests {
+    use super::*;
+
+    #[test]
+    fn request_permits_bound_concurrent_handlers_and_release_on_drop() {
+        let mut permits = Vec::with_capacity(MAX_API_REQUESTS);
+        for _ in 0..MAX_API_REQUESTS {
+            permits.push(
+                ApiRequestPermit::try_acquire()
+                    .expect("every slot below the capacity limit should be available"),
+            );
+        }
+        assert!(ApiRequestPermit::try_acquire().is_none());
+
+        drop(permits);
+        assert!(ApiRequestPermit::try_acquire().is_some());
+    }
 }

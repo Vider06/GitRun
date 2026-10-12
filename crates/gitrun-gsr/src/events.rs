@@ -83,7 +83,10 @@ struct QueueLock(File);
 
 impl QueueLock {
     fn acquire(path: &Path, exclusive: bool) -> Result<Self> {
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             std::fs::create_dir_all(parent)?;
         }
         let mut lock_name = path.as_os_str().to_os_string();
@@ -446,16 +449,28 @@ mod tests {
         let path = temp_path("rotation");
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.lock", path.display()));
-        emit(&path, &SecurityEvent::new("test", Severity::Critical, "before rotation")).unwrap();
+        emit(
+            &path,
+            &SecurityEvent::new("test", Severity::Critical, "before rotation"),
+        )
+        .unwrap();
         {
             let _lock = QueueLock::acquire(&path, true).unwrap();
             rotate_queue(&path).unwrap();
         }
-        emit(&path, &SecurityEvent::new("test", Severity::Info, "after rotation")).unwrap();
+        emit(
+            &path,
+            &SecurityEvent::new("test", Severity::Info, "after rotation"),
+        )
+        .unwrap();
 
         let all = read_all(&path).unwrap();
-        assert_eq!(all.iter().map(|event| event.message.as_str()).collect::<Vec<_>>(),
-            vec!["before rotation", "after rotation"]);
+        assert_eq!(
+            all.iter()
+                .map(|event| event.message.as_str())
+                .collect::<Vec<_>>(),
+            vec!["before rotation", "after rotation"]
+        );
         assert_eq!(read_last(&path, 1).unwrap()[0].message, "after rotation");
         assert_eq!(count_critical_since(&path, 0).unwrap(), 1);
 
@@ -480,7 +495,11 @@ mod tests {
         prune_archives(&path).unwrap();
         let archives = archive_paths(&path).unwrap();
         assert_eq!(archives.len(), MAX_ARCHIVES);
-        assert!(!archives[0].file_name().unwrap().to_string_lossy().contains("00000000000000000000-"));
+        assert!(!archives[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("00000000000000000000-"));
         for archive in archives {
             let _ = std::fs::remove_file(archive);
         }
@@ -496,11 +515,15 @@ mod tests {
             let path = path.clone();
             writers.push(std::thread::spawn(move || {
                 for index in 0..25 {
-                    emit(&path, &SecurityEvent::new(
-                        format!("writer-{writer}"),
-                        Severity::Info,
-                        format!("event-{index}"),
-                    )).unwrap();
+                    emit(
+                        &path,
+                        &SecurityEvent::new(
+                            format!("writer-{writer}"),
+                            Severity::Info,
+                            format!("event-{index}"),
+                        ),
+                    )
+                    .unwrap();
                 }
             }));
         }

@@ -64,12 +64,22 @@ struct ApiRequestPermit;
 #[cfg(unix)]
 impl ApiRequestPermit {
     fn try_acquire() -> Option<Self> {
-        ACTIVE_API_REQUESTS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-                (active < MAX_API_REQUESTS).then_some(active + 1)
-            })
-            .ok()
-            .map(|_| Self)
+        let mut active = ACTIVE_API_REQUESTS.load(Ordering::Acquire);
+        loop {
+            if active >= MAX_API_REQUESTS {
+                return None;
+            }
+
+            match ACTIVE_API_REQUESTS.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(Self),
+                Err(observed) => active = observed,
+            }
+        }
     }
 }
 

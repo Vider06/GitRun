@@ -3099,27 +3099,31 @@ mod mount_runtime_tests {
     #[test]
     fn mount_capability_check_rejects_effective_and_reacquirable_sys_admin() {
         let fields = ["CapEff:", "CapPrm:", "CapInh:", "CapAmb:", "CapBnd:"];
+        let empty_mask = "0000000000000000";
         let sys_admin = format!("{:016x}", 1u64 << 21);
-
-        let base_status = || {
+        let status_with = |enabled_field: Option<&str>| {
             fields
                 .iter()
-                .map(|field| format!("{field} 0000000000000000"))
+                .map(|field| {
+                    let mask = if Some(*field) == enabled_field {
+                        sys_admin.as_str()
+                    } else {
+                        empty_mask
+                    };
+                    format!("{field} {mask}")
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        assert!(!status_has_mount_admin_capability(&base_status()).unwrap());
 
+        assert!(!status_has_mount_admin_capability(&status_with(None)).unwrap());
         for field in fields {
-            let mut status = base_status();
-            status.push_str(&format!("\n{field} {sys_admin}"));
             assert!(
-                status_has_mount_admin_capability(&status).unwrap(),
+                status_has_mount_admin_capability(&status_with(Some(field))).unwrap(),
                 "{field} containing CAP_SYS_ADMIN must block live mounts"
             );
         }
-
-        assert!(status_has_mount_admin_capability("Name:\\tworker").is_err());
+        assert!(status_has_mount_admin_capability("Name: worker").is_err());
     }
 
     #[test]

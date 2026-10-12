@@ -1354,9 +1354,15 @@ impl ApiExecutionBackend {
         ) {
             match mountinfo_by_target(pid, target) {
                 Ok(Some(mount)) => {
-                    if let Err(rollback_error) =
-                        execute_mount_namespace(pid, None, None, target, MountAction::Unmount)
-                    {
+                    if let Err(rollback_error) = execute_mount_namespace(
+                        pid,
+                        None,
+                        None,
+                        target,
+                        MountAction::Unmount {
+                            expected_mount_id: mount.id,
+                        },
+                    ) {
                         record.state = "cleanup-required".into();
                         record.kernel_mount_id = Some(mount.id);
                         registry.mounts.retain(|item| item.id != mount_id);
@@ -1386,37 +1392,136 @@ impl ApiExecutionBackend {
             return Err(failed(error));
         }
 
-        if read_only {
-            if let Err(error) =
-                execute_mount_namespace(pid, None, None, target, MountAction::RemountReadOnly)
+        // Capture and durably record the kernel mount ID immediately after
+        // bind, before trying to change mount attributes. Recovery must never
+        // unmount an unowned path merely because a lease lacks an ID.
+        let mount_info = match mountinfo_by_target(pid, target) {
+            Ok(Some(info)) => info,
+            Ok(None) => {
+                record.state = "cleanup-required".into();
+                registry.mounts.retain(|item| item.id != mount_id);
+                registry.mounts.push(record);
+                let _ = registry.save(&self.state_dir);
+                return Err(failed(format!(
+                    "bind completed but no kernel mount ID could be captured; mount lease {mount_id} retained for safe recovery"
+                )));
+            }
+            Err(error) => {
+                record.state = "cleanup-required".into();
+                registry.mounts.retain(|item| item.id != mount_id);
+                registry.mounts.push(record);
+                let _ = registry.save(&self.state_dir);
+                return Err(failed(format!(
+                    "bind completed but mount identity inspection failed; mount lease {mount_id} retained: {error}"
+                )));
+            }
+        };
+        record.kernel_mount_id = Some(mount_info.id);
+        record.state = if read_only {
+            "read-only-pending"
+        } else {
+            "mounted"
+        }
+        .into();
+        registry.mounts.retain(|item| item.id != mount_id);
+        registry.mounts.push(record.clone());
+        if let Err(persist_error) = registry.save(&self.state_dir) {
+            if execute_mount_namespace(
+                pid,
+                None,
+                None,
+                target,
+                MountAction::Unmount {
+                    expected_mount_id: mount_info.id,
+                },
+            )
+            .is_ok()
             {
-                if execute_mount_namespace(pid, None, None, target, MountAction::Unmount).is_err() {
+                registry.mounts.retain(|item| item.id != mount_id);
+                let _ = registry.save(&self.state_dir);
+                return Err(failed(format!(
+                    "mount intent could not be durably updated and the mount was rolled back: {persist_error}"
+                )));
+            }
+            record.state = "cleanup-required".into();
+            registry.mounts.retain(|item| item.id != mount_id);
+            registry.mounts.push(record);
+            let recovery = registry.save(&self.state_dir);
+            return Err(failed(format!(
+                "mount succeeded but its kernel ID could not be durably saved; cleanup lease {mount_id} retained: {persist_error}; recovery save: {}",
+                recovery.err().map(|error| error.to_string()).unwrap_or_else(|| "ok".into())
+            )));
+        }
+
+        if read_only {
+            if let Err(error) = execute_mount_namespace(
+                pid,
+                None,
+                None,
+                target,
+                MountAction::RemountReadOnly {
+                    expected_mount_id: mount_info.id,
+                },
+            ) {
+                if let Err(rollback_error) = execute_mount_namespace(
+                    pid,
+                    None,
+                    None,
+                    target,
+                    MountAction::Unmount {
+                        expected_mount_id: mount_info.id,
+                    },
+                ) {
                     record.state = "cleanup-required".into();
-                    record.kernel_mount_id = mountinfo_by_target(pid, target)
-                        .ok()
-                        .flatten()
-                        .map(|mount| mount.id);
                     registry.mounts.retain(|item| item.id != mount_id);
                     registry.mounts.push(record);
                     let _ = registry.save(&self.state_dir);
                     return Err(failed(format!(
-                        "read-only remount failed and rollback failed; mount {mount_id} is registered for cleanup: {error}"
+                        "read-only enforcement failed and rollback failed; mount {mount_id} remains registered for cleanup: {error}; rollback: {rollback_error}"
                     )));
                 }
                 registry.mounts.retain(|item| item.id != mount_id);
-                let _ = registry.save(&self.state_dir);
+                registry.save(&self.state_dir).map_err(|save_error| {
+                    failed(format!(
+                        "read-only enforcement failed; mount was removed but lease cleanup failed: {error}; {save_error}"
+                    ))
+                })?;
                 return Err(failed(format!(
-                    "could not enforce read-only mount: {error}"
+                    "could not enforce read-only mount; mount was safely rolled back: {error}"
                 )));
             }
+            record.state = "mounted".into();
+            registry.mounts.retain(|item| item.id != mount_id);
+            registry.mounts.push(record.clone());
+            registry.save(&self.state_dir).map_err(|error| {
+                failed(format!(
+                    "read-only mount is active but registry state update failed; lease {mount_id} remains in read-only-pending state for recovery: {error}"
+                ))
+            })?;
         }
 
-        let mount_info = mountinfo_by_target(pid, target)
-            .map_err(failed)?
-            .ok_or_else(|| {
-                failed("mount command returned success but no matching mount appeared")
-            })?;
-        record.kernel_mount_id = Some(mount_info.id);
+        let verified_mount = match mountinfo_by_id(pid, mount_info.id) {
+            Ok(Some(info)) if info.target == target => info,
+            Ok(_) => {
+                record.state = "cleanup-required".into();
+                registry.mounts.retain(|item| item.id != mount_id);
+                registry.mounts.push(record);
+                let _ = registry.save(&self.state_dir);
+                return Err(failed(format!(
+                    "mount {mount_id} changed identity or target after attachment; cleanup lease retained"
+                )));
+            }
+            Err(error) => {
+                record.state = "cleanup-required".into();
+                registry.mounts.retain(|item| item.id != mount_id);
+                registry.mounts.push(record);
+                let _ = registry.save(&self.state_dir);
+                return Err(failed(format!(
+                    "could not verify mount {mount_id} after attachment; cleanup lease retained: {error}"
+                )));
+            }
+        };
+        record.kernel_mount_id = Some(verified_mount.id);
         record.state = "mounted".into();
         registry.mounts.retain(|item| item.id != mount_id);
         registry.mounts.push(record);
@@ -1469,26 +1574,7 @@ impl ApiExecutionBackend {
                 "GitDockRun target container identity changed before unmount",
             ));
         }
-        let pid = container_pid_for_mount(&record.container_id).map_err(failed)?;
-        let mount_info = match record.kernel_mount_id {
-            Some(id) => mountinfo_by_id(pid, id).map_err(failed)?,
-            None => mountinfo_by_target(pid, &record.target).map_err(failed)?,
-        };
-        if let Some(mount_info) = mount_info {
-            execute_mount_namespace(pid, None, None, &mount_info.target, MountAction::Unmount)
-                .map_err(failed)?;
-            let still_present = match record.kernel_mount_id {
-                Some(id) => mountinfo_by_id(pid, id).map_err(failed)?.is_some(),
-                None => mountinfo_by_target(pid, &record.target)
-                    .map_err(failed)?
-                    .is_some(),
-            };
-            if still_present {
-                return Err(failed(
-                    "kernel still reports the GitDockRun mount after unmount",
-                ));
-            }
-        }
+        cleanup_mount_record(&record).map_err(failed)?;
 
         registry.mounts.retain(|item| item.id != mount_id);
         registry.save(&self.state_dir).map_err(failed)?;
@@ -1610,8 +1696,8 @@ impl ApiExecutionBackend {
 #[derive(Debug, Clone, Copy)]
 enum MountAction {
     Bind,
-    RemountReadOnly,
-    Unmount,
+    RemountReadOnly { expected_mount_id: u32 },
+    Unmount { expected_mount_id: u32 },
 }
 
 #[cfg(target_os = "linux")]
@@ -1747,6 +1833,30 @@ fn container_pid_for_mount(container_id: &str) -> Result<i32, String> {
     {
         return Err("mount target PID no longer belongs to the bound Docker container".into());
     }
+
+    // A process with CAP_SYS_ADMIN can race path-based umount2 by altering the
+    // target namespace itself. Fail closed for privileged containers and for
+    // containers whose capability bounding set permits that capability.
+    let process_status = fs::read_to_string(format!("/proc/{pid}/status"))
+        .map_err(|error| format!("inspect mount target capabilities: {error}"))?;
+    let mut effective = None;
+    let mut bounding = None;
+    for line in process_status.lines() {
+        if let Some(value) = line.strip_prefix("CapEff:") {
+            effective = u64::from_str_radix(value.trim(), 16).ok();
+        } else if let Some(value) = line.strip_prefix("CapBnd:") {
+            bounding = u64::from_str_radix(value.trim(), 16).ok();
+        }
+    }
+    let cap_sys_admin = 1u64 << 21;
+    let effective = effective.ok_or_else(|| "container CapEff was missing or invalid".to_owned())?;
+    let bounding = bounding.ok_or_else(|| "container CapBnd was missing or invalid".to_owned())?;
+    if effective & cap_sys_admin != 0 || bounding & cap_sys_admin != 0 {
+        return Err(
+            "live GitDockRun mounts are refused for containers with CAP_SYS_ADMIN effective or available in CapBnd"
+                .into(),
+        );
+    }
     Ok(pid)
 }
 
@@ -1871,6 +1981,38 @@ fn mountinfo_by_id(pid: i32, mount_id: u32) -> Result<Option<MountInfo>, String>
     Ok(mountinfo_entries(pid)?
         .into_iter()
         .find(|mount| mount.id == mount_id))
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn mount_id_from_fd(fd: libc::c_int) -> Option<u32> {
+    // statx(2) exposes the same mount ID that appears in /proc/<pid>/mountinfo.
+    // Use a fixed, correctly aligned kernel statx buffer so this helper remains
+    // allocation-free when called in the post-fork namespace worker.
+    const STATX_MNT_ID_MASK: u32 = 0x1000;
+    const STATX_MNT_ID_OFFSET: usize = 144;
+    let mut statx_buffer = [0u64; 32];
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_statx,
+            fd,
+            c"".as_ptr(),
+            libc::AT_EMPTY_PATH,
+            STATX_MNT_ID_MASK,
+            statx_buffer.as_mut_ptr(),
+        )
+    };
+    if result != 0 {
+        return None;
+    }
+    let bytes = statx_buffer.as_ptr().cast::<u8>();
+    let mask = unsafe { std::ptr::read_unaligned(bytes.cast::<u32>()) };
+    if mask & STATX_MNT_ID_MASK == 0 {
+        return None;
+    }
+    let mount_id = unsafe {
+        std::ptr::read_unaligned(bytes.add(STATX_MNT_ID_OFFSET).cast::<u64>())
+    };
+    u32::try_from(mount_id).ok()
 }
 
 #[cfg(target_os = "linux")]
@@ -2142,7 +2284,7 @@ fn execute_mount_namespace(
                         }
                         libc::_exit(0);
                     }
-                    MountAction::RemountReadOnly => {
+                    MountAction::RemountReadOnly { expected_mount_id } => {
                         // Re-open the path after the bind so the FD refers to
                         // the mounted filesystem, not the covered old target.
                         let mounted_fd = libc::syscall(
@@ -2154,6 +2296,13 @@ fn execute_mount_namespace(
                         ) as libc::c_int;
                         if mounted_fd < 0 {
                             libc::_exit(46);
+                        }
+                        // The path may have been replaced after the parent
+                        // inspected mountinfo. Never change attributes on a
+                        // different mount that happens to occupy this target.
+                        if unsafe { mount_id_from_fd(mounted_fd) } != Some(expected_mount_id) {
+                            let _ = libc::close(mounted_fd);
+                            libc::_exit(63);
                         }
                         let attr = MountAttr {
                             attr_set: 0x01 | 0x02 | 0x04, // RDONLY | NOSUID | NODEV
@@ -2175,14 +2324,18 @@ fn execute_mount_namespace(
                         }
                         libc::_exit(0);
                     }
-                    MountAction::Unmount => {
-                        // umount2 needs the mountpoint path in the parent
-                        // mount, not a procfs FD link to the mounted root.
-                        // Close the O_PATH handle first so it cannot keep the
-                        // mounted filesystem busy during unmount.
+                    MountAction::Unmount { expected_mount_id } => {
+                        // Check mount identity inside the pinned target
+                        // namespace, immediately before the unmount operation.
+                        if unsafe { mount_id_from_fd(target_fd) } != Some(expected_mount_id) {
+                            let _ = libc::close(target_fd);
+                            libc::_exit(63);
+                        }
+                        // umount2 requires a pathname. The target container is
+                        // rejected if CAP_SYS_ADMIN is in its effective or
+                        // bounding set, preventing a workflow process from
+                        // racing this identity check by replacing mounts.
                         let _ = libc::close(target_fd);
-                        // openat2 above rejects symlinks/traversal, and the
-                        // caller checked the registered kernel mount ID.
                         if libc::umount2(target_relative_c.as_ptr(), 0) != 0 {
                             libc::_exit(47);
                         }
@@ -2243,11 +2396,54 @@ fn execute_mount_namespace(
             60 => "detach temporary source mount",
             61 => "inspect staged source identity",
             62 => "reject source path replacement during mount staging",
+            63 => "refuse operation because the target kernel mount ID changed or is unavailable",
             _ => "complete namespace operation",
         };
         return Err(format!("failed to {stage} (helper status {code})"));
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<(), String> {
+    let expected_mount_id = record.kernel_mount_id.ok_or_else(|| {
+        format!(
+            "mount lease {} has no kernel mount ID; refusing to unmount by pathname",
+            record.id
+        )
+    })?;
+    if let Some(mount) = mountinfo_by_id(pid, expected_mount_id)? {
+        execute_mount_namespace(
+            pid,
+            None,
+            None,
+            &mount.target,
+            MountAction::Unmount { expected_mount_id },
+        )?;
+        if mountinfo_by_id(pid, expected_mount_id)?.is_some() {
+            return Err(format!(
+                "kernel still reports mount ID {expected_mount_id} after cleanup"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn cleanup_mount_record(record: &MountRecord) -> Result<(), String> {
+    match container_pid_for_mount(&record.container_id) {
+        Ok(pid) => cleanup_mount_lease_in_namespace(pid, record),
+        Err(pid_error) => match docker::container_status(&record.container_id) {
+            Ok(Some(status)) if status != "running" => Ok(()),
+            Ok(None) => Ok(()),
+            Ok(Some(_)) => Err(format!(
+                "original container is still running but its mount namespace cannot be inspected: {pid_error}"
+            )),
+            Err(status_error) => Err(format!(
+                "cannot safely determine whether original container is gone: {pid_error}; {status_error}"
+            )),
+        },
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -2268,10 +2464,29 @@ fn reconcile_completed_mounts(
         .iter()
         .filter(|record| record.repository == repository)
     {
+        // A crash during mount setup or read-only enforcement must fail closed.
+        // If the lease has a known kernel ID, remove only that exact mount.
+        // A missing ID is deliberately preserved for manual recovery rather
+        // than guessing from a pathname that may now refer to someone else's mount.
+        if matches!(
+            record.state.as_str(),
+            "preparing" | "read-only-pending" | "cleanup-required"
+        ) {
+            match cleanup_mount_record(record) {
+                Ok(()) => remove_ids.push(record.id.clone()),
+                Err(error) => eprintln!(
+                    "gitrun-api: preserving incomplete mount lease {} for safe recovery: {error}",
+                    record.id
+                ),
+            }
+            continue;
+        }
+
         let job_completed = match client.find_workflow_job(repository, record.run_id, &record.job) {
             Ok(Some(job)) => {
                 !(job.status.eq_ignore_ascii_case("in_progress") && job.conclusion.is_none())
             }
+            // A missing job is considered completed only when the API call itself succeeded.
             Ok(None) => true,
             Err(error) => {
                 eprintln!(
@@ -2285,104 +2500,12 @@ fn reconcile_completed_mounts(
             continue;
         }
 
-        match docker::container_id(&record.container) {
-            Ok(Some(current_id)) if current_id == record.container_id => {
-                let pid = match container_pid_for_mount(&record.container_id) {
-                    Ok(pid) => pid,
-                    Err(error) => {
-                        // Only discard the lease once Docker confirms that the
-                        // container is gone or stopped. If it is still running,
-                        // keep the record so a transient PID/cgroup inspection
-                        // failure cannot orphan a live mount.
-                        match docker::container_status(&record.container) {
-                            Ok(Some(status)) if status != "running" => {
-                                remove_ids.push(record.id.clone());
-                            }
-                            Ok(None) => remove_ids.push(record.id.clone()),
-                            Ok(Some(_)) => eprintln!(
-                                "gitrun-api: preserving mount lease {} because its running container could not be inspected: {error}",
-                                record.id
-                            ),
-                            Err(status_error) => eprintln!(
-                                "gitrun-api: preserving mount lease {} because container status could not be verified: {error}; {status_error}",
-                                record.id
-                            ),
-                        }
-                        continue;
-                    }
-                };
-                let mount = match record.kernel_mount_id {
-                    Some(id) => mountinfo_by_id(pid, id)?,
-                    None => mountinfo_by_target(pid, &record.target)?,
-                };
-                if let Some(mount) = mount {
-                    if let Err(error) = execute_mount_namespace(
-                        pid,
-                        None,
-                        None,
-                        &mount.target,
-                        MountAction::Unmount,
-                    ) {
-                        eprintln!(
-                            "gitrun-api: could not clean mount {} after job completion: {error}",
-                            record.id
-                        );
-                        continue;
-                    }
-                }
-                remove_ids.push(record.id.clone());
-            }
-            Ok(None) => remove_ids.push(record.id.clone()),
-            Ok(Some(_different_id)) => {
-                // Never apply an old record to the replacement container
-                // resolved by name. The original immutable ID may still be
-                // running under another name, so clean that namespace by ID
-                // before dropping the lease.
-                match container_pid_for_mount(&record.container_id) {
-                    Ok(old_pid) => {
-                        let old_mount = match record.kernel_mount_id {
-                            Some(id) => mountinfo_by_id(old_pid, id)?,
-                            None => mountinfo_by_target(old_pid, &record.target)?,
-                        };
-                        if let Some(mount) = old_mount {
-                            if let Err(error) = execute_mount_namespace(
-                                old_pid,
-                                None,
-                                None,
-                                &mount.target,
-                                MountAction::Unmount,
-                            ) {
-                                eprintln!(
-                                    "gitrun-api: preserving mount lease {} because its original container changed names and cleanup failed: {error}",
-                                    record.id
-                                );
-                                continue;
-                            }
-                        }
-                        remove_ids.push(record.id.clone());
-                    }
-                    Err(error) => match docker::container_status(&record.container_id) {
-                        Ok(Some(status)) if status != "running" => {
-                            remove_ids.push(record.id.clone());
-                        }
-                        Ok(None) => remove_ids.push(record.id.clone()),
-                        Ok(Some(_)) => eprintln!(
-                            "gitrun-api: preserving mount lease {} because its original running container could not be inspected: {error}",
-                            record.id
-                        ),
-                        Err(status_error) => eprintln!(
-                            "gitrun-api: preserving mount lease {} because its original container status could not be verified: {error}; {status_error}",
-                            record.id
-                        ),
-                    },
-                }
-            }
-            Err(error) => {
-                eprintln!(
-                    "gitrun-api: cannot inspect mount container {}: {error}",
-                    record.container
-                );
-            }
+        match cleanup_mount_record(record) {
+            Ok(()) => remove_ids.push(record.id.clone()),
+            Err(error) => eprintln!(
+                "gitrun-api: preserving mount lease {} because cleanup could not be verified: {error}",
+                record.id
+            ),
         }
     }
 
@@ -2534,8 +2657,16 @@ mod mount_runtime_tests {
         let before = mountinfo_by_target(pid, &target)
             .expect("read mount table after bind")
             .expect("bind mount should appear");
-        execute_mount_namespace(pid, None, None, &target, MountAction::RemountReadOnly)
-            .expect("make bind mount read-only");
+        execute_mount_namespace(
+            pid,
+            None,
+            None,
+            &target,
+            MountAction::RemountReadOnly {
+                expected_mount_id: before.id,
+            },
+        )
+        .expect("make bind mount read-only");
 
         let read = Command::new("docker")
             .args([
@@ -2568,8 +2699,16 @@ mod mount_runtime_tests {
             "write unexpectedly succeeded on read-only mount"
         );
 
-        execute_mount_namespace(pid, None, None, &target, MountAction::Unmount)
-            .expect("unmount from target namespace");
+        execute_mount_namespace(
+            pid,
+            None,
+            None,
+            &target,
+            MountAction::Unmount {
+                expected_mount_id: before.id,
+            },
+        )
+        .expect("unmount from target namespace");
         assert!(mountinfo_by_id(pid, before.id)
             .expect("read mount table after unmount")
             .is_none());
@@ -2641,8 +2780,16 @@ mod mount_runtime_tests {
         let file_mount = mountinfo_by_target(pid, &target_file)
             .expect("read file mount table")
             .expect("file bind mount should appear");
-        execute_mount_namespace(pid, None, None, &target_file, MountAction::Unmount)
-            .expect("unmount regular file from target namespace");
+        execute_mount_namespace(
+            pid,
+            None,
+            None,
+            &target_file,
+            MountAction::Unmount {
+                expected_mount_id: file_mount.id,
+            },
+        )
+        .expect("unmount regular file from target namespace");
         assert!(mountinfo_by_id(pid, file_mount.id)
             .expect("read mount table after file unmount")
             .is_none());

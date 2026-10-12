@@ -2523,27 +2523,57 @@ fn recover_mount_id_by_source_identity(pid: i32, record: &MountRecord) -> Result
 #[cfg(target_os = "linux")]
 fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<(), String> {
     // If the service crashed after the kernel bind but before persisting its
-    // mount ID, recover only when exactly one allowed mountpoint resolves to
-    // the original source device/inode. Never fall back to unmounting by target
-    // path alone; ambiguous or legacy leases remain for manual inspection.
+    // mount ID, recovery may identify it only by a unique match at the exact
+    // durable target and original source device/inode. Never fall back to
+    // unmounting by target path alone; ambiguous or legacy leases are preserved.
     let expected_mount_id = match record.kernel_mount_id {
         Some(mount_id) => mount_id,
         None => recover_mount_id_by_source_identity(pid, record)?,
     };
-    if let Some(mount) = mountinfo_by_id(pid, expected_mount_id)? {
-        execute_mount_namespace(
-            &record.container_id,
-            pid,
-            None,
-            None,
-            &mount.target,
-            MountAction::Unmount { expected_mount_id },
-        )?;
-        if mountinfo_by_id(pid, expected_mount_id)?.is_some() {
-            return Err(format!(
-                "kernel still reports mount ID {expected_mount_id} after cleanup"
-            ));
-        }
+    let Some(mount) = mountinfo_by_id(pid, expected_mount_id)? else {
+        // The exact kernel mount ID is already absent: cleanup has succeeded.
+        return Ok(());
+    };
+
+    // Treat the registry as a recovery journal, not as sufficient authority by
+    // itself. Validate the target and the mounted source identity before ever
+    // unmounting an ID loaded from disk. This prevents a stale/corrupt record
+    // from being used to unmount a different mount in the same container.
+    if mount.target != record.target || !mount_target_is_allowed(&mount.target) {
+        return Err(format!(
+            "mount lease {} kernel ID {expected_mount_id} resolves to unexpected target {}; preserving lease",
+            record.id, mount.target
+        ));
+    }
+    let (Some(source_device), Some(source_inode)) = (record.source_device, record.source_inode)
+    else {
+        return Err(format!(
+            "mount lease {} is missing the recorded source identity; refusing automatic unmount",
+            record.id
+        ));
+    };
+    let mounted_path = PathBuf::from(format!("/proc/{pid}/root{}", record.target));
+    let metadata = fs::metadata(&mounted_path)
+        .map_err(|error| format!("inspect recorded mount target {}: {error}", record.target))?;
+    if metadata.dev() != source_device || metadata.ino() != source_inode {
+        return Err(format!(
+            "mount lease {} source identity at {} does not match; preserving lease",
+            record.id, record.target
+        ));
+    }
+
+    execute_mount_namespace(
+        &record.container_id,
+        pid,
+        None,
+        None,
+        &mount.target,
+        MountAction::Unmount { expected_mount_id },
+    )?;
+    if mountinfo_by_id(pid, expected_mount_id)?.is_some() {
+        return Err(format!(
+            "kernel still reports mount ID {expected_mount_id} after cleanup"
+        ));
     }
     Ok(())
 }

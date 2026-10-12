@@ -4860,7 +4860,7 @@ mod gsr_execution_boundary_tests {
                 if output == "recorded execution"
         )));
         assert!(matches!(
-            responses.last(),
+            result.responses.last(),
             Some(WireResponse::Event(ExecutionEvent::Finished {
                 exit_code: 0
             }))
@@ -5157,7 +5157,7 @@ mod api_socket_identity_integration_tests {
             result.responses.get(1),
             Some(WireResponse::Event(ExecutionEvent::Started))
         ));
-        assert!(responses.iter().any(|response| matches!(
+        assert!(result.responses.iter().any(|response| matches!(
             response,
             WireResponse::Event(ExecutionEvent::Stdout(output))
                 if output.contains("GitRun API STATUS")

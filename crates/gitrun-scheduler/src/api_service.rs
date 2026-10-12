@@ -589,63 +589,32 @@ fn handle_stream(
         }
     };
 
-    if identity.name != request.invocation.runner
-        || identity.repository != request.invocation.repository
-    {
-        send_error(
-            &mut stream,
-            "runner API identity does not match the managed container",
-        )?;
-        return Ok(());
-    }
-
-    let Some(run_id) = request.invocation.run_id else {
-        send_error(
-            &mut stream,
-            "GITHUB_RUN_ID is required for every GitRun API invocation",
-        )?;
-        return Ok(());
+    let binding = match validate_runner_invocation_binding(&identity, &request.invocation) {
+        Ok(binding) => binding,
+        Err(reason) => {
+            send_error(&mut stream, reason)?;
+            return Ok(());
+        }
     };
+    let run_id = binding.run_id;
 
-    match (identity.workflow_run_id, identity.workflow_job.as_deref()) {
-        (Some(bound_run), Some(bound_job))
-            if bound_run != run_id || bound_job != request.invocation.job =>
-        {
+    if binding.requires_active_job_lookup {
+        let Some(active_job) = github
+            .find_active_workflow_job_for_runner(&request.invocation.repository, &identity.name)
+            .map_err(|error| format!("verify active workflow job: {error}"))?
+        else {
             send_error(
                 &mut stream,
-                "workflow job identity does not match the runner container binding",
+                "no active GitHub workflow job is assigned to this runner",
             )?;
             return Ok(());
-        }
-        (Some(_), None) | (None, Some(_)) => {
+        };
+        if !active_job_matches(&active_job.name, &request.invocation.job) {
             send_error(
                 &mut stream,
-                "runner container has incomplete workflow binding metadata",
+                "requested workflow job is not the active job assigned to this runner",
             )?;
             return Ok(());
-        }
-        (Some(_), Some(_)) => {
-            // The guarded arm above rejects mismatched bindings; this arm
-            // covers the valid case where the bound run/job matches exactly.
-        }
-        (None, None) => {
-            let Some(active_job) = github
-                .find_active_workflow_job_for_runner(&request.invocation.repository, &identity.name)
-                .map_err(|error| format!("verify active workflow job: {error}"))?
-            else {
-                send_error(
-                    &mut stream,
-                    "no active GitHub workflow job is assigned to this runner",
-                )?;
-                return Ok(());
-            };
-            if active_job.name != request.invocation.job {
-                send_error(
-                    &mut stream,
-                    "requested workflow job is not the active job assigned to this runner",
-                )?;
-                return Ok(());
-            }
         }
     }
 
@@ -660,10 +629,12 @@ fn handle_stream(
         )?;
         return Ok(());
     };
-    if current_job.runner_name.as_deref() != Some(identity.name.as_str())
-        || !current_job.status.eq_ignore_ascii_case("in_progress")
-        || current_job.conclusion.is_some()
-    {
+    if !workflow_job_is_active_on_runner(
+        current_job.runner_name.as_deref(),
+        &current_job.status,
+        current_job.conclusion.as_deref(),
+        &identity.name,
+    ) {
         send_error(
             &mut stream,
             "GitRun API request is not being made by the active runner for this workflow job",
@@ -681,7 +652,7 @@ fn handle_stream(
         )?;
         return Ok(());
     };
-    if !request.invocation.workflow.is_empty() && request.invocation.workflow != workflow_run.name {
+    if !workflow_claim_matches(&request.invocation.workflow, &workflow_run.name) {
         send_error(&mut stream, "workflow identity claim does not match GitHub")?;
         return Ok(());
     }
@@ -779,6 +750,65 @@ fn send_error(stream: &mut UnixStream, message: &str) -> Result<(), String> {
             message: message.to_owned(),
         },
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RunnerInvocationBinding {
+    run_id: u64,
+    requires_active_job_lookup: bool,
+}
+
+/// Validate request claims against the identity discovered from SO_PEERCRED's
+/// owning container. This function is deliberately pure so all deny branches
+/// can be tested without mocking or invoking the Docker CLI.
+fn validate_runner_invocation_binding(
+    identity: &docker::ApiRunnerIdentity,
+    invocation: &ApiInvocation,
+) -> Result<RunnerInvocationBinding, &'static str> {
+    if identity.name != invocation.runner || identity.repository != invocation.repository {
+        return Err("runner API identity does not match the managed container");
+    }
+
+    let run_id = invocation
+        .run_id
+        .ok_or("GITHUB_RUN_ID is required for every GitRun API invocation")?;
+
+    let requires_active_job_lookup = match (identity.workflow_run_id, identity.workflow_job.as_deref()) {
+        (Some(bound_run), Some(bound_job))
+            if bound_run != run_id || bound_job != invocation.job =>
+        {
+            return Err("workflow job identity does not match the runner container binding");
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err("runner container has incomplete workflow binding metadata");
+        }
+        (Some(_), Some(_)) => false,
+        (None, None) => true,
+    };
+
+    Ok(RunnerInvocationBinding {
+        run_id,
+        requires_active_job_lookup,
+    })
+}
+
+fn active_job_matches(active_job_name: &str, requested_job: &str) -> bool {
+    active_job_name == requested_job
+}
+
+fn workflow_job_is_active_on_runner(
+    runner_name: Option<&str>,
+    status: &str,
+    conclusion: Option<&str>,
+    expected_runner: &str,
+) -> bool {
+    runner_name == Some(expected_runner)
+        && status.eq_ignore_ascii_case("in_progress")
+        && conclusion.is_none()
+}
+
+fn workflow_claim_matches(claim: &str, authoritative_workflow: &str) -> bool {
+    claim.is_empty() || claim == authoritative_workflow
 }
 
 /// Execute only the exact operation that GSR authorized and authenticated.
@@ -4431,6 +4461,165 @@ mod api_request_capacity_tests {
         assert!(started.elapsed() < Duration::from_secs(1));
         drop(server);
         let _ = sender.join();
+    }
+}
+
+/// Pure regression tests for the transport identity gates used by handle_stream.
+#[cfg(all(test, target_os = "linux"))]
+mod api_identity_validation_tests {
+    use super::*;
+
+    fn identity() -> docker::ApiRunnerIdentity {
+        docker::ApiRunnerIdentity {
+            name: "runner-1".into(),
+            repository: "owner/repo".into(),
+            container_id: "a".repeat(64),
+            workflow_job: None,
+            workflow_run_id: None,
+        }
+    }
+
+    fn invocation() -> ApiInvocation {
+        ApiInvocation {
+            api: GitRunApi::GitStatusRun,
+            operation: GitRunOperation::Status,
+            repository: "owner/repo".into(),
+            workflow: "CI".into(),
+            run_id: Some(42),
+            job: "build".into(),
+            runner: "runner-1".into(),
+            resource: None,
+            arguments: Default::default(),
+        }
+    }
+
+    #[test]
+    fn runner_name_and_repository_must_match_container_identity() {
+        let mut runner = identity();
+        let request = invocation();
+        assert!(validate_runner_invocation_binding(&runner, &request).is_ok());
+
+        runner.name = "runner-other".into();
+        assert!(matches!(
+            validate_runner_invocation_binding(&runner, &request),
+            Err(message) if message.contains("identity does not match")
+        ));
+
+        runner = identity();
+        runner.repository = "other/repo".into();
+        assert!(validate_runner_invocation_binding(&runner, &request).is_err());
+    }
+
+    #[test]
+    fn run_id_is_required_before_any_job_validation() {
+        let runner = identity();
+        let mut request = invocation();
+        request.run_id = None;
+        assert!(matches!(
+            validate_runner_invocation_binding(&runner, &request),
+            Err(message) if message.contains("GITHUB_RUN_ID is required")
+        ));
+    }
+
+    #[test]
+    fn container_job_and_run_binding_must_match_both_claims() {
+        let mut runner = identity();
+        runner.workflow_job = Some("build".into());
+        runner.workflow_run_id = Some(42);
+        let request = invocation();
+        assert_eq!(
+            validate_runner_invocation_binding(&runner, &request),
+            Ok(RunnerInvocationBinding {
+                run_id: 42,
+                requires_active_job_lookup: false,
+            })
+        );
+
+        runner.workflow_run_id = Some(99);
+        assert!(matches!(
+            validate_runner_invocation_binding(&runner, &request),
+            Err(message) if message.contains("binding")
+        ));
+
+        runner.workflow_run_id = Some(42);
+        runner.workflow_job = Some("deploy".into());
+        assert!(matches!(
+            validate_runner_invocation_binding(&runner, &request),
+            Err(message) if message.contains("binding")
+        ));
+    }
+
+    #[test]
+    fn partial_container_job_binding_fails_closed() {
+        let mut runner = identity();
+        runner.workflow_job = Some("build".into());
+        assert!(matches!(
+            validate_runner_invocation_binding(&runner, &invocation()),
+            Err(message) if message.contains("incomplete")
+        ));
+
+        runner = identity();
+        runner.workflow_run_id = Some(42);
+        assert!(matches!(
+            validate_runner_invocation_binding(&runner, &invocation()),
+            Err(message) if message.contains("incomplete")
+        ));
+    }
+
+    #[test]
+    fn unbound_container_requires_authoritative_active_job_lookup() {
+        let result = validate_runner_invocation_binding(&identity(), &invocation()).unwrap();
+        assert_eq!(result.run_id, 42);
+        assert!(result.requires_active_job_lookup);
+        assert!(active_job_matches("build", "build"));
+        assert!(!active_job_matches("deploy", "build"));
+    }
+
+    #[test]
+    fn authoritative_github_job_must_be_in_progress_on_the_same_runner() {
+        assert!(workflow_job_is_active_on_runner(
+            Some("runner-1"),
+            "in_progress",
+            None,
+            "runner-1",
+        ));
+        assert!(!workflow_job_is_active_on_runner(
+            Some("runner-2"),
+            "in_progress",
+            None,
+            "runner-1",
+        ));
+        assert!(!workflow_job_is_active_on_runner(
+            Some("runner-1"),
+            "queued",
+            None,
+            "runner-1",
+        ));
+        assert!(!workflow_job_is_active_on_runner(
+            Some("runner-1"),
+            "completed",
+            None,
+            "runner-1",
+        ));
+        assert!(!workflow_job_is_active_on_runner(
+            Some("runner-1"),
+            "in_progress",
+            Some("success"),
+            "runner-1",
+        ));
+        assert!(!workflow_job_is_active_on_runner(
+            None,
+            "in_progress",
+            None,
+            "runner-1",
+        ));
+    }
+
+    #[test]
+    fn workflow_claim_is_optional_but_cannot_override_github() {
+        assert!(workflow_claim_matches("", "CI"));
+        assert!(workflow_claim_matches("CI", "CI"));
+        assert!(!workflow_claim_matches("untrusted.yml", "CI"));
     }
 }
 

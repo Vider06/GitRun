@@ -4442,6 +4442,40 @@ mod api_request_capacity_tests {
     }
 
     #[test]
+    fn request_reader_rejects_oversized_frames_before_json_parsing() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let sender = std::thread::spawn(move || {
+            let mut payload = vec![b'x'; API_MAX_REQUEST_BYTES + 1];
+            payload.push(b'\\n');
+            let _ = client.write_all(&payload);
+        });
+
+        let result = read_api_request_with_timeout(&server, Duration::from_secs(3));
+        assert!(matches!(result, Err(message) if message.contains("too large")));
+        drop(server);
+        let _ = sender.join();
+    }
+
+    #[test]
+    fn request_reader_rejects_malformed_and_truncated_json_frames() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        for frame in [b"{not-json}\\n".as_slice(), b"{\\"invocation\\":\\n".as_slice()] {
+            let (server, mut client) = UnixStream::pair().unwrap();
+            client.write_all(frame).unwrap();
+
+            let bytes = read_api_request_with_timeout(&server, Duration::from_secs(1))
+                .expect("newline-terminated frame should be read")
+                .expect("peer wrote a frame");
+            assert!(serde_json::from_slice::<WireRequest>(&bytes).is_err());
+        }
+    }
+
+    #[test]
     fn request_reader_enforces_an_absolute_deadline_against_byte_trickling() {
         use std::io::Write;
         use std::os::unix::net::UnixStream;

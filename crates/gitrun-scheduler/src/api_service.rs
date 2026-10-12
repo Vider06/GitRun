@@ -3255,13 +3255,13 @@ mod mount_runtime_tests {
         fs::create_dir(&source_nested).expect("create nested source mountpoint");
         fs::write(source_nested.join("underlay.txt"), b"underlay\n")
             .expect("write nested source underlay");
-        let nested_overlay = std::env::temp_dir().join(format!("gitrun-mount-nested-overlay-{suffix}"));
+        let nested_overlay =
+            std::env::temp_dir().join(format!("gitrun-mount-nested-overlay-{suffix}"));
         let _nested_overlay_guard = TemporaryDirectory(nested_overlay.clone());
         fs::create_dir_all(&nested_overlay).expect("create nested source overlay");
         fs::write(nested_overlay.join("submount-only.txt"), b"submount\n")
             .expect("write nested source overlay file");
-        let nested_source_c =
-            std::ffi::CString::new(source_nested.as_os_str().as_bytes()).unwrap();
+        let nested_source_c = std::ffi::CString::new(source_nested.as_os_str().as_bytes()).unwrap();
         let nested_overlay_c =
             std::ffi::CString::new(nested_overlay.as_os_str().as_bytes()).unwrap();
         assert_eq!(

@@ -3211,16 +3211,9 @@ mod mount_runtime_tests {
         let other_runner = record("other-runner", "owner/repo", 42, "build", "runner-b");
         let other_job = record("other-job", "owner/repo", 42, "test", "runner-a");
         let other_repo = record("other-repo", "someone/else", 42, "build", "runner-a");
-        let mut other_container = record(
-            "other-container",
-            "owner/repo",
-            42,
-            "build",
-            "runner-a",
-        );
+        let mut other_container = record("other-container", "owner/repo", 42, "build", "runner-a");
         other_container.container_id = "different-container-id".into();
-        let duplicate_id_other_runner =
-            record("owned-a", "owner/repo", 42, "build", "runner-b");
+        let duplicate_id_other_runner = record("owned-a", "owner/repo", 42, "build", "runner-b");
         let original = MountRegistry {
             mounts: vec![
                 owned_a,

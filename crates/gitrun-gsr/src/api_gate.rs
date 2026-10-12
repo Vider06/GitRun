@@ -234,6 +234,18 @@ fn authorize_resource_scope(
                     reason: "resource registration is disabled".into(),
                 });
             }
+            let entry = required_argument(
+                GitRunApi::GitRegisterRun,
+                operation,
+                arguments,
+                "entry",
+            )?;
+            if !effective.register.allows_entry(entry) {
+                return Err(ApiGateError::ResourceDenied {
+                    resource: entry.to_owned(),
+                });
+            }
+
             let permanent = match arguments.get("permanent").map(String::as_str) {
                 None => false,
                 Some(value) if value.eq_ignore_ascii_case("true") => true,
@@ -316,6 +328,14 @@ fn authorize_dock(
                 .get("job")
                 .map(String::as_str)
                 .unwrap_or(&caller.job);
+            if job_name != caller.job {
+                return Err(ApiGateError::PolicyDenied {
+                    reason: format!(
+                        "GitDockRun {} may only target the caller's current workflow job",
+                        operation.as_str()
+                    ),
+                });
+            }
             if effective.docker.allows_job(job_name) {
                 Ok(())
             } else {
@@ -751,6 +771,115 @@ mod tests {
             None,
         );
         assert!(matches!(result, Err(ApiGateError::PolicyDenied { .. })));
+    }
+
+    fn settings_for_register(allowed_entries: Vec<String>) -> GitRunSettings {
+        let mut settings = GitRunSettings::default();
+        let mut matrix = gitrun_core::PolicyMatrix::default();
+        matrix.set(
+            GitRunApi::GitRegisterRun,
+            ApiPolicy::enabled_with([GitRunOperation::Register]),
+        );
+        settings.global = matrix;
+        settings.repositories.insert(
+            "owner/repo".into(),
+            RepositorySettings {
+                register: gitrun_core::RegisterPolicy {
+                    enabled: true,
+                    allow_workflow: true,
+                    allow_permanent: false,
+                    allowed_entries,
+                },
+                ..RepositorySettings::default()
+            },
+        );
+        settings
+    }
+
+    #[test]
+    fn register_entry_must_match_the_repository_allowlist_before_authorization() {
+        let settings = settings_for_register(vec!["/home/runner/approved".into()]);
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let args = |entry: &str| {
+            BTreeMap::from([
+                ("name".into(), "tool".into()),
+                ("entry".into(), entry.into()),
+                ("permanent".into(), "false".into()),
+            ])
+        };
+
+        let denied = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            None,
+            args("/home/runner/unapproved"),
+            None,
+        );
+        assert!(matches!(
+            denied,
+            Err(ApiGateError::ResourceDenied { resource }) if resource == "/home/runner/unapproved"
+        ));
+
+        let allowed = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            None,
+            args("/home/runner/approved"),
+            None,
+        );
+        assert!(allowed.is_ok());
+    }
+
+    #[test]
+    fn dock_connect_and_disconnect_only_authorize_the_callers_current_job() {
+        let settings = settings_for_dock();
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+
+        for operation in [GitRunOperation::Connect, GitRunOperation::Disconnect] {
+            let result = authorize(
+                &settings,
+                &caller,
+                GitRunApi::GitDockRun,
+                operation,
+                None,
+                BTreeMap::from([("job".into(), "cache".into())]),
+                None,
+            );
+            assert!(matches!(
+                result,
+                Err(ApiGateError::PolicyDenied { reason })
+                    if reason.contains("caller's current workflow job")
+            ));
+        }
+    }
+
+    #[test]
+    fn dock_connect_and_disconnect_allow_the_current_job_when_policy_permits_it() {
+        let mut settings = settings_for_dock();
+        settings
+            .repositories
+            .get_mut("owner/repo")
+            .unwrap()
+            .docker
+            .allowed_job_names = vec!["build".into()];
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+
+        for operation in [GitRunOperation::Connect, GitRunOperation::Disconnect] {
+            let result = authorize(
+                &settings,
+                &caller,
+                GitRunApi::GitDockRun,
+                operation,
+                None,
+                BTreeMap::from([("job".into(), "build".into())]),
+                None,
+            );
+            assert!(result.is_ok());
+        }
     }
 
     #[test]

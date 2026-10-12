@@ -1436,14 +1436,14 @@ impl ApiExecutionBackend {
             Ok(settings) => settings,
             Err(error) => {
                 registry.mounts.retain(|item| item.id != mount_id);
-                return match registry.save(&self.state_dir) {
-                        Ok(()) => Err(failed(format!(
-                            "reload GitDockRun mount policy before attach: {error}"
-                        ))),
-                        Err(save_error) => Err(failed(format!(
-                            "reload GitDockRun mount policy before attach: {error}; failed to remove pre-attach intent: {save_error}"
-                        ))),
-                    };
+                if let Err(save_error) = registry.save(&self.state_dir) {
+                    return Err(failed(format!(
+                        "policy reload failed: {error}; pre-attach intent cleanup failed: {save_error}"
+                    )));
+                }
+                return Err(failed(format!(
+                    "reload GitDockRun mount policy before attach: {error}"
+                )));
             }
         };
         let final_authorization = authorize_live_mount_source(

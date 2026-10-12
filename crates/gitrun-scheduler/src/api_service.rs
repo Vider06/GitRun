@@ -4537,7 +4537,9 @@ mod gsr_execution_boundary_tests {
         )));
         assert!(matches!(
             responses.last(),
-            Some(WireResponse::Event(ExecutionEvent::Finished { exit_code: 0 }))
+            Some(WireResponse::Event(ExecutionEvent::Finished {
+                exit_code: 0
+            }))
         ));
     }
 
@@ -4575,7 +4577,11 @@ mod gsr_execution_boundary_tests {
         .expect("authorization rejection should be returned over the wire");
 
         assert!(backend.requests.lock().unwrap().is_empty());
-        assert_eq!(responses.len(), 1, "denial must not accept or stream execution");
+        assert_eq!(
+            responses.len(),
+            1,
+            "denial must not accept or stream execution"
+        );
         assert!(matches!(
             responses.first(),
             Some(WireResponse::Error { message }) if message.contains("resource denied")
@@ -4590,11 +4596,20 @@ mod gsr_execution_boundary_tests {
         let base = invocation(GitRunApi::GitStatusRun, GitRunOperation::Status);
 
         let mutations: [(&str, Box<dyn Fn(&mut ApiInvocation)>); 5] = [
-            ("repository", Box::new(|request| request.repository = "other/repo".into())),
-            ("workflow", Box::new(|request| request.workflow = "untrusted.yml".into())),
+            (
+                "repository",
+                Box::new(|request| request.repository = "other/repo".into()),
+            ),
+            (
+                "workflow",
+                Box::new(|request| request.workflow = "untrusted.yml".into()),
+            ),
             ("run ID", Box::new(|request| request.run_id = Some(99))),
             ("job", Box::new(|request| request.job = "deploy".into())),
-            ("runner", Box::new(|request| request.runner = "other-runner".into())),
+            (
+                "runner",
+                Box::new(|request| request.runner = "other-runner".into()),
+            ),
         ];
 
         for (claim, mutate) in mutations {
@@ -4621,11 +4636,14 @@ mod gsr_execution_boundary_tests {
                 backend.requests.lock().unwrap().is_empty(),
                 "{claim} mismatch must not dispatch to the backend"
             );
-            assert!(matches!(
-                responses.as_slice(),
-                [WireResponse::Error { message }]
-                    if message.starts_with("GSR caller binding failed:")
-            ), "{claim} mismatch should fail before API authorization");
+            assert!(
+                matches!(
+                    responses.as_slice(),
+                    [WireResponse::Error { message }]
+                        if message.starts_with("GSR caller binding failed:")
+                ),
+                "{claim} mismatch should fail before API authorization"
+            );
         }
     }
 }

@@ -96,15 +96,16 @@ impl QueueLock {
             .read(true)
             .write(true)
             .open(PathBuf::from(lock_name))?;
-        let mode = if exclusive {
-            libc::LOCK_EX
-        } else {
-            libc::LOCK_SH
-        };
-        // SAFETY: flock operates on the live descriptor owned by lock.
-        if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), mode) } == -1 {
-            return Err(std::io::Error::last_os_error().into());
+        #[cfg(unix)]
+        {
+            let mode = if exclusive { libc::LOCK_EX } else { libc::LOCK_SH };
+            // SAFETY: flock operates on the live descriptor owned by lock.
+            if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), mode) } == -1 {
+                return Err(std::io::Error::last_os_error().into());
+            }
         }
+        #[cfg(not(unix))]
+        let _ = exclusive;
         Ok(Self(lock))
     }
 }

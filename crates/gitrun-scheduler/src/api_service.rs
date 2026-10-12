@@ -2778,6 +2778,20 @@ fn recover_mount_id_by_source_identity(
 
 #[cfg(target_os = "linux")]
 fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<(), String> {
+    // The durable "preparing" state proves the privileged worker was never
+    // entered. Do not inspect or infer a mount ID in this state: a different
+    // actor may have mounted the same source at this target after the lease was
+    // written, and inode equality does not make that external mount ours.
+    if record.state == "preparing" {
+        return match record.kernel_mount_id {
+            None => Ok(()),
+            Some(mount_id) => Err(format!(
+                "mount lease {} is still preparing but unexpectedly records kernel mount ID {mount_id}; preserving it for manual review",
+                record.id
+            )),
+        };
+    }
+
     // If the service crashed after the kernel bind but before persisting its
     // mount ID, recovery may identify it only by a unique match at the exact
     // durable target and original source device/inode. Never fall back to
@@ -2787,14 +2801,10 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
         None => recover_mount_id_by_source_identity(pid, record)?,
     };
     let Some(expected_mount_id) = expected_mount_id else {
-        // Only the durable "preparing" state proves that the bind worker had
-        // not yet been entered. Once state is "attaching" (or a later recovery
-        // state), the mount may have landed on a renamed target or the service
-        // may have crashed before its mount ID was persisted. Preserve the
-        // lease for manual recovery instead of deleting the only journal entry.
-        if record.state == "preparing" {
-            return Ok(());
-        }
+        // Once state is "attaching" (or a later recovery state), the mount may
+        // have landed on a renamed target or the service may have crashed
+        // before its mount ID was persisted. Preserve the lease for manual
+        // recovery instead of deleting the only journal entry.
         return Err(format!(
             "mount lease {} has no identifiable mount at its recorded target; preserving the lease because attach may have raced a target rename",
             record.id
@@ -3519,6 +3529,42 @@ mod mount_runtime_tests {
             .expect("verify no mount was created")
             .is_none());
 
+        // A different actor can create a mount at the same path after a
+        // "preparing" lease was persisted. Even when it exposes the same
+        // source inode, that lease proves GitRun never entered the attach
+        // worker and must not be allowed to unmount the other actor's mount.
+        execute_mount_namespace(
+            &container_id,
+            pid,
+            Some(source.as_raw_fd()),
+            Some(&canonical_source),
+            &target,
+            MountAction::Bind { read_only: true },
+        )
+        .expect("create competing mount at preparing lease target");
+        let competing_mount = mountinfo_by_target(pid, &target)
+            .expect("inspect competing mount")
+            .expect("competing mount should be present");
+        cleanup_mount_lease_in_namespace(pid, &interrupted_lease)
+            .expect("preparing lease must not unmount a mount created by another actor");
+        assert!(mountinfo_by_id(pid, competing_mount.id)
+            .expect("verify preparing lease left competing mount intact")
+            .is_some());
+        execute_mount_namespace(
+            &container_id,
+            pid,
+            None,
+            None,
+            &target,
+            MountAction::Unmount {
+                expected_mount_id: competing_mount.id,
+            },
+        )
+        .expect("remove competing mount created by the test");
+        assert!(mountinfo_by_target(pid, &target)
+            .expect("verify competing mount was removed")
+            .is_none());
+
         // Once the durable state says the privileged attach may have begun,
         // absence at the original pathname is ambiguous (for example, the
         // target may have been renamed). Never discard this lease automatically.
@@ -3541,7 +3587,7 @@ mod mount_runtime_tests {
         let recovered_candidate = mountinfo_by_target(pid, &target)
             .expect("inspect recreated interrupted mount")
             .expect("recreated source bind should be present");
-        let mut wrong_identity_lease = interrupted_lease.clone();
+        let mut wrong_identity_lease = attaching_lease.clone();
         wrong_identity_lease.kernel_mount_id = Some(recovered_candidate.id);
         wrong_identity_lease.source_inode = Some(source_metadata.ino().wrapping_add(1));
         assert!(cleanup_mount_lease_in_namespace(pid, &wrong_identity_lease).is_err());
@@ -3549,7 +3595,7 @@ mod mount_runtime_tests {
             .expect("verify source mismatch did not unmount")
             .is_some());
 
-        cleanup_mount_lease_in_namespace(pid, &interrupted_lease)
+        cleanup_mount_lease_in_namespace(pid, &attaching_lease)
             .expect("recover incomplete mount by exact target and source identity");
         assert!(mountinfo_by_target(pid, &target)
             .expect("read mount table after interrupted-lease recovery")

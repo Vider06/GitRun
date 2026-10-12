@@ -1325,13 +1325,19 @@ impl ApiExecutionBackend {
         let settings =
             GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(&self.state_dir))
                 .map_err(|error| failed(error.to_string()))?;
-        let mount_policy = settings
-            .effective_for_repository(&request.repository)
-            .docker
-            .allowed_mounts;
-        let canonical_source = mount_policy
-            .authorize_source(Path::new(source), read_only)
-            .map_err(failed)?;
+        let resource = request
+            .resource
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| failed("GitDockRun MOUNT has no logical container resource"))?;
+        let canonical_source = authorize_live_mount_source(
+            &settings,
+            &request.repository,
+            resource,
+            Path::new(source),
+            read_only,
+        )
+        .map_err(failed)?;
         let source_handle = open_mount_source(&canonical_source).map_err(failed)?;
         let source_metadata = source_handle
             .metadata()
@@ -1729,6 +1735,41 @@ impl ApiExecutionBackend {
             "GitDockRun MELT: PASS\nsource={source}\ntarget={target_name}\nid={target_id}\n"
         )))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn authorize_live_mount_source(
+    settings: &GitRunSettings,
+    repository: &str,
+    resource: &str,
+    source: &Path,
+    read_only: bool,
+) -> Result<PathBuf, String> {
+    let effective = settings.effective_for_repository(repository);
+    if !effective
+        .api_policy
+        .allows(GitRunApi::GitDockRun, GitRunOperation::Mount)
+    {
+        return Err("GitDockRun MOUNT is disabled by the current effective API policy".into());
+    }
+    if !effective.docker.allows_container(resource) {
+        return Err(format!(
+            "GitDockRun MOUNT resource {resource} is not currently allowlisted"
+        ));
+    }
+    let logic = effective
+        .docker
+        .logic_container(resource)
+        .ok_or_else(|| format!("GitDockRun MOUNT has no policy for logic container {resource}"))?;
+    if !logic.mountable {
+        return Err(format!(
+            "GitDockRun MOUNT is disabled for logic container {resource}"
+        ));
+    }
+    effective
+        .docker
+        .allowed_mounts
+        .authorize_source(source, read_only)
 }
 
 #[cfg(target_os = "linux")]
@@ -2721,6 +2762,112 @@ mod mount_runtime_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn runtime_mount_policy_rechecks_api_resource_capability_and_source() {
+        use gitrun_core::api_policy::{ApiPolicy, PolicyMatrix};
+        use gitrun_core::settings::{
+            DockerPolicy, LogicContainerPolicy, MountPolicy, MountRule, RepositorySettings,
+        };
+
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-runtime-policy-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("source.txt"), b"payload").unwrap();
+
+        let make_settings = |api_enabled: bool, container_allowed: bool, mountable: bool| {
+            let mut settings = GitRunSettings::default();
+            let mut matrix = PolicyMatrix::default();
+            matrix.set(
+                GitRunApi::GitDockRun,
+                if api_enabled {
+                    ApiPolicy::enabled_with([GitRunOperation::Mount])
+                } else {
+                    ApiPolicy::disabled()
+                },
+            );
+            settings.global = matrix;
+
+            let mut docker = DockerPolicy::default();
+            docker.allowed_container_names = if container_allowed {
+                vec!["runner".into()]
+            } else {
+                Vec::new()
+            };
+            docker.logic_containers.insert(
+                "runner".into(),
+                LogicContainerPolicy {
+                    mountable,
+                    ..LogicContainerPolicy::default()
+                },
+            );
+            docker.allowed_mounts = MountPolicy {
+                enabled: true,
+                rules: vec![MountRule {
+                    source: dir.to_string_lossy().into_owned(),
+                    recursive: true,
+                    read_only: true,
+                    allow: true,
+                }],
+            };
+            settings.repositories.insert(
+                "owner/repo".into(),
+                RepositorySettings {
+                    docker,
+                    ..RepositorySettings::default()
+                },
+            );
+            settings
+        };
+
+        let source = dir.join("source.txt");
+        let enabled = make_settings(true, true, true);
+        assert!(authorize_live_mount_source(
+            &enabled,
+            "owner/repo",
+            "runner",
+            &source,
+            true
+        )
+        .is_ok());
+        assert!(authorize_live_mount_source(
+            &enabled,
+            "owner/repo",
+            "runner",
+            &source,
+            false
+        )
+        .is_err());
+        assert!(authorize_live_mount_source(
+            &make_settings(false, true, true),
+            "owner/repo",
+            "runner",
+            &source,
+            true
+        )
+        .is_err());
+        assert!(authorize_live_mount_source(
+            &make_settings(true, false, true),
+            "owner/repo",
+            "runner",
+            &source,
+            true
+        )
+        .is_err());
+        assert!(authorize_live_mount_source(
+            &make_settings(true, true, false),
+            "owner/repo",
+            "runner",
+            &source,
+            true
+        )
+        .is_err());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

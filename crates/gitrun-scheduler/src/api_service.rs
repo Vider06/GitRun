@@ -1294,16 +1294,34 @@ impl ApiExecutionBackend {
             target,
             MountAction::Bind,
         ) {
-            if mountinfo_by_target(pid, target).ok().flatten().is_some()
-                && execute_mount_namespace(pid, None, target, MountAction::Unmount).is_err()
-            {
-                record.state = "cleanup-required".into();
-                registry.mounts.retain(|item| item.id != mount_id);
-                registry.mounts.push(record);
-                let _ = registry.save(&self.state_dir);
-                return Err(failed(format!(
-                    "mount failed and rollback failed; mount {mount_id} is registered for cleanup: {error}"
-                )));
+            match mountinfo_by_target(pid, target) {
+                Ok(Some(mount)) => {
+                    if let Err(rollback_error) =
+                        execute_mount_namespace(pid, None, target, MountAction::Unmount)
+                    {
+                        record.state = "cleanup-required".into();
+                        record.kernel_mount_id = Some(mount.id);
+                        registry.mounts.retain(|item| item.id != mount_id);
+                        registry.mounts.push(record);
+                        let _ = registry.save(&self.state_dir);
+                        return Err(failed(format!(
+                            "mount failed and rollback failed; mount {mount_id} is registered for cleanup: {error}; rollback: {rollback_error}"
+                        )));
+                    }
+                }
+                Ok(None) => {}
+                Err(inspect_error) => {
+                    // If mount state cannot be inspected, keep a durable
+                    // cleanup lease rather than deleting the only recovery
+                    // record and potentially orphaning a live mount.
+                    record.state = "cleanup-required".into();
+                    registry.mounts.retain(|item| item.id != mount_id);
+                    registry.mounts.push(record);
+                    let _ = registry.save(&self.state_dir);
+                    return Err(failed(format!(
+                        "mount failed and rollback state could not be inspected; mount {mount_id} is registered for cleanup: {error}; inspect: {inspect_error}"
+                    )));
+                }
             }
             registry.mounts.retain(|item| item.id != mount_id);
             let _ = registry.save(&self.state_dir);

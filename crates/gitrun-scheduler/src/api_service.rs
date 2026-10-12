@@ -1412,18 +1412,39 @@ impl ApiExecutionBackend {
         // mount exists.
         registry.save(&self.state_dir).map_err(failed)?;
 
+        // Persist the conservative recovery boundary before the final policy
+        // read. If the service crashes during the check below, retain the lease:
+        // recovery must not guess whether the privileged worker was entered.
+        // While the process is alive, however, a failed check can safely remove
+        // this intent because the worker has not yet been invoked.
+        record.state = "attaching".into();
+        registry.mounts.retain(|item| item.id != mount_id);
+        registry.mounts.push(record.clone());
+        registry.save(&self.state_dir).map_err(|error| {
+            failed(format!(
+                "cannot persist mount attaching state; refusing bind: {error}"
+            ))
+        })?;
+
         // Settings can change after GSR has authorized the request and while
-        // the target/source are being inspected. Re-read the current effective
-        // policy immediately before the namespace syscall; if the source now
-        // resolves differently, the previously pinned file descriptor is not
-        // allowed to bypass that change.
+        // the target/source are being inspected. Reload the effective policy
+        // after the durable state write, as close as possible to the namespace
+        // operation; a previously pinned source cannot bypass a policy change.
         let current_settings =
-            GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(&self.state_dir))
-                .map_err(|error| {
-                    failed(format!(
-                        "reload GitDockRun mount policy before attach: {error}"
-                    ))
-                })?;
+            match GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(&self.state_dir)) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    registry.mounts.retain(|item| item.id != mount_id);
+                    return match registry.save(&self.state_dir) {
+                        Ok(()) => Err(failed(format!(
+                            "reload GitDockRun mount policy before attach: {error}"
+                        ))),
+                        Err(save_error) => Err(failed(format!(
+                            "reload GitDockRun mount policy before attach: {error}; failed to remove pre-attach intent: {save_error}"
+                        ))),
+                    };
+                }
+            };
         let final_authorization = authorize_live_mount_source(
             &current_settings,
             &request.repository,
@@ -1449,19 +1470,6 @@ impl ApiExecutionBackend {
                 "mount was blocked because its effective policy changed before attach: {policy_error}"
             )));
         }
-
-        // Durably mark the uncertainty boundary immediately before entering
-        // the privileged worker. If the service dies during the syscall, the
-        // recovery path must not infer "no mount" merely because the original
-        // pathname is now absent or was replaced.
-        record.state = "attaching".into();
-        registry.mounts.retain(|item| item.id != mount_id);
-        registry.mounts.push(record.clone());
-        registry.save(&self.state_dir).map_err(|error| {
-            failed(format!(
-                "cannot persist mount attaching state; refusing bind: {error}"
-            ))
-        })?;
 
         if let Err(error) = execute_mount_namespace(
             &binding.container_id,

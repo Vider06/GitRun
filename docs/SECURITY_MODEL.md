@@ -63,6 +63,8 @@ GSR provides defense-in-depth through command/resource policy, workflow validati
 
 The standalone `gitrun-gsr` process is a watchdog with its own systemd unit. It watches the scheduler PID file and records unexpected scheduler exits as critical security events. The broader GSR hardening scope is still not a substitute for the Docker socket/host boundary, and the standalone service unit still warrants additional systemd sandboxing review.
 
+The shared security-event JSONL queue rotates the active file before it would exceed 16 MiB and retains up to ten archives. On Unix, producers and readers coordinate through a sidecar advisory lock, including during rotation, so current GitRun processes do not append into a renamed file or read across a partial rotation. Readers include retained archives; the newest-event view remains bounded. This is a finite retention policy: oldest archives are deleted when the cap is exceeded, so the queue is not a permanent audit archive. Preserve/export events externally if a longer compliance retention period is required. A single unusually large event can exceed the nominal per-file cap.
+
 ## GitVault and secrets at rest
 
 GitVault stores secrets as AES-256-GCM ciphertext on disk. A randomly generated 32-byte master key is stored separately with owner-only (`0600`) permissions.

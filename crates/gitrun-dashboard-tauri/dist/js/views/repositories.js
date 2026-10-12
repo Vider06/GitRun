@@ -12,16 +12,24 @@ const logicOps = ["connect","read","write","execute","melt","mountable"];
 export async function renderRepository(repo, navigate) {
   const generation = window.__gitrunNavigationGeneration;
   content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Loading repository configuration…</p></div>';
-  let detail, requirements, settings, config, runnerSnapshot, activitySnapshot;
+  let detail, requirements, settings, config;
   const forceRefresh = Boolean(window.__gitrunForceRefresh);
+  const unavailableRunnerSnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[]};
+  const unavailableActivitySnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[]};
+  let runnerSnapshot = unavailableRunnerSnapshot;
+  let activitySnapshot = unavailableActivitySnapshot;
+  // Remote GitHub telemetry is deliberately kept off the navigation critical path.
+  // The repository's local policy/configuration must render even when GitHub is slow.
+  const telemetryPromise = Promise.all([
+    invoke("get_runner_snapshot", {forceRefresh}).catch((error) => ({...unavailableRunnerSnapshot,warnings:[String(error)]})),
+    invoke("get_repository_activity", {forceRefresh}).catch((error) => ({...unavailableActivitySnapshot,warnings:[String(error)]}))
+  ]);
   try {
-    [detail, requirements, settings, config, runnerSnapshot, activitySnapshot] = await Promise.all([
+    [detail, requirements, settings, config] = await Promise.all([
       invoke("get_repo_detail", {repo}),
       invoke("get_dock_requirements", {repo}),
       invoke("get_gitrun_settings"),
-      invoke("get_config"),
-      invoke("get_runner_snapshot", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[String(error)]})),
-      invoke("get_repository_activity", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[String(error)]}))
+      invoke("get_config")
     ]);
   } catch (error) {
     if (generation !== window.__gitrunNavigationGeneration) return;
@@ -54,17 +62,17 @@ export async function renderRepository(repo, navigate) {
       '<article class="panel metric-card"><div class="metric-top">GitVault groups</div><div class="metric-value">' + (detail.vault_groups || []).length + '</div><div class="metric-foot">Configured secret scopes</div></article>' +
       '<article class="panel metric-card"><div class="metric-top">Logic rules</div><div class="metric-value">' + ruleList.length + '</div><div class="metric-foot">Global dynamic-runner matching</div></article>' +
       '<article class="panel metric-card"><div class="metric-top">Workflow requirements</div><div class="metric-value">' + (requirements || []).length + '</div><div class="metric-foot">Detected GitDockRun calls</div></article>' +
-      '<article class="panel metric-card"><div class="metric-top">Live runners</div><div class="metric-value">' + (repoRunners.length || (runnerSnapshot.repositories_checked === runnerSnapshot.repositories_total && runnerSnapshot.repositories_total > 0 ? "0" : "Unknown")) + '</div><div class="metric-foot">' + (runnerSnapshot.stale ? "Cached snapshot" : "GitHub API snapshot") + '</div></article>' +
-      '<article class="panel metric-card"><div class="metric-top">Stars</div><div class="metric-value">' + (repoActivity ? esc(repoActivity.stars) : "Unknown") + '</div><div class="metric-foot">Repository metadata</div></article>' +
-      '<article class="panel metric-card"><div class="metric-top">Open PRs</div><div class="metric-value">' + (repoActivity ? esc(repoActivity.open_pull_requests) : "Unknown") + '</div><div class="metric-foot">GitHub Search API</div></article>' +
-      '<article class="panel metric-card"><div class="metric-top">Merged PRs</div><div class="metric-value">' + (repoActivity ? esc(repoActivity.merged_pull_requests) : "Unknown") + '</div><div class="metric-foot">GitHub Search API count · may be capped</div></article>' +
-      '<article class="panel metric-card"><div class="metric-top">Queued workflow runs</div><div class="metric-value">' + (workflowSummary ? esc(workflowSummary.queued) : "Unknown") + '</div><div class="metric-foot">Latest 100 workflow runs</div></article>' +
-      '<article class="panel metric-card"><div class="metric-top">In-progress runs</div><div class="metric-value">' + (workflowSummary ? esc(workflowSummary.in_progress) : "Unknown") + '</div><div class="metric-foot">Workflow-run count, not job count</div></article>' +
-      '<article class="panel metric-card"><div class="metric-top">Failed runs</div><div class="metric-value">' + (workflowSummary ? esc(workflowSummary.failed) : "Unknown") + '</div><div class="metric-foot">Latest 100 workflow runs</div></article>' +
+      '<article class="panel metric-card"><div class="metric-top">Live runners</div><div class="metric-value" id="repo-live-runners">Unknown</div><div class="metric-foot">' + (runnerSnapshot.stale ? "Cached snapshot" : "GitHub API snapshot") + '</div></article>' +
+      '<article class="panel metric-card"><div class="metric-top">Stars</div><div class="metric-value" id="repo-stars">Unknown</div><div class="metric-foot">Repository metadata</div></article>' +
+      '<article class="panel metric-card"><div class="metric-top">Open PRs</div><div class="metric-value" id="repo-open-prs">Unknown</div><div class="metric-foot">GitHub Search API</div></article>' +
+      '<article class="panel metric-card"><div class="metric-top">Merged PRs</div><div class="metric-value" id="repo-merged-prs">Unknown</div><div class="metric-foot">GitHub Search API count · may be capped</div></article>' +
+      '<article class="panel metric-card"><div class="metric-top">Queued workflow runs</div><div class="metric-value" id="repo-queued-runs">Unknown</div><div class="metric-foot">Latest 100 workflow runs</div></article>' +
+      '<article class="panel metric-card"><div class="metric-top">In-progress runs</div><div class="metric-value" id="repo-running-runs">Unknown</div><div class="metric-foot">Workflow-run count, not job count</div></article>' +
+      '<article class="panel metric-card"><div class="metric-top">Failed runs</div><div class="metric-value" id="repo-failed-runs">Unknown</div><div class="metric-foot">Latest 100 workflow runs</div></article>' +
     '</div>' +
     '<div class="notice warn"><div><strong>Job history is not exposed yet</strong>Runner status and busy state come from a cached GitHub snapshot. Job queues, run history and per-job resource usage require additional telemetry sources.</div></div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Runner inventory</h2><span class="muted">' + (runnerSnapshot.repositories_checked === runnerSnapshot.repositories_total && runnerSnapshot.repositories_total > 0 ? repoRunners.length + ' observed' : 'Partial / unavailable') + '</span></div>' +
-      (runnerRows ? '<div class="table-wrap"><table><thead><tr><th>Runner</th><th>Status</th><th>Load</th><th>Type</th><th>Container</th><th>Settings</th></tr></thead><tbody>' + runnerRows + '</tbody></table></div>' : empty("Runner status unavailable","GitHub API authentication or runner discovery may have failed. An empty partial snapshot is not a zero count.")) +
+      '<div id="repo-runner-inventory">' + (runnerRows ? '<div class="table-wrap"><table><thead><tr><th>Runner</th><th>Status</th><th>Load</th><th>Type</th><th>Container</th><th>Settings</th></tr></thead><tbody>' + runnerRows + '</tbody></table></div>' : empty("Runner status unavailable","GitHub API authentication or runner discovery may have failed. An empty partial snapshot is not a zero count.")) + '</div>' +
       ((runnerSnapshot.warnings || []).length ? '<div class="notice warn mt-12"><div><strong>Snapshot warnings</strong>' + runnerSnapshot.warnings.map((warning) => {
         const text = String(warning);
         const missingRunnerPermission = text.includes("Resource not accessible by integration") && text.includes("/actions/runners");
@@ -73,7 +81,7 @@ export async function renderRepository(repo, navigate) {
           : '';
         return '<p>' + esc(warning) + '</p>' + permissionHint;
       }).join("") + '</div></div>' : '') +
-      '<p class="field-hint mt-10">Snapshot: ' + (runnerSnapshot.checked_at ? new Date(Number(runnerSnapshot.checked_at)*1000).toLocaleTimeString() : "not checked") + (runnerSnapshot.stale ? ' · stale cached data' : ' · shared 60-second cache') + '</p></div>' +
+      '<p class="field-hint mt-10" id="repo-runner-snapshot-foot">Snapshot: not checked · loading telemetry in background</p></div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Logic Containers matching rules</h2><button class="btn" id="add-rule-btn">＋ Add rule</button></div><p class="section-description">These rules are global and saved immediately when added or removed. They select the backend and image for matching dynamic jobs; their saves are separate from the repository policy controls below.</p>' +
       (ruleList.length ? '<div class="card-list">' + ruleList.map((rule,index) => '<div class="list-row"><div class="list-row-main"><strong>' + esc(rule.name) + '</strong><small>Labels: ' + esc((rule.match_labels || []).join(", ")) + ' · Image: ' + esc(rule.image) + ' · Backend: ' + esc(rule.backend && rule.backend.Vm ? "VM " + rule.backend.Vm.vm_name : "Local Linux") + '</small></div><button class="btn btn-danger" data-delete-rule="' + index + '">Remove</button></div>').join("") + '</div>' : empty("No matching rules","Dynamic jobs use the default image until a rule matches.")) +
     '</div>' +
@@ -145,6 +153,50 @@ export async function renderRepository(repo, navigate) {
   }));
   document.getElementById("save-repo-policy").addEventListener("click", savePolicy);
   document.getElementById("save-repo-policy-bottom").addEventListener("click", savePolicy);
+
+  // Refresh telemetry after first paint; never replace the policy form while the user may edit it.
+  void telemetryPromise.then(([nextRunnerSnapshot, nextActivitySnapshot]) => {
+    if (generation !== window.__gitrunNavigationGeneration || !content.isConnected) return;
+    runnerSnapshot = nextRunnerSnapshot;
+    activitySnapshot = nextActivitySnapshot;
+    const runners = (runnerSnapshot.runners || []).filter((runner) => runner.repository === repo);
+    const activity = (activitySnapshot.repositories || []).find((item) => item.repository === repo);
+    const workflow = (runnerSnapshot.workflow_runs || []).find((item) => item.repository === repo);
+    const values = {
+      "repo-live-runners": runners.length || (runnerSnapshot.repositories_checked === runnerSnapshot.repositories_total && runnerSnapshot.repositories_total > 0 ? "0" : "Unknown"),
+      "repo-stars": activity ? activity.stars : "Unknown",
+      "repo-open-prs": activity ? activity.open_pull_requests : "Unknown",
+      "repo-merged-prs": activity ? activity.merged_pull_requests : "Unknown",
+      "repo-queued-runs": workflow ? workflow.queued : "Unknown",
+      "repo-running-runs": workflow ? workflow.in_progress : "Unknown",
+      "repo-failed-runs": workflow ? workflow.failed : "Unknown"
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const node = document.getElementById(id);
+      if (node) node.textContent = String(value);
+    }
+    const inventory = document.getElementById("repo-runner-inventory");
+    if (inventory) {
+      const table = runners.map((runner) => '<tr><td><strong>' + esc(runner.name) + '</strong><div class="subtle mono">ID ' + esc(runner.id) + '</div></td><td>' + pill(runner.online ? "Online" : runner.status, runner.online ? "good" : "bad") + '</td><td>' + pill(runner.busy ? "Busy" : "Idle", runner.busy ? "warn" : "neutral") + '</td><td>' + pill(runner.kind, runner.kind === "Permanent" ? "info" : runner.kind === "Dynamic" ? "good" : "warn") + '</td><td>' + esc(runner.container_status || "Unknown") + '</td><td>' + (runner.kind === "Permanent" ? '<button class="icon-action" data-runner-settings="' + esc(runner.name) + '" title="Permanent runner settings" aria-label="Permanent runner settings">⚙</button>' : '<span class="subtle">—</span>') + '</td></tr>').join("");
+      inventory.innerHTML = table
+        ? '<div class="table-wrap"><table><thead><tr><th>Runner</th><th>Status</th><th>Load</th><th>Type</th><th>Container</th><th>Settings</th></tr></thead><tbody>' + table + '</tbody></table></div>'
+        : empty("Runner status unavailable","GitHub API authentication or runner discovery may have failed. An empty partial snapshot is not a zero count.");
+      inventory.querySelectorAll("[data-runner-settings]").forEach((button) => button.addEventListener("click", () => {
+        const runner = runners.find((item) => item.name === button.dataset.runnerSettings);
+        if (!runner) return;
+        const backdrop = document.createElement("div");
+        backdrop.className = "modal-backdrop";
+        backdrop.innerHTML = '<section class="modal" role="dialog" aria-modal="true"><h2>Permanent runner settings</h2><p>Runner-specific override storage is not exposed by the current backend. The controls below show the observed runner identity and link to the global runner policy.</p><div class="kv-grid"><div class="kv"><small>Runner</small><strong>' + esc(runner.name) + '</strong></div><div class="kv"><small>Container state</small><strong>' + esc(runner.container_status || "Unknown") + '</strong></div><div class="kv"><small>Current state</small><strong>' + esc(runner.status) + (runner.busy ? " · busy" : " · idle") + '</strong></div><div class="kv"><small>Scope</small><strong>' + esc(repo) + '</strong></div></div><div class="modal-actions"><button class="btn" data-close>Close</button><button class="btn btn-primary" data-general>Global runner settings →</button></div></section>';
+        document.body.appendChild(backdrop);
+        backdrop.querySelector("[data-close]").onclick = () => backdrop.remove();
+        backdrop.querySelector("[data-general]").onclick = () => { backdrop.remove(); window.dispatchEvent(new CustomEvent("gitrun:navigate",{detail:"general"})); };
+      }));
+    }
+    const summary = inventory?.closest(".section")?.querySelector(".section-heading .muted");
+    if (summary) summary.textContent = runnerSnapshot.repositories_checked === runnerSnapshot.repositories_total && runnerSnapshot.repositories_total > 0 ? runners.length + " observed" : "Partial / unavailable";
+    const foot = document.getElementById("repo-runner-snapshot-foot");
+    if (foot) foot.textContent = "Snapshot: " + (runnerSnapshot.checked_at ? new Date(Number(runnerSnapshot.checked_at)*1000).toLocaleTimeString() : "not checked") + (runnerSnapshot.stale ? " · stale cached data" : " · shared 60-second cache");
+  }).catch(() => { /* telemetry failure must not affect the usable policy form */ });
 
   async function savePolicy() {
     const next = structuredClone(settings);

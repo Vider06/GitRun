@@ -1954,21 +1954,6 @@ fn execute_mount_namespace(
                     libc::_exit(44);
                 }
 
-                // Mount changes must remain private to the runner namespace.
-                // This is performed before resolving the target so a bind
-                // cannot propagate to a peer namespace.
-                if matches!(action, MountAction::Bind)
-                    && libc::mount(
-                        std::ptr::null(),
-                        c"/".as_ptr(),
-                        std::ptr::null(),
-                        libc::MS_REC | libc::MS_PRIVATE,
-                        std::ptr::null(),
-                    ) != 0
-                {
-                    libc::_exit(50);
-                }
-
                 let root_fd = libc::open(
                     c"/".as_ptr(),
                     libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
@@ -2019,6 +2004,20 @@ fn execute_mount_namespace(
                     libc::_exit(55);
                 }
                 let target_ptr = target_link.as_ptr();
+                // Isolate the mount that contains this target rather than
+                // changing propagation for every mount in the container.
+                // The bind must not propagate into a peer namespace.
+                if matches!(action, MountAction::Bind)
+                    && libc::mount(
+                        std::ptr::null(),
+                        target_ptr,
+                        std::ptr::null(),
+                        libc::MS_PRIVATE,
+                        std::ptr::null(),
+                    ) != 0
+                {
+                    libc::_exit(50);
+                }
                 match action {
                     MountAction::Bind => {
                         if source_tree_fd < 0 {

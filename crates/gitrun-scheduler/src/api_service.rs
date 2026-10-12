@@ -2960,6 +2960,21 @@ mod mount_runtime_tests {
         }
     }
 
+    struct TemporaryMount(PathBuf);
+
+    impl Drop for TemporaryMount {
+        fn drop(&mut self) {
+            use std::os::unix::ffi::OsStrExt;
+
+            if let Ok(path) = std::ffi::CString::new(self.0.as_os_str().as_bytes()) {
+                // Best-effort cleanup if an assertion exits the test early.
+                unsafe {
+                    libc::umount2(path.as_ptr(), libc::MNT_DETACH);
+                }
+            }
+        }
+    }
+
     #[test]
     fn runtime_mount_policy_rechecks_api_resource_capability_and_source() {
         use gitrun_core::api_policy::{ApiPolicy, PolicyMatrix};
@@ -3148,6 +3163,28 @@ mod mount_runtime_tests {
             "the privileged namespace test must run as root"
         );
 
+        // Isolate this test's temporary nested source mount from the host mount
+        // namespace. The bind itself is non-recursive, and this test must never
+        // leave its auxiliary mount propagated onto the runner host.
+        assert_eq!(
+            unsafe { libc::unshare(libc::CLONE_NEWNS) },
+            0,
+            "create an isolated mount namespace for the privileged smoke test"
+        );
+        assert_eq!(
+            unsafe {
+                libc::mount(
+                    std::ptr::null(),
+                    c"/".as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_REC | libc::MS_PRIVATE,
+                    std::ptr::null(),
+                )
+            },
+            0,
+            "make the privileged smoke-test mount namespace private"
+        );
+
         let suffix = format!("{}-{}", std::process::id(), now());
         let name = format!("gitrun-mount-smoke-{suffix}");
         let container_guard = TemporaryContainer(name.clone());
@@ -3209,6 +3246,38 @@ mod mount_runtime_tests {
         );
         assert!(validate_mount_target(pid, &symlink_target, true).is_err());
         assert!(validate_mount_target(pid, &nonempty_target, true).is_err());
+
+        // Put a real submount below the source directory. The GitDockRun
+        // contract is a non-recursive bind: the destination must expose the
+        // underlying directory contents, not the nested mount's contents.
+        use std::os::unix::ffi::OsStrExt;
+        let source_nested = source_dir.join("nested");
+        fs::create_dir(&source_nested).expect("create nested source mountpoint");
+        fs::write(source_nested.join("underlay.txt"), b"underlay\n")
+            .expect("write nested source underlay");
+        let nested_overlay = std::env::temp_dir().join(format!("gitrun-mount-nested-overlay-{suffix}"));
+        let _nested_overlay_guard = TemporaryDirectory(nested_overlay.clone());
+        fs::create_dir_all(&nested_overlay).expect("create nested source overlay");
+        fs::write(nested_overlay.join("submount-only.txt"), b"submount\n")
+            .expect("write nested source overlay file");
+        let nested_source_c =
+            std::ffi::CString::new(source_nested.as_os_str().as_bytes()).unwrap();
+        let nested_overlay_c =
+            std::ffi::CString::new(nested_overlay.as_os_str().as_bytes()).unwrap();
+        assert_eq!(
+            unsafe {
+                libc::mount(
+                    nested_overlay_c.as_ptr(),
+                    nested_source_c.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                )
+            },
+            0,
+            "create nested source mount in the isolated test namespace"
+        );
+        let _nested_source_mount_guard = TemporaryMount(source_nested.clone());
 
         let canonical_source = fs::canonicalize(&source_dir).unwrap();
         let source = open_mount_source(&canonical_source).expect("open canonical host source");
@@ -3286,6 +3355,37 @@ mod mount_runtime_tests {
             String::from_utf8_lossy(&read.stderr)
         );
         assert_eq!(read.stdout, b"mount-payload\n");
+
+        let underlay_read = Command::new("docker")
+            .args([
+                "exec",
+                name.as_str(),
+                "cat",
+                &format!("{target}/nested/underlay.txt"),
+            ])
+            .output()
+            .expect("read source underlay at nested mountpoint");
+        assert!(
+            underlay_read.status.success(),
+            "non-recursive bind did not expose the nested mountpoint underlay: {}",
+            String::from_utf8_lossy(&underlay_read.stderr)
+        );
+        assert_eq!(underlay_read.stdout, b"underlay\n");
+        let nested_mount_absent = Command::new("docker")
+            .args([
+                "exec",
+                name.as_str(),
+                "test",
+                "!",
+                "-e",
+                &format!("{target}/nested/submount-only.txt"),
+            ])
+            .output()
+            .expect("check nested source mount was not transferred");
+        assert!(
+            nested_mount_absent.status.success(),
+            "non-recursive GitDockRun bind unexpectedly transferred a nested source mount"
+        );
 
         let write = Command::new("docker")
             .args([

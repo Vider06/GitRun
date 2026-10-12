@@ -2094,7 +2094,7 @@ fn mountinfo_by_id(pid: i32, mount_id: u32) -> Result<Option<MountInfo>, String>
 }
 
 #[cfg(target_os = "linux")]
-unsafe fn mount_id_from_fd(fd: libc::c_int) -> Option<u32> {
+fn mount_id_from_fd(fd: libc::c_int) -> Option<u32> {
     // statx(2) exposes the same mount ID that appears in /proc/<pid>/mountinfo.
     // Use a fixed, correctly aligned kernel statx buffer so this helper remains
     // allocation-free when called in the post-fork namespace worker.
@@ -2142,7 +2142,6 @@ fn containing_mountpoint(pid: i32, target: &str) -> Result<String, String> {
 
 #[cfg(target_os = "linux")]
 fn same_file_identity(left: &fs::File, right: &fs::File) -> Result<bool, String> {
-    use std::os::unix::fs::MetadataExt;
     let left = left
         .metadata()
         .map_err(|error| format!("inspect pinned namespace descriptor: {error}"))?;

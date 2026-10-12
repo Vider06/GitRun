@@ -1455,7 +1455,7 @@ impl ApiExecutionBackend {
             Some(source_handle.as_raw_fd()),
             Some(&canonical_source),
             target,
-            MountAction::Bind,
+            MountAction::Bind { read_only },
         ) {
             // A worker can be interrupted after the kernel side effect but
             // before returning success. Without an identity returned by that
@@ -1813,7 +1813,7 @@ fn authorize_live_mount_source(
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy)]
 enum MountAction {
-    Bind,
+    Bind { read_only: bool },
     RemountReadOnly { expected_mount_id: u32 },
     Unmount { expected_mount_id: u32 },
 }
@@ -2192,7 +2192,7 @@ fn execute_mount_namespace(
         .ok_or_else(|| "mount target must be a non-root absolute path".to_owned())?;
     let target_relative_c =
         CString::new(target_relative).map_err(|_| "mount target contains a NUL byte".to_owned())?;
-    let private_mountpoint = if matches!(action, MountAction::Bind) {
+    let private_mountpoint = if matches!(action, MountAction::Bind { .. }) {
         let mountpoint = containing_mountpoint(pid, target)?;
         Some(
             CString::new(mountpoint)
@@ -2206,7 +2206,7 @@ fn execute_mount_namespace(
     // Create a private-namespace bind of the source at a temporary, matching
     // mountpoint, clone that mount tree, then move the detached tree into the
     // target namespace. The staging mount never propagates into the host.
-    let staging = if matches!(action, MountAction::Bind) {
+    let staging = if matches!(action, MountAction::Bind { .. }) {
         use std::os::unix::ffi::OsStrExt;
         let source_fd =
             source_fd.ok_or_else(|| "mount source descriptor was not provided".to_owned())?;
@@ -2323,6 +2323,28 @@ fn execute_mount_namespace(
                 if libc::umount2(staging_path.as_ptr(), libc::MNT_DETACH) != 0 {
                     libc::_exit(60);
                 }
+                if matches!(action, MountAction::Bind { read_only: true }) {
+                    // Make the detached tree read-only before it is visible in
+                    // the live container namespace. Applying this after
+                    // move_mount would expose a writeable window to the job.
+                    let attr = MountAttr {
+                        attr_set: 0x01 | 0x02 | 0x04, // RDONLY | NOSUID | NODEV
+                        attr_clr: 0,
+                        propagation: 0,
+                        userns_fd: 0,
+                    };
+                    let changed = libc::syscall(
+                        libc::SYS_mount_setattr,
+                        tree_fd,
+                        c"".as_ptr(),
+                        libc::AT_EMPTY_PATH,
+                        &attr as *const MountAttr,
+                        std::mem::size_of::<MountAttr>(),
+                    );
+                    if changed != 0 {
+                        libc::_exit(64);
+                    }
+                }
                 tree_fd
             } else {
                 -1
@@ -2386,7 +2408,7 @@ fn execute_mount_namespace(
                 // Make only the mount that contains this target private.
                 // This prevents propagation to peer namespaces without
                 // recursively changing every mount in the container.
-                if matches!(action, MountAction::Bind) {
+                if matches!(action, MountAction::Bind { .. }) {
                     let Some(private_mountpoint) = private_mountpoint.as_ref() else {
                         libc::_exit(50);
                     };
@@ -2402,7 +2424,7 @@ fn execute_mount_namespace(
                     }
                 }
                 match action {
-                    MountAction::Bind => {
+                    MountAction::Bind { .. } => {
                         if source_tree_fd < 0 {
                             libc::_exit(45);
                         }
@@ -2539,6 +2561,7 @@ fn execute_mount_namespace(
             61 => "inspect staged source identity",
             62 => "reject source path replacement during mount staging",
             63 => "refuse operation because the target kernel mount ID changed or is unavailable",
+            64 => "set read-only attributes on detached source mount before attachment (kernel mount_setattr support is required)",
             _ => "complete namespace operation",
         };
         return Err(format!("failed to {stage} (helper status {code})"));
@@ -3019,13 +3042,32 @@ mod mount_runtime_tests {
             Some(std::os::fd::AsRawFd::as_raw_fd(&source)),
             Some(&canonical_source),
             &target,
-            MountAction::Bind,
+            MountAction::Bind { read_only: true },
         )
-        .expect("bind mount into target namespace");
+        .expect("bind read-only mount into target namespace");
 
         let before = mountinfo_by_target(pid, &target)
             .expect("read mount table after bind")
             .expect("bind mount should appear");
+        let pre_remount_write = Command::new("docker")
+            .args([
+                "exec",
+                name.as_str(),
+                "sh",
+                "-c",
+                &format!("printf changed > '{target}/payload.txt'"),
+            ])
+            .output()
+            .expect("attempt write immediately after read-only bind");
+        assert!(
+            !pre_remount_write.status.success(),
+            "read-only bind exposed a writable window before post-attach verification"
+        );
+        assert_eq!(
+            fs::read_to_string(source_dir.join("payload.txt")).unwrap(),
+            "mount-payload\n",
+            "pre-remount write attempt changed the host source"
+        );
         let wrong_mount_id = before.id.wrapping_add(1);
         assert!(execute_mount_namespace(
             &container_id,
@@ -3150,9 +3192,9 @@ mod mount_runtime_tests {
             Some(source.as_raw_fd()),
             Some(&canonical_source),
             &target,
-            MountAction::Bind,
+            MountAction::Bind { read_only: true },
         )
-        .expect("recreate mount for interrupted-lease recovery");
+        .expect("recreate read-only mount for interrupted-lease recovery");
         let recovered_candidate = mountinfo_by_target(pid, &target)
             .expect("inspect recreated interrupted mount")
             .expect("recreated source bind should be present");
@@ -3203,7 +3245,7 @@ mod mount_runtime_tests {
             Some(source_file_handle.as_raw_fd()),
             Some(&canonical_source_file),
             &target_file,
-            MountAction::Bind,
+            MountAction::Bind { read_only: false },
         )
         .expect("bind regular file into target namespace");
         let file_read = Command::new("docker")

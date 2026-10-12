@@ -2866,11 +2866,13 @@ mod mount_runtime_tests {
             );
             settings.global = matrix;
 
-            let mut docker = DockerPolicy::default();
-            docker.allowed_container_names = if container_allowed {
-                vec!["runner".into()]
-            } else {
-                Vec::new()
+            let mut docker = DockerPolicy {
+                allowed_container_names: if container_allowed {
+                    vec!["runner".into()]
+                } else {
+                    Vec::new()
+                },
+                ..DockerPolicy::default()
             };
             docker.logic_containers.insert(
                 "runner".into(),

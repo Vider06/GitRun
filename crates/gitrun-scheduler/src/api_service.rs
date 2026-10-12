@@ -16,9 +16,9 @@ use gitrun_exe::{
 use gitrun_gsr::api_gate::{authorize, ExecutionAuthority, VerifiedCaller};
 use gitrun_vault::{Scope, Vault};
 use std::fs;
-use std::io::Write;
 #[cfg(unix)]
 use std::io::Read;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;

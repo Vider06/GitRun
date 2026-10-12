@@ -1877,23 +1877,28 @@ fn execute_mount_namespace(
             // namespace. This supports ordinary files/directories whose
             // original mounts are not visible inside the container.
             let source_tree_fd = if let Some((_, source_path, staging_path)) = staging.as_ref() {
-                if libc::unshare(libc::CLONE_NEWNS) != 0
-                    || libc::mount(
-                        std::ptr::null(),
-                        c"/".as_ptr(),
-                        std::ptr::null(),
-                        libc::MS_REC | libc::MS_PRIVATE,
-                        std::ptr::null(),
-                    ) != 0
-                    || libc::mount(
-                        source_path.as_ptr(),
-                        staging_path.as_ptr(),
-                        std::ptr::null(),
-                        libc::MS_BIND,
-                        std::ptr::null(),
-                    ) != 0
-                {
+                if libc::unshare(libc::CLONE_NEWNS) != 0 {
                     libc::_exit(56);
+                }
+                if libc::mount(
+                    std::ptr::null(),
+                    c"/".as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_REC | libc::MS_PRIVATE,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    libc::_exit(57);
+                }
+                if libc::mount(
+                    source_path.as_ptr(),
+                    staging_path.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    libc::_exit(58);
                 }
                 let tree_fd = libc::syscall(
                     libc::SYS_open_tree,
@@ -1902,10 +1907,10 @@ fn execute_mount_namespace(
                     libc::O_CLOEXEC | 1, // OPEN_TREE_CLONE
                 ) as libc::c_int;
                 if tree_fd < 0 {
-                    libc::_exit(57);
+                    libc::_exit(59);
                 }
                 if libc::umount2(staging_path.as_ptr(), libc::MNT_DETACH) != 0 {
-                    libc::_exit(58);
+                    libc::_exit(60);
                 }
                 tree_fd
             } else {
@@ -2099,9 +2104,11 @@ fn execute_mount_namespace(
             53 => "inspect pinned mount target",
             54 => "reject special-file mount target",
             55 => "prepare pinned target path",
-            56 => "create private source mount staging namespace or bind source",
-            57 => "clone staged source mount tree",
-            58 => "detach temporary source mount",
+            56 => "create private source mount staging namespace",
+            57 => "make source staging mounts private",
+            58 => "bind source into staging mountpoint",
+            59 => "clone staged source mount tree",
+            60 => "detach temporary source mount",
             _ => "complete namespace operation",
         };
         return Err(format!("failed to {stage} (helper status {code})"));
@@ -2295,6 +2302,29 @@ mod mount_runtime_tests {
         assert!(mountinfo_by_target(pid, &target)
             .expect("read mount table before mounting")
             .is_none());
+        assert!(validate_mount_target(pid, "/workspace/../etc", true).is_err());
+
+        let symlink_target = format!("/workspace/gitrun-mount-link-{suffix}");
+        let nonempty_target = format!("/workspace/gitrun-mount-nonempty-{suffix}");
+        let prepare_invalid_targets = Command::new("docker")
+            .args([
+                "exec",
+                name.as_str(),
+                "sh",
+                "-c",
+                &format!(
+                    "ln -s '{target}' '{symlink_target}' && mkdir -p '{nonempty_target}' && printf hidden > '{nonempty_target}/hidden.txt'"
+                ),
+            ])
+            .output()
+            .expect("prepare invalid mount targets");
+        assert!(
+            prepare_invalid_targets.status.success(),
+            "could not prepare invalid mount targets: {}",
+            String::from_utf8_lossy(&prepare_invalid_targets.stderr)
+        );
+        assert!(validate_mount_target(pid, &symlink_target, true).is_err());
+        assert!(validate_mount_target(pid, &nonempty_target, true).is_err());
 
         let source = open_mount_source(&fs::canonicalize(&source_dir).unwrap())
             .expect("open canonical host source");
@@ -2375,6 +2405,7 @@ mod mount_runtime_tests {
         );
         validate_mount_target(pid, &target_file, false)
             .expect("validate regular-file mount target");
+        assert!(validate_mount_target(pid, &target_file, true).is_err());
         let source_file_handle = open_mount_source(&fs::canonicalize(&source_file).unwrap())
             .expect("open canonical host source file");
         execute_mount_namespace(

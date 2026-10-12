@@ -2487,9 +2487,7 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
             None,
             None,
             &mount.target,
-            MountAction::Unmount {
-                expected_mount_id,
-            },
+            MountAction::Unmount { expected_mount_id },
         )?;
         if mountinfo_by_id(pid, expected_mount_id)?.is_some() {
             return Err(format!(

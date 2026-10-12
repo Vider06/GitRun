@@ -2190,7 +2190,11 @@ fn execute_mount_namespace(
                         libc::_exit(0);
                     }
                     MountAction::Unmount => {
-                        if libc::umount2(target_ptr, 0) != 0 {
+                        // umount2 needs the mountpoint path in the parent
+                        // mount, not a procfs FD link to the mounted root.
+                        // The path was opened with openat2 above (no symlinks
+                        // or traversal) and the caller checked its mount ID.
+                        if libc::umount2(target_relative_c.as_ptr(), 0) != 0 {
                             libc::_exit(47);
                         }
                         libc::_exit(0);

@@ -42,7 +42,48 @@ const MAX_VAULT_WRITE_BYTES: usize = 1024 * 1024;
 #[cfg(target_os = "linux")]
 const MOUNT_REGISTRY_FILE: &str = "gitdock-mount-registry.json";
 #[cfg(target_os = "linux")]
+const MOUNT_REGISTRY_LOCK_FILE: &str = "gitdock-mount-registry.lock";
+#[cfg(target_os = "linux")]
 static GITDOCK_MOUNT_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(target_os = "linux")]
+struct MountRegistryLock(fs::File);
+
+#[cfg(target_os = "linux")]
+impl MountRegistryLock {
+    fn acquire(state_dir: &Path) -> Result<Self, String> {
+        fs::create_dir_all(state_dir)
+            .map_err(|error| format!("create mount registry lock directory: {error}"))?;
+        let path = state_dir.join(MOUNT_REGISTRY_LOCK_FILE);
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(&path)
+            .map_err(|error| format!("open mount registry lock: {error}"))?;
+        #[cfg(unix)]
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("secure mount registry lock permissions: {error}"))?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(format!(
+                "lock GitDockRun mount registry: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(Self(file))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for MountRegistryLock {
+    fn drop(&mut self) {
+        let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1203,6 +1244,7 @@ impl ApiExecutionBackend {
         let _guard = GITDOCK_MOUNT_LOCK
             .lock()
             .map_err(|_| failed("GitDockRun mount registry lock is poisoned"))?;
+        let _registry_lock = MountRegistryLock::acquire(&self.state_dir).map_err(failed)?;
         let binding = self.require_dock_binding_record(request)?;
         let source = arg(request, "source")?;
         let target = arg(request, "target")?;
@@ -1386,6 +1428,7 @@ impl ApiExecutionBackend {
         let _guard = GITDOCK_MOUNT_LOCK
             .lock()
             .map_err(|_| failed("GitDockRun mount registry lock is poisoned"))?;
+        let _registry_lock = MountRegistryLock::acquire(&self.state_dir).map_err(failed)?;
         let binding = self.require_dock_binding_record(request)?;
         let mount_id = arg(request, "mount_id")?;
         let mut registry = MountRegistry::load(&self.state_dir).map_err(failed)?;
@@ -2170,6 +2213,7 @@ fn reconcile_completed_mounts(
     let _guard = GITDOCK_MOUNT_LOCK
         .lock()
         .map_err(|_| "GitDockRun mount registry lock is poisoned".to_owned())?;
+    let _registry_lock = MountRegistryLock::acquire(state_dir)?;
     let mut registry = MountRegistry::load(state_dir)?;
     let snapshot = registry.mounts.clone();
     let mut remove_ids = Vec::new();

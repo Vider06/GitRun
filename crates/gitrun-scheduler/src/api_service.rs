@@ -2120,7 +2120,10 @@ fn execute_mount_namespace(
                             0x04 | 0x40, // MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH
                         );
                         if moved != 0 {
-                            libc::_exit(45);
+                            // Preserve errno through waitpid so CI reports
+                            // the kernel reason, not just a generic helper code.
+                            let errno = *libc::__errno_location();
+                            libc::_exit(100 + errno.clamp(1, 154));
                         }
                         libc::_exit(0);
                     }
@@ -2190,6 +2193,13 @@ fn execute_mount_namespace(
         } else {
             -1
         };
+        if (100..=254).contains(&code) {
+            let errno = code - 100;
+            return Err(format!(
+                "failed to attach detached source mount: {}",
+                std::io::Error::from_raw_os_error(errno)
+            ));
+        }
         let stage = match code {
             41 => "enter mount namespace",
             42 => "enter PID namespace",

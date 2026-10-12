@@ -4961,3 +4961,272 @@ mod gsr_execution_boundary_tests {
         }
     }
 }
+
+
+#[cfg(all(test, unix, target_os = "linux"))]
+mod api_socket_identity_integration_tests {
+    use super::*;
+    use crate::github::{WorkflowJobInfo, WorkflowRunInfo};
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::sync::Mutex;
+
+    #[derive(Clone)]
+    struct FakeApiIdentityProvider {
+        identity: Option<docker::ApiRunnerIdentity>,
+        active_job: Option<WorkflowJobInfo>,
+        job: Option<WorkflowJobInfo>,
+        run: Option<WorkflowRunInfo>,
+        failure_at: Option<&'static str>,
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl FakeApiIdentityProvider {
+        fn record_call(&self, stage: &'static str) -> Result<(), String> {
+            self.calls.lock().unwrap().push(stage);
+            if self.failure_at == Some(stage) {
+                Err(format!("injected {stage} lookup failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl ApiIdentityProvider for FakeApiIdentityProvider {
+        fn runner_for_peer_pid(
+            &self,
+            _peer_pid: i32,
+        ) -> Result<Option<docker::ApiRunnerIdentity>, String> {
+            self.record_call("peer_identity")?;
+            Ok(self.identity.clone())
+        }
+
+        fn find_active_workflow_job_for_runner(
+            &self,
+            _repository: &str,
+            _runner_name: &str,
+        ) -> Result<Option<WorkflowJobInfo>, String> {
+            self.record_call("active_job")?;
+            Ok(self.active_job.clone())
+        }
+
+        fn find_workflow_job(
+            &self,
+            _repository: &str,
+            _run_id: u64,
+            _job_name: &str,
+        ) -> Result<Option<WorkflowJobInfo>, String> {
+            self.record_call("workflow_job")?;
+            Ok(self.job.clone())
+        }
+
+        fn find_workflow_run(
+            &self,
+            _repository: &str,
+            _run_id: u64,
+        ) -> Result<Option<WorkflowRunInfo>, String> {
+            self.record_call("workflow_run")?;
+            Ok(self.run.clone())
+        }
+    }
+
+    fn valid_provider() -> FakeApiIdentityProvider {
+        FakeApiIdentityProvider {
+            identity: Some(docker::ApiRunnerIdentity {
+                name: "runner-1".into(),
+                repository: "owner/repo".into(),
+                container_id: "a".repeat(64),
+                workflow_job: Some("build".into()),
+                workflow_run_id: Some(42),
+            }),
+            active_job: None,
+            job: Some(WorkflowJobInfo {
+                id: 101,
+                name: "build".into(),
+                status: "in_progress".into(),
+                conclusion: None,
+                runner_name: Some("runner-1".into()),
+            }),
+            run: Some(WorkflowRunInfo {
+                id: 42,
+                name: "CI".into(),
+            }),
+            failure_at: None,
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn status_invocation() -> ApiInvocation {
+        ApiInvocation {
+            api: GitRunApi::GitStatusRun,
+            operation: GitRunOperation::Status,
+            repository: "owner/repo".into(),
+            workflow: "CI".into(),
+            run_id: Some(42),
+            job: "build".into(),
+            runner: "runner-1".into(),
+            resource: None,
+            arguments: Default::default(),
+        }
+    }
+
+    fn invoke_socket_request(
+        tag: &str,
+        invocation: ApiInvocation,
+        provider: FakeApiIdentityProvider,
+    ) -> (Result<(), String>, Vec<WireResponse>, Vec<&'static str>) {
+        let state_dir = std::env::temp_dir().join(format!(
+            "gitrun-api-socket-integration-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&state_dir);
+        fs::create_dir_all(&state_dir).unwrap();
+
+        let mut settings = GitRunSettings::default();
+        settings.global.set(
+            GitRunApi::GitStatusRun,
+            gitrun_core::ApiPolicy::enabled_with([GitRunOperation::Status]),
+        );
+        settings
+            .save(GitRunSettings::path_for_state_dir(&state_dir))
+            .unwrap();
+
+        let github = Arc::new(GitHubClient::new("test-only-token").unwrap());
+        let authority = Arc::new(ExecutionAuthority::new().unwrap());
+        let calls = Arc::clone(&provider.calls);
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let handler_state_dir = state_dir.clone();
+        let handler = std::thread::spawn(move || {
+            handle_stream_with_identity_provider(
+                server,
+                Config::default(),
+                github,
+                handler_state_dir,
+                authority,
+                &provider,
+            )
+        });
+
+        let request = WireRequest { invocation };
+        let mut frame = serde_json::to_vec(&request).unwrap();
+        frame.push(b'\n');
+        client.write_all(&frame).unwrap();
+
+        let mut response_text = String::new();
+        client.read_to_string(&mut response_text).unwrap();
+        drop(client);
+
+        let handler_result = handler.join().unwrap();
+        let responses = response_text
+            .lines()
+            .map(|line| serde_json::from_str::<WireResponse>(line).unwrap())
+            .collect();
+        let calls = calls.lock().unwrap().clone();
+        let _ = fs::remove_dir_all(&state_dir);
+
+        (handler_result, responses, calls)
+    }
+
+    fn contains_acceptance(responses: &[WireResponse]) -> bool {
+        responses
+            .iter()
+            .any(|response| matches!(response, WireResponse::Accepted))
+    }
+
+    #[test]
+    fn full_unix_socket_path_accepts_only_after_identity_github_and_gsr_checks() {
+        let (result, responses, calls) =
+            invoke_socket_request("accepted", status_invocation(), valid_provider());
+
+        assert!(result.is_ok(), "handler failed: {result:?}");
+        assert!(contains_acceptance(&responses));
+        assert!(matches!(
+            responses.get(1),
+            Some(WireResponse::Event(ExecutionEvent::Started))
+        ));
+        assert!(responses.iter().any(|response| matches!(
+            response,
+            WireResponse::Event(ExecutionEvent::Stdout(output))
+                if output.contains("GitRun API STATUS")
+        )));
+        assert!(matches!(
+            responses.last(),
+            Some(WireResponse::Event(ExecutionEvent::Finished { exit_code: 0 }))
+        ));
+        assert_eq!(calls, ["peer_identity", "workflow_job", "workflow_run"]);
+    }
+
+    #[test]
+    fn unmanaged_socket_peer_is_rejected_before_github_lookups() {
+        let mut provider = valid_provider();
+        provider.identity = None;
+
+        let (result, responses, calls) =
+            invoke_socket_request("unmanaged-peer", status_invocation(), provider);
+
+        assert!(result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&responses));
+        assert!(matches!(
+            responses.as_slice(),
+            [WireResponse::Error { message }]
+                if message.contains("not a managed runner container")
+        ));
+        assert_eq!(calls, ["peer_identity"]);
+    }
+
+    #[test]
+    fn inactive_github_job_is_rejected_before_authorization_or_execution() {
+        let mut provider = valid_provider();
+        let job = provider.job.as_mut().unwrap();
+        job.status = "completed".into();
+        job.conclusion = Some("success".into());
+
+        let (result, responses, calls) =
+            invoke_socket_request("inactive-job", status_invocation(), provider);
+
+        assert!(result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&responses));
+        assert!(matches!(
+            responses.as_slice(),
+            [WireResponse::Error { message }]
+                if message.contains("active runner for this workflow job")
+        ));
+        assert_eq!(calls, ["peer_identity", "workflow_job"]);
+    }
+
+    #[test]
+    fn workflow_claim_mismatch_is_rejected_before_execution() {
+        let mut invocation = status_invocation();
+        invocation.workflow = "untrusted-workflow".into();
+
+        let (result, responses, calls) =
+            invoke_socket_request("workflow-mismatch", invocation, valid_provider());
+
+        assert!(result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(!contains_acceptance(&responses));
+        assert!(matches!(
+            responses.as_slice(),
+            [WireResponse::Error { message }]
+                if message.contains("workflow identity claim does not match")
+        ));
+        assert_eq!(calls, ["peer_identity", "workflow_job", "workflow_run"]);
+    }
+
+    #[test]
+    fn github_lookup_error_fails_closed_without_accepting_or_executing() {
+        let mut provider = valid_provider();
+        provider.failure_at = Some("workflow_job");
+
+        let (result, responses, calls) =
+            invoke_socket_request("github-error", status_invocation(), provider);
+
+        assert!(matches!(result, Err(message) if message.contains("verify current workflow job")));
+        assert!(!contains_acceptance(&responses));
+        assert!(responses.is_empty());
+        assert_eq!(calls, ["peer_identity", "workflow_job"]);
+    }
+}

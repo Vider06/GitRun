@@ -234,12 +234,8 @@ fn authorize_resource_scope(
                     reason: "resource registration is disabled".into(),
                 });
             }
-            let entry = required_argument(
-                GitRunApi::GitRegisterRun,
-                operation,
-                arguments,
-                "entry",
-            )?;
+            let entry =
+                required_argument(GitRunApi::GitRegisterRun, operation, arguments, "entry")?;
             if !effective.register.allows_entry(entry) {
                 return Err(ApiGateError::ResourceDenied {
                     resource: entry.to_owned(),

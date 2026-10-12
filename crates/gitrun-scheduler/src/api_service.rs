@@ -20,15 +20,15 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(unix)]
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
@@ -4231,7 +4231,6 @@ fn now() -> u64 {
         .map(|value| value.as_secs())
         .unwrap_or(0)
 }
-
 
 #[cfg(all(test, unix))]
 mod api_request_capacity_tests {

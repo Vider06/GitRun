@@ -370,6 +370,143 @@ impl PolicyMatrix {
 mod tests {
     use super::*;
 
+    const ALL_OPERATIONS: [GitRunOperation; 19] = [
+        GitRunOperation::Read,
+        GitRunOperation::Write,
+        GitRunOperation::Exists,
+        GitRunOperation::Delete,
+        GitRunOperation::List,
+        GitRunOperation::Connect,
+        GitRunOperation::Disconnect,
+        GitRunOperation::Execute,
+        GitRunOperation::Melt,
+        GitRunOperation::Mount,
+        GitRunOperation::Unmount,
+        GitRunOperation::File,
+        GitRunOperation::Logs,
+        GitRunOperation::Register,
+        GitRunOperation::Install,
+        GitRunOperation::Remove,
+        GitRunOperation::Update,
+        GitRunOperation::Verify,
+        GitRunOperation::Status,
+    ];
+
+    fn expected_operations(api: GitRunApi) -> &'static [GitRunOperation] {
+        match api {
+            GitRunApi::GitVaultRun => &[
+                GitRunOperation::Read,
+                GitRunOperation::Write,
+                GitRunOperation::Exists,
+                GitRunOperation::Delete,
+                GitRunOperation::List,
+            ],
+            GitRunApi::GitDockRun => &[
+                GitRunOperation::Connect,
+                GitRunOperation::Disconnect,
+                GitRunOperation::Read,
+                GitRunOperation::Write,
+                GitRunOperation::Execute,
+                GitRunOperation::Melt,
+                GitRunOperation::Mount,
+                GitRunOperation::Unmount,
+            ],
+            GitRunApi::GitSaveRun => &[GitRunOperation::File, GitRunOperation::Logs],
+            GitRunApi::GitRegisterRun => &[GitRunOperation::Register],
+            GitRunApi::GitInstallRun => &[
+                GitRunOperation::Install,
+                GitRunOperation::Remove,
+                GitRunOperation::Update,
+            ],
+            GitRunApi::GitReadRun => &[GitRunOperation::Read],
+            GitRunApi::GitWriteRun => &[GitRunOperation::Write],
+            GitRunApi::GitVerifyRun => &[GitRunOperation::Verify],
+            GitRunApi::GitStatusRun => &[GitRunOperation::Status],
+        }
+    }
+
+    fn minimal_valid_arguments(
+        api: GitRunApi,
+        operation: GitRunOperation,
+    ) -> BTreeMap<String, String> {
+        let pairs: &[(&str, &str)] = match (api, operation) {
+            (GitRunApi::GitVaultRun, GitRunOperation::Read)
+            | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
+            | (GitRunApi::GitVaultRun, GitRunOperation::Delete) => &[("name", "secret")],
+            (GitRunApi::GitVaultRun, GitRunOperation::Write) => {
+                &[("name", "secret"), ("value", "value")]
+            }
+            (GitRunApi::GitDockRun, GitRunOperation::Connect)
+            | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => &[("job", "build")],
+            (GitRunApi::GitDockRun, GitRunOperation::Read) => &[("path", "/workspace/file")],
+            (GitRunApi::GitDockRun, GitRunOperation::Write) => {
+                &[("path", "/workspace/file"), ("value", "value")]
+            }
+            (GitRunApi::GitDockRun, GitRunOperation::Execute) => {
+                &[("command", "printf safe")]
+            }
+            (GitRunApi::GitDockRun, GitRunOperation::Melt) => &[("target", "runner")],
+            (GitRunApi::GitDockRun, GitRunOperation::Mount) => &[
+                ("source", "/tmp/source"),
+                ("target", "/workspace/source"),
+                ("read_only", "true"),
+            ],
+            (GitRunApi::GitDockRun, GitRunOperation::Unmount) => {
+                &[("mount_id", "gm-0123456789abcdef")]
+            }
+            (GitRunApi::GitSaveRun, GitRunOperation::File)
+            | (GitRunApi::GitReadRun, GitRunOperation::Read)
+            | (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => {
+                &[("path", "/workspace/file")]
+            }
+            (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &[("namefile", "build.log")],
+            (GitRunApi::GitRegisterRun, GitRunOperation::Register) => &[
+                ("name", "tool"),
+                ("entry", "/home/runner/tool"),
+                ("permanent", "false"),
+            ],
+            (GitRunApi::GitInstallRun, GitRunOperation::Install)
+            | (GitRunApi::GitInstallRun, GitRunOperation::Remove) => &[("package", "curl")],
+            (GitRunApi::GitWriteRun, GitRunOperation::Write) => {
+                &[("path", "/workspace/file"), ("value", "value")]
+            }
+            _ => &[],
+        };
+
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn every_api_operation_pair_matches_the_closed_contract_matrix() {
+        for api in GitRunApi::ALL {
+            for operation in ALL_OPERATIONS {
+                let expected = expected_operations(api).contains(&operation);
+                assert_eq!(
+                    api.supports_operation(operation),
+                    expected,
+                    "unexpected contract support for {api:?}/{operation:?}"
+                );
+
+                let arguments = minimal_valid_arguments(api, operation);
+                let result = validate_arguments(api, operation, &arguments);
+                if expected {
+                    assert!(
+                        result.is_ok(),
+                        "valid contract pair {api:?}/{operation:?} failed validation: {result:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(result, Err(ref reason) if reason.contains("not part of this API")),
+                        "unsupported contract pair {api:?}/{operation:?} was not rejected explicitly: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn unknown_api_entries_cannot_be_enabled_by_default() {
         let matrix = PolicyMatrix::default();

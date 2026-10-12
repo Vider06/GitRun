@@ -3269,7 +3269,7 @@ mod mount_runtime_tests {
             .iter()
             .map(|mount| mount.id.as_str())
             .collect();
-        assert_eq!(remaining, ["other-runner", "other-job", "other-repo"]);
+        assert_eq!(remaining, vec!["other-runner", "other-job", "other-repo"]);
     }
 
     #[test]

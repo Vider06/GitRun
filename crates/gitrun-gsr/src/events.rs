@@ -83,7 +83,7 @@ struct QueueLock(File);
 
 impl QueueLock {
     fn acquire(path: &Path, exclusive: bool) -> Result<Self> {
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
         let mut lock_name = path.as_os_str().to_os_string();
@@ -108,9 +108,12 @@ impl QueueLock {
 
 impl Drop for QueueLock {
     fn drop(&mut self) {
-        // SAFETY: the descriptor remains open for the lifetime of this guard.
-        unsafe {
-            libc::flock(std::os::fd::AsRawFd::as_raw_fd(&self.0), libc::LOCK_UN);
+        #[cfg(unix)]
+        {
+            // SAFETY: the descriptor remains open for the lifetime of this guard.
+            unsafe {
+                libc::flock(std::os::fd::AsRawFd::as_raw_fd(&self.0), libc::LOCK_UN);
+            }
         }
     }
 }
@@ -436,6 +439,78 @@ mod tests {
             vec!["second", "third"]
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rotation_preserves_order_for_all_read_paths() {
+        let path = temp_path("rotation");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+        emit(&path, &SecurityEvent::new("test", Severity::Critical, "before rotation")).unwrap();
+        {
+            let _lock = QueueLock::acquire(&path, true).unwrap();
+            rotate_queue(&path).unwrap();
+        }
+        emit(&path, &SecurityEvent::new("test", Severity::Info, "after rotation")).unwrap();
+
+        let all = read_all(&path).unwrap();
+        assert_eq!(all.iter().map(|event| event.message.as_str()).collect::<Vec<_>>(),
+            vec!["before rotation", "after rotation"]);
+        assert_eq!(read_last(&path, 1).unwrap()[0].message, "after rotation");
+        assert_eq!(count_critical_since(&path, 0).unwrap(), 1);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+        for archive in archive_paths(&path).unwrap() {
+            let _ = std::fs::remove_file(archive);
+        }
+    }
+
+    #[test]
+    fn archive_retention_prunes_oldest_archives() {
+        let path = temp_path("retention");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+        let prefix = format!("{}.archive-", path.file_name().unwrap().to_string_lossy());
+        for index in 0..(MAX_ARCHIVES + 2) {
+            let archive = path.with_file_name(format!("{prefix}{index:020}-0000000000-0000000000"));
+            std::fs::write(archive, "archive\n").unwrap();
+        }
+
+        prune_archives(&path).unwrap();
+        let archives = archive_paths(&path).unwrap();
+        assert_eq!(archives.len(), MAX_ARCHIVES);
+        assert!(!archives[0].file_name().unwrap().to_string_lossy().contains("00000000000000000000-"));
+        for archive in archives {
+            let _ = std::fs::remove_file(archive);
+        }
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+    }
+
+    #[test]
+    fn concurrent_writers_keep_complete_jsonl_records() {
+        let path = temp_path("concurrent");
+        let _ = std::fs::remove_file(&path);
+        let mut writers = Vec::new();
+        for writer in 0..4 {
+            let path = path.clone();
+            writers.push(std::thread::spawn(move || {
+                for index in 0..25 {
+                    emit(&path, &SecurityEvent::new(
+                        format!("writer-{writer}"),
+                        Severity::Info,
+                        format!("event-{index}"),
+                    )).unwrap();
+                }
+            }));
+        }
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let events = read_all(&path).unwrap();
+        assert_eq!(events.len(), 100);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
     }
 
     #[test]

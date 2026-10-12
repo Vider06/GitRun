@@ -3388,8 +3388,7 @@ mod mount_runtime_tests {
             fs::write(dir.join("child-ready"), b"ready").expect("signal child started");
             let _lock = MountRegistryLock::acquire(&dir)
                 .expect("child acquires the mount lock after the parent releases it");
-            fs::write(dir.join("child-acquired"), b"acquired")
-                .expect("signal child acquired lock");
+            fs::write(dir.join("child-acquired"), b"acquired").expect("signal child acquired lock");
             return;
         }
 
@@ -3418,11 +3417,17 @@ mod mount_runtime_tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(ready_path.exists(), "child process should reach lock acquisition");
+        assert!(
+            ready_path.exists(),
+            "child process should reach lock acquisition"
+        );
 
         std::thread::sleep(std::time::Duration::from_millis(150));
         assert!(
-            child.try_wait().expect("check blocked child process").is_none(),
+            child
+                .try_wait()
+                .expect("check blocked child process")
+                .is_none(),
             "independent process unexpectedly acquired the lock while parent held it"
         );
         assert!(
@@ -3431,7 +3436,9 @@ mod mount_runtime_tests {
         );
 
         drop(parent_lock);
-        let output = child.wait_with_output().expect("wait for child lock process");
+        let output = child
+            .wait_with_output()
+            .expect("wait for child lock process");
         assert!(
             output.status.success(),
             "child lock test failed: {}",

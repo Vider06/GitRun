@@ -4962,7 +4962,6 @@ mod gsr_execution_boundary_tests {
     }
 }
 
-
 #[cfg(all(test, unix, target_os = "linux"))]
 mod api_socket_identity_integration_tests {
     use super::*;
@@ -5164,9 +5163,14 @@ mod api_socket_identity_integration_tests {
         )));
         assert!(matches!(
             responses.last(),
-            Some(WireResponse::Event(ExecutionEvent::Finished { exit_code: 0 }))
+            Some(WireResponse::Event(ExecutionEvent::Finished {
+                exit_code: 0
+            }))
         ));
-        assert_eq!(result.calls, vec!["peer_identity", "workflow_job", "workflow_run"]);
+        assert_eq!(
+            result.calls,
+            vec!["peer_identity", "workflow_job", "workflow_run"]
+        );
     }
 
     #[test]
@@ -5176,7 +5180,10 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("unmanaged-peer", status_invocation(), provider);
 
-        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(
+            result.handler_result.is_ok(),
+            "expected a wire-level denial: {result:?}"
+        );
         assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
             result.responses.as_slice(),
@@ -5219,7 +5226,10 @@ mod api_socket_identity_integration_tests {
             [WireResponse::Error { message }]
                 if message.contains("workflow identity claim does not match")
         ));
-        assert_eq!(result.calls, vec!["peer_identity", "workflow_job", "workflow_run"]);
+        assert_eq!(
+            result.calls,
+            vec!["peer_identity", "workflow_job", "workflow_run"]
+        );
     }
 
     #[test]
@@ -5229,7 +5239,9 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("github-error", status_invocation(), provider);
 
-        assert!(matches!(result.handler_result, Err(ref message) if message.contains("verify current workflow job")));
+        assert!(
+            matches!(result.handler_result, Err(ref message) if message.contains("verify current workflow job"))
+        );
         assert!(!contains_acceptance(&result.responses));
         assert!(result.responses.is_empty());
         assert_eq!(result.calls, vec!["peer_identity", "workflow_job"]);

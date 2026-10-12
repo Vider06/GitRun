@@ -3379,6 +3379,71 @@ mod mount_runtime_tests {
     }
 
     #[test]
+    fn mount_registry_lock_serializes_across_processes() {
+        const CHILD_MODE: &str = "GITRUN_MOUNT_LOCK_CHILD";
+        const CHILD_DIR: &str = "GITRUN_MOUNT_LOCK_CHILD_DIR";
+
+        if std::env::var_os(CHILD_MODE).is_some() {
+            let dir = PathBuf::from(std::env::var_os(CHILD_DIR).expect("child lock directory"));
+            fs::write(dir.join("child-ready"), b"ready").expect("signal child started");
+            let _lock = MountRegistryLock::acquire(&dir)
+                .expect("child acquires the mount lock after the parent releases it");
+            fs::write(dir.join("child-acquired"), b"acquired")
+                .expect("signal child acquired lock");
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-lock-process-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _dir_guard = TemporaryDirectory(dir.clone());
+        fs::create_dir_all(&dir).expect("create process-lock test directory");
+        let parent_lock = MountRegistryLock::acquire(&dir).expect("acquire parent mount lock");
+        let executable = std::env::current_exe().expect("locate current test executable");
+        let mut child = Command::new(executable)
+            .arg("mount_registry_lock_serializes_across_processes")
+            .arg("--nocapture")
+            .env(CHILD_MODE, "1")
+            .env(CHILD_DIR, &dir)
+            .spawn()
+            .expect("spawn child test process");
+
+        let ready_path = dir.join("child-ready");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ready_path.exists() && std::time::Instant::now() < deadline {
+            if let Some(status) = child.try_wait().expect("check child process") {
+                panic!("child exited before requesting lock: {status}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(ready_path.exists(), "child process should reach lock acquisition");
+
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(
+            child.try_wait().expect("check blocked child process").is_none(),
+            "independent process unexpectedly acquired the lock while parent held it"
+        );
+        assert!(
+            !dir.join("child-acquired").exists(),
+            "child must not signal lock acquisition while parent holds it"
+        );
+
+        drop(parent_lock);
+        let output = child.wait_with_output().expect("wait for child lock process");
+        assert!(
+            output.status.success(),
+            "child lock test failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            dir.join("child-acquired").exists(),
+            "child should acquire the lock after parent releases it"
+        );
+    }
+
+    #[test]
     fn privileged_mount_namespace_bind_unmount_smoke_test() {
         if std::env::var("GITRUN_ENABLE_PRIVILEGED_MOUNT_TESTS")
             .ok()

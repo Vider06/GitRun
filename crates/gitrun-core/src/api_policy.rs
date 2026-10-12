@@ -442,9 +442,7 @@ mod tests {
             (GitRunApi::GitDockRun, GitRunOperation::Write) => {
                 &[("path", "/workspace/file"), ("value", "value")]
             }
-            (GitRunApi::GitDockRun, GitRunOperation::Execute) => {
-                &[("command", "printf safe")]
-            }
+            (GitRunApi::GitDockRun, GitRunOperation::Execute) => &[("command", "printf safe")],
             (GitRunApi::GitDockRun, GitRunOperation::Melt) => &[("target", "runner")],
             (GitRunApi::GitDockRun, GitRunOperation::Mount) => &[
                 ("source", "/tmp/source"),
@@ -456,9 +454,7 @@ mod tests {
             }
             (GitRunApi::GitSaveRun, GitRunOperation::File)
             | (GitRunApi::GitReadRun, GitRunOperation::Read)
-            | (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => {
-                &[("path", "/workspace/file")]
-            }
+            | (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => &[("path", "/workspace/file")],
             (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &[("namefile", "build.log")],
             (GitRunApi::GitRegisterRun, GitRunOperation::Register) => &[
                 ("name", "tool"),

@@ -1416,10 +1416,13 @@ impl ApiExecutionBackend {
         // policy immediately before the namespace syscall; if the source now
         // resolves differently, the previously pinned file descriptor is not
         // allowed to bypass that change.
-        let current_settings = GitRunSettings::load_or_default(
-            GitRunSettings::path_for_state_dir(&self.state_dir),
-        )
-        .map_err(|error| failed(format!("reload GitDockRun mount policy before attach: {error}")))?;
+        let current_settings =
+            GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(&self.state_dir))
+                .map_err(|error| {
+                    failed(format!(
+                        "reload GitDockRun mount policy before attach: {error}"
+                    ))
+                })?;
         let final_authorization = authorize_live_mount_source(
             &current_settings,
             &request.repository,

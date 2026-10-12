@@ -1545,6 +1545,31 @@ struct MountInfo {
 }
 
 #[cfg(target_os = "linux")]
+struct MountStagingPath {
+    path: PathBuf,
+    is_dir: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for MountStagingPath {
+    fn drop(&mut self) {
+        let result = if self.is_dir {
+            fs::remove_dir(&self.path)
+        } else {
+            fs::remove_file(&self.path)
+        };
+        if let Err(error) = result {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "gitrun-api: failed to remove temporary mount staging path {}: {error}",
+                    self.path.display()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 #[repr(C)]
 struct OpenHow {
     flags: u64,
@@ -1789,33 +1814,52 @@ fn execute_mount_namespace(
         .ok_or_else(|| "mount target must be a non-root absolute path".to_owned())?;
     let target_relative_c =
         CString::new(target_relative).map_err(|_| "mount target contains a NUL byte".to_owned())?;
-    // Clone the source mount while its original mount namespace is still
-    // active. A raw source FD opened on the host is not necessarily a path in
-    // the container's mount namespace; mounting a procfs FD path after
-    // setns/chroot can fail for legitimate host-only source paths.
-    // A detached mount tree can be moved into the target namespace by FD.
-    let source_tree = if matches!(action, MountAction::Bind) {
+    // A source file/directory is not necessarily itself a mount point, so
+    // open_tree(OPEN_TREE_CLONE) cannot be applied directly to its O_PATH FD.
+    // Create a private-namespace bind of the source at a temporary, matching
+    // mountpoint, clone that mount tree, then move the detached tree into the
+    // target namespace. The staging mount never propagates into the host.
+    let staging = if matches!(action, MountAction::Bind) {
+        use std::os::unix::ffi::OsStrExt;
         let source_fd =
             source_fd.ok_or_else(|| "mount source descriptor was not provided".to_owned())?;
-        let tree_fd = unsafe {
-            libc::syscall(
-                libc::SYS_open_tree,
-                source_fd,
-                c"".as_ptr(),
-                libc::AT_EMPTY_PATH | libc::O_CLOEXEC | 1, // OPEN_TREE_CLONE
-            ) as libc::c_int
-        };
-        if tree_fd < 0 {
+        let mut source_stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe { libc::fstat(source_fd, source_stat.as_mut_ptr()) } != 0 {
             return Err(format!(
-                "clone mount source tree: {}",
+                "inspect mount source descriptor: {}",
                 std::io::Error::last_os_error()
             ));
         }
-        Some(unsafe { fs::File::from_raw_fd(tree_fd) })
+        let source_stat = unsafe { source_stat.assume_init() };
+        let source_type = source_stat.st_mode & libc::S_IFMT;
+        let is_dir = source_type == libc::S_IFDIR;
+        if !is_dir && source_type != libc::S_IFREG {
+            return Err("mount source descriptor is not a regular file or directory".into());
+        }
+        let id = new_mount_id()?;
+        let path = PathBuf::from(format!("/tmp/.gitrun-mount-stage-{id}"));
+        if is_dir {
+            fs::create_dir(&path)
+                .map_err(|error| format!("create temporary mount staging directory: {error}"))?;
+        } else {
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .map_err(|error| format!("create temporary mount staging file: {error}"))?;
+        }
+        let guard = MountStagingPath {
+            path: path.clone(),
+            is_dir,
+        };
+        let source_path = CString::new(format!("/proc/self/fd/{source_fd}"))
+            .map_err(|_| "invalid mount source descriptor".to_owned())?;
+        let staging_path = CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| "invalid temporary mount staging path".to_owned())?;
+        Some((guard, source_path, staging_path))
     } else {
         None
     };
-    let source_tree_fd = source_tree.as_ref().map(AsRawFd::as_raw_fd);
 
     // Pin the namespaces and root before fork so a reused PID can never redirect
     // the mount operation to a replacement container.
@@ -1828,6 +1872,46 @@ fn execute_mount_namespace(
     }
     if outer_pid == 0 {
         unsafe {
+            // Stage the source in a private copy of the host mount namespace,
+            // then keep only a detached mount FD before entering the target
+            // namespace. This supports ordinary files/directories whose
+            // original mounts are not visible inside the container.
+            let source_tree_fd = if let Some((_, source_path, staging_path)) = staging.as_ref() {
+                if libc::unshare(libc::CLONE_NEWNS) != 0
+                    || libc::mount(
+                        std::ptr::null(),
+                        c"/".as_ptr(),
+                        std::ptr::null(),
+                        libc::MS_REC | libc::MS_PRIVATE,
+                        std::ptr::null(),
+                    ) != 0
+                    || libc::mount(
+                        source_path.as_ptr(),
+                        staging_path.as_ptr(),
+                        std::ptr::null(),
+                        libc::MS_BIND,
+                        std::ptr::null(),
+                    ) != 0
+                {
+                    libc::_exit(56);
+                }
+                let tree_fd = libc::syscall(
+                    libc::SYS_open_tree,
+                    libc::AT_FDCWD,
+                    staging_path.as_ptr(),
+                    libc::O_CLOEXEC | 1, // OPEN_TREE_CLONE
+                ) as libc::c_int;
+                if tree_fd < 0 {
+                    libc::_exit(57);
+                }
+                if libc::umount2(staging_path.as_ptr(), libc::MNT_DETACH) != 0 {
+                    libc::_exit(58);
+                }
+                tree_fd
+            } else {
+                -1
+            };
+
             if libc::setns(mount_namespace.as_raw_fd(), libc::CLONE_NEWNS) != 0 {
                 libc::_exit(41);
             }
@@ -1914,9 +1998,9 @@ fn execute_mount_namespace(
                 let target_ptr = target_link.as_ptr();
                 match action {
                     MountAction::Bind => {
-                        let Some(source_tree_fd) = source_tree_fd else {
+                        if source_tree_fd < 0 {
                             libc::_exit(45);
-                        };
+                        }
                         // Both ends are addressed by pinned FDs. This avoids
                         // resolving a host-only source path inside the
                         // container namespace and avoids path replacement

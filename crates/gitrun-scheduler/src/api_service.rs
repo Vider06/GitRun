@@ -2489,32 +2489,35 @@ fn recover_mount_id_by_source_identity(pid: i32, record: &MountRecord) -> Result
         ));
     };
 
-    let mut candidates = Vec::new();
-    for mount in mountinfo_entries(pid)? {
-        if !mount_target_is_allowed(&mount.target) {
-            continue;
-        }
-        let mounted_path = PathBuf::from(format!("/proc/{pid}/root{}", mount.target));
-        let metadata = match fs::metadata(&mounted_path) {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
-        if metadata.dev() == source_device && metadata.ino() == source_inode {
-            candidates.push(mount.id);
-        }
-    }
-
-    match candidates.as_slice() {
-        [mount_id] => Ok(*mount_id),
-        [] => Err(format!(
-            "mount lease {} has no mount matching the recorded source inode; preserving it for manual recovery",
+    // Only look at the exact destination captured in the durable intent. A
+    // global scan by inode could otherwise select an unrelated mount of the
+    // same directory elsewhere in this container.
+    if !mount_target_is_allowed(&record.target) {
+        return Err(format!(
+            "mount lease {} has a target outside the recovery allowlist",
             record.id
-        )),
-        _ => Err(format!(
-            "mount lease {} matches multiple mounts by source inode; refusing ambiguous recovery",
-            record.id
-        )),
+        ));
     }
+    let matching_entries: Vec<MountInfo> = mountinfo_entries(pid)?
+        .into_iter()
+        .filter(|mount| mount.target == record.target)
+        .collect();
+    let [mount] = matching_entries.as_slice() else {
+        return Err(format!(
+            "mount lease {} does not have exactly one mount entry at its recorded target; preserving it for manual recovery",
+            record.id
+        ));
+    };
+    let mounted_path = PathBuf::from(format!("/proc/{pid}/root{}", record.target));
+    let metadata = fs::metadata(&mounted_path)
+        .map_err(|error| format!("inspect recorded mount target {}: {error}", record.target))?;
+    if metadata.dev() != source_device || metadata.ino() != source_inode {
+        return Err(format!(
+            "mount lease {} target no longer matches its original source inode; preserving it for manual recovery",
+            record.id
+        ));
+    }
+    Ok(mount.id)
 }
 
 #[cfg(target_os = "linux")]

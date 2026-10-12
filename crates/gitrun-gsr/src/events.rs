@@ -18,10 +18,16 @@
 //! GSR exists.
 
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Active JSONL stays bounded; archives provide a finite, ordered audit window.
+const MAX_QUEUE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_ARCHIVES: usize = 10;
+static ARCHIVE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -70,27 +76,119 @@ impl SecurityEvent {
     }
 }
 
-/// Appends a security event to the shared queue file at `path`. Safe to
-/// call from any GitRun process/thread: opens in append mode, so concurrent
-/// writers from different processes don't corrupt each other's records as
-/// long as each write is a single line (guaranteed here — events are
-/// serialized to one JSON line each, and POSIX guarantees small
-/// (<PIPE_BUF, typically 4KB) writes via O_APPEND don't interleave).
+/// Cross-process queue lock. Writers, rotation, and readers use the same
+/// sidecar lock so a reader cannot observe the queue between archive rename
+/// and the next append.
+struct QueueLock(File);
+
+impl QueueLock {
+    fn acquire(path: &Path, exclusive: bool) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut lock_name = path.as_os_str().to_os_string();
+        lock_name.push(".lock");
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(PathBuf::from(lock_name))?;
+        let mode = if exclusive { libc::LOCK_EX } else { libc::LOCK_SH };
+        // SAFETY: flock operates on the live descriptor owned by lock.
+        if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), mode) } == -1 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(Self(lock))
+    }
+}
+
+impl Drop for QueueLock {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor remains open for the lifetime of this guard.
+        unsafe {
+            libc::flock(std::os::fd::AsRawFd::as_raw_fd(&self.0), libc::LOCK_UN);
+        }
+    }
+}
+
+fn archive_prefix(path: &Path) -> Option<String> {
+    Some(format!("{}.archive-", path.file_name()?.to_str()?))
+}
+
+/// Returns archive paths in oldest-to-newest lexical order.
+fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let Some(prefix) = archive_prefix(path) else {
+        return Ok(Vec::new());
+    };
+    let mut archives = Vec::new();
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(archives),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_name().to_str().is_some_and(|name| name.starts_with(&prefix))
+            && entry.file_type()?.is_file()
+        {
+            archives.push(entry.path());
+        }
+    }
+    archives.sort();
+    Ok(archives)
+}
+
+fn prune_archives(path: &Path) -> Result<()> {
+    let archives = archive_paths(path)?;
+    let excess = archives.len().saturating_sub(MAX_ARCHIVES);
+    for archive in archives.into_iter().take(excess) {
+        std::fs::remove_file(archive)?;
+    }
+    Ok(())
+}
+
+fn rotate_queue(path: &Path) -> Result<()> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.len() == 0 {
+        return Ok(());
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let sequence = ARCHIVE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let archive = path.with_file_name(format!(
+        "{}.archive-{timestamp:020}-{:010}-{sequence:010}",
+        path.file_name().and_then(|name| name.to_str()).unwrap_or("events"),
+        std::process::id()
+    ));
+    std::fs::rename(path, archive)?;
+    prune_archives(path)
+}
+
+/// Appends an event and rotates the active JSONL file before it exceeds 16 MiB.
+/// Up to ten archives are retained. The advisory lock coordinates current
+/// GitRun producers and readers across processes.
 pub fn emit(path: &Path, event: &SecurityEvent) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    let line = serde_json::to_string(event)?;
+    let _lock = QueueLock::acquire(path, true)?;
+    if std::fs::metadata(path)
+        .map(|metadata| metadata.len().saturating_add(line.len() as u64 + 1) > MAX_QUEUE_BYTES)
+        .unwrap_or(false)
+    {
+        rotate_queue(path)?;
     }
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    let line = serde_json::to_string(event)?;
     writeln!(file, "{line}")?;
     Ok(())
 }
 
-/// Reads every event currently in the queue file. GSR's watchdog loop calls
-/// this periodically and tracks its own read offset (see `main.rs`) rather
-/// than this function tracking state, so multiple readers (or a restarted
-/// GSR) can each maintain their own position independently.
-pub fn read_all(path: &Path) -> Result<Vec<SecurityEvent>> {
+fn read_file_all(path: &Path) -> Result<Vec<SecurityEvent>> {
     match std::fs::read_to_string(path) {
         Ok(raw) => raw
             .lines()
@@ -102,39 +200,67 @@ pub fn read_all(path: &Path) -> Result<Vec<SecurityEvent>> {
     }
 }
 
-/// Counts critical events at or after a timestamp using a streaming reader.
-/// The whole durable queue is scanned to preserve exact counts, but only one
-/// record is held in memory at a time.
-pub fn count_critical_since(path: &Path, cutoff: u64) -> Result<u32> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(error) => return Err(error.into()),
-    };
+/// Reads retained archives followed by the active queue under a shared lock.
+pub fn read_all(path: &Path) -> Result<Vec<SecurityEvent>> {
+    let _lock = QueueLock::acquire(path, false)?;
+    let mut events = Vec::new();
+    for archive in archive_paths(path)? {
+        events.extend(read_file_all(&archive)?);
+    }
+    events.extend(read_file_all(path)?);
+    Ok(events)
+}
 
+/// Counts critical events across the retained audit window with bounded memory.
+pub fn count_critical_since(path: &Path, cutoff: u64) -> Result<u32> {
+    let _lock = QueueLock::acquire(path, false)?;
     let mut count = 0_u32;
-    for line in std::io::BufReader::new(file).lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let event: SecurityEvent = serde_json::from_str(&line)?;
-        if event.severity == Severity::Critical && event.timestamp >= cutoff {
-            count = count.saturating_add(1);
+    let mut files = archive_paths(path)?;
+    files.push(path.to_path_buf());
+    for queue in files {
+        let file = match File::open(&queue) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        for line in std::io::BufReader::new(file).lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: SecurityEvent = serde_json::from_str(&line)?;
+            if event.severity == Severity::Critical && event.timestamp >= cutoff {
+                count = count.saturating_add(1);
+            }
         }
     }
     Ok(count)
 }
 
-/// Reads only the newest limit records by seeking from the end of the JSONL
-/// queue. This keeps dashboard log rendering bounded even when the durable
-/// event queue has grown over months of operation.
+/// Reads the newest records across archives and the active file without
+/// loading the full retained history into memory.
 pub fn read_last(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
     if limit == 0 {
         return Ok(Vec::new());
     }
+    let _lock = QueueLock::acquire(path, false)?;
+    let mut files = archive_paths(path)?;
+    files.push(path.to_path_buf());
+    let mut result = Vec::new();
+    for queue in files.into_iter().rev() {
+        let remaining = limit.saturating_sub(result.len());
+        if remaining == 0 {
+            break;
+        }
+        let mut older = read_last_file(&queue, remaining)?;
+        older.append(&mut result);
+        result = older;
+    }
+    Ok(result)
+}
 
-    let mut file = match std::fs::File::open(path) {
+fn read_last_file(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
+    let mut file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
@@ -144,7 +270,6 @@ pub fn read_last(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
         return Ok(Vec::new());
     }
 
-    // A final newline terminates the newest record; it is not an extra record.
     let mut last_byte = [0_u8; 1];
     file.seek(SeekFrom::Start(position - 1))?;
     file.read_exact(&mut last_byte)?;

@@ -2178,8 +2178,11 @@ fn execute_mount_namespace(
                     MountAction::Unmount => {
                         // umount2 needs the mountpoint path in the parent
                         // mount, not a procfs FD link to the mounted root.
-                        // The path was opened with openat2 above (no symlinks
-                        // or traversal) and the caller checked its mount ID.
+                        // Close the O_PATH handle first so it cannot keep the
+                        // mounted filesystem busy during unmount.
+                        let _ = libc::close(target_fd);
+                        // openat2 above rejects symlinks/traversal, and the
+                        // caller checked the registered kernel mount ID.
                         if libc::umount2(target_relative_c.as_ptr(), 0) != 0 {
                             libc::_exit(47);
                         }

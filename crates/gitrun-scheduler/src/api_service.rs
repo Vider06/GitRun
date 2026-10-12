@@ -11,7 +11,8 @@ use crate::GitHubClient;
 use gitrun_core::{Config, GitRunApi, GitRunOperation, GitRunSettings};
 use gitrun_exe::{
     ipc::{WireRequest, WireResponse, DEFAULT_SOCKET_PATH},
-    AuthorizedOperation, ExecutionBackend, ExecutionError, ExecutionEvent, ExecutionResult,
+    ApiInvocation, AuthorizedOperation, ExecutionBackend, ExecutionError, ExecutionEvent,
+    ExecutionResult,
 };
 use gitrun_gsr::api_gate::{authorize, ExecutionAuthority, VerifiedCaller};
 use gitrun_vault::{Scope, Vault};
@@ -698,43 +699,26 @@ fn handle_stream(
         .map_err(|error| format!("unable to load GitRun settings: {error}"))?;
     let command_policy = config.command_policy();
 
-    let authorized = match authorize(
-        &settings,
-        &caller,
-        request.invocation.api,
-        request.invocation.operation,
-        request.invocation.resource.as_deref(),
-        request.invocation.arguments.clone(),
-        command_policy.as_ref(),
-    ) {
-        Ok(operation) => operation,
-        Err(error) => {
-            send_error(&mut stream, &format!("GSR validation failed: {error}"))?;
-            return Ok(());
-        }
-    };
-
-    let authorized = execution_authority
-        .handoff_to_executor(authorized)
-        .map_err(|error| format!("GSR executor handoff failed: {error}"))?;
-
-    send_response(&mut stream, WireResponse::Accepted)?;
-
     let backend = ApiExecutionBackend {
         config,
         state_dir,
         github,
-        caller,
+        caller: caller.clone(),
         caller_container_id: identity.container_id.clone(),
     };
 
-    let mut send = |event: ExecutionEvent| {
-        let _ = send_response(&mut stream, WireResponse::Event(event));
+    let mut write_wire_response = |response: WireResponse| {
+        send_response(&mut stream, response).map_err(|error| error.to_string())
     };
-
-    if let Err(error) = backend.execute_stream(&authorized, &mut send) {
-        send_error(&mut stream, &format!("GitExecuteRun failed: {error}"))?;
-    }
+    execute_gsr_authorized_stream(
+        &settings,
+        &caller,
+        &request.invocation,
+        command_policy.as_ref(),
+        &execution_authority,
+        &backend,
+        &mut write_wire_response,
+    )?;
 
     Ok(())
 }
@@ -795,6 +779,92 @@ fn send_error(stream: &mut UnixStream, message: &str) -> Result<(), String> {
             message: message.to_owned(),
         },
     )
+}
+
+/// Execute only the exact operation that GSR authorized and authenticated.
+/// Keeping this ordering in one helper makes the privileged boundary testable
+/// with a recording backend, without requiring a live Docker daemon or GitHub API.
+fn execute_gsr_authorized_stream(
+    settings: &GitRunSettings,
+    caller: &VerifiedCaller,
+    invocation: &ApiInvocation,
+    command_policy: Option<&gitrun_core::command_policy::CommandPolicy>,
+    execution_authority: &ExecutionAuthority,
+    backend: &dyn ExecutionBackend,
+    write_response: &mut dyn FnMut(WireResponse) -> Result<(), String>,
+) -> Result<(), String> {
+    if let Err(reason) = validate_verified_caller_binding(caller, invocation) {
+        write_response(WireResponse::Error {
+            message: format!("GSR caller binding failed: {reason}"),
+        })?;
+        return Ok(());
+    }
+
+    let authorized = match authorize(
+        settings,
+        caller,
+        invocation.api,
+        invocation.operation,
+        invocation.resource.as_deref(),
+        invocation.arguments.clone(),
+        command_policy,
+    ) {
+        Ok(operation) => operation,
+        Err(error) => {
+            write_response(WireResponse::Error {
+                message: format!("GSR validation failed: {error}"),
+            })?;
+            return Ok(());
+        }
+    };
+
+    let authorized = execution_authority
+        .handoff_to_executor(authorized)
+        .map_err(|error| format!("GSR executor handoff failed: {error}"))?;
+
+    // A client must observe acceptance before any execution event.
+    write_response(WireResponse::Accepted)?;
+
+    let mut send_event = |event: ExecutionEvent| {
+        // Match the existing streaming contract: a disconnected client must
+        // not panic the privileged worker while it is reporting output.
+        let _ = write_response(WireResponse::Event(event));
+    };
+    let result = backend.execute_stream(&authorized, &mut send_event);
+    drop(send_event);
+
+    if let Err(error) = result {
+        write_response(WireResponse::Error {
+            message: format!("GitExecuteRun failed: {error}"),
+        })?;
+    }
+    Ok(())
+}
+
+/// Re-check the invocation claims against the trusted caller object at the
+/// last boundary before authorization and dispatch. The transport layer still
+/// performs peer/container and GitHub verification; this check prevents future
+/// callers from accidentally skipping the claim-to-identity binding.
+fn validate_verified_caller_binding(
+    caller: &VerifiedCaller,
+    invocation: &ApiInvocation,
+) -> Result<(), &'static str> {
+    if invocation.repository != caller.repository {
+        return Err("repository claim differs from verified caller");
+    }
+    if !invocation.workflow.is_empty() && invocation.workflow != caller.workflow {
+        return Err("workflow claim differs from verified caller");
+    }
+    if invocation.run_id != caller.run_id {
+        return Err("workflow run ID differs from verified caller");
+    }
+    if invocation.job != caller.job {
+        return Err("workflow job claim differs from verified caller");
+    }
+    if invocation.runner != caller.runner {
+        return Err("runner claim differs from verified caller");
+    }
+    Ok(())
 }
 
 struct ApiExecutionBackend {
@@ -4361,5 +4431,201 @@ mod api_request_capacity_tests {
         assert!(started.elapsed() < Duration::from_secs(1));
         drop(server);
         let _ = sender.join();
+    }
+}
+
+/// End-to-end tests for the verified-caller -> GSR -> authenticated handoff
+/// -> execution-backend boundary. The fake backend records dispatches but
+/// never performs a real privileged side effect.
+#[cfg(test)]
+mod gsr_execution_boundary_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingBackend {
+        requests: Mutex<Vec<AuthorizedOperation>>,
+    }
+
+    impl ExecutionBackend for RecordingBackend {
+        fn execute(
+            &self,
+            request: &AuthorizedOperation,
+        ) -> Result<ExecutionResult, ExecutionError> {
+            self.requests.lock().unwrap().push(request.clone());
+            Ok(ExecutionResult {
+                exit_code: 0,
+                stdout: "recorded execution".into(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn caller() -> VerifiedCaller {
+        VerifiedCaller::new("owner/repo", "CI", "build", "runner-1").with_run_id(Some(42))
+    }
+
+    fn invocation(api: GitRunApi, operation: GitRunOperation) -> ApiInvocation {
+        ApiInvocation {
+            api,
+            operation,
+            repository: "owner/repo".into(),
+            // An empty workflow claim is permitted; GSR must use the
+            // authoritative workflow in VerifiedCaller, not this claim.
+            workflow: String::new(),
+            run_id: Some(42),
+            job: "build".into(),
+            runner: "runner-1".into(),
+            resource: None,
+            arguments: Default::default(),
+        }
+    }
+
+    fn settings_allow_status() -> GitRunSettings {
+        let mut settings = GitRunSettings::default();
+        settings.global.set(
+            GitRunApi::GitStatusRun,
+            gitrun_core::ApiPolicy::enabled_with([GitRunOperation::Status]),
+        );
+        settings
+    }
+
+    #[test]
+    fn authorized_request_hands_the_exact_gsr_operation_to_the_backend() {
+        let settings = settings_allow_status();
+        let caller = caller();
+        let invocation = invocation(GitRunApi::GitStatusRun, GitRunOperation::Status);
+        let expected = authorize(
+            &settings,
+            &caller,
+            invocation.api,
+            invocation.operation,
+            invocation.resource.as_deref(),
+            invocation.arguments.clone(),
+            None,
+        )
+        .expect("the configured status operation should be authorized");
+        let authority = ExecutionAuthority::new().unwrap();
+        let backend = RecordingBackend::default();
+        let mut responses = Vec::new();
+
+        execute_gsr_authorized_stream(
+            &settings,
+            &caller,
+            &invocation,
+            None,
+            &authority,
+            &backend,
+            &mut |response| {
+                responses.push(response);
+                Ok(())
+            },
+        )
+        .expect("authorized request should complete");
+
+        let dispatched = backend.requests.lock().unwrap();
+        assert_eq!(dispatched.as_slice(), &[expected]);
+        assert!(matches!(responses.first(), Some(WireResponse::Accepted)));
+        assert!(matches!(
+            responses.get(1),
+            Some(WireResponse::Event(ExecutionEvent::Started))
+        ));
+        assert!(responses.iter().any(|response| matches!(
+            response,
+            WireResponse::Event(ExecutionEvent::Stdout(output))
+                if output == "recorded execution"
+        )));
+        assert!(matches!(
+            responses.last(),
+            Some(WireResponse::Event(ExecutionEvent::Finished { exit_code: 0 }))
+        ));
+    }
+
+    #[test]
+    fn denied_docked_resource_is_rejected_before_backend_dispatch() {
+        let mut settings = GitRunSettings::default();
+        settings.global.set(
+            GitRunApi::GitDockRun,
+            gitrun_core::ApiPolicy::enabled_with([GitRunOperation::Execute]),
+        );
+        // The repository uses the default deny-by-default Docker policy, so
+        // even a syntactically valid operation cannot target this resource.
+        let caller = caller();
+        let mut invocation = invocation(GitRunApi::GitDockRun, GitRunOperation::Execute);
+        invocation.resource = Some("production".into());
+        invocation
+            .arguments
+            .insert("command".into(), "printf unsafe".into());
+        let authority = ExecutionAuthority::new().unwrap();
+        let backend = RecordingBackend::default();
+        let mut responses = Vec::new();
+
+        execute_gsr_authorized_stream(
+            &settings,
+            &caller,
+            &invocation,
+            None,
+            &authority,
+            &backend,
+            &mut |response| {
+                responses.push(response);
+                Ok(())
+            },
+        )
+        .expect("authorization rejection should be returned over the wire");
+
+        assert!(backend.requests.lock().unwrap().is_empty());
+        assert_eq!(responses.len(), 1, "denial must not accept or stream execution");
+        assert!(matches!(
+            responses.first(),
+            Some(WireResponse::Error { message }) if message.contains("resource denied")
+        ));
+    }
+
+    #[test]
+    fn invocation_claim_mismatches_never_reach_gsr_or_backend() {
+        let settings = settings_allow_status();
+        let authority = ExecutionAuthority::new().unwrap();
+        let caller = caller();
+        let base = invocation(GitRunApi::GitStatusRun, GitRunOperation::Status);
+
+        let mutations: [(&str, Box<dyn Fn(&mut ApiInvocation)>); 5] = [
+            ("repository", Box::new(|request| request.repository = "other/repo".into())),
+            ("workflow", Box::new(|request| request.workflow = "untrusted.yml".into())),
+            ("run ID", Box::new(|request| request.run_id = Some(99))),
+            ("job", Box::new(|request| request.job = "deploy".into())),
+            ("runner", Box::new(|request| request.runner = "other-runner".into())),
+        ];
+
+        for (claim, mutate) in mutations {
+            let backend = RecordingBackend::default();
+            let mut request = base.clone();
+            mutate(&mut request);
+            let mut responses = Vec::new();
+
+            execute_gsr_authorized_stream(
+                &settings,
+                &caller,
+                &request,
+                None,
+                &authority,
+                &backend,
+                &mut |response| {
+                    responses.push(response);
+                    Ok(())
+                },
+            )
+            .expect("binding failure should be reported to the peer");
+
+            assert!(
+                backend.requests.lock().unwrap().is_empty(),
+                "{claim} mismatch must not dispatch to the backend"
+            );
+            assert!(matches!(
+                responses.as_slice(),
+                [WireResponse::Error { message }]
+                    if message.starts_with("GSR caller binding failed:")
+            ), "{claim} mismatch should fail before API authorization");
+        }
     }
 }

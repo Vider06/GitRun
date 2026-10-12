@@ -1460,7 +1460,9 @@ impl ApiExecutionBackend {
         registry.mounts.retain(|item| item.id != mount_id);
         registry.mounts.push(record.clone());
         registry.save(&self.state_dir).map_err(|error| {
-            failed(format!("cannot persist mount attaching state; refusing bind: {error}"))
+            failed(format!(
+                "cannot persist mount attaching state; refusing bind: {error}"
+            ))
         })?;
 
         if let Err(error) = execute_mount_namespace(
@@ -1990,7 +1992,10 @@ fn container_has_cap_sys_admin_in_bounding_set(container_id: &str) -> Result<boo
         .map_err(|error| format!("enumerate processes for mount capability check: {error}"))?;
     for entry in proc_entries {
         let entry = entry.map_err(|error| format!("enumerate processes: {error}"))?;
-        let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<u32>().ok())
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
         else {
             continue;
         };
@@ -2017,7 +2022,9 @@ fn container_has_cap_sys_admin_in_bounding_set(container_id: &str) -> Result<boo
             Ok(tasks) => tasks,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                return Err(format!("enumerate threads for container process {pid}: {error}"));
+                return Err(format!(
+                    "enumerate threads for container process {pid}: {error}"
+                ));
             }
         };
         for task in tasks {
@@ -2028,7 +2035,9 @@ fn container_has_cap_sys_admin_in_bounding_set(container_id: &str) -> Result<boo
                 Ok(status) => status,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
-                    return Err(format!("inspect capability status for thread {tid}: {error}"));
+                    return Err(format!(
+                        "inspect capability status for thread {tid}: {error}"
+                    ));
                 }
             };
             let bounding = status

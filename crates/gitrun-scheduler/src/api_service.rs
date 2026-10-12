@@ -1113,8 +1113,7 @@ impl ApiExecutionBackend {
             .lock()
             .map_err(|_| failed("GitDockRun mount registry lock is poisoned"))?;
         #[cfg(target_os = "linux")]
-        let mount_registry_lock =
-            MountRegistryLock::acquire(&self.state_dir).map_err(failed)?;
+        let mount_registry_lock = MountRegistryLock::acquire(&self.state_dir).map_err(failed)?;
 
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
@@ -1136,8 +1135,7 @@ impl ApiExecutionBackend {
         // cleanup cannot be verified so callers never receive a false success.
         #[cfg(target_os = "linux")]
         {
-            let mut mount_registry =
-                MountRegistry::load(&self.state_dir).map_err(failed)?;
+            let mut mount_registry = MountRegistry::load(&self.state_dir).map_err(failed)?;
             let owned_mounts: Vec<MountRecord> = mount_registry
                 .mounts
                 .iter()

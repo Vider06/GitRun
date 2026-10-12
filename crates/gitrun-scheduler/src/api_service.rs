@@ -1105,6 +1105,17 @@ impl ApiExecutionBackend {
             ));
         }
 
+        // Serialize disconnect with mount/unmount across both threads and
+        // service processes. Keep these locks through binding removal so a
+        // concurrent MOUNT cannot create a fresh lease after cleanup.
+        #[cfg(target_os = "linux")]
+        let mount_guard = GITDOCK_MOUNT_LOCK
+            .lock()
+            .map_err(|_| failed("GitDockRun mount registry lock is poisoned"))?;
+        #[cfg(target_os = "linux")]
+        let mount_registry_lock =
+            MountRegistryLock::acquire(&self.state_dir).map_err(failed)?;
+
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
         let binding = registry
@@ -1120,18 +1131,56 @@ impl ApiExecutionBackend {
             ));
         }
 
-        // The API service has already verified that this invocation comes
-        // from the active job. Disconnect must therefore drop the binding,
-        // not try to delete that job's live runner (or require an impossible
-        // post-completion API call). Scheduler cleanup owns the dynamic
-        // container lifecycle after the job exits; mount leases are reconciled
-        // independently from the mount registry.
+        // Disconnect revokes this workflow's mount capability too. Remove
+        // those mounts before dropping the binding, and retain the binding if
+        // cleanup cannot be verified so callers never receive a false success.
+        #[cfg(target_os = "linux")]
+        {
+            let mut mount_registry =
+                MountRegistry::load(&self.state_dir).map_err(failed)?;
+            let owned_mounts: Vec<MountRecord> = mount_registry
+                .mounts
+                .iter()
+                .filter(|mount| {
+                    mount.repository == request.repository
+                        && mount.run_id == run_id
+                        && mount.job == job
+                        && mount.requester_runner == self.caller.runner
+                })
+                .cloned()
+                .collect();
+
+            for mount in &owned_mounts {
+                cleanup_mount_record(mount).map_err(|error| {
+                    failed(format!(
+                        "cannot disconnect while GitDockRun mount {} needs cleanup: {error}",
+                        mount.id
+                    ))
+                })?;
+            }
+
+            if !owned_mounts.is_empty() {
+                let owned_ids: Vec<&str> =
+                    owned_mounts.iter().map(|mount| mount.id.as_str()).collect();
+                mount_registry
+                    .mounts
+                    .retain(|mount| !owned_ids.contains(&mount.id.as_str()));
+                mount_registry.save(&self.state_dir).map_err(failed)?;
+            }
+        }
+
         let binding = registry
             .remove(&request.repository, run_id, job)
             .ok_or_else(|| failed(format!("no GitDockRun binding exists for job {job}")))?;
         registry
             .save(&self.state_dir)
             .map_err(|error| failed(error.to_string()))?;
+
+        #[cfg(target_os = "linux")]
+        {
+            drop(mount_registry_lock);
+            drop(mount_guard);
+        }
 
         if !binding.dynamic && docker_container_has_marker(&binding.container_id)? {
             restore_runner(&binding.container_id)?;
@@ -2524,6 +2573,11 @@ fn cleanup_mount_record(record: &MountRecord) -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
+fn workflow_job_is_completed(status: &str, conclusion: Option<&str>) -> bool {
+    status.eq_ignore_ascii_case("completed") || conclusion.is_some()
+}
+
+#[cfg(target_os = "linux")]
 fn reconcile_completed_mounts(
     client: &GitHubClient,
     state_dir: &Path,
@@ -2543,8 +2597,9 @@ fn reconcile_completed_mounts(
     {
         // A crash during mount setup or read-only enforcement must fail closed.
         // If the lease has a known kernel ID, remove only that exact mount.
-        // A missing ID is deliberately preserved for manual recovery rather
-        // than guessing from a pathname that may now refer to someone else's mount.
+        // If the ID was not persisted before a crash, recovery may identify it
+        // only by a unique match for the durable source device/inode. Ambiguous
+        // or legacy leases remain for manual recovery.
         if matches!(
             record.state.as_str(),
             "preparing" | "read-only-pending" | "cleanup-required"
@@ -2560,9 +2615,7 @@ fn reconcile_completed_mounts(
         }
 
         let job_completed = match client.find_workflow_job(repository, record.run_id, &record.job) {
-            Ok(Some(job)) => {
-                !(job.status.eq_ignore_ascii_case("in_progress") && job.conclusion.is_none())
-            }
+            Ok(Some(job)) => workflow_job_is_completed(&job.status, job.conclusion.as_deref()),
             // A missing job is considered completed only when the API call itself succeeded.
             Ok(None) => true,
             Err(error) => {
@@ -2625,6 +2678,16 @@ mod mount_runtime_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn workflow_mount_cleanup_requires_completed_job_status() {
+        assert!(!workflow_job_is_completed("queued", None));
+        assert!(!workflow_job_is_completed("waiting", None));
+        assert!(!workflow_job_is_completed("in_progress", None));
+        assert!(workflow_job_is_completed("completed", None));
+        assert!(workflow_job_is_completed("in_progress", Some("cancelled")));
+        assert!(workflow_job_is_completed("COMPLETED", Some("success")));
     }
 
     #[test]

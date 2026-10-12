@@ -2296,8 +2296,48 @@ fn reconcile_completed_mounts(
             }
             Ok(None) => remove_ids.push(record.id.clone()),
             Ok(Some(_different_id)) => {
-                // Never apply an old record to a replacement container.
-                remove_ids.push(record.id.clone());
+                // Never apply an old record to the replacement container
+                // resolved by name. The original immutable ID may still be
+                // running under another name, so clean that namespace by ID
+                // before dropping the lease.
+                match container_pid_for_mount(&record.container_id) {
+                    Ok(old_pid) => {
+                        let old_mount = match record.kernel_mount_id {
+                            Some(id) => mountinfo_by_id(old_pid, id)?,
+                            None => mountinfo_by_target(old_pid, &record.target)?,
+                        };
+                        if let Some(mount) = old_mount {
+                            if let Err(error) = execute_mount_namespace(
+                                old_pid,
+                                None,
+                                None,
+                                &mount.target,
+                                MountAction::Unmount,
+                            ) {
+                                eprintln!(
+                                    "gitrun-api: preserving mount lease {} because its original container changed names and cleanup failed: {error}",
+                                    record.id
+                                );
+                                continue;
+                            }
+                        }
+                        remove_ids.push(record.id.clone());
+                    }
+                    Err(error) => match docker::container_status(&record.container_id) {
+                        Ok(Some(status)) if status != "running" => {
+                            remove_ids.push(record.id.clone());
+                        }
+                        Ok(None) => remove_ids.push(record.id.clone()),
+                        Ok(Some(_)) => eprintln!(
+                            "gitrun-api: preserving mount lease {} because its original running container could not be inspected: {error}",
+                            record.id
+                        ),
+                        Err(status_error) => eprintln!(
+                            "gitrun-api: preserving mount lease {} because its original container status could not be verified: {error}; {status_error}",
+                            record.id
+                        ),
+                    },
+                }
             }
             Err(error) => {
                 eprintln!(

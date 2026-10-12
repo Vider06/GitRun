@@ -2099,20 +2099,6 @@ fn execute_mount_namespace(
                     libc::_exit(54);
                 }
 
-                // Address the pinned target inode through a procfs magic link.
-                // openat2 refuses symlink/magic-link path components, and the
-                // descriptor keeps the mount target stable if its name changes.
-                let mut target_link = [0 as libc::c_char; 64];
-                let target_link_len = libc::snprintf(
-                    target_link.as_mut_ptr(),
-                    target_link.len(),
-                    c"/proc/self/fd/%d".as_ptr(),
-                    target_fd,
-                );
-                if target_link_len < 0 || target_link_len as usize >= target_link.len() {
-                    libc::_exit(55);
-                }
-                let target_ptr = target_link.as_ptr();
                 // Make only the mount that contains this target private.
                 // This prevents propagation to peer namespaces without
                 // recursively changing every mount in the container.
@@ -2247,7 +2233,6 @@ fn execute_mount_namespace(
             52 => "resolve target without symlinks (kernel openat2 support is required)",
             53 => "inspect pinned mount target",
             54 => "reject special-file mount target",
-            55 => "prepare pinned target path",
             56 => "create private source mount staging namespace",
             57 => "make source staging mounts private",
             58 => "bind source into staging mountpoint",

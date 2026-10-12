@@ -16,7 +16,9 @@ use gitrun_exe::{
 use gitrun_gsr::api_gate::{authorize, ExecutionAuthority, VerifiedCaller};
 use gitrun_vault::{Scope, Vault};
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::Write;
+#[cfg(unix)]
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -27,7 +29,7 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 #[cfg(unix)]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "linux")]
@@ -473,6 +475,65 @@ pub(crate) fn is_dock_bound(
 }
 
 #[cfg(unix)]
+fn read_api_request(stream: &UnixStream) -> Result<Option<Vec<u8>>, String> {
+    read_api_request_with_timeout(stream, API_READ_TIMEOUT)
+}
+
+/// Read exactly one newline-terminated request line under an absolute deadline.
+/// A socket read timeout alone is only an inactivity timeout; recalculating the
+/// remaining budget on every read prevents a slow peer from trickling bytes forever.
+#[cfg(unix)]
+fn read_api_request_with_timeout(
+    stream: &UnixStream,
+    timeout: Duration,
+) -> Result<Option<Vec<u8>>, String> {
+    let deadline = Instant::now() + timeout;
+    let mut encoded = Vec::with_capacity(4096);
+    let mut reader = stream;
+    let mut chunk = [0u8; 8192];
+
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("API request read deadline exceeded".into());
+        }
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|error| format!("set API request read deadline: {error}"))?;
+
+        match reader.read(&mut chunk) {
+            Ok(0) if encoded.is_empty() => return Ok(None),
+            Ok(0) => {
+                return Err("API request ended before its newline terminator".into());
+            }
+            Ok(count) => {
+                if let Some(newline) = chunk[..count].iter().position(|byte| *byte == b'\n') {
+                    encoded.extend_from_slice(&chunk[..newline]);
+                    if encoded.len() > API_MAX_REQUEST_BYTES {
+                        return Err("API request is too large".into());
+                    }
+                    return Ok(Some(encoded));
+                }
+
+                encoded.extend_from_slice(&chunk[..count]);
+                if encoded.len() > API_MAX_REQUEST_BYTES {
+                    return Err("API request is too large".into());
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                return Err("API request read deadline exceeded".into());
+            }
+            Err(error) => return Err(format!("read API request: {error}")),
+        }
+    }
+}
+
+#[cfg(unix)]
 fn handle_stream(
     mut stream: UnixStream,
     config: Config,
@@ -480,26 +541,16 @@ fn handle_stream(
     state_dir: std::path::PathBuf,
     execution_authority: Arc<ExecutionAuthority>,
 ) -> Result<(), String> {
-    let mut reader = BufReader::new(
-        stream
-            .try_clone()
-            .map_err(|e| format!("clone API socket: {e}"))?,
-    );
-    let mut encoded = String::new();
-    let read = reader
-        .by_ref()
-        .take(API_MAX_REQUEST_BYTES as u64 + 1)
-        .read_line(&mut encoded)
-        .map_err(|e| format!("read API request: {e}"))?;
-    if read == 0 {
-        return Ok(());
-    }
-    if encoded.len() > API_MAX_REQUEST_BYTES {
-        send_error(&mut stream, "API request is too large")?;
-        return Ok(());
-    }
+    let encoded = match read_api_request(&stream) {
+        Ok(Some(encoded)) => encoded,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            send_error(&mut stream, &error)?;
+            return Ok(());
+        }
+    };
 
-    let request: WireRequest = match serde_json::from_str(encoded.trim_end()) {
+    let request: WireRequest = match serde_json::from_slice(&encoded) {
         Ok(request) => request,
         Err(error) => {
             send_error(&mut stream, &format!("invalid API request: {error}"))?;
@@ -4249,5 +4300,56 @@ mod api_request_capacity_tests {
 
         drop(permits);
         assert!(ApiRequestPermit::try_acquire().is_some());
+    }
+
+    #[test]
+    fn request_reader_requires_newline_terminated_frame() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(b"{}").unwrap();
+        drop(client);
+
+        let result = read_api_request_with_timeout(&server, Duration::from_secs(1));
+        assert!(matches!(result, Err(message) if message.contains("newline terminator")));
+    }
+
+    #[test]
+    fn request_reader_accepts_one_newline_terminated_frame() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client.write_all(b"{}\n").unwrap();
+
+        assert_eq!(
+            read_api_request_with_timeout(&server, Duration::from_secs(1)).unwrap(),
+            Some(b"{}".to_vec())
+        );
+    }
+
+    #[test]
+    fn request_reader_enforces_an_absolute_deadline_against_byte_trickling() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        use std::time::Instant;
+
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let sender = std::thread::spawn(move || {
+            for byte in b"slow-client" {
+                std::thread::sleep(Duration::from_millis(35));
+                if client.write_all(&[*byte]).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let started = Instant::now();
+        let result = read_api_request_with_timeout(&server, Duration::from_millis(150));
+        assert!(matches!(result, Err(message) if message.contains("deadline exceeded")));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(server);
+        let _ = sender.join();
     }
 }

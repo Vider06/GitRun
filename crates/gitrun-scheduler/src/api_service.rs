@@ -1134,35 +1134,16 @@ impl ApiExecutionBackend {
         #[cfg(target_os = "linux")]
         {
             let mut mount_registry = MountRegistry::load(&self.state_dir).map_err(failed)?;
-            let owned_mounts: Vec<MountRecord> = mount_registry
-                .mounts
-                .iter()
-                .filter(|mount| {
-                    mount.repository == request.repository
-                        && mount.run_id == run_id
-                        && mount.job == job
-                        && mount.requester_runner == self.caller.runner
-                })
-                .cloned()
-                .collect();
-
-            for mount in &owned_mounts {
-                cleanup_mount_record(mount).map_err(|error| {
-                    failed(format!(
-                        "cannot disconnect while GitDockRun mount {} needs cleanup: {error}",
-                        mount.id
-                    ))
-                })?;
-            }
-
-            if !owned_mounts.is_empty() {
-                let owned_ids: Vec<&str> =
-                    owned_mounts.iter().map(|mount| mount.id.as_str()).collect();
-                mount_registry
-                    .mounts
-                    .retain(|mount| !owned_ids.contains(&mount.id.as_str()));
-                mount_registry.save(&self.state_dir).map_err(failed)?;
-            }
+            cleanup_owned_mounts_for_disconnect(
+                &mut mount_registry,
+                &self.state_dir,
+                &request.repository,
+                run_id,
+                job,
+                &self.caller.runner,
+                cleanup_mount_record,
+            )
+            .map_err(failed)?;
         }
 
         let binding = registry
@@ -2859,6 +2840,54 @@ fn cleanup_mount_lease_in_namespace(pid: i32, record: &MountRecord) -> Result<()
 }
 
 #[cfg(target_os = "linux")]
+fn cleanup_owned_mounts_for_disconnect<F>(
+    registry: &mut MountRegistry,
+    state_dir: &Path,
+    repository: &str,
+    run_id: u64,
+    job: &str,
+    requester_runner: &str,
+    mut cleanup: F,
+) -> Result<(), String>
+where
+    F: FnMut(&MountRecord) -> Result<(), String>,
+{
+    let owned_mounts: Vec<MountRecord> = registry
+        .mounts
+        .iter()
+        .filter(|mount| {
+            mount.repository == repository
+                && mount.run_id == run_id
+                && mount.job == job
+                && mount.requester_runner == requester_runner
+        })
+        .cloned()
+        .collect();
+
+    // Do not drop any lease records until every owned mount was cleaned.
+    // If one cleanup fails after an earlier one succeeded, retaining the
+    // earlier now-stale lease is safe: the next reconciliation can confirm
+    // that its exact kernel mount ID is absent.
+    for mount in &owned_mounts {
+        cleanup(mount).map_err(|error| {
+            format!(
+                "cannot disconnect while GitDockRun mount {} needs cleanup: {error}",
+                mount.id
+            )
+        })?;
+    }
+
+    if !owned_mounts.is_empty() {
+        let owned_ids: Vec<&str> = owned_mounts.iter().map(|mount| mount.id.as_str()).collect();
+        registry
+            .mounts
+            .retain(|mount| !owned_ids.contains(&mount.id.as_str()));
+        registry.save(state_dir)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn mount_cleanup_status_is_terminal(status: &str) -> bool {
     matches!(
         status.to_ascii_lowercase().as_str(),
@@ -3144,6 +3173,103 @@ mod mount_runtime_tests {
         assert!(workflow_job_is_completed("completed", None));
         assert!(!workflow_job_is_completed("in_progress", Some("cancelled")));
         assert!(workflow_job_is_completed("COMPLETED", Some("success")));
+    }
+
+    #[test]
+    fn disconnect_mount_cleanup_preserves_leases_on_failure_and_filters_ownership() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-disconnect-mounts-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let record = |id: &str, repository: &str, run_id, job: &str, runner: &str| MountRecord {
+            id: id.into(),
+            repository: repository.into(),
+            run_id,
+            job: job.into(),
+            requester_runner: runner.into(),
+            container: "runner-container".into(),
+            container_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            source: "/tmp/source".into(),
+            target: "/workspace/mount".into(),
+            read_only: true,
+            source_device: Some(1),
+            source_inode: Some(2),
+            kernel_mount_id: Some(10),
+            state: "mounted".into(),
+            created_at: now(),
+        };
+        let owned_a = record("owned-a", "owner/repo", 42, "build", "runner-a");
+        let owned_b = record("owned-b", "owner/repo", 42, "build", "runner-a");
+        let other_runner = record("other-runner", "owner/repo", 42, "build", "runner-b");
+        let other_job = record("other-job", "owner/repo", 42, "test", "runner-a");
+        let other_repo = record("other-repo", "someone/else", 42, "build", "runner-a");
+        let original = MountRegistry {
+            mounts: vec![
+                owned_a,
+                owned_b,
+                other_runner,
+                other_job,
+                other_repo,
+            ],
+        };
+        original.save(&dir).expect("persist fixture mount leases");
+        let mut registry = MountRegistry::load(&dir).expect("load fixture mount leases");
+
+        let mut cleaned = Vec::new();
+        let failed = cleanup_owned_mounts_for_disconnect(
+            &mut registry,
+            &dir,
+            "owner/repo",
+            42,
+            "build",
+            "runner-a",
+            |mount| {
+                cleaned.push(mount.id.clone());
+                if mount.id == "owned-b" {
+                    Err("simulated cleanup failure".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(failed
+            .expect_err("failed mount cleanup must abort disconnect")
+            .contains("owned-b"));
+        assert_eq!(cleaned, ["owned-a", "owned-b"]);
+        assert_eq!(registry.mounts.len(), 5);
+        assert_eq!(
+            MountRegistry::load(&dir)
+                .expect("load leases after cleanup failure")
+                .mounts
+                .len(),
+            5,
+            "failed disconnect must preserve all lease records on disk"
+        );
+
+        let mut cleaned_after_retry = Vec::new();
+        cleanup_owned_mounts_for_disconnect(
+            &mut registry,
+            &dir,
+            "owner/repo",
+            42,
+            "build",
+            "runner-a",
+            |mount| {
+                cleaned_after_retry.push(mount.id.clone());
+                Ok(())
+            },
+        )
+        .expect("successful cleanup removes only this runner's leases");
+        assert_eq!(cleaned_after_retry, ["owned-a", "owned-b"]);
+        let persisted = MountRegistry::load(&dir).expect("load leases after successful cleanup");
+        let remaining: Vec<&str> = persisted
+            .mounts
+            .iter()
+            .map(|mount| mount.id.as_str())
+            .collect();
+        assert_eq!(remaining, ["other-runner", "other-job", "other-repo"]);
+        fs::remove_dir_all(dir).expect("remove disconnect mount test directory");
     }
 
     #[test]

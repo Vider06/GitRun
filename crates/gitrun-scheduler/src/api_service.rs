@@ -1140,6 +1140,7 @@ impl ApiExecutionBackend {
                 &request.repository,
                 run_id,
                 job,
+                &binding.container_id,
                 &self.caller.runner,
                 cleanup_mount_record,
             )
@@ -2846,6 +2847,7 @@ fn cleanup_owned_mounts_for_disconnect<F>(
     repository: &str,
     run_id: u64,
     job: &str,
+    container_id: &str,
     requester_runner: &str,
     mut cleanup: F,
 ) -> Result<(), String>
@@ -2859,6 +2861,7 @@ where
             mount.repository == repository
                 && mount.run_id == run_id
                 && mount.job == job
+                && mount.container_id == container_id
                 && mount.requester_runner == requester_runner
         })
         .cloned()
@@ -2878,10 +2881,13 @@ where
     }
 
     if !owned_mounts.is_empty() {
-        let owned_ids: Vec<&str> = owned_mounts.iter().map(|mount| mount.id.as_str()).collect();
-        registry
-            .mounts
-            .retain(|mount| !owned_ids.contains(&mount.id.as_str()));
+        registry.mounts.retain(|mount| {
+            mount.repository != repository
+                || mount.run_id != run_id
+                || mount.job != job
+                || mount.container_id != container_id
+                || mount.requester_runner != requester_runner
+        });
         registry.save(state_dir)?;
     }
     Ok(())
@@ -3205,6 +3211,16 @@ mod mount_runtime_tests {
         let other_runner = record("other-runner", "owner/repo", 42, "build", "runner-b");
         let other_job = record("other-job", "owner/repo", 42, "test", "runner-a");
         let other_repo = record("other-repo", "someone/else", 42, "build", "runner-a");
+        let mut other_container = record(
+            "other-container",
+            "owner/repo",
+            42,
+            "build",
+            "runner-a",
+        );
+        other_container.container_id = "different-container-id".into();
+        let duplicate_id_other_runner =
+            record("owned-a", "owner/repo", 42, "build", "runner-b");
         let original = MountRegistry {
             mounts: vec![
                 owned_a,
@@ -3212,6 +3228,8 @@ mod mount_runtime_tests {
                 other_runner,
                 other_job,
                 other_repo,
+                other_container,
+                duplicate_id_other_runner,
             ],
         };
         original.save(&dir).expect("persist fixture mount leases");
@@ -3224,6 +3242,7 @@ mod mount_runtime_tests {
             "owner/repo",
             42,
             "build",
+            "test-container-id",
             "runner-a",
             |mount| {
                 cleaned.push(mount.id.clone());
@@ -3241,13 +3260,13 @@ mod mount_runtime_tests {
             cleaned.iter().map(String::as_str).collect::<Vec<_>>(),
             vec!["owned-a", "owned-b"]
         );
-        assert_eq!(registry.mounts.len(), 5);
+        assert_eq!(registry.mounts.len(), 7);
         assert_eq!(
             MountRegistry::load(&dir)
                 .expect("load leases after cleanup failure")
                 .mounts
                 .len(),
-            5,
+            7,
             "failed disconnect must preserve all lease records on disk"
         );
 
@@ -3278,7 +3297,16 @@ mod mount_runtime_tests {
             .iter()
             .map(|mount| mount.id.as_str())
             .collect();
-        assert_eq!(remaining, vec!["other-runner", "other-job", "other-repo"]);
+        assert_eq!(
+            remaining,
+            vec![
+                "other-runner",
+                "other-job",
+                "other-repo",
+                "other-container",
+                "owned-a",
+            ]
+        );
     }
 
     #[test]

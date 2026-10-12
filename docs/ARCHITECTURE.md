@@ -1,4 +1,6 @@
-# GitRun architecture (1.4.6)
+# GitRun architecture — v1.5.0 refactor (draft)
+
+> This is a high-level architecture overview, not a completed contract audit. The crate-by-crate evidence map and remaining test obligations are tracked in [v1.5.0-contract-inventory.md](v1.5.0-contract-inventory.md) and [v1.5.0-refactor-status.md](v1.5.0-refactor-status.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 

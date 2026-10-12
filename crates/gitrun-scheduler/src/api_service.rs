@@ -3277,6 +3277,7 @@ mod mount_runtime_tests {
             "owner/repo",
             42,
             "build",
+            "test-container-id",
             "runner-a",
             |mount| {
                 cleaned_after_retry.push(mount.id.clone());

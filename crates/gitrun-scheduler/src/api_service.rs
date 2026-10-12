@@ -5201,7 +5201,10 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("inactive-job", status_invocation(), provider);
 
-        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(
+            result.handler_result.is_ok(),
+            "expected a wire-level denial: {result:?}"
+        );
         assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
             result.responses.as_slice(),
@@ -5218,7 +5221,10 @@ mod api_socket_identity_integration_tests {
 
         let result = invoke_socket_request("workflow-mismatch", invocation, valid_provider());
 
-        assert!(result.handler_result.is_ok(), "expected a wire-level denial: {result:?}");
+        assert!(
+            result.handler_result.is_ok(),
+            "expected a wire-level denial: {result:?}"
+        );
         assert!(!contains_acceptance(&result.responses));
         assert!(matches!(
             result.responses.as_slice(),

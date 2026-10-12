@@ -4449,7 +4449,7 @@ mod api_request_capacity_tests {
         let (server, mut client) = UnixStream::pair().unwrap();
         let sender = std::thread::spawn(move || {
             let mut payload = vec![b'x'; API_MAX_REQUEST_BYTES + 1];
-            payload.push(b'\\n');
+            payload.push(b'\n');
             let _ = client.write_all(&payload);
         });
 
@@ -4464,7 +4464,7 @@ mod api_request_capacity_tests {
         use std::io::Write;
         use std::os::unix::net::UnixStream;
 
-        for frame in [b"{not-json}\\n".as_slice(), b"{\\"invocation\\":\\n".as_slice()] {
+        for frame in [b"{not-json}\n".as_slice(), b"{\"invocation\":\n".as_slice()] {
             let (server, mut client) = UnixStream::pair().unwrap();
             client.write_all(frame).unwrap();
 

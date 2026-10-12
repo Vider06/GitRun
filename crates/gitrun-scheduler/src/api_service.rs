@@ -2375,9 +2375,8 @@ mod mount_runtime_tests {
         );
         validate_mount_target(pid, &target_file, false)
             .expect("validate regular-file mount target");
-        let source_file_handle =
-            open_mount_source(&fs::canonicalize(&source_file).unwrap())
-                .expect("open canonical host source file");
+        let source_file_handle = open_mount_source(&fs::canonicalize(&source_file).unwrap())
+            .expect("open canonical host source file");
         execute_mount_namespace(
             pid,
             Some(source_file_handle.as_raw_fd()),
@@ -2416,16 +2415,12 @@ mod mount_runtime_tests {
             .expect("file bind mount should appear");
         execute_mount_namespace(pid, None, &target_file, MountAction::Unmount)
             .expect("unmount regular file from target namespace");
-        assert!(
-            mountinfo_by_id(pid, file_mount.id)
-                .expect("read mount table after file unmount")
-                .is_none()
-        );
-        assert!(
-            mountinfo_by_target(pid, &target_file)
-                .expect("verify file target no longer mounted")
-                .is_none()
-        );
+        assert!(mountinfo_by_id(pid, file_mount.id)
+            .expect("read mount table after file unmount")
+            .is_none());
+        assert!(mountinfo_by_target(pid, &target_file)
+            .expect("verify file target no longer mounted")
+            .is_none());
 
         drop(container_guard);
         drop(source_guard);

@@ -93,14 +93,18 @@ mod linux {
 
     const SECCOMP_MODE_FILTER: libc::c_ulong = 2;
     const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+    const SECCOMP_RET_ERRNO: u32 = 0x0005_0000;
     const SECCOMP_RET_TRACE: u32 = 0x7ff0_0000;
     const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
+    const CLONE_UNTRACED_FLAG: u32 = 0x0080_0000;
+    const SECCOMP_DATA_ARGS_OFFSET: u32 = 16;
 
     const BPF_LD: u16 = 0x00;
     const BPF_W: u16 = 0x00;
     const BPF_ABS: u16 = 0x20;
     const BPF_JMP: u16 = 0x05;
     const BPF_JEQ: u16 = 0x10;
+    const BPF_JSET: u16 = 0x40;
     const BPF_K: u16 = 0x00;
     const BPF_RET: u16 = 0x06;
 
@@ -310,21 +314,66 @@ mod linux {
             },
             libc::sock_filter {
                 code: BPF_JMP | BPF_JEQ | BPF_K,
-                jt: 2,
+                jt: 9,
                 jf: 0,
                 k: libc::SYS_execve as u32,
             },
             libc::sock_filter {
                 code: BPF_JMP | BPF_JEQ | BPF_K,
-                jt: 1,
+                jt: 8,
                 jf: 0,
                 k: libc::SYS_execveat as u32,
+            },
+            libc::sock_filter {
+                code: BPF_JMP | BPF_JEQ | BPF_K,
+                jt: 2,
+                jf: 0,
+                k: libc::SYS_clone as u32,
+            },
+            libc::sock_filter {
+                // clone3 puts its flags behind a user pointer, which classic
+                // BPF cannot dereference. Return ENOSYS so callers can use
+                // clone instead, where CLONE_UNTRACED can be checked here.
+                code: BPF_JMP | BPF_JEQ | BPF_K,
+                jt: 5,
+                jf: 0,
+                k: libc::SYS_clone3 as u32,
             },
             libc::sock_filter {
                 code: BPF_RET | BPF_K,
                 jt: 0,
                 jf: 0,
                 k: SECCOMP_RET_ALLOW,
+            },
+            libc::sock_filter {
+                code: BPF_LD | BPF_W | BPF_ABS,
+                jt: 0,
+                jf: 0,
+                k: SECCOMP_DATA_ARGS_OFFSET,
+            },
+            libc::sock_filter {
+                code: BPF_JMP | BPF_JSET | BPF_K,
+                jt: 1,
+                jf: 0,
+                k: CLONE_UNTRACED_FLAG,
+            },
+            libc::sock_filter {
+                code: BPF_RET | BPF_K,
+                jt: 0,
+                jf: 0,
+                k: SECCOMP_RET_ALLOW,
+            },
+            libc::sock_filter {
+                code: BPF_RET | BPF_K,
+                jt: 0,
+                jf: 0,
+                k: SECCOMP_RET_ERRNO | libc::EPERM as u32,
+            },
+            libc::sock_filter {
+                code: BPF_RET | BPF_K,
+                jt: 0,
+                jf: 0,
+                k: SECCOMP_RET_ERRNO | libc::ENOSYS as u32,
             },
             libc::sock_filter {
                 code: BPF_RET | BPF_K,
@@ -1101,6 +1150,58 @@ mod linux {
             let mut registers = unsafe { std::mem::zeroed::<libc::user_regs_struct>() };
             registers.orig_rax = syscall;
             registers
+        }
+
+        #[test]
+        fn seccomp_blocks_untraced_clone_and_makes_clone3_fall_back() {
+            let child = unsafe { libc::fork() };
+            assert!(child >= 0, "fork for seccomp filter test failed");
+            if child == 0 {
+                unsafe {
+                    if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0
+                        || install_seccomp_trace_filter() != 0
+                    {
+                        libc::_exit(101);
+                    }
+
+                    let clone_result = libc::syscall(
+                        libc::SYS_clone,
+                        (u64::from(CLONE_UNTRACED_FLAG) | libc::SIGCHLD as u64) as libc::c_ulong,
+                        0usize,
+                        0usize,
+                        0usize,
+                        0usize,
+                    );
+                    if clone_result == 0 {
+                        libc::_exit(102);
+                    }
+                    if clone_result != -1 || *libc::__errno_location() != libc::EPERM {
+                        libc::_exit(103);
+                    }
+
+                    // A valid zero-flags clone_args is enough to prove the
+                    // filter deliberately returns ENOSYS without creating a
+                    // child; unsupported kernels naturally have the same result.
+                    let clone_args = [0u64; 11];
+                    let clone3_result = libc::syscall(
+                        libc::SYS_clone3,
+                        clone_args.as_ptr(),
+                        std::mem::size_of_val(&clone_args),
+                    );
+                    if clone3_result == 0 {
+                        libc::_exit(104);
+                    }
+                    if clone3_result != -1 || *libc::__errno_location() != libc::ENOSYS {
+                        libc::_exit(105);
+                    }
+                    libc::_exit(0);
+                }
+            }
+
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+            assert!(is_exited(status), "filter test subprocess did not exit normally");
+            assert_eq!((status >> 8) & 0xff, 0, "seccomp filter did not enforce clone policy");
         }
 
         #[test]

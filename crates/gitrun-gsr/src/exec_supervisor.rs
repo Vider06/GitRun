@@ -562,6 +562,15 @@ mod linux {
                             return Err(SupervisorError::Ptrace(
                                 "tracee vanished while freezing exec arguments",
                             ));
+                        } else {
+                            let wait_error = std::io::Error::last_os_error();
+                            if wait_error.raw_os_error() == Some(libc::EINTR) {
+                                continue;
+                            }
+                            return Err(SupervisorError::Syscall(
+                                "waitpid vanished tracee",
+                                wait_error,
+                            ));
                         }
                         continue;
                     }

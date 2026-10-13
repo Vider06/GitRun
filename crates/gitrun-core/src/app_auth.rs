@@ -216,9 +216,7 @@ fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
     if bytes.len() > 20
         && (bytes[19] != b'.'
             || bytes[20..bytes.len() - 1].is_empty()
-            || !bytes[20..bytes.len() - 1]
-                .iter()
-                .all(u8::is_ascii_digit))
+            || !bytes[20..bytes.len() - 1].iter().all(u8::is_ascii_digit))
     {
         return None;
     }
@@ -257,11 +255,7 @@ fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
     } else {
         year
     };
-    let adjusted_year = if y >= 0 {
-        y
-    } else {
-        y.checked_sub(399)?
-    };
+    let adjusted_year = if y >= 0 { y } else { y.checked_sub(399)? };
     let era = adjusted_year.checked_div(400)?;
     let yoe = y.checked_sub(era.checked_mul(400)?)?;
     let mp = if month > 2 {

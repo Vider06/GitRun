@@ -121,7 +121,10 @@ fn sample_disk_percent(config: &Config) -> Result<f32, ResourcePressureError> {
         }
         let path = Path::new(raw_path);
         if !path.exists() {
-            continue;
+            return Err(ResourcePressureError::Disk {
+                path: path.display().to_string(),
+                detail: "configured critical filesystem path does not exist".into(),
+            });
         }
         found = true;
         let output = Command::new("df")
@@ -144,7 +147,10 @@ fn sample_disk_percent(config: &Config) -> Result<f32, ResourcePressureError> {
             .and_then(|line| line.split_whitespace().nth(4))
             .and_then(|v| v.strip_suffix('%'))
             .and_then(|v| v.parse::<f32>().ok())
-            .ok_or(ResourcePressureError::Parse)?;
+            .ok_or_else(|| ResourcePressureError::Disk {
+                path: path.display().to_string(),
+                detail: "could not parse filesystem usage percentage from df output".into(),
+            })?;
         max_usage = max_usage.max(usage);
     }
     if !found {
@@ -156,6 +162,29 @@ fn sample_disk_percent(config: &Config) -> Result<f32, ResourcePressureError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn missing_configured_disk_path_is_an_error() {
+        let missing = std::env::temp_dir().join(format!(
+            "gitrun-missing-critical-fs-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config = Config {
+            resource_pressure_paths: missing.display().to_string(),
+            ..Config::default()
+        };
+
+        let error = sample_disk_percent(&config).unwrap_err();
+        assert!(matches!(
+            error,
+            ResourcePressureError::Disk { path, .. }
+                if path == missing.display().to_string()
+        ));
+    }
 
     #[test]
     fn pressure_is_triggered_by_any_threshold() {

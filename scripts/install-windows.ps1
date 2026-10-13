@@ -142,7 +142,12 @@ try {
   }
 
   foreach ($repo in $repoList) {
-    if ($repo -notmatch "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") {
+    $repoParts = $repo.Split([char]'/')
+    if (
+      $repo -notmatch "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" -or
+      $repoParts[0] -eq "." -or $repoParts[0] -eq ".." -or
+      $repoParts[1] -eq "." -or $repoParts[1] -eq ".."
+    ) {
       throw "Invalid repository: $repo"
     }
 

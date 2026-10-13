@@ -613,7 +613,9 @@ mod linux {
             // PTRACE_EVENT_STOP/SIGTRAP is the expected interrupt stop.
             // Other stops may be signal deliveries or ptrace events that must
             // be resumed after the protected exec has completed.
-            let deliver = if event == 0 && signal != libc::SIGSTOP && signal != libc::SIGTRAP {
+            let deliver = if event == PTRACE_EVENT_STOP as i32 && signal == libc::SIGTRAP {
+                0
+            } else if event == 0 && signal != libc::SIGSTOP && signal != libc::SIGTRAP {
                 signal
             } else {
                 0
@@ -1066,6 +1068,7 @@ mod linux {
     mod tests {
         use super::*;
         use std::collections::HashMap;
+        use std::time::Duration;
 
         fn test_pid() -> libc::pid_t {
             123
@@ -1137,7 +1140,7 @@ mod linux {
 
             let mut empty = HashMap::<u64, u8>::new();
             put_bytes(&mut empty, u64::MAX - 255, &vec![1u8; 256]);
-            assert!(read_argv_with(test_pid(), u64::MAX - 127, |address, out| {
+            assert!(read_argv_with(test_pid(), u64::MAX - 255, |address, out| {
                 read_fake_memory(&empty, address, out)
             })
             .is_err());
@@ -1153,6 +1156,211 @@ mod linux {
                 read_fake_memory(&memory, address, out)
             })
             .is_err());
+        }
+
+
+        // This is an OS-level regression for the primitive that closes the
+        // TOCTOU window: a sibling thread shares the same address space and
+        // continuously changes a word while the tracer freezes a target thread.
+        #[test]
+        fn freezer_stops_a_shared_address_space_mutator_until_exec_check_finishes() {
+            const TEST_STACK_SIZE: usize = 1024 * 1024;
+
+            let counter = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    std::mem::size_of::<AtomicU64>(),
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED | libc::MAP_ANONYMOUS,
+                    -1,
+                    0,
+                )
+            };
+            assert_ne!(counter, libc::MAP_FAILED);
+            let counter = counter.cast::<AtomicU64>();
+            unsafe { std::ptr::write(counter, AtomicU64::new(0)) };
+
+            let stack = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    TEST_STACK_SIZE,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                    -1,
+                    0,
+                )
+            };
+            assert_ne!(stack, libc::MAP_FAILED);
+
+            let mut gate = [-1; 2];
+            assert_eq!(unsafe { libc::pipe2(gate.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+            let child = unsafe { libc::fork() };
+            assert!(child >= 0);
+            if child == 0 {
+                unsafe {
+                    libc::close(gate[1]);
+                    freezer_test_tracee(gate[0], counter, stack.cast(), TEST_STACK_SIZE);
+                }
+            }
+            unsafe { libc::close(gate[0]) };
+
+            let options = ptrace_options();
+            let seize = unsafe { libc::ptrace(PTRACE_SEIZE, child, 0, options) };
+            if seize == -1 {
+                unsafe {
+                    libc::kill(child, libc::SIGKILL);
+                    libc::close(gate[1]);
+                    libc::munmap(counter.cast(), std::mem::size_of::<AtomicU64>());
+                    libc::munmap(stack, TEST_STACK_SIZE);
+                }
+                panic!("could not seize tracee for TOCTOU regression");
+            }
+            let interrupted = unsafe { libc::ptrace(PTRACE_INTERRUPT, child, 0, 0) };
+            if interrupted == -1 || !is_stopped(wait_for_initial_stop(child).unwrap()) {
+                unsafe {
+                    libc::kill(child, libc::SIGKILL);
+                    libc::close(gate[1]);
+                    libc::munmap(counter.cast(), std::mem::size_of::<AtomicU64>());
+                    libc::munmap(stack, TEST_STACK_SIZE);
+                }
+                panic!("could not stop tracee during TOCTOU regression setup");
+            }
+
+            let ready = [1u8];
+            let written = unsafe { libc::write(gate[1], ready.as_ptr().cast(), ready.len()) };
+            unsafe { libc::close(gate[1]) };
+            assert_eq!(written, 1);
+            continue_tracee(child).unwrap();
+
+            let worker = loop {
+                let mut status = 0;
+                let waited = unsafe {
+                    libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL)
+                };
+                assert!(waited > 0, "waiting for test worker clone failed");
+                if waited == child
+                    && is_stopped(status)
+                    && ((status >> 16) & 0xffff) == PTRACE_EVENT_CLONE as i32
+                {
+                    break ptrace_event_pid(child).unwrap();
+                }
+                if is_exited(status) || is_signaled(status) {
+                    panic!("test tracee exited before creating worker thread");
+                }
+            };
+            continue_tracee(child).unwrap();
+
+            let mut worker_status = 0;
+            assert_eq!(
+                unsafe { libc::waitpid(worker, &mut worker_status, libc::WUNTRACED | libc::__WALL) },
+                worker
+            );
+            assert!(is_stopped(worker_status), "worker did not enter ptrace stop");
+            continue_tracee(worker).unwrap();
+
+            let mut tracees = HashSet::from([child, worker]);
+            let mut deferred = VecDeque::new();
+            let event_path = std::env::temp_dir().join(format!(
+                "gitrun-gsr-freezer-test-{}.jsonl",
+                std::process::id()
+            ));
+
+            let mut initial = 0;
+            for _ in 0..100 {
+                initial = unsafe { (*counter).load(Ordering::Relaxed) };
+                if initial > 0 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let stop_target = unsafe { libc::ptrace(PTRACE_INTERRUPT, child, 0, 0) };
+            assert_ne!(stop_target, -1, "could not stop target tracee");
+            assert!(is_stopped(wait_for_initial_stop(child).unwrap()));
+
+            let mut frozen =
+                freeze_tracees(child, &mut tracees, &mut deferred, &event_path).unwrap();
+            let before = unsafe { (*counter).load(Ordering::Relaxed) };
+            std::thread::sleep(Duration::from_millis(25));
+            let during = unsafe { (*counter).load(Ordering::Relaxed) };
+            let stopped_during_window = before > 0 && during == before;
+
+            thaw_tracees(&mut frozen, &mut tracees).unwrap();
+            continue_tracee(child).unwrap();
+            std::thread::sleep(Duration::from_millis(25));
+            let after = unsafe { (*counter).load(Ordering::Relaxed) };
+            let resumed_after_window = after > during;
+
+            unsafe { libc::kill(child, libc::SIGKILL) };
+            reap_test_tracees(&mut tracees);
+            unsafe {
+                libc::munmap(counter.cast(), std::mem::size_of::<AtomicU64>());
+                libc::munmap(stack, TEST_STACK_SIZE);
+            }
+
+            assert!(initial > 0, "mutator thread never ran");
+            assert!(stopped_during_window, "shared memory changed while peers were frozen");
+            assert!(resumed_after_window, "mutator did not resume after thaw");
+        }
+
+        extern "C" fn freezer_test_mutator(argument: *mut libc::c_void) -> libc::c_int {
+            let counter = argument.cast::<AtomicU64>();
+            loop {
+                unsafe { (*counter).fetch_add(1, Ordering::Relaxed) };
+                unsafe { libc::usleep(100) };
+            }
+        }
+
+        unsafe fn freezer_test_tracee(
+            gate_read: RawFd,
+            counter: *mut AtomicU64,
+            stack: *mut libc::c_void,
+            stack_size: usize,
+        ) -> ! {
+            if libc::setpgid(0, 0) != 0 {
+                libc::_exit(121);
+            }
+            let mut ready = 0u8;
+            if libc::read(gate_read, (&mut ready as *mut u8).cast(), 1) != 1 || ready != 1 {
+                libc::_exit(122);
+            }
+            libc::close(gate_read);
+            let flags = libc::CLONE_VM | libc::CLONE_FS | libc::CLONE_FILES
+                | libc::CLONE_SIGHAND | libc::CLONE_THREAD;
+            let stack_top = stack.cast::<u8>().add(stack_size).cast::<libc::c_void>();
+            if libc::clone(
+                freezer_test_mutator,
+                stack_top,
+                flags,
+                counter.cast::<libc::c_void>(),
+            ) < 0
+            {
+                libc::_exit(123);
+            }
+            loop {
+                libc::pause();
+            }
+        }
+
+        fn reap_test_tracees(tracees: &mut HashSet<libc::pid_t>) {
+            for _ in 0..500 {
+                if tracees.is_empty() {
+                    return;
+                }
+                unsafe { libc::kill(*tracees.iter().next().unwrap(), libc::SIGKILL) };
+                let mut status = 0;
+                let waited = unsafe {
+                    libc::waitpid(-1, &mut status, libc::WNOHANG | libc::__WALL)
+                };
+                if waited > 0 {
+                    if is_exited(status) || is_signaled(status) {
+                        tracees.remove(&waited);
+                    } else if is_stopped(status) {
+                        let _ = unsafe { libc::ptrace(PTRACE_CONT, waited, 0, libc::SIGKILL) };
+                    }
+                } else {
+                    unsafe { libc::usleep(1000) };
+                }
+            }
         }
 
         fn pointer_table(values: &[u64]) -> Vec<u8> {

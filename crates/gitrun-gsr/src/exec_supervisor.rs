@@ -1158,7 +1158,6 @@ mod linux {
             .is_err());
         }
 
-
         // This is an OS-level regression for the primitive that closes the
         // TOCTOU window: a sibling thread shares the same address space and
         // continuously changes a word while the tracer freezes a target thread.
@@ -1193,7 +1192,10 @@ mod linux {
             assert_ne!(stack, libc::MAP_FAILED);
 
             let mut gate = [-1; 2];
-            assert_eq!(unsafe { libc::pipe2(gate.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+            assert_eq!(
+                unsafe { libc::pipe2(gate.as_mut_ptr(), libc::O_CLOEXEC) },
+                0
+            );
             let child = unsafe { libc::fork() };
             assert!(child >= 0);
             if child == 0 {
@@ -1234,9 +1236,8 @@ mod linux {
 
             let worker = loop {
                 let mut status = 0;
-                let waited = unsafe {
-                    libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL)
-                };
+                let waited =
+                    unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL) };
                 assert!(waited > 0, "waiting for test worker clone failed");
                 if waited == child
                     && is_stopped(status)
@@ -1252,10 +1253,15 @@ mod linux {
 
             let mut worker_status = 0;
             assert_eq!(
-                unsafe { libc::waitpid(worker, &mut worker_status, libc::WUNTRACED | libc::__WALL) },
+                unsafe {
+                    libc::waitpid(worker, &mut worker_status, libc::WUNTRACED | libc::__WALL)
+                },
                 worker
             );
-            assert!(is_stopped(worker_status), "worker did not enter ptrace stop");
+            assert!(
+                is_stopped(worker_status),
+                "worker did not enter ptrace stop"
+            );
             continue_tracee(worker).unwrap();
 
             let mut tracees = HashSet::from([child, worker]);
@@ -1298,7 +1304,10 @@ mod linux {
             }
 
             assert!(initial > 0, "mutator thread never ran");
-            assert!(stopped_during_window, "shared memory changed while peers were frozen");
+            assert!(
+                stopped_during_window,
+                "shared memory changed while peers were frozen"
+            );
             assert!(resumed_after_window, "mutator did not resume after thaw");
         }
 
@@ -1324,8 +1333,11 @@ mod linux {
                 libc::_exit(122);
             }
             libc::close(gate_read);
-            let flags = libc::CLONE_VM | libc::CLONE_FS | libc::CLONE_FILES
-                | libc::CLONE_SIGHAND | libc::CLONE_THREAD;
+            let flags = libc::CLONE_VM
+                | libc::CLONE_FS
+                | libc::CLONE_FILES
+                | libc::CLONE_SIGHAND
+                | libc::CLONE_THREAD;
             let stack_top = stack.cast::<u8>().add(stack_size).cast::<libc::c_void>();
             if libc::clone(
                 freezer_test_mutator,
@@ -1348,9 +1360,8 @@ mod linux {
                 }
                 unsafe { libc::kill(*tracees.iter().next().unwrap(), libc::SIGKILL) };
                 let mut status = 0;
-                let waited = unsafe {
-                    libc::waitpid(-1, &mut status, libc::WNOHANG | libc::__WALL)
-                };
+                let waited =
+                    unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG | libc::__WALL) };
                 if waited > 0 {
                     if is_exited(status) || is_signaled(status) {
                         tracees.remove(&waited);

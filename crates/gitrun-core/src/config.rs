@@ -272,13 +272,18 @@ impl Config {
     pub fn from_env_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let content = fs::read_to_string(path)?;
         let mut lookup = std::collections::HashMap::new();
-        for raw in content.lines() {
+        for (line_index, raw) in content.lines().enumerate() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let Some((key, value)) = line.split_once('=') else {
-                return Err(ConfigError::Invalid(format!("invalid env line: {line}")));
+                // Do not echo the malformed line: it may be a pasted secret
+                // or token that accidentally omitted its key and '='.
+                return Err(ConfigError::Invalid(format!(
+                    "invalid env file syntax at line {}: expected KEY=VALUE",
+                    line_index + 1
+                )));
             };
             lookup.insert(key.trim().to_owned(), unquote(value.trim()));
         }
@@ -655,6 +660,16 @@ impl Config {
                 "runner seccomp profile must be a non-empty value without whitespace".into(),
             ));
         }
+        if self
+            .runner_seccomp_profile
+            .trim()
+            .eq_ignore_ascii_case("unconfined")
+            && !self.gsr_allow_unsafe_runner
+        {
+            return Err(ConfigError::Invalid(
+                "GITRUN_RUNNER_SECCOMP_PROFILE=unconfined requires GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true as an explicit opt-in".into(),
+            ));
+        }
         if self.runner_apparmor_profile.chars().any(char::is_control)
             || self
                 .runner_apparmor_profile
@@ -663,6 +678,16 @@ impl Config {
         {
             return Err(ConfigError::Invalid(
                 "runner AppArmor profile must not contain whitespace or control characters".into(),
+            ));
+        }
+        if self
+            .runner_apparmor_profile
+            .trim()
+            .eq_ignore_ascii_case("unconfined")
+            && !self.gsr_allow_unsafe_runner
+        {
+            return Err(ConfigError::Invalid(
+                "GITRUN_RUNNER_APPARMOR_PROFILE=unconfined requires GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true as an explicit opt-in".into(),
             ));
         }
         if !matches!(self.gtuu_schedule_timezone.as_str(), "utc" | "local") {
@@ -931,12 +956,24 @@ fn is_valid_docker_name(value: &str) -> bool {
 }
 
 fn is_repository(value: &str) -> bool {
+    fn valid_component(part: &str) -> bool {
+        !part.is_empty()
+            && !matches!(part, "." | "..")
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+    }
+
     let mut parts = value.split('/');
-    matches!((parts.next(), parts.next(), parts.next()), (Some(a), Some(b), None) if !a.is_empty() && !b.is_empty())
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(owner), Some(repo), None)
+            if valid_component(owner) && valid_component(repo)
+    )
 }
 fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, ConfigError> {
     match value {
-        Some(v) => v.parse().map_err(|_| ConfigError::Integer {
+        Some(v) => v.trim().parse().map_err(|_| ConfigError::Integer {
             key: key.into(),
             value: v.clone(),
         }),
@@ -945,7 +982,7 @@ fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, Con
 }
 fn value_u64(value: &Option<String>, key: &str, default: u64) -> Result<u64, ConfigError> {
     match value {
-        Some(v) => v.parse().map_err(|_| ConfigError::Integer {
+        Some(v) => v.trim().parse().map_err(|_| ConfigError::Integer {
             key: key.into(),
             value: v.clone(),
         }),
@@ -985,8 +1022,13 @@ mod tests {
     #[test]
     fn repository_validation_is_strict() {
         assert!(is_repository("owner/repo"));
+        assert!(is_repository("owner/repo.name-2_test"));
         assert!(!is_repository("owner"));
         assert!(!is_repository("owner/repo/extra"));
+        assert!(!is_repository("owner/repo name"));
+        assert!(!is_repository("owner/repo?query"));
+        assert!(!is_repository("../repo"));
+        assert!(!is_repository("owner/.."));
     }
 
     #[test]
@@ -1088,6 +1130,64 @@ mod tests {
     #[test]
     fn invalid_boolean_is_rejected() {
         assert!(parse_bool("TEST", "maybe").is_err());
+    }
+
+    #[test]
+    fn environment_numeric_values_are_trimmed_before_parsing() {
+        let lookup = std::collections::HashMap::from([
+            ("GITRUN_MIN_RUNNERS".to_owned(), " 2 ".to_owned()),
+            ("GITRUN_MAX_RUNNERS".to_owned(), " 4 ".to_owned()),
+            ("GITRUN_IDLE_TIMEOUT".to_owned(), " 120 ".to_owned()),
+            (
+                "GITRUN_CONTAINER_RECOVERY_COOLDOWN".to_owned(),
+                " 90 ".to_owned(),
+            ),
+        ]);
+        let config = Config::from_lookup(&lookup).unwrap();
+        assert_eq!(config.min_runners, 2);
+        assert_eq!(config.max_runners, 4);
+        assert_eq!(config.idle_timeout, 120);
+        assert_eq!(config.container_recovery_cooldown, 90);
+    }
+
+    #[test]
+    fn malformed_env_line_errors_do_not_echo_possible_secrets() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-config-malformed-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "GITRUN_MIN_RUNNERS=2\nthis-looks-like-a-secret-token\n",
+        )
+        .unwrap();
+        let error = Config::from_env_file(&path).unwrap_err().to_string();
+        fs::remove_file(path).unwrap();
+
+        assert!(error.contains("line 2"));
+        assert!(error.contains("expected KEY=VALUE"));
+        assert!(!error.contains("this-looks-like-a-secret-token"));
+    }
+
+    #[test]
+    fn unconfined_sandbox_profiles_require_explicit_unsafe_opt_in() {
+        let mut config = Config::default();
+        config.runner_seccomp_profile = "unconfined".into();
+        assert!(config.validate().is_err());
+
+        config.gsr_allow_unsafe_runner = true;
+        assert!(config.validate().is_ok());
+
+        config.gsr_allow_unsafe_runner = false;
+        config.runner_seccomp_profile = "default".into();
+        config.runner_apparmor_profile = "UNCONFINED".into();
+        assert!(config.validate().is_err());
+
+        config.gsr_allow_unsafe_runner = true;
+        assert!(config.validate().is_ok());
     }
 
     #[test]

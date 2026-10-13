@@ -250,19 +250,11 @@ fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
 
     // Days since epoch using checked arithmetic so malformed input can never
     // overflow and panic the caller.
-    let y = if month <= 2 {
-        year.checked_sub(1)?
-    } else {
-        year
-    };
+    let y = if month <= 2 { year.checked_sub(1)? } else { year };
     let adjusted_year = if y >= 0 { y } else { y.checked_sub(399)? };
     let era = adjusted_year.checked_div(400)?;
     let yoe = y.checked_sub(era.checked_mul(400)?)?;
-    let mp = if month > 2 {
-        month.checked_sub(3)?
-    } else {
-        month.checked_add(9)?
-    };
+    let mp = if month > 2 { month.checked_sub(3)? } else { month.checked_add(9)? };
     let doy = 153_i64
         .checked_mul(mp)?
         .checked_add(2)?

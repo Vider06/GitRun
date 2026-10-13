@@ -507,7 +507,10 @@ fn read_api_request_with_timeout(
 
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
+        // Some platforms reject sub-millisecond socket timeouts after rounding
+        // them down to zero. Treat the final fraction of the deadline as expired
+        // rather than leaking a platform-specific set_read_timeout error.
+        if remaining < Duration::from_millis(1) {
             return Err("API request read deadline exceeded".into());
         }
         stream

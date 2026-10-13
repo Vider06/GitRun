@@ -349,7 +349,10 @@ mod tests {
         let policy = baseline_only();
         assert_eq!(policy.evaluate("echo nsentering"), Decision::Allowed);
         assert_eq!(policy.evaluate("echo ptraceable"), Decision::Allowed);
-        assert_eq!(policy.evaluate("echo metadata.google.internalish"), Decision::Allowed);
+        assert_eq!(
+            policy.evaluate("echo metadata.google.internalish"),
+            Decision::Allowed
+        );
         assert!(matches!(
             policy.evaluate("curl http://169.254.169.254/latest/meta-data/"),
             Decision::Denied { .. }

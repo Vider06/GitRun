@@ -159,7 +159,12 @@ pub fn run() {
                     continue;
                 }
                 Ok(_) => {}
-                Err(error) => eprintln!("gitrun-autoscaler: resource pressure check unavailable: {error}; continuing for availability"),
+                Err(error @ resource_pressure::ResourcePressureError::Disk { .. }) => {
+                    eprintln!("gitrun-autoscaler: critical filesystem pressure check failed: {error}; holding scheduler reconciliation until the configured disk checks recover");
+                    sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
+                    continue;
+                }
+                Err(error) => eprintln!("gitrun-autoscaler: host resource pressure check unavailable: {error}; continuing for availability"),
             }
         }
         for repo in &config.repositories {

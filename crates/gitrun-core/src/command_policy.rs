@@ -178,6 +178,18 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
 
     let pattern_tokens = pattern.split(' ').collect::<Vec<_>>();
     let command_tokens = command_normalized.split(' ').collect::<Vec<_>>();
+
+    // Preserve the established single-token behavior: the token may identify
+    // the executable or a command token in a wrapper invocation.
+    if pattern_tokens.len() == 1 {
+        let token = pattern_tokens[0];
+        return command_tokens.iter().any(|candidate| {
+            *candidate == token
+                || candidate.strip_prefix("./").is_some_and(|p| p == token)
+                || candidate.ends_with(&format!("/{token}"))
+        });
+    }
+
     let Some(command_executable) = command_tokens.first() else {
         return false;
     };

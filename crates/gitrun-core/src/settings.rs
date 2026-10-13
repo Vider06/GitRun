@@ -30,6 +30,8 @@ pub enum SettingsError {
     Io(#[from] std::io::Error),
     #[error("unable to decode settings: {0}")]
     Decode(#[source] serde_json::Error),
+    #[error("unsupported settings schema version {found}; this build supports version {supported}")]
+    UnsupportedSchema { found: u32, supported: u32 },
     #[error("unable to encode settings: {0}")]
     Encode(#[source] serde_json::Error),
 }
@@ -103,7 +105,19 @@ impl GitRunSettings {
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self, SettingsError> {
         let raw = fs::read_to_string(path)?;
-        serde_json::from_str(&raw).map_err(SettingsError::Decode)
+        let settings: Self = serde_json::from_str(&raw).map_err(SettingsError::Decode)?;
+        settings.validate_schema_version()?;
+        Ok(settings)
+    }
+
+    fn validate_schema_version(&self) -> Result<(), SettingsError> {
+        if self.schema_version != SETTINGS_SCHEMA_VERSION {
+            return Err(SettingsError::UnsupportedSchema {
+                found: self.schema_version,
+                supported: SETTINGS_SCHEMA_VERSION,
+            });
+        }
+        Ok(())
     }
 
     /// Load existing settings, or return a secure fail-closed policy when
@@ -122,6 +136,7 @@ impl GitRunSettings {
     /// but policy tampering is security-sensitive, so Unix deployments keep
     /// it owner-readable/writable only.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), SettingsError> {
+        self.validate_schema_version()?;
         let path = path.as_ref();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -130,7 +145,7 @@ impl GitRunSettings {
         let raw = serde_json::to_vec_pretty(self).map_err(SettingsError::Encode)?;
         let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
 
-        {
+        let write_result = (|| -> Result<(), SettingsError> {
             let mut options = fs::OpenOptions::new();
             options.write(true).create_new(true);
             #[cfg(unix)]
@@ -141,21 +156,25 @@ impl GitRunSettings {
             let mut file = options.open(&temp)?;
             file.write_all(&raw)?;
             file.sync_all()?;
-        }
+            drop(file);
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
-        }
-
-        match fs::rename(&temp, path) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let _ = fs::remove_file(&temp);
-                Err(error.into())
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
             }
+
+            fs::rename(&temp, path)?;
+            Ok(())
+        })();
+
+        if write_result.is_err() && temp.exists() {
+            // Only remove the temporary file if this call created it. If
+            // create_new failed because another file already existed, leave
+            // that file untouched.
+            let _ = fs::remove_file(&temp);
         }
+        write_result
     }
 }
 
@@ -319,10 +338,20 @@ impl MountPolicy {
         let mut matches: Vec<(&MountRule, PathBuf)> = Vec::new();
 
         for rule in &self.rules {
-            let rule_source = match Path::new(&rule.source).canonicalize() {
-                Ok(path) => path,
-                Err(_) => continue,
-            };
+            let configured_source = Path::new(&rule.source);
+            if !configured_source.is_absolute()
+                || configured_source.components().any(|part| {
+                    matches!(
+                        part,
+                        std::path::Component::ParentDir | std::path::Component::CurDir
+                    )
+                })
+            {
+                return Err("mount rule source must be a clean absolute path".into());
+            }
+            let rule_source = configured_source.canonicalize().map_err(|error| {
+                format!("cannot resolve configured mount rule source: {error}")
+            })?;
             let exact = canonical_source == rule_source;
             let descendant = rule.recursive
                 && canonical_source != rule_source
@@ -699,6 +728,86 @@ mod tests {
             ..RegisterPolicy::default()
         };
         assert!(wildcard.allows_entry("/home/runner/any-safe-entry"));
+    }
+
+    #[test]
+    fn settings_load_rejects_unsupported_schema_versions() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-settings-schema-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(SETTINGS_FILE_NAME);
+        let mut value = serde_json::to_value(GitRunSettings::default()).unwrap();
+        value["schema_version"] = serde_json::json!(SETTINGS_SCHEMA_VERSION + 1);
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+
+        assert!(matches!(
+            GitRunSettings::load(&path),
+            Err(SettingsError::UnsupportedSchema {
+                found,
+                supported: SETTINGS_SCHEMA_VERSION
+            }) if found == SETTINGS_SCHEMA_VERSION + 1
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_save_rejects_unsupported_schema_versions() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-settings-save-schema-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(SETTINGS_FILE_NAME);
+        let settings = GitRunSettings {
+            schema_version: SETTINGS_SCHEMA_VERSION + 1,
+            ..GitRunSettings::default()
+        };
+
+        assert!(matches!(
+            settings.save(&path),
+            Err(SettingsError::UnsupportedSchema {
+                found,
+                supported: SETTINGS_SCHEMA_VERSION
+            }) if found == SETTINGS_SCHEMA_VERSION + 1
+        ));
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_configured_mount_rule_fails_closed() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-invalid-rule-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.txt");
+        fs::write(&source, "payload").unwrap();
+        let policy = MountPolicy {
+            enabled: true,
+            rules: vec![
+                MountRule {
+                    source: dir.to_string_lossy().into_owned(),
+                    recursive: true,
+                    read_only: true,
+                    allow: true,
+                },
+                MountRule {
+                    source: dir.join("missing-deny-root").to_string_lossy().into_owned(),
+                    recursive: true,
+                    read_only: true,
+                    allow: false,
+                },
+            ],
+        };
+
+        assert!(policy.authorize_source(&source, true).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

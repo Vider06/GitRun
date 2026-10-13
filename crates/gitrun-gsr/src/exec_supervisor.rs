@@ -413,7 +413,7 @@ mod linux {
                 continue;
             }
 
-            let signal = status & 0x7f;
+            let signal = (status >> 8) & 0xff;
             let event = (status >> 16) & 0xffff;
 
             if event == PTRACE_EVENT_SECCOMP as i32 {
@@ -598,7 +598,7 @@ mod linux {
             }
 
             tracees.insert(pid);
-            let signal = status & 0x7f;
+            let signal = (status >> 8) & 0xff;
             let event = (status >> 16) & 0xffff;
             if event == PTRACE_EVENT_SECCOMP as i32 {
                 // Two threads can reach execve's seccomp stop concurrently.
@@ -691,7 +691,7 @@ mod linux {
                 continue;
             }
 
-            let signal = status & 0x7f;
+            let signal = (status >> 8) & 0xff;
             let event = (status >> 16) & 0xffff;
             if event == PTRACE_EVENT_EXEC as i32 {
                 let former_tid = ptrace_event_pid(waited)?;

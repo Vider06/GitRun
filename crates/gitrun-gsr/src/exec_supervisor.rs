@@ -173,7 +173,10 @@ mod linux {
                 libc::kill(pid, libc::SIGKILL);
                 libc::close(gate[1]);
             }
-            return Err(SupervisorError::Syscall("PTRACE_INTERRUPT root tracee", error));
+            return Err(SupervisorError::Syscall(
+                "PTRACE_INTERRUPT root tracee",
+                error,
+            ));
         }
         let wait_result = wait_for_initial_stop(pid)?;
         if !is_stopped(wait_result) {
@@ -181,7 +184,9 @@ mod linux {
                 libc::kill(pid, libc::SIGKILL);
                 libc::close(gate[1]);
             }
-            return Err(SupervisorError::Ptrace("root tracee did not stop after seize"));
+            return Err(SupervisorError::Ptrace(
+                "root tracee did not stop after seize",
+            ));
         }
 
         let ready = [1u8];
@@ -356,9 +361,8 @@ mod linux {
                 (pid, status)
             } else {
                 let mut status = 0;
-                let waited = unsafe {
-                    libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL)
-                };
+                let waited =
+                    unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL) };
                 if waited == -1 {
                     let error = std::io::Error::last_os_error();
                     if error.raw_os_error() == Some(libc::EINTR) {
@@ -428,7 +432,10 @@ mod linux {
                                 thaw_tracees(&mut frozen, &mut tracees)?;
                                 resume_if_alive(returned_pid, 0)?;
                             }
-                            ExecCompletion::Executed { pid: exec_pid, former_tid } => {
+                            ExecCompletion::Executed {
+                                pid: exec_pid,
+                                former_tid,
+                            } => {
                                 if former_tid != exec_pid {
                                     tracees.remove(&former_tid);
                                 }
@@ -498,7 +505,10 @@ mod linux {
 
     enum ExecCompletion {
         SyscallReturned(libc::pid_t),
-        Executed { pid: libc::pid_t, former_tid: libc::pid_t },
+        Executed {
+            pid: libc::pid_t,
+            former_tid: libc::pid_t,
+        },
         TraceeExited,
     }
 
@@ -553,7 +563,10 @@ mod linux {
                 if error.raw_os_error() == Some(libc::EINTR) {
                     continue;
                 }
-                return Err(SupervisorError::Syscall("waitpid while freezing tracees", error));
+                return Err(SupervisorError::Syscall(
+                    "waitpid while freezing tracees",
+                    error,
+                ));
             }
             let pid = waited;
 
@@ -631,7 +644,9 @@ mod linux {
     ) -> Result<ExecCompletion, SupervisorError> {
         let result = unsafe { libc::ptrace(PTRACE_SYSCALL, pid, 0, 0) };
         if result == -1 {
-            return Err(SupervisorError::Ptrace("PTRACE_SYSCALL after exec inspection"));
+            return Err(SupervisorError::Ptrace(
+                "PTRACE_SYSCALL after exec inspection",
+            ));
         }
 
         loop {
@@ -642,7 +657,10 @@ mod linux {
                 if error.raw_os_error() == Some(libc::EINTR) {
                     continue;
                 }
-                return Err(SupervisorError::Syscall("waitpid for inspected exec", error));
+                return Err(SupervisorError::Syscall(
+                    "waitpid for inspected exec",
+                    error,
+                ));
             }
 
             if is_exited(status) || is_signaled(status) {
@@ -714,7 +732,9 @@ mod linux {
             };
             let resumed = unsafe { libc::ptrace(PTRACE_SYSCALL, pid, 0, deliver) };
             if resumed == -1 {
-                return Err(SupervisorError::Ptrace("PTRACE_SYSCALL while awaiting exec result"));
+                return Err(SupervisorError::Ptrace(
+                    "PTRACE_SYSCALL while awaiting exec result",
+                ));
             }
         }
     }
@@ -769,7 +789,12 @@ mod linux {
         if registers.orig_rax == libc::SYS_execve as u64 {
             Ok((registers.rdi, registers.rsi, -1i64, 0u64))
         } else if registers.orig_rax == libc::SYS_execveat as u64 {
-            Ok((registers.rsi, registers.rdx, registers.rdi as i64, registers.r10))
+            Ok((
+                registers.rsi,
+                registers.rdx,
+                registers.rdi as i64,
+                registers.r10,
+            ))
         } else {
             Err(SupervisorError::InspectFailed(pid))
         }
@@ -907,8 +932,8 @@ mod linux {
         let Some(end) = buffer[..bytes].iter().position(|byte| *byte == 0) else {
             return Err(SupervisorError::InspectFailed(pid));
         };
-        let value = std::str::from_utf8(&buffer[..end])
-            .map_err(|_| SupervisorError::InspectFailed(pid))?;
+        let value =
+            std::str::from_utf8(&buffer[..end]).map_err(|_| SupervisorError::InspectFailed(pid))?;
         Ok(value.to_owned())
     }
 
@@ -1037,7 +1062,6 @@ mod linux {
         let _ = crate::events::emit(events_path, &event);
     }
 
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -1058,7 +1082,8 @@ mod linux {
             let mut registers = regs(libc::SYS_execve as u64);
             registers.rdi = 0x1111;
             registers.rsi = 0x2222;
-            let (path, argv, dirfd, flags) = exec_register_arguments(&registers, test_pid()).unwrap();
+            let (path, argv, dirfd, flags) =
+                exec_register_arguments(&registers, test_pid()).unwrap();
             assert_eq!((path, argv, dirfd, flags), (0x1111, 0x2222, -1, 0));
         }
 
@@ -1069,8 +1094,12 @@ mod linux {
             registers.rsi = 0x1111;
             registers.rdx = 0x2222;
             registers.r10 = EXECVEAT_AT_EMPTY_PATH;
-            let (path, argv, dirfd, flags) = exec_register_arguments(&registers, test_pid()).unwrap();
-            assert_eq!((path, argv, dirfd, flags), (0x1111, 0x2222, -100, EXECVEAT_AT_EMPTY_PATH));
+            let (path, argv, dirfd, flags) =
+                exec_register_arguments(&registers, test_pid()).unwrap();
+            assert_eq!(
+                (path, argv, dirfd, flags),
+                (0x1111, 0x2222, -100, EXECVEAT_AT_EMPTY_PATH)
+            );
         }
 
         #[test]
@@ -1097,18 +1126,21 @@ mod linux {
             put_bytes(&mut memory, 0x2000, &[b'a', 0xff, 0]);
             assert!(read_argv_with(test_pid(), 0x1000, |address, out| {
                 read_fake_memory(&memory, address, out)
-            }).is_err());
+            })
+            .is_err());
 
             let truncated = HashMap::<u64, u8>::from([(0x1000, 1u8)]);
             assert!(read_argv_with(test_pid(), 0x1000, |address, out| {
                 read_fake_memory(&truncated, address, out)
-            }).is_err());
+            })
+            .is_err());
 
             let mut empty = HashMap::<u64, u8>::new();
             put_bytes(&mut empty, u64::MAX - 127, &vec![1u8; 256]);
             assert!(read_argv_with(test_pid(), u64::MAX - 127, |address, out| {
                 read_fake_memory(&empty, address, out)
-            }).is_err());
+            })
+            .is_err());
         }
 
         #[test]
@@ -1119,7 +1151,8 @@ mod linux {
             put_bytes(&mut memory, 0x2000, b"x\0");
             assert!(read_argv_with(test_pid(), 0x1000, |address, out| {
                 read_fake_memory(&memory, address, out)
-            }).is_err());
+            })
+            .is_err());
         }
 
         fn pointer_table(values: &[u64]) -> Vec<u8> {

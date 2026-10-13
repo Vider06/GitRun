@@ -5,7 +5,9 @@
 //! stronger boundary underneath it: the Actions runner process and every
 //! descendant are ptrace-traced, and a seccomp filter turns every execve
 //! and execveat into a synchronous supervisor stop before the kernel starts
-//! the new program.
+//! the new program. All threads/tracees are quiesced while the supervisor
+//! reads path/argv and until the kernel has consumed them. Non-UTF-8 paths or
+//! argv are rejected rather than lossy-normalized before policy evaluation.
 //!
 //! This closes two important gaps in the old design:
 //! - a job cannot bypass the shell agent simply by calling execve from
@@ -59,16 +61,18 @@ pub fn run(_events_path: &Path, _policy: &CommandPolicy) -> Result<i32, Supervis
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod linux {
     use super::*;
-    use std::collections::HashSet;
+    use std::collections::{HashSet, VecDeque};
+    use std::os::fd::RawFd;
 
     const RUNNER_USER: &str = "runner";
     const RUNNER_SCRIPT: &str = "/home/runner/actions-runner/run.sh";
 
-    const PTRACE_TRACEME: libc::c_uint = 0;
     const PTRACE_CONT: libc::c_uint = 7;
     const PTRACE_GETREGS: libc::c_uint = 12;
     const PTRACE_SETREGS: libc::c_uint = 13;
-    const PTRACE_SETOPTIONS: libc::c_uint = 0x4200;
+    const PTRACE_SYSCALL: libc::c_uint = 24;
+    const PTRACE_SEIZE: libc::c_uint = 0x4206;
+    const PTRACE_INTERRUPT: libc::c_uint = 0x4207;
     const PTRACE_GETEVENTMSG: libc::c_uint = 0x4201;
 
     const PTRACE_O_TRACEFORK: libc::c_ulong = 0x0000_0002;
@@ -76,12 +80,16 @@ mod linux {
     const PTRACE_O_TRACECLONE: libc::c_ulong = 0x0000_0008;
     const PTRACE_O_TRACEEXEC: libc::c_ulong = 0x0000_0010;
     const PTRACE_O_TRACESECCOMP: libc::c_ulong = 0x0000_0080;
+    const PTRACE_O_TRACESYSGOOD: libc::c_ulong = 0x0000_0001;
     const PTRACE_O_EXITKILL: libc::c_ulong = 0x0010_0000;
 
     const PTRACE_EVENT_FORK: libc::c_ulong = 1;
     const PTRACE_EVENT_VFORK: libc::c_ulong = 2;
     const PTRACE_EVENT_CLONE: libc::c_ulong = 3;
+    const PTRACE_EVENT_EXEC: libc::c_ulong = 4;
     const PTRACE_EVENT_SECCOMP: libc::c_ulong = 7;
+    const PTRACE_EVENT_STOP: libc::c_ulong = 128;
+    const SYSCALL_STOP_SIGNAL: i32 = libc::SIGTRAP | 0x80;
 
     const SECCOMP_MODE_FILTER: libc::c_ulong = 2;
     const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
@@ -121,8 +129,23 @@ mod linux {
         signal_hook::flag::register(signal_hook::consts::SIGINT, stopping.clone())
             .map_err(|error| SupervisorError::Syscall("register SIGINT", error))?;
 
+        // The child blocks on this pipe until it has been seized. That avoids
+        // the TRACEME/SIGSTOP bootstrap and makes PTRACE_INTERRUPT available
+        // for every descendant and thread we need to freeze for exec checks.
+        let mut gate = [-1; 2];
+        if unsafe { libc::pipe2(gate.as_mut_ptr(), libc::O_CLOEXEC) } == -1 {
+            return Err(SupervisorError::Syscall(
+                "create ptrace bootstrap pipe",
+                std::io::Error::last_os_error(),
+            ));
+        }
+
         let pid = unsafe { libc::fork() };
         if pid < 0 {
+            unsafe {
+                libc::close(gate[0]);
+                libc::close(gate[1]);
+            }
             return Err(SupervisorError::Syscall(
                 "fork",
                 std::io::Error::last_os_error(),
@@ -130,9 +153,49 @@ mod linux {
         }
 
         if pid == 0 {
-            child_main(&runner);
+            unsafe { libc::close(gate[1]) };
+            child_main(&runner, gate[0]);
         }
 
+        unsafe { libc::close(gate[0]) };
+        let options = ptrace_options();
+        if unsafe { libc::ptrace(PTRACE_SEIZE, pid, 0, options) } == -1 {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::close(gate[1]);
+            }
+            return Err(SupervisorError::Syscall("PTRACE_SEIZE root tracee", error));
+        }
+        if unsafe { libc::ptrace(PTRACE_INTERRUPT, pid, 0, 0) } == -1 {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::close(gate[1]);
+            }
+            return Err(SupervisorError::Syscall("PTRACE_INTERRUPT root tracee", error));
+        }
+        let wait_result = wait_for_initial_stop(pid)?;
+        if !is_stopped(wait_result) {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::close(gate[1]);
+            }
+            return Err(SupervisorError::Ptrace("root tracee did not stop after seize"));
+        }
+
+        let ready = [1u8];
+        let written = unsafe { libc::write(gate[1], ready.as_ptr().cast(), ready.len()) };
+        unsafe { libc::close(gate[1]) };
+        if written != ready.len() as isize {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            return Err(SupervisorError::Syscall(
+                "release ptrace bootstrap pipe",
+                std::io::Error::last_os_error(),
+            ));
+        }
+
+        continue_tracee(pid)?;
         supervise_parent(pid, policy, events_path, stopping)
     }
 
@@ -158,29 +221,28 @@ mod linux {
 
     /// Child-side bootstrap. Any failure uses _exit so the child does not
     /// run parent-side destructors after fork.
-    fn child_main(runner: &RunnerIdentity) -> ! {
+    fn child_main(runner: &RunnerIdentity, gate_read: RawFd) -> ! {
         unsafe {
             if libc::setpgid(0, 0) != 0 {
                 libc::_exit(125);
             }
-            // Protect against the tiny pre-PTRACE_O_EXITKILL window if the
-            // PID-1 supervisor dies before it can configure ptrace options.
+            // Protect against the tiny pre-PTRACE_EXITKILL window if the
+            // PID-1 supervisor dies before ptrace options are installed.
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) != 0 {
                 libc::_exit(125);
             }
 
-            // TRACEME must happen while the child still has the container's
-            // root capability set; the runner uid deliberately has no
-            // CAP_SYS_PTRACE.
-            if libc::ptrace(PTRACE_TRACEME, 0, 0, 0) == -1 {
-                libc::_exit(125);
-            }
-            if libc::raise(libc::SIGSTOP) != 0 {
+            // Do not perform any runner bootstrap until the parent has seized
+            // and stopped us. PTRACE_SEIZE options then cover the process tree.
+            let mut ready = 0u8;
+            let read_result = libc::read(gate_read, (&mut ready as *mut u8).cast(), 1);
+            libc::close(gate_read);
+            if read_result != 1 || ready != 1 {
                 libc::_exit(125);
             }
 
-            // The parent sets ptrace options before resuming us. We can now
-            // drop identity permanently.
+            // The parent has installed PTRACE_O_EXITKILL and resumed us. We can
+            // now drop identity permanently.
             if libc::initgroups(runner.name.as_ptr(), runner.gid) != 0
                 || libc::setresgid(runner.gid, runner.gid, runner.gid) != 0
                 || libc::setresuid(runner.uid, runner.uid, runner.uid) != 0
@@ -280,28 +342,9 @@ mod linux {
         events_path: &Path,
         stopping: Arc<AtomicBool>,
     ) -> Result<i32, SupervisorError> {
-        let wait_result = wait_for_initial_stop(root_pid)?;
-        if !is_stopped(wait_result) {
-            return Err(SupervisorError::Ptrace(
-                "root tracee did not stop for setup",
-            ));
-        }
-
-        let options = PTRACE_O_TRACEFORK
-            | PTRACE_O_TRACEVFORK
-            | PTRACE_O_TRACECLONE
-            | PTRACE_O_TRACEEXEC
-            | PTRACE_O_TRACESECCOMP
-            | PTRACE_O_EXITKILL;
-
-        if ptrace_setoptions(root_pid, options) == -1 {
-            kill_process_group(root_pid);
-            return Err(SupervisorError::Ptrace("PTRACE_SETOPTIONS"));
-        }
-        continue_tracee(root_pid)?;
-
         let mut tracees = HashSet::from([root_pid]);
         let mut root_exit: Option<i32> = None;
+        let mut deferred_exits = VecDeque::<(libc::pid_t, i32)>::new();
 
         loop {
             if stopping.load(Ordering::Relaxed) {
@@ -309,18 +352,23 @@ mod linux {
                 kill_tracees(&tracees);
             }
 
-            let mut status = 0;
-            let waited = unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED) };
-            if waited == -1 {
-                let error = std::io::Error::last_os_error();
-                if error.raw_os_error() == Some(libc::EINTR) {
-                    continue;
+            let (pid, status) = if let Some((pid, status)) = deferred_exits.pop_front() {
+                (pid, status)
+            } else {
+                let mut status = 0;
+                let waited = unsafe {
+                    libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL)
+                };
+                if waited == -1 {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() == Some(libc::EINTR) {
+                        continue;
+                    }
+                    kill_process_group(root_pid);
+                    return Err(SupervisorError::Syscall("waitpid", error));
                 }
-                kill_process_group(root_pid);
-                return Err(SupervisorError::Syscall("waitpid", error));
-            }
-
-            let pid = waited;
+                (waited, status)
+            };
 
             if is_exited(status) {
                 tracees.remove(&pid);
@@ -356,9 +404,43 @@ mod linux {
             let event = (status >> 16) & 0xffff;
 
             if event == PTRACE_EVENT_SECCOMP as i32 {
+                // Snapshot all tracees before reading path/argv, then keep them
+                // stopped until the kernel has consumed these pointers. The
+                // syscall-exit stop handles failed execve; PTRACE_EVENT_EXEC
+                // handles successful execve.
+                let mut frozen =
+                    freeze_tracees(pid, &mut tracees, &mut deferred_exits, events_path)?;
                 match inspect_exec(pid, policy, events_path)? {
-                    ExecDecision::Allow => continue_tracee(pid)?,
-                    ExecDecision::Deny => deny_and_continue(pid)?,
+                    ExecDecision::Deny => {
+                        deny_exec_syscall(pid)?;
+                        thaw_tracees(&mut frozen, &mut tracees)?;
+                        continue_tracee(pid)?;
+                    }
+                    ExecDecision::Allow => {
+                        match complete_inspected_exec(
+                            pid,
+                            &mut tracees,
+                            &mut frozen,
+                            &mut deferred_exits,
+                            events_path,
+                        )? {
+                            ExecCompletion::SyscallReturned(returned_pid) => {
+                                thaw_tracees(&mut frozen, &mut tracees)?;
+                                resume_if_alive(returned_pid, 0)?;
+                            }
+                            ExecCompletion::Executed { pid: exec_pid, former_tid } => {
+                                if former_tid != exec_pid {
+                                    tracees.remove(&former_tid);
+                                }
+                                tracees.insert(exec_pid);
+                                thaw_tracees(&mut frozen, &mut tracees)?;
+                                resume_if_alive(exec_pid, 0)?;
+                            }
+                            ExecCompletion::TraceeExited => {
+                                thaw_tracees(&mut frozen, &mut tracees)?;
+                            }
+                        }
+                    }
                 }
                 continue;
             }
@@ -369,7 +451,8 @@ mod linux {
             ) {
                 let new_pid = ptrace_event_pid(pid)?;
                 tracees.insert(new_pid);
-                continue_tracee(new_pid)?;
+                // The child has its own initial PTRACE_EVENT_STOP. We only
+                // resume it after that stop is collected and registered.
                 continue_tracee(pid)?;
                 continue;
             }
@@ -396,8 +479,256 @@ mod linux {
         Ok(status)
     }
 
-    fn ptrace_setoptions(pid: libc::pid_t, options: libc::c_ulong) -> libc::c_long {
-        unsafe { libc::ptrace(PTRACE_SETOPTIONS, pid, 0, options) }
+    fn ptrace_options() -> libc::c_ulong {
+        PTRACE_O_TRACEFORK
+            | PTRACE_O_TRACEVFORK
+            | PTRACE_O_TRACECLONE
+            | PTRACE_O_TRACEEXEC
+            | PTRACE_O_TRACESECCOMP
+            | PTRACE_O_TRACESYSGOOD
+            | PTRACE_O_EXITKILL
+    }
+
+    #[derive(Default)]
+    struct FrozenTracees {
+        // Tracees stopped by PTRACE_INTERRUPT, plus event stops we consumed
+        // while freezing. Each entry stores the signal to deliver on resume.
+        resume: Vec<(libc::pid_t, libc::c_int)>,
+    }
+
+    enum ExecCompletion {
+        SyscallReturned(libc::pid_t),
+        Executed { pid: libc::pid_t, former_tid: libc::pid_t },
+        TraceeExited,
+    }
+
+    fn freeze_tracees(
+        target: libc::pid_t,
+        tracees: &mut HashSet<libc::pid_t>,
+        deferred_exits: &mut VecDeque<(libc::pid_t, i32)>,
+        events_path: &Path,
+    ) -> Result<FrozenTracees, SupervisorError> {
+        let mut frozen = FrozenTracees::default();
+
+        loop {
+            let covered: HashSet<_> = frozen.resume.iter().map(|(pid, _)| *pid).collect();
+            let pending: Vec<_> = tracees
+                .iter()
+                .copied()
+                .filter(|pid| *pid != target && !covered.contains(pid))
+                .collect();
+            if pending.is_empty() {
+                return Ok(frozen);
+            }
+
+            for pid in pending {
+                let result = unsafe { libc::ptrace(PTRACE_INTERRUPT, pid, 0, 0) };
+                if result == -1 {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() == Some(libc::ESRCH) {
+                        // The tracee has already exited. Collect its wait status
+                        // if available; it can no longer mutate the target's memory.
+                        let mut status = 0;
+                        let waited = unsafe {
+                            libc::waitpid(pid, &mut status, libc::__WALL | libc::WNOHANG)
+                        };
+                        if waited == pid {
+                            tracees.remove(&pid);
+                            deferred_exits.push_back((pid, status));
+                        } else if waited == 0 {
+                            return Err(SupervisorError::Ptrace(
+                                "tracee vanished while freezing exec arguments",
+                            ));
+                        }
+                        continue;
+                    }
+                    return Err(SupervisorError::Syscall("PTRACE_INTERRUPT", error));
+                }
+            }
+
+            let mut status = 0;
+            let waited = unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL) };
+            if waited == -1 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                return Err(SupervisorError::Syscall("waitpid while freezing tracees", error));
+            }
+            let pid = waited;
+
+            if is_exited(status) || is_signaled(status) {
+                tracees.remove(&pid);
+                deferred_exits.push_back((pid, status));
+                continue;
+            }
+            if !is_stopped(status) {
+                continue;
+            }
+            if pid == target {
+                return Err(SupervisorError::Ptrace(
+                    "exec tracee stopped unexpectedly while freezing peers",
+                ));
+            }
+
+            tracees.insert(pid);
+            let signal = status & 0x7f;
+            let event = (status >> 16) & 0xffff;
+            if event == PTRACE_EVENT_SECCOMP as i32 {
+                // Two threads can reach execve's seccomp stop concurrently.
+                // Only the first inspected syscall is eligible to run while
+                // the rest are frozen; deny the second without reading mutable
+                // arguments so it cannot race the active authorization.
+                deny_exec_syscall(pid)?;
+                emit_inspection_failure(
+                    events_path,
+                    pid,
+                    "concurrent exec denied while another exec is being inspected",
+                );
+                frozen.resume.push((pid, 0));
+                continue;
+            }
+
+            if matches!(
+                event as libc::c_ulong,
+                PTRACE_EVENT_FORK | PTRACE_EVENT_VFORK | PTRACE_EVENT_CLONE
+            ) {
+                let new_pid = ptrace_event_pid(pid)?;
+                tracees.insert(new_pid);
+            }
+
+            // PTRACE_EVENT_STOP/SIGTRAP is the expected interrupt stop.
+            // Other stops may be signal deliveries or ptrace events that must
+            // be resumed after the protected exec has completed.
+            let deliver = if event == 0 && signal != libc::SIGSTOP && signal != libc::SIGTRAP {
+                signal
+            } else {
+                0
+            };
+            frozen.resume.push((pid, deliver));
+        }
+    }
+
+    fn thaw_tracees(
+        frozen: &mut FrozenTracees,
+        tracees: &mut HashSet<libc::pid_t>,
+    ) -> Result<(), SupervisorError> {
+        for (pid, signal) in frozen.resume.drain(..) {
+            if !tracees.contains(&pid) {
+                continue;
+            }
+            resume_if_alive(pid, signal)?;
+        }
+        Ok(())
+    }
+
+    fn complete_inspected_exec(
+        pid: libc::pid_t,
+        tracees: &mut HashSet<libc::pid_t>,
+        frozen: &mut FrozenTracees,
+        deferred_exits: &mut VecDeque<(libc::pid_t, i32)>,
+        events_path: &Path,
+    ) -> Result<ExecCompletion, SupervisorError> {
+        let result = unsafe { libc::ptrace(PTRACE_SYSCALL, pid, 0, 0) };
+        if result == -1 {
+            return Err(SupervisorError::Ptrace("PTRACE_SYSCALL after exec inspection"));
+        }
+
+        loop {
+            let mut status = 0;
+            let waited = unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL) };
+            if waited == -1 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                return Err(SupervisorError::Syscall("waitpid for inspected exec", error));
+            }
+
+            if is_exited(status) || is_signaled(status) {
+                tracees.remove(&waited);
+                if waited == pid {
+                    deferred_exits.push_back((waited, status));
+                    return Ok(ExecCompletion::TraceeExited);
+                }
+                deferred_exits.push_back((waited, status));
+                continue;
+            }
+            if !is_stopped(status) {
+                continue;
+            }
+
+            let signal = status & 0x7f;
+            let event = (status >> 16) & 0xffff;
+            if event == PTRACE_EVENT_EXEC as i32 {
+                let former_tid = ptrace_event_pid(waited)?;
+                return Ok(ExecCompletion::Executed {
+                    pid: waited,
+                    former_tid,
+                });
+            }
+            if waited == pid && event == 0 && signal == SYSCALL_STOP_SIGNAL {
+                return Ok(ExecCompletion::SyscallReturned(waited));
+            }
+
+            if waited != pid {
+                // A tracee that was stopped during the freeze should remain
+                // held if an external signal or exit event arrives meanwhile.
+                if event == PTRACE_EVENT_SECCOMP as i32 {
+                    deny_exec_syscall(waited)?;
+                    emit_inspection_failure(
+                        events_path,
+                        waited,
+                        "concurrent exec denied while another exec is being inspected",
+                    );
+                } else if matches!(
+                    event as libc::c_ulong,
+                    PTRACE_EVENT_FORK | PTRACE_EVENT_VFORK | PTRACE_EVENT_CLONE
+                ) {
+                    let child = ptrace_event_pid(waited)?;
+                    tracees.insert(child);
+                }
+                let deliver = if event == 0
+                    && signal != libc::SIGSTOP
+                    && signal != libc::SIGTRAP
+                    && signal != SYSCALL_STOP_SIGNAL
+                {
+                    signal
+                } else {
+                    0
+                };
+                frozen.resume.push((waited, deliver));
+                continue;
+            }
+
+            // A signal can interrupt the exec attempt. Keep every peer frozen
+            // and trace the current thread until it either succeeds or returns.
+            let deliver = if event == 0
+                && signal != libc::SIGSTOP
+                && signal != libc::SIGTRAP
+                && signal != SYSCALL_STOP_SIGNAL
+            {
+                signal
+            } else {
+                0
+            };
+            let resumed = unsafe { libc::ptrace(PTRACE_SYSCALL, pid, 0, deliver) };
+            if resumed == -1 {
+                return Err(SupervisorError::Ptrace("PTRACE_SYSCALL while awaiting exec result"));
+            }
+        }
+    }
+
+    fn resume_if_alive(pid: libc::pid_t, signal: libc::c_int) -> Result<(), SupervisorError> {
+        let result = unsafe { libc::ptrace(PTRACE_CONT, pid, 0, signal) };
+        if result == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
+            }
+            return Err(SupervisorError::Syscall("PTRACE_CONT frozen tracee", error));
+        }
+        Ok(())
     }
 
     fn continue_tracee(pid: libc::pid_t) -> Result<(), SupervisorError> {
@@ -431,6 +762,19 @@ mod linux {
         Deny,
     }
 
+    fn exec_register_arguments(
+        registers: &libc::user_regs_struct,
+        pid: libc::pid_t,
+    ) -> Result<(u64, u64, i64, u64), SupervisorError> {
+        if registers.orig_rax == libc::SYS_execve as u64 {
+            Ok((registers.rdi, registers.rsi, -1i64, 0u64))
+        } else if registers.orig_rax == libc::SYS_execveat as u64 {
+            Ok((registers.rsi, registers.rdx, registers.rdi as i64, registers.r10))
+        } else {
+            Err(SupervisorError::InspectFailed(pid))
+        }
+    }
+
     fn inspect_exec(
         pid: libc::pid_t,
         policy: &CommandPolicy,
@@ -443,18 +787,7 @@ mod linux {
         }
         let registers = unsafe { registers.assume_init() };
 
-        let (path_ptr, argv_ptr, dirfd, flags) = if registers.orig_rax == libc::SYS_execve as u64 {
-            (registers.rdi, registers.rsi, -1i64, 0u64)
-        } else if registers.orig_rax == libc::SYS_execveat as u64 {
-            (
-                registers.rsi,
-                registers.rdx,
-                registers.rdi as i64,
-                registers.r10,
-            )
-        } else {
-            return Err(SupervisorError::InspectFailed(pid));
-        };
+        let (path_ptr, argv_ptr, dirfd, flags) = exec_register_arguments(&registers, pid)?;
 
         let mut path = if path_ptr == 0 {
             "<execveat-empty>".to_owned()
@@ -514,7 +847,7 @@ mod linux {
         }
     }
 
-    fn deny_and_continue(pid: libc::pid_t) -> Result<(), SupervisorError> {
+    fn deny_exec_syscall(pid: libc::pid_t) -> Result<(), SupervisorError> {
         let mut registers = std::mem::MaybeUninit::<libc::user_regs_struct>::uninit();
         let result = unsafe { libc::ptrace(PTRACE_GETREGS, pid, 0, registers.as_mut_ptr()) };
         if result == -1 {
@@ -539,7 +872,7 @@ mod linux {
         if result == -1 {
             return Err(SupervisorError::Ptrace("PTRACE_SETREGS"));
         }
-        continue_tracee(pid)
+        Ok(())
     }
 
     fn resolve_execveat_empty_path(pid: libc::pid_t, dirfd: i64) -> Option<String> {
@@ -549,56 +882,94 @@ mod linux {
         let path = format!("/proc/{pid}/fd/{dirfd}");
         std::fs::read_link(path)
             .ok()
-            .map(|value| value.to_string_lossy().into_owned())
+            .and_then(|value| value.into_os_string().into_string().ok())
     }
 
     fn read_c_string(pid: libc::pid_t, address: u64) -> Result<String, SupervisorError> {
+        read_c_string_with(pid, address, |remote, buffer| {
+            read_process_memory(pid, remote, buffer)
+        })
+    }
+
+    fn read_c_string_with<F>(
+        pid: libc::pid_t,
+        address: u64,
+        mut read_memory: F,
+    ) -> Result<String, SupervisorError>
+    where
+        F: FnMut(u64, &mut [u8]) -> Result<usize, SupervisorError>,
+    {
         let mut buffer = vec![0u8; MAX_STRING];
-        let bytes = read_process_memory(pid, address, &mut buffer)?;
+        let bytes = read_memory(address, &mut buffer)?;
+        if bytes > buffer.len() {
+            return Err(SupervisorError::InspectFailed(pid));
+        }
         let Some(end) = buffer[..bytes].iter().position(|byte| *byte == 0) else {
             return Err(SupervisorError::InspectFailed(pid));
         };
-        Ok(String::from_utf8_lossy(&buffer[..end]).into_owned())
+        let value = std::str::from_utf8(&buffer[..end])
+            .map_err(|_| SupervisorError::InspectFailed(pid))?;
+        Ok(value.to_owned())
     }
 
     fn read_argv(pid: libc::pid_t, address: u64) -> Result<Vec<String>, SupervisorError> {
+        read_argv_with(pid, address, |remote, buffer| {
+            read_process_memory(pid, remote, buffer)
+        })
+    }
+
+    fn read_argv_with<F>(
+        pid: libc::pid_t,
+        address: u64,
+        mut read_memory: F,
+    ) -> Result<Vec<String>, SupervisorError>
+    where
+        F: FnMut(u64, &mut [u8]) -> Result<usize, SupervisorError>,
+    {
         if address == 0 {
             return Ok(Vec::new());
         }
 
         const CHUNK: usize = 32;
         const POINTER_SIZE: u64 = std::mem::size_of::<u64>() as u64;
+        const CHUNK_BYTES: usize = CHUNK * std::mem::size_of::<u64>();
         let mut args = Vec::new();
         let mut total_bytes = 0usize;
 
         for chunk_index in 0..(MAX_ARGC / CHUNK) {
-            let mut pointers = vec![0u64; CHUNK];
-            let remote_address = address + (chunk_index * CHUNK) as u64 * POINTER_SIZE;
-            let bytes = read_process_memory(pid, remote_address, unsafe {
-                std::slice::from_raw_parts_mut(
-                    pointers.as_mut_ptr() as *mut u8,
-                    pointers.len() * std::mem::size_of::<u64>(),
-                )
-            })?;
+            let offset = (chunk_index as u64)
+                .checked_mul(CHUNK as u64 * POINTER_SIZE)
+                .ok_or(SupervisorError::InspectFailed(pid))?;
+            let remote_address = address
+                .checked_add(offset)
+                .ok_or(SupervisorError::InspectFailed(pid))?;
+            let mut raw_pointers = [0u8; CHUNK_BYTES];
+            let bytes = read_memory(remote_address, &mut raw_pointers)?;
 
-            if bytes == 0 || bytes % std::mem::size_of::<u64>() != 0 {
+            if bytes == 0 || bytes > raw_pointers.len() || bytes % POINTER_SIZE as usize != 0 {
                 return Err(SupervisorError::InspectFailed(pid));
             }
 
-            let pointer_count = bytes / std::mem::size_of::<u64>();
-            for &pointer in &pointers[..pointer_count] {
+            for raw_pointer in raw_pointers[..bytes].chunks_exact(POINTER_SIZE as usize) {
+                let pointer = u64::from_ne_bytes(
+                    raw_pointer
+                        .try_into()
+                        .map_err(|_| SupervisorError::InspectFailed(pid))?,
+                );
                 if pointer == 0 {
                     return Ok(args);
                 }
-                let value = read_c_string(pid, pointer)?;
-                total_bytes = total_bytes.saturating_add(value.len());
+                let value = read_c_string_with(pid, pointer, &mut read_memory)?;
+                total_bytes = total_bytes
+                    .checked_add(value.len())
+                    .ok_or(SupervisorError::InspectFailed(pid))?;
                 if total_bytes > 64 * 1024 {
                     return Err(SupervisorError::InspectFailed(pid));
                 }
                 args.push(value);
             }
 
-            if bytes < CHUNK * std::mem::size_of::<u64>() {
+            if bytes < CHUNK_BYTES {
                 return Err(SupervisorError::InspectFailed(pid));
             }
         }
@@ -664,6 +1035,127 @@ mod linux {
             format!("blocked exec inspection for pid {pid}: {detail}; refusing the exec"),
         );
         let _ = crate::events::emit(events_path, &event);
+    }
+
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::collections::HashMap;
+
+        fn test_pid() -> libc::pid_t {
+            123
+        }
+
+        fn regs(syscall: u64) -> libc::user_regs_struct {
+            let mut registers = unsafe { std::mem::zeroed::<libc::user_regs_struct>() };
+            registers.orig_rax = syscall;
+            registers
+        }
+
+        #[test]
+        fn execve_arguments_use_the_x86_64_register_contract() {
+            let mut registers = regs(libc::SYS_execve as u64);
+            registers.rdi = 0x1111;
+            registers.rsi = 0x2222;
+            let (path, argv, dirfd, flags) = exec_register_arguments(&registers, test_pid()).unwrap();
+            assert_eq!((path, argv, dirfd, flags), (0x1111, 0x2222, -1, 0));
+        }
+
+        #[test]
+        fn execveat_arguments_use_the_x86_64_register_contract() {
+            let mut registers = regs(libc::SYS_execveat as u64);
+            registers.rdi = (-100i64) as u64;
+            registers.rsi = 0x1111;
+            registers.rdx = 0x2222;
+            registers.r10 = EXECVEAT_AT_EMPTY_PATH;
+            let (path, argv, dirfd, flags) = exec_register_arguments(&registers, test_pid()).unwrap();
+            assert_eq!((path, argv, dirfd, flags), (0x1111, 0x2222, -100, EXECVEAT_AT_EMPTY_PATH));
+        }
+
+        #[test]
+        fn c_string_reader_rejects_non_utf8_and_missing_terminators() {
+            let invalid_utf8 = [0xff, 0x00];
+            let decoded = read_c_string_with(test_pid(), 0x10, |_, out| {
+                out[..invalid_utf8.len()].copy_from_slice(&invalid_utf8);
+                Ok(invalid_utf8.len())
+            });
+            assert!(decoded.is_err());
+
+            let no_nul = vec![b'a'; MAX_STRING];
+            let decoded = read_c_string_with(test_pid(), 0x10, |_, out| {
+                out[..no_nul.len()].copy_from_slice(&no_nul);
+                Ok(no_nul.len())
+            });
+            assert!(decoded.is_err());
+        }
+
+        #[test]
+        fn argv_reader_rejects_invalid_utf8_truncated_pointers_and_overflow() {
+            let mut memory = HashMap::<u64, u8>::new();
+            put_bytes(&mut memory, 0x1000, &pointer_table(&[0x2000, 0]));
+            put_bytes(&mut memory, 0x2000, &[b'a', 0xff, 0]);
+            assert!(read_argv_with(test_pid(), 0x1000, |address, out| {
+                read_fake_memory(&memory, address, out)
+            }).is_err());
+
+            let truncated = HashMap::<u64, u8>::from([(0x1000, 1u8)]);
+            assert!(read_argv_with(test_pid(), 0x1000, |address, out| {
+                read_fake_memory(&truncated, address, out)
+            }).is_err());
+
+            let mut empty = HashMap::<u64, u8>::new();
+            put_bytes(&mut empty, u64::MAX - 127, &vec![1u8; 256]);
+            assert!(read_argv_with(test_pid(), u64::MAX - 127, |address, out| {
+                read_fake_memory(&empty, address, out)
+            }).is_err());
+        }
+
+        #[test]
+        fn argv_reader_rejects_more_than_the_maximum_argument_count() {
+            let mut memory = HashMap::<u64, u8>::new();
+            let pointer_bytes = pointer_table(&vec![0x2000; MAX_ARGC]);
+            put_bytes(&mut memory, 0x1000, &pointer_bytes);
+            put_bytes(&mut memory, 0x2000, b"x\0");
+            assert!(read_argv_with(test_pid(), 0x1000, |address, out| {
+                read_fake_memory(&memory, address, out)
+            }).is_err());
+        }
+
+        fn pointer_table(values: &[u64]) -> Vec<u8> {
+            let mut bytes = Vec::with_capacity((values.len() + 1) * 8);
+            for value in values {
+                bytes.extend_from_slice(&value.to_ne_bytes());
+            }
+            bytes.extend_from_slice(&0u64.to_ne_bytes());
+            bytes
+        }
+
+        fn put_bytes(memory: &mut HashMap<u64, u8>, start: u64, bytes: &[u8]) {
+            for (offset, byte) in bytes.iter().copied().enumerate() {
+                memory.insert(start + offset as u64, byte);
+            }
+        }
+
+        fn read_fake_memory(
+            memory: &HashMap<u64, u8>,
+            address: u64,
+            out: &mut [u8],
+        ) -> Result<usize, SupervisorError> {
+            let mut count = 0;
+            for (offset, slot) in out.iter_mut().enumerate() {
+                let Some(value) = memory.get(&address.saturating_add(offset as u64)) else {
+                    break;
+                };
+                *slot = *value;
+                count += 1;
+            }
+            if count == 0 {
+                Err(SupervisorError::InspectFailed(test_pid()))
+            } else {
+                Ok(count)
+            }
+        }
     }
 
     fn is_stopped(status: i32) -> bool {

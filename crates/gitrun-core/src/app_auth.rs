@@ -34,6 +34,8 @@ pub enum AppAuthError {
     Clock(#[from] std::time::SystemTimeError),
     #[error("invalid GitHub installation token expiration timestamp: {0}")]
     InvalidTimestamp(String),
+    #[error("invalid GitHub App {0}: expected a positive decimal integer ID")]
+    InvalidIdentifier(&'static str),
 }
 
 pub type Result<T> = std::result::Result<T, AppAuthError>;
@@ -83,6 +85,8 @@ impl AppAuth {
         connect_timeout: Duration,
         request_timeout: Duration,
     ) -> Result<Self> {
+        let app_id = validate_github_id(app_id.into(), "ID")?;
+        let installation_id = validate_github_id(installation_id.into(), "installation ID")?;
         let encoding_key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())
             .map_err(AppAuthError::InvalidPrivateKey)?;
         let http = reqwest::blocking::Client::builder()
@@ -90,8 +94,8 @@ impl AppAuth {
             .timeout(request_timeout)
             .build()?;
         Ok(Self {
-            app_id: app_id.into(),
-            installation_id: installation_id.into(),
+            app_id,
+            installation_id,
             encoding_key,
             http,
             cached: Mutex::new(None),
@@ -179,14 +183,58 @@ impl AppAuth {
 /// "2026-09-23T12:34:56Z") without pulling in `chrono` for one field —
 /// same reasoning as the manual date math already used in
 /// `gitrun-scheduler/src/main.rs`'s GTUU scheduler.
+fn validate_github_id(value: String, field: &'static str) -> Result<String> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || !value.parse::<u64>().is_ok_and(|id| id > 0)
+    {
+        return Err(AppAuthError::InvalidIdentifier(field));
+    }
+    Ok(value)
+}
+
 fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
-    let raw = raw.strip_suffix('Z')?;
-    let (date, time) = raw.split_once('T')?;
-    let mut date_parts = date.split('-');
-    let year: i64 = date_parts.next()?.parse().ok()?;
-    let month: i64 = date_parts.next()?.parse().ok()?;
-    let day: i64 = date_parts.next()?.parse().ok()?;
-    if date_parts.next().is_some() || !(1..=12).contains(&month) {
+    let bytes = raw.as_bytes();
+    if bytes.len() < 20
+        || !raw.ends_with('Z')
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || !bytes[0..4].iter().all(u8::is_ascii_digit)
+        || !bytes[5..7].iter().all(u8::is_ascii_digit)
+        || !bytes[8..10].iter().all(u8::is_ascii_digit)
+        || !bytes[11..13].iter().all(u8::is_ascii_digit)
+        || !bytes[14..16].iter().all(u8::is_ascii_digit)
+        || !bytes[17..19].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    // RFC 3339 permits fractional seconds. GitHub's expiration timestamps
+    // normally use whole seconds, but accept a non-empty decimal fraction.
+    if bytes.len() > 20
+        && (bytes[19] != b'.'
+            || bytes[20..bytes.len() - 1].is_empty()
+            || !bytes[20..bytes.len() - 1]
+                .iter()
+                .all(u8::is_ascii_digit))
+    {
+        return None;
+    }
+
+    let year = raw[0..4].parse::<i64>().ok()?;
+    let month = raw[5..7].parse::<i64>().ok()?;
+    let day = raw[8..10].parse::<i64>().ok()?;
+    let hour = raw[11..13].parse::<i64>().ok()?;
+    let minute = raw[14..16].parse::<i64>().ok()?;
+    let second = raw[17..19].parse::<i64>().ok()?;
+
+    if !(1..=12).contains(&month)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second)
+    {
         return None;
     }
 
@@ -196,37 +244,46 @@ fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
         4 | 6 | 9 | 11 => 30,
         2 if leap => 29,
         2 => 28,
-        _ => unreachable!(),
+        _ => return None,
     };
     if !(1..=days_in_month).contains(&day) {
         return None;
     }
 
-    let mut time_parts = time.split(':');
-    let hour: i64 = time_parts.next()?.parse().ok()?;
-    let minute: i64 = time_parts.next()?.parse().ok()?;
-    let second: f64 = time_parts.next()?.parse().ok()?;
-    if time_parts.next().is_some()
-        || !(0..=23).contains(&hour)
-        || !(0..=59).contains(&minute)
-        || !second.is_finite()
-        || !(0.0..60.0).contains(&second)
-    {
-        return None;
+    // Days since epoch using checked arithmetic so malformed input can never
+    // overflow and panic the caller.
+    let y = if month <= 2 { year.checked_sub(1)? } else { year };
+    let adjusted_year = if y >= 0 { y } else { y.checked_sub(399)? };
+    let era = adjusted_year.checked_div(400)?;
+    let yoe = y.checked_sub(era.checked_mul(400)?)?;
+    let mp = if month > 2 { month.checked_sub(3)? } else { month.checked_add(9)? };
+    let doy = 153_i64
+        .checked_mul(mp)?
+        .checked_add(2)?
+        .checked_div(5)?
+        .checked_add(day)?
+        .checked_sub(1)?;
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe / 4)?
+        .checked_sub(yoe / 100)?
+        .checked_add(doy)?;
+    let days_since_epoch = era
+        .checked_mul(146097)?
+        .checked_add(doe)?
+        .checked_sub(719468)?;
+    let total_secs = days_since_epoch
+        .checked_mul(86400)?
+        .checked_add(hour.checked_mul(3600)?)?
+        .checked_add(minute.checked_mul(60)?)?
+        .checked_add(second)?;
+    let delta = Duration::from_secs(total_secs.unsigned_abs());
+
+    if total_secs >= 0 {
+        UNIX_EPOCH.checked_add(delta)
+    } else {
+        UNIX_EPOCH.checked_sub(delta)
     }
-
-    // Days-since-epoch from a civil date (inverse of the calculation already
-    // used in main.rs's chrono_like_now, same source algorithm).
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as u64;
-    let mp = if month > 2 { month - 3 } else { month + 9 } as u64;
-    let doy = (153 * mp + 2) / 5 + day as u64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days_since_epoch = era * 146097 + doe as i64 - 719468;
-
-    let total_secs = days_since_epoch * 86400 + hour * 3600 + minute * 60 + second as i64;
-    Some(UNIX_EPOCH + Duration::from_secs(total_secs.max(0) as u64))
 }
 
 #[cfg(test)]
@@ -237,6 +294,15 @@ mod tests {
     fn parses_well_formed_github_timestamp() {
         let parsed = parse_github_timestamp("2026-09-23T12:00:00Z");
         assert!(parsed.is_some());
+    }
+
+    #[test]
+    fn timestamp_parser_rejects_overflow_and_noncanonical_fields() {
+        assert!(parse_github_timestamp("999999999999-09-23T12:00:00Z").is_none());
+        assert!(parse_github_timestamp("2026-9-23T12:00:00Z").is_none());
+        assert!(parse_github_timestamp("2026-09-23T2:00:00Z").is_none());
+        assert!(parse_github_timestamp("2026-09-23T12:00:00.Z").is_none());
+        assert!(parse_github_timestamp("2026-09-23T12:00:00.123Z").is_some());
     }
 
     #[test]
@@ -255,6 +321,23 @@ mod tests {
         let earlier = parse_github_timestamp("2026-01-01T00:00:00Z").unwrap();
         let later = parse_github_timestamp("2026-06-15T08:30:00Z").unwrap();
         assert!(later > earlier);
+    }
+
+    #[test]
+    fn app_auth_rejects_invalid_numeric_identifiers_before_key_parsing() {
+        let timeout = Duration::from_secs(1);
+        assert!(matches!(
+            AppAuth::new("abc", "67890", "not a real PEM key", timeout, timeout),
+            Err(AppAuthError::InvalidIdentifier("ID"))
+        ));
+        assert!(matches!(
+            AppAuth::new("12345", "12/../../evil", "not a real PEM key", timeout, timeout),
+            Err(AppAuthError::InvalidIdentifier("installation ID"))
+        ));
+        assert!(matches!(
+            AppAuth::new("0", "67890", "not a real PEM key", timeout, timeout),
+            Err(AppAuthError::InvalidIdentifier("ID"))
+        ));
     }
 
     #[test]

@@ -1581,7 +1581,6 @@ mod linux {
             }
         }
     }
-
 }
 
 pub fn run_supervisor(events_path: &Path, policy: &CommandPolicy) -> Result<i32, SupervisorError> {

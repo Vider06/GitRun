@@ -2118,13 +2118,14 @@ fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> 
         .collect())
 }
 
-#[tauri::command]
-fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
-    let config = load_config()?;
+fn load_dock_requirements_for_repo(
+    config: &Config,
+    repo: &str,
+) -> Result<Vec<DockRequirementSummary>, String> {
     if !config
         .repositories
         .iter()
-        .any(|configured| configured == &repo)
+        .any(|configured| configured == repo)
     {
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
@@ -2132,7 +2133,7 @@ fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, St
         .join("workflow-dock-requirements")
         .join(format!(
             "{}.json",
-            gitrun_scheduler::docker::sanitize(&repo, '_')
+            gitrun_scheduler::docker::sanitize(repo, '_')
         ));
     let raw = match std::fs::read_to_string(&path) {
         Ok(raw) => raw,
@@ -2153,6 +2154,56 @@ fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, St
                 .collect()
         })
         .map_err(|e| format!("decode Dock requirements: {e}"))
+}
+
+#[tauri::command]
+fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
+    let config = load_config()?;
+    load_dock_requirements_for_repo(&config, &repo)
+}
+
+#[derive(Debug, Serialize)]
+struct RepoDashboardBootstrap {
+    detail: RepoDetail,
+    requirements: Vec<DockRequirementSummary>,
+    settings: GitRunSettings,
+    config: Config,
+}
+
+/// Loads the repository's local dashboard state from one consistent config
+/// snapshot. The frontend previously issued four IPC calls that independently
+/// reloaded config and settings before it could render the policy form.
+#[tauri::command]
+fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, String> {
+    let config = load_config()?;
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repo)
+    {
+        return Err(format!("repository is not configured in GitRun: {repo}"));
+    }
+
+    let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
+    let logic_rules =
+        gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
+    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
+        .map_err(|e| e.to_string())?;
+    let docker_policy = settings.effective_for_repository(&repo).docker;
+    let detail = RepoDetail {
+        vault_groups: config.vault_groups_for_repo(&repo),
+        repo: repo.clone(),
+        logic_rules,
+        docker_policy,
+    };
+    let requirements = load_dock_requirements_for_repo(&config, &repo)?;
+
+    Ok(RepoDashboardBootstrap {
+        detail,
+        requirements,
+        settings,
+        config,
+    })
 }
 
 // ---------------------------------------------------------------------
@@ -2787,6 +2838,7 @@ pub fn run() {
             get_repository_activity,
             get_host_resource_snapshot,
             get_repo_detail,
+            get_repo_dashboard_bootstrap,
             list_vault_secrets,
             set_vault_secret,
             delete_vault_secret,

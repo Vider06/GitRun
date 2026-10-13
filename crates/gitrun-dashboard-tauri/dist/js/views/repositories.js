@@ -25,12 +25,8 @@ export async function renderRepository(repo, navigate) {
     invoke("get_repository_activity", {forceRefresh}).catch((error) => ({...unavailableActivitySnapshot,warnings:[String(error)]}))
   ]);
   try {
-    [detail, requirements, settings, config] = await Promise.all([
-      invoke("get_repo_detail", {repo}),
-      invoke("get_dock_requirements", {repo}),
-      invoke("get_gitrun_settings"),
-      invoke("get_config")
-    ]);
+    const bootstrap = await invoke("get_repo_dashboard_bootstrap", {repo});
+    ({detail, requirements, settings, config} = bootstrap);
   } catch (error) {
     if (generation !== window.__gitrunNavigationGeneration) return;
     content.innerHTML = errorView(error);

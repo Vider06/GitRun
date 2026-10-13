@@ -145,6 +145,7 @@ impl GitRunSettings {
         let raw = serde_json::to_vec_pretty(self).map_err(SettingsError::Encode)?;
         let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
 
+        let mut temp_created = false;
         let write_result = (|| -> Result<(), SettingsError> {
             let mut options = fs::OpenOptions::new();
             options.write(true).create_new(true);
@@ -154,6 +155,7 @@ impl GitRunSettings {
                 options.mode(0o600);
             }
             let mut file = options.open(&temp)?;
+            temp_created = true;
             file.write_all(&raw)?;
             file.sync_all()?;
             drop(file);
@@ -168,10 +170,7 @@ impl GitRunSettings {
             Ok(())
         })();
 
-        if write_result.is_err() && temp.exists() {
-            // Only remove the temporary file if this call created it. If
-            // create_new failed because another file already existed, leave
-            // that file untouched.
+        if write_result.is_err() && temp_created {
             let _ = fs::remove_file(&temp);
         }
         write_result

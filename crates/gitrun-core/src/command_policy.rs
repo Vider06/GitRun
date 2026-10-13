@@ -50,7 +50,7 @@ impl PatternList {
         Self { enabled, patterns }
     }
 
-    /// True if `enabled` and the normalized command contains any pattern.
+    /// True if `enabled` and the normalized command contains a pattern at token boundaries.
     ///
     /// Whitespace is normalized before matching so equivalent shell spellings
     /// such as `sudo rm`, `sudo\\trm`, and multi-line scripts cannot bypass
@@ -61,7 +61,7 @@ impl PatternList {
         }
         self.patterns.iter().map(String::as_str).find(|pattern| {
             let pattern = normalize_command(pattern);
-            !pattern.is_empty() && command_normalized.contains(&pattern)
+            contains_pattern_at_token_boundaries(command_normalized, &pattern)
         })
     }
 }
@@ -155,6 +155,39 @@ impl CommandPolicy {
         }
         Decision::Allowed
     }
+}
+
+/// Match a pattern without accepting it as an arbitrary substring of a larger
+/// identifier. Punctuation-delimited indicators (URLs, paths and flags) can
+/// still match inside a command line; alphanumeric/underscore boundaries
+/// prevent cases such as `nsentering` or `ptraceable` from triggering.
+fn contains_pattern_at_token_boundaries(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+
+    haystack.match_indices(needle).any(|(start, matched)| {
+        let end = start + matched.len();
+        let starts_with_word = needle
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        let ends_with_word = needle
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        let left_boundary = !starts_with_word
+            || haystack[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        let right_boundary = !ends_with_word
+            || haystack[end..]
+                .chars()
+                .next()
+                .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        left_boundary && right_boundary
+    })
 }
 
 /// Canonicalize shell whitespace without attempting to parse shell syntax.
@@ -309,6 +342,22 @@ mod tests {
     fn baseline_allows_ordinary_build_command() {
         let policy = baseline_only();
         assert_eq!(policy.evaluate("cargo build --release"), Decision::Allowed);
+    }
+
+    #[test]
+    fn blacklist_does_not_match_dangerous_name_inside_unrelated_identifier() {
+        let policy = baseline_only();
+        assert_eq!(policy.evaluate("echo nsentering"), Decision::Allowed);
+        assert_eq!(policy.evaluate("echo ptraceable"), Decision::Allowed);
+        assert_eq!(policy.evaluate("echo metadata.google.internalish"), Decision::Allowed);
+        assert!(matches!(
+            policy.evaluate("curl http://169.254.169.254/latest/meta-data/"),
+            Decision::Denied { .. }
+        ));
+        assert!(matches!(
+            policy.evaluate("nsenter --target 1 --mount"),
+            Decision::Denied { .. }
+        ));
     }
 
     #[test]

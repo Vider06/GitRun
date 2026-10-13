@@ -562,21 +562,27 @@ impl Config {
                 "runner labels must not be empty".into(),
             ));
         }
-        if !is_positive_decimal(&self.container_cpus) {
+        if self.container_cpus.trim() != self.container_cpus
+            || !is_positive_decimal(&self.container_cpus)
+        {
             return Err(ConfigError::Invalid(format!(
-                "container cpus must be a positive decimal number, got {:?}",
+                "container cpus must be a positive decimal number without surrounding whitespace, got {:?}",
                 self.container_cpus
             )));
         }
-        if !is_positive_docker_size(&self.container_memory) {
+        if self.container_memory.trim() != self.container_memory
+            || !is_positive_docker_size(&self.container_memory)
+        {
             return Err(ConfigError::Invalid(format!(
-                "container memory must be a positive Docker size, got {:?}",
+                "container memory must be a positive Docker size without surrounding whitespace, got {:?}",
                 self.container_memory
             )));
         }
-        if !is_positive_u64(&self.container_pids_limit) {
+        if self.container_pids_limit.trim() != self.container_pids_limit
+            || !is_positive_u64(&self.container_pids_limit)
+        {
             return Err(ConfigError::Invalid(format!(
-                "container pids limit must be a positive integer, got {:?}",
+                "container pids limit must be a positive integer without surrounding whitespace, got {:?}",
                 self.container_pids_limit
             )));
         }
@@ -604,9 +610,11 @@ impl Config {
                 self.shared_cache_volume
             )));
         }
-        if !is_positive_docker_size(&self.runner_home_size) {
+        if self.runner_home_size.trim() != self.runner_home_size
+            || !is_positive_docker_size(&self.runner_home_size)
+        {
             return Err(ConfigError::Invalid(format!(
-                "runner home size must be a positive Docker size, got {:?}",
+                "runner home size must be a positive Docker size without surrounding whitespace, got {:?}",
                 self.runner_home_size
             )));
         }
@@ -1239,6 +1247,22 @@ mod tests {
         assert!(config.validate().is_err());
         config.container_pids_limit = "1024".into();
 
+        // The validator must not accept a trimmed interpretation when the
+        // exact string is passed through to Docker as a CLI argument.
+        config.container_cpus = " 1 ".into();
+        assert!(config.validate().is_err());
+        config.container_cpus = "1".into();
+
+        config.container_memory = " 1g ".into();
+        assert!(config.validate().is_err());
+        config.container_memory = "1g".into();
+
+        config.container_pids_limit = " 1024 ".into();
+        assert!(config.validate().is_err());
+        config.container_pids_limit = "1024".into();
+
+        config.runner_home_size = " 8g ".into();
+        assert!(config.validate().is_err());
         config.runner_home_size = "nope".into();
         assert!(config.validate().is_err());
     }

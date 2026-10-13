@@ -86,12 +86,36 @@ async function navigate(view, options = {}) {
       overviewCache = null;
       await renderOverview(navigate, cachedOverview);
     }
-    else if (view === "security") await (await import("./views/security.js")).renderSecurity();
-    else if (view === "vault") await (await import("./views/vault.js")).renderVault();
-    else if (view === "gsr") await (await import("./views/gsr.js")).renderGsr();
-    else if (view === "logs") await (await import("./views/logs.js")).renderLogs();
-    else if (view === "general") await (await import("./views/settings.js")).renderGeneral();
-    else if (view === "app-settings") await (await import("./views/app-settings.js")).renderAppSettings();
+    else if (view === "security") {
+      const { renderSecurity } = await import("./views/security.js");
+      if (generation !== navigationGeneration) return;
+      await renderSecurity();
+    }
+    else if (view === "vault") {
+      const { renderVault } = await import("./views/vault.js");
+      if (generation !== navigationGeneration) return;
+      await renderVault();
+    }
+    else if (view === "gsr") {
+      const { renderGsr } = await import("./views/gsr.js");
+      if (generation !== navigationGeneration) return;
+      await renderGsr();
+    }
+    else if (view === "logs") {
+      const { renderLogs } = await import("./views/logs.js");
+      if (generation !== navigationGeneration) return;
+      await renderLogs();
+    }
+    else if (view === "general") {
+      const { renderGeneral } = await import("./views/settings.js");
+      if (generation !== navigationGeneration) return;
+      await renderGeneral();
+    }
+    else if (view === "app-settings") {
+      const { renderAppSettings } = await import("./views/app-settings.js");
+      if (generation !== navigationGeneration) return;
+      await renderAppSettings();
+    }
     else if (view === "recovery") await renderRecovery();
     else await renderOverview(navigate);
     if (generation === navigationGeneration) setCatExpression(currentCatState);

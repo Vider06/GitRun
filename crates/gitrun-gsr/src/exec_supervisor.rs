@@ -1200,8 +1200,15 @@ mod linux {
 
             let mut status = 0;
             assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
-            assert!(is_exited(status), "filter test subprocess did not exit normally");
-            assert_eq!((status >> 8) & 0xff, 0, "seccomp filter did not enforce clone policy");
+            assert!(
+                is_exited(status),
+                "filter test subprocess did not exit normally"
+            );
+            assert_eq!(
+                (status >> 8) & 0xff,
+                0,
+                "seccomp filter did not enforce clone policy"
+            );
         }
 
         #[test]

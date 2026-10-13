@@ -1048,12 +1048,14 @@ mod linux {
                 return Err(SupervisorError::InspectFailed(pid));
             }
 
-            for raw_pointer in raw_pointers[..bytes].chunks_exact(POINTER_SIZE as usize) {
-                let pointer = u64::from_ne_bytes(
-                    raw_pointer
-                        .try_into()
-                        .map_err(|_| SupervisorError::InspectFailed(pid))?,
-                );
+            for pointer_offset in (0..bytes).step_by(POINTER_SIZE as usize) {
+                let pointer_end = pointer_offset
+                    .checked_add(POINTER_SIZE as usize)
+                    .ok_or(SupervisorError::InspectFailed(pid))?;
+                let pointer_bytes: [u8; 8] = raw_pointers[pointer_offset..pointer_end]
+                    .try_into()
+                    .map_err(|_| SupervisorError::InspectFailed(pid))?;
+                let pointer = u64::from_ne_bytes(pointer_bytes);
                 if pointer == 0 {
                     return Ok(args);
                 }
@@ -1135,6 +1137,18 @@ mod linux {
         let _ = crate::events::emit(events_path, &event);
     }
 
+    fn is_stopped(status: i32) -> bool {
+        (status & 0xff) == 0x7f
+    }
+
+    fn is_exited(status: i32) -> bool {
+        (status & 0x7f) == 0
+    }
+
+    fn is_signaled(status: i32) -> bool {
+        let signal = status & 0x7f;
+        signal != 0 && signal != 0x7f
+    }
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -1568,18 +1582,6 @@ mod linux {
         }
     }
 
-    fn is_stopped(status: i32) -> bool {
-        (status & 0xff) == 0x7f
-    }
-
-    fn is_exited(status: i32) -> bool {
-        (status & 0x7f) == 0
-    }
-
-    fn is_signaled(status: i32) -> bool {
-        let signal = status & 0x7f;
-        signal != 0 && signal != 0x7f
-    }
 }
 
 pub fn run_supervisor(events_path: &Path, policy: &CommandPolicy) -> Result<i32, SupervisorError> {

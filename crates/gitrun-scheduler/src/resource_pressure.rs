@@ -186,6 +186,33 @@ mod tests {
         ));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_critical_path_is_not_ignored_when_another_path_exists() {
+        let existing = std::env::temp_dir().join(format!(
+            "gitrun-critical-fs-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&existing).unwrap();
+        let missing = existing.join("missing-critical-path");
+        let config = Config {
+            resource_pressure_paths: format!("{};{}", existing.display(), missing.display()),
+            ..Config::default()
+        };
+
+        let result = sample_disk_percent(&config);
+        std::fs::remove_dir_all(&existing).unwrap();
+        let error = result.unwrap_err();
+        assert!(matches!(
+            error,
+            ResourcePressureError::Disk { path, .. }
+                if path == missing.display().to_string()
+        ));
+    }
+
     #[test]
     fn pressure_is_triggered_by_any_threshold() {
         let c = Config {

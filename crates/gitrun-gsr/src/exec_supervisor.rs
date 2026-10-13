@@ -1285,7 +1285,7 @@ mod linux {
 
             let mut empty = HashMap::<u64, u8>::new();
             put_bytes(&mut empty, u64::MAX - 255, &vec![1u8; 256]);
-            put_bytes(&mut empty, 0x0101_0101_0101_0101, b"x\\0");
+            put_bytes(&mut empty, 0x0101_0101_0101_0101, b"x\0");
             assert!(read_argv_with(test_pid(), u64::MAX - 255, |address, out| {
                 read_fake_memory(&empty, address, out)
             })

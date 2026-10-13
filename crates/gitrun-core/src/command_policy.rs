@@ -26,12 +26,11 @@
 //! whitespace-normalized command line — intentionally simple (see
 //! `CommandPolicy::evaluate`) rather than a shell parser, because a job's
 //! command line is already attacker-influenced text and a parser is itself
-//! an attack surface. Single-word whitelist entries are additionally matched
-//! at command-token boundaries, preventing an entry such as `cargo` from
-//! accidentally authorizing `my-cargo-wrapper`; multi-word whitelist entries
-//! retain substring matching. This still trades some false negatives
-//! (obfuscated invocations) for a policy that is easy to audit and cannot
-//! itself be exploited via crafted input.
+//! an attack surface. Whitelist entries must match the executable and its
+//! initial arguments, never an arbitrary later substring, preventing an
+//! unrelated executable from being authorized by its arguments. This still
+//! trades some false negatives (obfuscated invocations) for a policy that is
+//! easy to audit and cannot itself be exploited via crafted input.
 
 use serde::{Deserialize, Serialize};
 
@@ -167,25 +166,41 @@ fn normalize_command(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Whitelist entries that contain multiple words keep the documented
-/// substring behavior. A single-word whitelist entry, however, must identify
-/// an actual command token (or an absolute/relative path ending in that
-/// executable name), so `cargo` cannot accidentally authorize
-/// `my-cargo-wrapper`.
+/// A whitelist entry must describe the executable and, when present,
+/// its initial arguments. It must not match a phrase that appears only in a
+/// later argument (for example, a Python script whose filename contains
+/// `cargo build --release`).
 fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     let pattern = normalize_command(pattern);
     if pattern.is_empty() {
         return false;
     }
-    if pattern.contains(' ') {
-        return command_normalized.contains(&pattern);
+
+    let pattern_tokens = pattern.split(' ').collect::<Vec<_>>();
+    let command_tokens = command_normalized.split(' ').collect::<Vec<_>>();
+    let Some(command_executable) = command_tokens.first() else {
+        return false;
+    };
+
+    let executable_name = command_executable.rsplit('/').next().unwrap_or(command_executable);
+    if executable_name != pattern_tokens[0] {
+        return false;
     }
 
-    command_normalized.split(' ').any(|token| {
-        token == pattern
-            || token.strip_prefix("./").is_some_and(|p| p == pattern)
-            || token.ends_with(&format!("/{pattern}"))
-    })
+    // The GSR supervisor formats execve as path, argv[0], argv[1..], so
+    // argv[0] commonly duplicates the executable. Direct callers/tests may
+    // provide the conventional executable, argv[1..] form instead.
+    let args_start = if command_tokens.get(1).is_some_and(|token| {
+        token.rsplit('/').next().unwrap_or(token) == executable_name
+    }) {
+        2
+    } else {
+        1
+    };
+
+    let expected_args = &pattern_tokens[1..];
+    let actual_args = command_tokens.get(args_start..).unwrap_or_default();
+    actual_args.starts_with(expected_args)
 }
 
 /// Our shipped baseline: commands/patterns with essentially no legitimate
@@ -371,18 +386,40 @@ mod tests {
     }
 
     #[test]
-    fn whitelist_multicharacter_pattern_keeps_substring_behavior() {
+    fn whitelist_multiword_pattern_matches_executable_and_initial_arguments() {
         let policy = CommandPolicy {
             baseline_blacklist: PatternList::default(),
             user_blacklist: PatternList::default(),
             user_whitelist: PatternList::new(true, vec!["cargo build --release".into()]),
         };
+
+        // Direct command form and the supervisor's path/argv form both match,
+        // including additional trailing arguments.
         assert_eq!(
             policy.evaluate("cargo build --release --locked"),
             Decision::Allowed
         );
+        assert_eq!(
+            policy.evaluate("/usr/bin/cargo cargo build --release --locked"),
+            Decision::Allowed
+        );
+        assert_eq!(
+            policy.evaluate("/usr/bin/cargo build --release --locked"),
+            Decision::Allowed
+        );
+
         assert!(matches!(
             policy.evaluate("cargo test"),
+            Decision::Denied { .. }
+        ));
+        // The whitelisted phrase appearing later in another executable's
+        // arguments must not authorize that executable.
+        assert!(matches!(
+            policy.evaluate("/usr/bin/python python malicious.py cargo build --release"),
+            Decision::Denied { .. }
+        ));
+        assert!(matches!(
+            policy.evaluate("echo cargo build --release"),
             Decision::Denied { .. }
         ));
     }

@@ -130,22 +130,20 @@ fn argument_contract(
         (GitRunApi::GitDockRun, GitRunOperation::Connect)
         | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => (&["job"], &["job"]),
         (GitRunApi::GitDockRun, GitRunOperation::Read) => (&["path"], &["path"]),
-        (GitRunApi::GitDockRun, GitRunOperation::Write) => {
-            (&["path", "value"], &["path", "value"])
-        }
-        (GitRunApi::GitDockRun, GitRunOperation::Execute) => {
-            (&["command"], &["command"])
-        }
+        (GitRunApi::GitDockRun, GitRunOperation::Write) => (&["path", "value"], &["path", "value"]),
+        (GitRunApi::GitDockRun, GitRunOperation::Execute) => (&["command"], &["command"]),
         (GitRunApi::GitDockRun, GitRunOperation::Melt) => (&[], &["target"]),
-        (GitRunApi::GitDockRun, GitRunOperation::Mount) => {
-            (&["source", "target", "read_only"], &["source", "target", "read_only"])
-        }
+        (GitRunApi::GitDockRun, GitRunOperation::Mount) => (
+            &["source", "target", "read_only"],
+            &["source", "target", "read_only"],
+        ),
         (GitRunApi::GitDockRun, GitRunOperation::Unmount) => (&["mount_id"], &["mount_id"]),
         (GitRunApi::GitSaveRun, GitRunOperation::File) => (&["path"], &["path"]),
         (GitRunApi::GitSaveRun, GitRunOperation::Logs) => (&["namefile"], &["namefile"]),
-        (GitRunApi::GitRegisterRun, GitRunOperation::Register) => {
-            (&["name", "entry", "permanent"], &["name", "entry", "permanent"])
-        }
+        (GitRunApi::GitRegisterRun, GitRunOperation::Register) => (
+            &["name", "entry", "permanent"],
+            &["name", "entry", "permanent"],
+        ),
         (GitRunApi::GitInstallRun, GitRunOperation::Install) => {
             (&["package"], &["package", "version"])
         }

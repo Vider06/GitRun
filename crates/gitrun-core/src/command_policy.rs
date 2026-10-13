@@ -194,7 +194,10 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
         return false;
     };
 
-    let executable_name = command_executable.rsplit('/').next().unwrap_or(command_executable);
+    let executable_name = command_executable
+        .rsplit('/')
+        .next()
+        .unwrap_or(command_executable);
     if executable_name != pattern_tokens[0] {
         return false;
     }
@@ -202,9 +205,10 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     // The GSR supervisor formats execve as path, argv[0], argv[1..], so
     // argv[0] commonly duplicates the executable. Direct callers/tests may
     // provide the conventional executable, argv[1..] form instead.
-    let args_start = if command_tokens.get(1).is_some_and(|token| {
-        token.rsplit('/').next().unwrap_or(token) == executable_name
-    }) {
+    let args_start = if command_tokens
+        .get(1)
+        .is_some_and(|token| token.rsplit('/').next().unwrap_or(token) == executable_name)
+    {
         2
     } else {
         1

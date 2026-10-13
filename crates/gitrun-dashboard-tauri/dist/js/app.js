@@ -1,13 +1,5 @@
-import { invoke, content, esc, toast, errorView, setFooter } from "./lib.js";
+import { invoke, content, esc, toast, errorView, setFooter, applyTheme } from "./lib.js";
 import { renderOverview } from "./views/overview.js";
-import { renderRepository } from "./views/repositories.js";
-import { renderVault } from "./views/vault.js";
-import { renderGsr } from "./views/gsr.js";
-import { renderLogs } from "./views/logs.js";
-import { renderSecurity } from "./views/security.js";
-import { renderGeneral } from "./views/settings.js";
-import { renderAppSettings, applyTheme } from "./views/app-settings.js";
-import { renderSetup } from "./setup.js";
 
 const repoList = document.getElementById("repo-list");
 const names = {
@@ -77,6 +69,8 @@ async function navigate(view, options = {}) {
   setNavigation(view);
   if (view.startsWith("repo:")) {
     try {
+      const { renderRepository } = await import("./views/repositories.js");
+      if (generation !== navigationGeneration) return;
       await renderRepository(view.slice(5), navigate);
       if (generation === navigationGeneration) setCatExpression(currentCatState);
     } catch (error) {
@@ -92,12 +86,12 @@ async function navigate(view, options = {}) {
       overviewCache = null;
       await renderOverview(navigate, cachedOverview);
     }
-    else if (view === "security") await renderSecurity();
-    else if (view === "vault") await renderVault();
-    else if (view === "gsr") await renderGsr();
-    else if (view === "logs") await renderLogs();
-    else if (view === "general") await renderGeneral();
-    else if (view === "app-settings") await renderAppSettings();
+    else if (view === "security") await (await import("./views/security.js")).renderSecurity();
+    else if (view === "vault") await (await import("./views/vault.js")).renderVault();
+    else if (view === "gsr") await (await import("./views/gsr.js")).renderGsr();
+    else if (view === "logs") await (await import("./views/logs.js")).renderLogs();
+    else if (view === "general") await (await import("./views/settings.js")).renderGeneral();
+    else if (view === "app-settings") await (await import("./views/app-settings.js")).renderAppSettings();
     else if (view === "recovery") await renderRecovery();
     else await renderOverview(navigate);
     if (generation === navigationGeneration) setCatExpression(currentCatState);
@@ -197,9 +191,15 @@ window.addEventListener("gitrun:config-saved", () => {
   overviewCache = null;
   void loadRepoNav().catch(() => {});
 });
-window.addEventListener("gitrun:setup-required", () => {
+window.addEventListener("gitrun:setup-required", async () => {
   setupInProgress = true;
-  renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
+  try {
+    const { renderSetup } = await import("./setup.js");
+    renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
+  } catch (error) {
+    setupInProgress = false;
+    content.innerHTML = errorView("Could not load setup: " + error);
+  }
 });
 
 applySavedPreferences();
@@ -209,6 +209,7 @@ setSidebarCollapsed(localStorage.getItem("gitrun-sidebar-collapsed") === "true")
     const firstRun = await invoke("is_first_run");
     if (firstRun) {
       setupInProgress = true;
+      const { renderSetup } = await import("./setup.js");
       renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
     } else {
       await loadRepoNav();

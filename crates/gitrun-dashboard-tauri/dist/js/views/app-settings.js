@@ -1,4 +1,4 @@
-import { invoke, content, esc, heading, panel, pill, toast, confirmModal } from "../lib.js";
+import { invoke, content, esc, heading, panel, pill, toast, confirmModal, applyTheme } from "../lib.js";
 
 export async function renderAppSettings() {
   const generation = window.__gitrunNavigationGeneration;
@@ -176,9 +176,4 @@ export async function renderAppSettings() {
     successText: "GitRun has been removed. Closing this dashboard…",
     invokeCommand: "uninstall_gitrun"
   }));
-}
-export function applyTheme(theme) {
-  let effective = theme;
-  if (theme === "system") effective = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  document.documentElement.dataset.theme = effective;
 }

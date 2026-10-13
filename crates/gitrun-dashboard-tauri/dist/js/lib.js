@@ -1,6 +1,12 @@
 export const invoke = window.__TAURI__.core.invoke;
 export const content = document.getElementById("content");
 
+export function applyTheme(theme) {
+  let effective = theme;
+  if (theme === "system") effective = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  document.documentElement.dataset.theme = effective;
+}
+
 export function esc(value) {
   const node = document.createElement("span");
   node.textContent = value == null ? "" : String(value);

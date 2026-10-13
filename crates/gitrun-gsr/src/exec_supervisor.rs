@@ -178,7 +178,16 @@ mod linux {
                 error,
             ));
         }
-        let wait_result = wait_for_initial_stop(pid)?;
+        let wait_result = match wait_for_initial_stop(pid) {
+            Ok(status) => status,
+            Err(error) => {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                    libc::close(gate[1]);
+                }
+                return Err(error);
+            }
+        };
         if !is_stopped(wait_result) {
             unsafe {
                 libc::kill(pid, libc::SIGKILL);
@@ -438,6 +447,10 @@ mod linux {
                             } => {
                                 if former_tid != exec_pid {
                                     tracees.remove(&former_tid);
+                                    // A non-leader exec adopts the TGID as its
+                                    // new PID. Do not try to resume the former
+                                    // leader a second time with a stale signal.
+                                    frozen.resume.retain(|(held_pid, _)| *held_pid != exec_pid);
                                 }
                                 tracees.insert(exec_pid);
                                 thaw_tracees(&mut frozen, &mut tracees)?;
@@ -1068,6 +1081,7 @@ mod linux {
     mod tests {
         use super::*;
         use std::collections::HashMap;
+        use std::sync::atomic::AtomicU64;
         use std::time::Duration;
 
         fn test_pid() -> libc::pid_t {

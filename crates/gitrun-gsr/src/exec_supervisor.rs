@@ -1271,10 +1271,37 @@ mod linux {
 
             let mut empty = HashMap::<u64, u8>::new();
             put_bytes(&mut empty, u64::MAX - 255, &vec![1u8; 256]);
+            put_bytes(&mut empty, 0x0101_0101_0101_0101, b"x\\0");
             assert!(read_argv_with(test_pid(), u64::MAX - 255, |address, out| {
                 read_fake_memory(&empty, address, out)
             })
             .is_err());
+        }
+
+        #[test]
+        fn argv_reader_rejects_total_argument_bytes_over_limit() {
+            let mut memory = HashMap::<u64, u8>::new();
+            put_bytes(&mut memory, 0x1000, &pointer_table(&vec![0x2000; 32]));
+            let mut long_argument = vec![b'a'; MAX_STRING - 1];
+            long_argument.push(0);
+            put_bytes(&mut memory, 0x2000, &long_argument);
+
+            assert!(read_argv_with(test_pid(), 0x1000, |address, out| {
+                read_fake_memory(&memory, address, out)
+            })
+            .is_err());
+        }
+
+        #[test]
+        fn ptrace_resume_and_register_failures_are_reported() {
+            assert!(matches!(
+                continue_tracee(-1),
+                Err(SupervisorError::Ptrace("PTRACE_CONT"))
+            ));
+            assert!(matches!(
+                deny_exec_syscall(-1),
+                Err(SupervisorError::Ptrace("PTRACE_GETREGS"))
+            ));
         }
 
         #[test]

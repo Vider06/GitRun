@@ -721,6 +721,18 @@ impl Config {
                 "GitHub App auth requires GITRUN_GITHUB_APP_ID, GITRUN_GITHUB_APP_INSTALLATION_ID, and GITRUN_GITHUB_APP_PRIVATE_KEY_PATH to all be set together".into(),
             ));
         }
+        if app_fields.iter().all(|set| *set) {
+            if !is_positive_decimal_integer(&self.github_app_id) {
+                return Err(ConfigError::Invalid(
+                    "GITRUN_GITHUB_APP_ID must be a positive decimal integer".into(),
+                ));
+            }
+            if !is_positive_decimal_integer(&self.github_app_installation_id) {
+                return Err(ConfigError::Invalid(
+                    "GITRUN_GITHUB_APP_INSTALLATION_ID must be a positive decimal integer".into(),
+                ));
+            }
+        }
         validate_time(&self.container_update_time)?;
         let mut seen_repositories =
             std::collections::HashSet::with_capacity(self.repositories.len());
@@ -892,6 +904,12 @@ fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, Config
         }),
         None => Ok(default),
     }
+}
+
+fn is_positive_decimal_integer(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && value.parse::<u64>().is_ok_and(|number| number > 0)
 }
 
 fn is_positive_u64(value: &str) -> bool {
@@ -1247,6 +1265,25 @@ mod tests {
         let mut config = Config::default();
         config.min_runners = 0;
         config.max_runners = 1;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn github_app_ids_must_be_positive_decimal_integers() {
+        let mut config = Config::default();
+        config.github_app_id = "abc".into();
+        config.github_app_installation_id = "456".into();
+        config.github_app_private_key_path = "/tmp/github-app.pem".into();
+        assert!(config.validate().is_err());
+
+        config.github_app_id = "123".into();
+        config.github_app_installation_id = "12/../../evil".into();
+        assert!(config.validate().is_err());
+
+        config.github_app_installation_id = "0".into();
+        assert!(config.validate().is_err());
+
+        config.github_app_installation_id = "456".into();
         assert!(config.validate().is_ok());
     }
 

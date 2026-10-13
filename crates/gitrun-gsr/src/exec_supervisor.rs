@@ -1491,37 +1491,39 @@ mod linux {
             }
         }
 
-        unsafe fn freezer_test_tracee(
+        fn freezer_test_tracee(
             gate_read: RawFd,
             counter: *mut AtomicU64,
             stack: *mut libc::c_void,
             stack_size: usize,
         ) -> ! {
-            if libc::setpgid(0, 0) != 0 {
-                libc::_exit(121);
-            }
-            let mut ready = 0u8;
-            if libc::read(gate_read, (&mut ready as *mut u8).cast(), 1) != 1 || ready != 1 {
-                libc::_exit(122);
-            }
-            libc::close(gate_read);
-            let flags = libc::CLONE_VM
-                | libc::CLONE_FS
-                | libc::CLONE_FILES
-                | libc::CLONE_SIGHAND
-                | libc::CLONE_THREAD;
-            let stack_top = stack.cast::<u8>().add(stack_size).cast::<libc::c_void>();
-            if libc::clone(
-                freezer_test_mutator,
-                stack_top,
-                flags,
-                counter.cast::<libc::c_void>(),
-            ) < 0
-            {
-                libc::_exit(123);
-            }
-            loop {
-                libc::pause();
+            unsafe {
+                if libc::setpgid(0, 0) != 0 {
+                    libc::_exit(121);
+                }
+                let mut ready = 0u8;
+                if libc::read(gate_read, (&mut ready as *mut u8).cast(), 1) != 1 || ready != 1 {
+                    libc::_exit(122);
+                }
+                libc::close(gate_read);
+                let flags = libc::CLONE_VM
+                    | libc::CLONE_FS
+                    | libc::CLONE_FILES
+                    | libc::CLONE_SIGHAND
+                    | libc::CLONE_THREAD;
+                let stack_top = stack.cast::<u8>().add(stack_size).cast::<libc::c_void>();
+                if libc::clone(
+                    freezer_test_mutator,
+                    stack_top,
+                    flags,
+                    counter.cast::<libc::c_void>(),
+                ) < 0
+                {
+                    libc::_exit(123);
+                }
+                loop {
+                    libc::pause();
+                }
             }
         }
 

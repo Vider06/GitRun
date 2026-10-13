@@ -30,7 +30,9 @@ pub enum SettingsError {
     Io(#[from] std::io::Error),
     #[error("unable to decode settings: {0}")]
     Decode(#[source] serde_json::Error),
-    #[error("unsupported settings schema version {found}; this build supports version {supported}")]
+    #[error(
+        "unsupported settings schema version {found}; this build supports version {supported}"
+    )]
     UnsupportedSchema { found: u32, supported: u32 },
     #[error("unable to encode settings: {0}")]
     Encode(#[source] serde_json::Error),
@@ -348,9 +350,9 @@ impl MountPolicy {
             {
                 return Err("mount rule source must be a clean absolute path".into());
             }
-            let rule_source = configured_source.canonicalize().map_err(|error| {
-                format!("cannot resolve configured mount rule source: {error}")
-            })?;
+            let rule_source = configured_source
+                .canonicalize()
+                .map_err(|error| format!("cannot resolve configured mount rule source: {error}"))?;
             let exact = canonical_source == rule_source;
             let descendant = rule.recursive
                 && canonical_source != rule_source
@@ -779,10 +781,8 @@ mod tests {
 
     #[test]
     fn invalid_configured_mount_rule_fails_closed() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-mount-invalid-rule-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-mount-invalid-rule-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let source = dir.join("source.txt");

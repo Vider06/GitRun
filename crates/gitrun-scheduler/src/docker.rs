@@ -353,8 +353,13 @@ pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Resul
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
+fn container_label_format(label: &str) -> String {
+    // format! requires doubled braces to emit Docker's double-brace Go template.
+    format!("{{{{index .Config.Labels \"{label}\"}}}}")
+}
+
 fn container_label_on(host: &DockerHost, name: &str, label: &str) -> Result<Option<String>> {
-    let format = format!("{{index .Config.Labels \\\"{label}\\\"}}");
+    let format = container_label_format(label);
     let output = run_on(host, &["inspect", "-f", &format, name])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -529,7 +534,23 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
 
     // Best-effort for disk-backed runner-home volumes. Harmless for tmpfs homes.
     if let Some(volume) = home_volume {
-        let _ = run_on(host, &["volume", "rm", "-f", &volume]);
+        let output = run_on(host, &["volume", "rm", "-f", &volume])?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let normalized = stderr.to_ascii_lowercase();
+            // Cleanup is idempotent: a volume already removed by another
+            // reconciliation worker is not a failure, but any other error
+            // must be surfaced because the volume may retain runner credentials.
+            if !(normalized.contains("no such volume")
+                || normalized.contains("volume not found"))
+            {
+                return Err(DockerError::Command(if stderr.is_empty() {
+                    format!("container removed but runner home volume cleanup failed for {volume}")
+                } else {
+                    format!("container removed but runner home volume cleanup failed for {volume}: {stderr}")
+                }));
+            }
+        }
     }
     Ok(())
 }
@@ -1384,6 +1405,14 @@ mod tests {
     fn gsr_supervisor_keeps_ptrace_when_optional_hardening_is_disabled() {
         let args = gsr_supervisor_capability_args();
         assert_eq!(args, vec!["--cap-add", "SYS_PTRACE"]);
+    }
+
+    #[test]
+    fn container_label_format_emits_valid_docker_go_template() {
+        assert_eq!(
+            container_label_format("gitrun.dock_target"),
+            r#"{{index .Config.Labels "gitrun.dock_target"}}"#
+        );
     }
 
     #[test]

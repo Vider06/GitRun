@@ -220,7 +220,12 @@ impl Vault {
             .map_err(|_| VaultError::InvalidMasterKey(data_key.len()))?;
 
         let secrets_path = dir.join(SECRETS_FILE);
-        let data = match fs::metadata(&secrets_path) {
+        let data = match fs::symlink_metadata(&secrets_path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(VaultError::CorruptIndex(
+                    "secrets.json must be a regular, non-symlink file".to_owned(),
+                ));
+            }
             Ok(_) => {
                 set_secret_file_permissions(&secrets_path)?;
                 let raw = fs::read_to_string(&secrets_path)?;
@@ -588,30 +593,45 @@ fn set_secret_file_permissions(_path: &Path) -> Result<()> {
 
 fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<[u8; 32]> {
     let path = dir.join(MASTER_KEY_FILE);
-    match fs::read(&path) {
-        Ok(bytes) => {
-            if bytes.len() != 32 {
-                return Err(VaultError::InvalidMasterKey(bytes.len()));
-            }
-            bytes
-                .try_into()
-                .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(VaultError::InvalidMasterKey(0));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut key = MaybeUninit::<[u8; 32]>::uninit();
-            let key_bytes =
-                unsafe { std::slice::from_raw_parts_mut(key.as_mut_ptr().cast::<u8>(), 32) };
-            let mut rng = SysRng;
-            if let Err(error) = rng.try_fill_bytes(key_bytes) {
-                events.on_randomness_failure("generating the vault master key");
-                return Err(VaultError::from(error));
-            }
-            let key = unsafe { key.assume_init() };
-            write_master_key(&path, &key)?;
-            Ok(key)
-        }
+        Ok(_) => return read_master_key(&path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let mut key = MaybeUninit::<[u8; 32]>::uninit();
+    let key_bytes = unsafe { std::slice::from_raw_parts_mut(key.as_mut_ptr().cast::<u8>(), 32) };
+    let mut rng = SysRng;
+    if let Err(error) = rng.try_fill_bytes(key_bytes) {
+        events.on_randomness_failure("generating the vault master key");
+        return Err(VaultError::from(error));
+    }
+    let key = unsafe { key.assume_init() };
+    match write_master_key(&path, &key) {
+        Ok(()) => Ok(key),
+        // Another process may have initialized the vault concurrently. The
+        // canonical key is published with an atomic hard link, so it is safe
+        // to read after AlreadyExists without observing a partial key.
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => read_master_key(&path),
         Err(error) => Err(error.into()),
     }
+}
+
+fn read_master_key(path: &Path) -> Result<[u8; 32]> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(VaultError::InvalidMasterKey(0));
+    }
+    let bytes = fs::read(path)?;
+    if bytes.len() != 32 {
+        return Err(VaultError::InvalidMasterKey(bytes.len()));
+    }
+    bytes
+        .try_into()
+        .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
 }
 
 /// Writes the master key with 0600 permissions set atomically at creation —
@@ -621,20 +641,61 @@ fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<
 fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(key)?;
-    file.sync_all()?;
-    Ok(())
+
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::other("master key path has no parent directory")
+    })?;
+    let temp = parent.join(format!(
+        ".{MASTER_KEY_FILE}.tmp.{}.{}",
+        std::process::id(),
+        TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)?;
+        file.write_all(key)?;
+        file.sync_all()?;
+        // Hard-link publication is atomic and refuses to overwrite a key
+        // another process already created. The final path never exposes a
+        // partially written key.
+        fs::hard_link(&temp, path)?;
+        fs::remove_file(&temp)?;
+        sync_parent_dir(parent)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 #[cfg(not(unix))]
 fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
-    fs::write(path, key)?;
-    Ok(())
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::other("master key path has no parent directory")
+    })?;
+    let temp = parent.join(format!(
+        ".{MASTER_KEY_FILE}.tmp.{}.{}",
+        std::process::id(),
+        TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
+        use std::io::Write;
+        file.write_all(key)?;
+        file.sync_all()?;
+        fs::hard_link(&temp, path)?;
+        fs::remove_file(&temp)?;
+        sync_parent_dir(parent)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Builds the internal storage key combining scope and name, so the same

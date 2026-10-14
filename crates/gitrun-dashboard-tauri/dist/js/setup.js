@@ -36,7 +36,7 @@ export function renderSetup(isReinstall, onComplete) {
       status.textContent = authMode === "pat" && !token ? "A GitHub token is required." : authMode === "app" && (!appId || !installationId || !privateKeyPath) ? "Complete the GitHub App fields." : "At least one repository is required.";
       status.style.color = "var(--danger)"; return;
     }
-    if (authMode === "app" && (!/^\\d+$/.test(appId) || !/^\\d+$/.test(installationId))) {
+    if (authMode === "app" && (!/^\d+$/.test(appId) || !/^\d+$/.test(installationId))) {
       status.textContent = "GitHub App ID and Installation ID must contain digits only.";
       status.style.color = "var(--danger)";
       return;

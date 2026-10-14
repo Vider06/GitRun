@@ -83,6 +83,8 @@ pub enum VaultError {
     Decode(#[from] serde_json::Error),
     #[error("vault index is inconsistent: {0}")]
     CorruptIndex(String),
+    #[error("vault data was replaced but directory durability could not be confirmed: {0}")]
+    DurabilityUncertain(String),
     #[error("secret '{0}' not found")]
     NotFound(String),
     #[error("encryption failed for secret '{0}'")]
@@ -290,12 +292,16 @@ impl Vault {
         };
         let previous = self.data.secrets.insert(key.clone(), replacement);
         if let Err(error) = self.persist() {
-            match previous {
-                Some(previous) => {
-                    self.data.secrets.insert(key, previous);
-                }
-                None => {
-                    self.data.secrets.remove(&key);
+            // A post-rename directory-sync failure means the new file is
+            // already visible. Keep memory aligned with that committed state.
+            if !matches!(error, VaultError::DurabilityUncertain(_)) {
+                match previous {
+                    Some(previous) => {
+                        self.data.secrets.insert(key, previous);
+                    }
+                    None => {
+                        self.data.secrets.remove(&key);
+                    }
                 }
             }
             return Err(error);
@@ -370,7 +376,11 @@ impl Vault {
             .remove(&key)
             .ok_or_else(|| VaultError::NotFound(name.to_owned()))?;
         if let Err(error) = self.persist() {
-            self.data.secrets.insert(key, removed);
+            // See set_scoped: after atomic rename, retain the new in-memory
+            // state even if the directory fsync reports uncertain durability.
+            if !matches!(error, VaultError::DurabilityUncertain(_)) {
+                self.data.secrets.insert(key, removed);
+            }
             return Err(error);
         }
         self.events.on_secret_delete(name, scope);
@@ -513,22 +523,21 @@ impl Vault {
 
     fn persist(&self) -> Result<()> {
         let path = self.dir.join(SECRETS_FILE);
-        let nonce = now();
         let tmp = self.dir.join(format!(
             ".{SECRETS_FILE}.tmp.{}.{}",
             std::process::id(),
-            TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(nonce)
+            TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        let result = (|| {
-            write_secret_file(&tmp, &self.data)?;
-            fs::rename(&tmp, &path)?;
-            sync_parent_dir(&self.dir)?;
-            Ok(())
-        })();
-        if result.is_err() {
+        if let Err(error) = write_secret_file(&tmp, &self.data) {
             let _ = fs::remove_file(&tmp);
+            return Err(error);
         }
-        result
+        if let Err(error) = fs::rename(&tmp, &path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
+        sync_parent_dir(&self.dir)
+            .map_err(|error| VaultError::DurabilityUncertain(error.to_string()))
     }
 }
 
@@ -624,6 +633,11 @@ fn read_master_key(path: &Path) -> Result<[u8; 32]> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(VaultError::InvalidMasterKey(0));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     }
     let bytes = fs::read(path)?;
     if bytes.len() != 32 {

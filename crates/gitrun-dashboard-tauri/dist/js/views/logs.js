@@ -29,7 +29,7 @@ function renderSecurityRows() {
   const target = document.getElementById("security-log-rows");
   if (!target) return;
   if (eventError) {
-    target.innerHTML = '<div class="notice danger"><div><strong>Security event history unavailable</strong><p>' + esc(eventError) + '</p>The event queue could not be read; this is not an empty log.</div></div>';
+    target.innerHTML = '<div class="notice danger" role="alert"><div><strong>Security event history unavailable</strong><p>' + esc(eventError) + '</p>The event queue could not be read; this is not an empty log.</div></div>';
     const count = document.getElementById("security-log-count");
     if (count) count.textContent = "Read failed";
     return;
@@ -52,16 +52,23 @@ function renderJournalRows() {
     return;
   }
   if (journalError) {
-    target.innerHTML = '<div class="notice danger"><div><strong>Service journal unavailable</strong><p>' + esc(journalError) + '</p><p>On Linux, check that the dashboard user can read the systemd journal.</p></div></div>';
+    target.innerHTML = '<div class="notice danger" role="alert"><div><strong>Service journal unavailable</strong><p>' + esc(journalError) + '</p><p>On Linux, check that the dashboard user can read the systemd journal.</p></div></div>';
     return;
   }
   target.innerHTML = cachedJournal.length ? '<pre class="terminal log-terminal">' + cachedJournal.map(esc).join("\n") + '</pre>' : empty("No service output returned", "The journal query succeeded but returned no matching records.");
 }
 
 function renderPanes() {
-  document.querySelectorAll("[data-log-pane]").forEach((button) => button.classList.toggle("active", button.dataset.logPane === activePane));
-  document.getElementById("security-log-pane").hidden = activePane !== "security";
-  document.getElementById("journal-log-pane").hidden = activePane !== "journal";
+  document.querySelectorAll("[data-log-pane]").forEach((button) => {
+    const selected = button.dataset.logPane === activePane;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  const securityPane = document.getElementById("security-log-pane");
+  const journalPane = document.getElementById("journal-log-pane");
+  if (securityPane) securityPane.hidden = activePane !== "security";
+  if (journalPane) journalPane.hidden = activePane !== "journal";
 }
 
 export async function renderLogs() {
@@ -78,11 +85,11 @@ export async function renderLogs() {
   }
   if (generation !== window.__gitrunNavigationGeneration) return;
   content.innerHTML = heading("OPERATIONS", "Logs", "Security event history and systemd output for GitRun. GitVault event records never contain secret values.", '<button class="btn" data-action="refresh-view">↻ Refresh</button>') +
-    '<div class="tabs log-tabs"><button class="tab" data-log-pane="security">Security events</button><button class="tab" data-log-pane="journal">Service journal</button></div>' +
-    '<section id="security-log-pane" class="section"><div class="toolbar"><div><h2>GSR event queue</h2><p class="section-description">Persistent JSONL records from GitVault, the watchdog, host poller and runner-side enforcement.</p></div><span id="security-log-count" class="pill info"></span></div>' +
+    '<div class="tabs log-tabs" role="tablist" aria-label="Log views"><button class="tab" id="logs-security-tab" type="button" role="tab" aria-controls="security-log-pane" aria-selected="true" data-log-pane="security">Security events</button><button class="tab" id="logs-journal-tab" type="button" role="tab" aria-controls="journal-log-pane" aria-selected="false" tabindex="-1" data-log-pane="journal">Service journal</button></div>' +
+    '<section id="security-log-pane" class="section" role="tabpanel" aria-labelledby="logs-security-tab"><div class="toolbar"><div><h2>GSR event queue</h2><p class="section-description">Persistent JSONL records from GitVault, the watchdog, host poller and runner-side enforcement.</p></div><span id="security-log-count" class="pill info" role="status" aria-live="polite"></span></div>' +
     '<div class="log-filters"><label class="field"><span>Source</span><select id="logs-source"><option value="all">All sources</option><option value="gitvault">GitVault / EventSink</option><option value="gsr-watchdog">GSR watchdog</option><option value="gsr-poll">GSR host poller</option><option value="gsr-agent">GSR command agent</option><option value="gsr-exec-supervisor">GSR exec supervisor</option><option value="other">Other sources</option></select></label><label class="field"><span>Severity</span><select id="logs-severity"><option value="all">All levels</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select></label><label class="field log-search"><span>Search</span><input id="logs-search" type="search" placeholder="Search source or message"></label></div>' +
     '<div id="security-log-rows" class="card-list"></div></section>' +
-    '<section id="journal-log-pane" class="section" hidden><div class="toolbar"><div><h2>Systemd journal</h2><p class="section-description">Service stdout/stderr, separate from structured security events.</p></div><div class="heading-actions"><select id="journal-source" aria-label="Service journal source"><option value="all">Scheduler + GSR</option><option value="scheduler">Scheduler (gitrun.service)</option><option value="gsr">GSR (gitrun-gsr.service)</option></select><button class="btn" id="refresh-journal">↻ Reload journal</button></div></div><div id="journal-log-rows" class="card-list"></div></section>';
+    '<section id="journal-log-pane" class="section" role="tabpanel" aria-labelledby="logs-journal-tab" hidden><div class="toolbar"><div><h2>Systemd journal</h2><p class="section-description">Service stdout/stderr, separate from structured security events.</p></div><div class="heading-actions"><select id="journal-source" aria-label="Service journal source"><option value="all">Scheduler + GSR</option><option value="scheduler">Scheduler (gitrun.service)</option><option value="gsr">GSR (gitrun-gsr.service)</option></select><button class="btn" id="refresh-journal">↻ Reload journal</button></div></div><div id="journal-log-rows" class="card-list"></div></section>';
   activePane = "security";
   renderPanes(); renderSecurityRows(); renderJournalRows();
   document.querySelectorAll("[data-log-pane]").forEach((button) => button.addEventListener("click", () => {

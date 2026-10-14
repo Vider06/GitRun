@@ -8,10 +8,12 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 const REGISTRY_FILE: &str = "dock-registry.json";
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub enum DockRegistryError {
@@ -19,6 +21,8 @@ pub enum DockRegistryError {
     Io(#[from] std::io::Error),
     #[error("unable to decode dock registry: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("invalid dock registry: {0}")]
+    Invalid(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,7 +51,11 @@ impl DockRegistry {
     pub fn load(state_dir: impl AsRef<Path>) -> Result<Self, DockRegistryError> {
         let path = path_for(state_dir);
         match fs::read_to_string(path) {
-            Ok(raw) => Ok(serde_json::from_str(&raw)?),
+            Ok(raw) => {
+                let registry: Self = serde_json::from_str(&raw)?;
+                registry.validate_unique_bindings()?;
+                Ok(registry)
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error.into()),
         }
@@ -57,7 +65,8 @@ impl DockRegistry {
         let state_dir = state_dir.as_ref();
         fs::create_dir_all(state_dir)?;
         let path = path_for(state_dir);
-        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), sequence));
         let raw = serde_json::to_vec_pretty(self)?;
 
         {
@@ -79,6 +88,18 @@ impl DockRegistry {
             return Err(error.into());
         }
 
+        Ok(())
+    }
+
+    fn validate_unique_bindings(&self) -> Result<(), DockRegistryError> {
+        let mut keys = std::collections::HashSet::with_capacity(self.bindings.len());
+        for binding in &self.bindings {
+            if !keys.insert((&binding.repository, binding.run_id, &binding.job)) {
+                return Err(DockRegistryError::Invalid(
+                    "duplicate repository/run/job binding".into(),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -171,6 +192,47 @@ mod tests {
         let loaded = DockRegistry::load(&dir).unwrap();
         assert_eq!(loaded, registry);
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_rejects_duplicate_workflow_job_bindings() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-duplicate-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = path_for(&dir);
+        let duplicate = DockRegistry {
+            bindings: vec![
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build".into(),
+                    container: "runner-a".into(),
+                    container_id: "id-a".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 1,
+                },
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build".into(),
+                    container: "runner-b".into(),
+                    container_id: "id-b".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 2,
+                },
+            ],
+        };
+        fs::write(&path, serde_json::to_vec(&duplicate).unwrap()).unwrap();
+
+        assert!(matches!(DockRegistry::load(&dir), Err(DockRegistryError::Invalid(_))));
         let _ = fs::remove_dir_all(&dir);
     }
 

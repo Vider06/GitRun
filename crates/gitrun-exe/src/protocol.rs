@@ -8,7 +8,7 @@ use crate::AuthorizedOperation;
 use hmac::{digest::KeyInit, Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -18,18 +18,20 @@ const NONCE_LEN: usize = 32;
 pub const DEFAULT_MAX_CLOCK_SKEW_SECS: u64 = 30;
 const DEFAULT_REPLAY_CACHE_SIZE: usize = 4096;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChannelKey(#[serde(with = "serde_bytes_hex")] pub Vec<u8>);
+const MIN_CHANNEL_KEY_LEN: usize = 32;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChannelKey(#[serde(with = "serde_bytes_hex")] Vec<u8>);
 
 impl ChannelKey {
     pub fn generate() -> Result<Self, ChannelAuthError> {
-        let mut key = vec![0u8; 32];
+        let mut key = vec![0u8; MIN_CHANNEL_KEY_LEN];
         getrandom::fill(&mut key).map_err(ChannelAuthError::Randomness)?;
         Ok(Self(key))
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, ChannelAuthError> {
-        if bytes.len() < 32 {
+        if bytes.len() < MIN_CHANNEL_KEY_LEN {
             return Err(ChannelAuthError::WeakKey);
         }
         Ok(Self(bytes))
@@ -37,6 +39,23 @@ impl ChannelKey {
 
     pub fn to_hex(&self) -> String {
         hex::encode(&self.0)
+    }
+
+    fn validate(&self) -> Result<(), ChannelAuthError> {
+        if self.0.len() < MIN_CHANNEL_KEY_LEN {
+            return Err(ChannelAuthError::WeakKey);
+        }
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for ChannelKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = serde_bytes_hex::deserialize(deserializer)?;
+        Self::from_bytes(bytes).map_err(serde::de::Error::custom)
     }
 }
 
@@ -52,9 +71,10 @@ pub struct SignedRequest {
 
 impl SignedRequest {
     pub fn sign(request: AuthorizedOperation, key: &ChannelKey) -> Result<Self, ChannelAuthError> {
+        key.validate()?;
         let mut nonce = vec![0u8; NONCE_LEN];
         getrandom::fill(&mut nonce).map_err(ChannelAuthError::Randomness)?;
-        let timestamp = now();
+        let timestamp = now()?;
         let payload = SigningPayload {
             request: &request,
             timestamp,
@@ -77,11 +97,12 @@ impl SignedRequest {
         max_clock_skew_secs: u64,
         replay: &mut ReplayGuard,
     ) -> Result<(), ChannelAuthError> {
+        key.validate()?;
         if self.nonce.len() != NONCE_LEN {
             return Err(ChannelAuthError::InvalidNonce);
         }
 
-        let current = now();
+        let current = now()?;
         if current.abs_diff(self.timestamp) > max_clock_skew_secs {
             return Err(ChannelAuthError::Expired);
         }
@@ -99,9 +120,11 @@ impl SignedRequest {
         mac.verify_slice(&self.mac)
             .map_err(|_| ChannelAuthError::Authentication)?;
 
-        if !replay.check_and_record(&self.nonce) {
-            return Err(ChannelAuthError::Replay);
-        }
+        replay.check_and_record(
+            &self.nonce,
+            self.timestamp.saturating_add(max_clock_skew_secs),
+            current,
+        )?;
 
         Ok(())
     }
@@ -115,51 +138,76 @@ struct SigningPayload<'a> {
 }
 
 fn compute_mac(key: &[u8], payload: &[u8]) -> Result<Vec<u8>, ChannelAuthError> {
+    if key.len() < MIN_CHANNEL_KEY_LEN {
+        return Err(ChannelAuthError::WeakKey);
+    }
     let mut mac =
         <HmacSha256 as KeyInit>::new_from_slice(key).map_err(|_| ChannelAuthError::WeakKey)?;
     mac.update(payload);
     Ok(mac.finalize().into_bytes().to_vec())
 }
 
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+fn now() -> Result<u64, ChannelAuthError> {
+    unix_timestamp(SystemTime::now())
+}
+
+fn unix_timestamp(time: SystemTime) -> Result<u64, ChannelAuthError> {
+    time.duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
-        .unwrap_or(0)
+        .map_err(|_| ChannelAuthError::ClockUnavailable)
 }
 
 #[derive(Debug)]
 pub struct ReplayGuard {
-    seen: HashSet<Vec<u8>>,
-    order: VecDeque<Vec<u8>>,
+    expires_at: HashMap<Vec<u8>, u64>,
+    order: VecDeque<(Vec<u8>, u64)>,
     max_entries: usize,
 }
 
 impl ReplayGuard {
     pub fn new(max_entries: usize) -> Self {
         Self {
-            seen: HashSet::new(),
+            expires_at: HashMap::new(),
             order: VecDeque::new(),
             max_entries: max_entries.max(1),
         }
     }
 
-    pub fn check_and_record(&mut self, nonce: &[u8]) -> bool {
-        if self.seen.contains(nonce) {
-            return false;
-        }
-
-        let value = nonce.to_vec();
-        self.seen.insert(value.clone());
-        self.order.push_back(value);
-
-        while self.order.len() > self.max_entries {
-            if let Some(old) = self.order.pop_front() {
-                self.seen.remove(&old);
+    /// Records a nonce until its signed request can no longer pass timestamp
+    /// validation. Expired entries are pruned, but live entries are never
+    /// evicted to make room: a full cache fails closed.
+    pub fn check_and_record(
+        &mut self,
+        nonce: &[u8],
+        valid_until: u64,
+        current: u64,
+    ) -> Result<(), ChannelAuthError> {
+        let expired: Vec<(Vec<u8>, u64)> = self
+            .order
+            .iter()
+            .filter(|(_, expiry)| *expiry < current)
+            .cloned()
+            .collect();
+        if !expired.is_empty() {
+            self.order.retain(|(_, expiry)| *expiry >= current);
+            for (old_nonce, old_expiry) in expired {
+                if self.expires_at.get(&old_nonce) == Some(&old_expiry) {
+                    self.expires_at.remove(&old_nonce);
+                }
             }
         }
 
-        true
+        if self.expires_at.contains_key(nonce) {
+            return Err(ChannelAuthError::Replay);
+        }
+        if self.expires_at.len() >= self.max_entries {
+            return Err(ChannelAuthError::ReplayCacheFull);
+        }
+
+        let value = nonce.to_vec();
+        self.expires_at.insert(value.clone(), valid_until);
+        self.order.push_back((value, valid_until));
+        Ok(())
     }
 }
 
@@ -181,8 +229,12 @@ pub enum ChannelAuthError {
     InvalidNonce,
     #[error("request timestamp is outside the allowed clock skew")]
     Expired,
+    #[error("system clock is before the Unix epoch")]
+    ClockUnavailable,
     #[error("replayed request nonce")]
     Replay,
+    #[error("replay cache is full of requests that are still valid")]
+    ReplayCacheFull,
     #[error("GSR authentication failed")]
     Authentication,
 }
@@ -224,6 +276,51 @@ mod tests {
             resource: None,
             arguments: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn weak_channel_keys_are_rejected_by_all_entry_points() {
+        let weak = ChannelKey(vec![1]);
+        assert!(matches!(
+            SignedRequest::sign(request(), &weak),
+            Err(ChannelAuthError::WeakKey)
+        ));
+
+        let valid_key = ChannelKey::generate().unwrap();
+        let signed = SignedRequest::sign(request(), &valid_key).unwrap();
+        let mut replay = ReplayGuard::default();
+        assert!(matches!(
+            signed.verify(&weak, DEFAULT_MAX_CLOCK_SKEW_SECS, &mut replay),
+            Err(ChannelAuthError::WeakKey)
+        ));
+
+        let encoded = serde_json::json!(hex::encode([1u8, 2, 3]));
+        let decoded = serde_json::from_value::<ChannelKey>(encoded);
+        assert!(decoded.is_err(), "deserialization must enforce minimum key length");
+    }
+
+    #[test]
+    fn replay_cache_does_not_evict_live_nonces_when_full() {
+        let mut replay = ReplayGuard::new(1);
+        replay.check_and_record(b"nonce-1", 200, 100).unwrap();
+        assert!(matches!(
+            replay.check_and_record(b"nonce-2", 200, 100),
+            Err(ChannelAuthError::ReplayCacheFull)
+        ));
+        assert!(matches!(
+            replay.check_and_record(b"nonce-1", 200, 100),
+            Err(ChannelAuthError::Replay)
+        ));
+        replay.check_and_record(b"nonce-2", 300, 201).unwrap();
+    }
+
+    #[test]
+    fn clock_before_unix_epoch_fails_closed() {
+        let before_epoch = UNIX_EPOCH - std::time::Duration::from_secs(1);
+        assert!(matches!(
+            unix_timestamp(before_epoch),
+            Err(ChannelAuthError::ClockUnavailable)
+        ));
     }
 
     #[test]
@@ -286,7 +383,7 @@ mod tests {
     fn expired_past_timestamp_is_rejected() {
         let key = ChannelKey::generate().unwrap();
         let mut signed = SignedRequest::sign(request(), &key).unwrap();
-        signed.timestamp = now().saturating_sub(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
+        signed.timestamp = now().unwrap().saturating_sub(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
 
         let mut replay = ReplayGuard::default();
         assert!(matches!(
@@ -299,7 +396,7 @@ mod tests {
     fn expired_future_timestamp_is_rejected() {
         let key = ChannelKey::generate().unwrap();
         let mut signed = SignedRequest::sign(request(), &key).unwrap();
-        signed.timestamp = now().saturating_add(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
+        signed.timestamp = now().unwrap().saturating_add(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
 
         let mut replay = ReplayGuard::default();
         assert!(matches!(

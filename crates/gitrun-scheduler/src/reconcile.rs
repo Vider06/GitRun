@@ -532,10 +532,7 @@ mod tests {
             vec!["self-hosted".into(), "Linux".into()],
             vec!["self-hosted".into(), "Linux".into()],
         ];
-        input.queued_job_names = vec![
-            "deploy-production".into(),
-            "build-docs".into(),
-        ];
+        input.queued_job_names = vec!["deploy-production".into(), "build-docs".into()];
         input.queued_job_run_ids = vec![42, 43];
         input.dock_target_jobs = vec!["deploy-production".into()];
         input.logic_rules = Vec::new();

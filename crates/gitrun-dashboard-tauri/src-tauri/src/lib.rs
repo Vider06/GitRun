@@ -1729,6 +1729,10 @@ fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
 /// available) rather than the dashboard round-tripping it back to them.
 #[tauri::command]
 fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), String> {
+    const MAX_VAULT_SECRET_BYTES: usize = 1024 * 1024;
+    if value.len() > MAX_VAULT_SECRET_BYTES {
+        return Err("GitVault secret exceeds the 1 MiB safety limit".into());
+    }
     let config = load_config()?;
     let mut vault = open_vault(&config)?;
     vault

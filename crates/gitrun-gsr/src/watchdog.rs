@@ -32,6 +32,12 @@ extern "C" {
 
 #[cfg(unix)]
 fn process_is_alive(pid: u32) -> bool {
+    // Do not cast malformed PID-file values into negative pid_t values:
+    // kill(-1, 0) checks process-group-wide permissions and can falsely make
+    // a corrupt watchdog target look alive forever.
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     let result = unsafe { libc_kill(pid as i32, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1) // EPERM: alive, just not ours
 }
@@ -138,6 +144,14 @@ fn try_graphical_notification(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_pid_values_are_not_treated_as_live_processes() {
+        assert!(!process_is_alive(0));
+        assert!(!process_is_alive(u32::MAX));
+        assert!(!process_is_alive(i32::MAX as u32 + 1));
+    }
 
     #[test]
     fn read_pid_parses_valid_file() {

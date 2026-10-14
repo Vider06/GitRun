@@ -34,6 +34,8 @@ pub enum AppAuthError {
     Clock(#[from] std::time::SystemTimeError),
     #[error("invalid GitHub installation token expiration timestamp: {0}")]
     InvalidTimestamp(String),
+    #[error("GitHub returned an installation token that expires too soon: {0}")]
+    TokenExpiresTooSoon(String),
     #[error("invalid GitHub App {0}: expected a positive decimal integer ID")]
     InvalidIdentifier(&'static str),
 }
@@ -106,15 +108,13 @@ impl AppAuth {
     /// cached token or the cached one is close enough to expiry that using
     /// it risks a mid-request 401.
     pub fn token(&self) -> Result<String> {
-        const REFRESH_MARGIN: Duration = Duration::from_secs(120);
-
         // Keep the cache lock across token minting. Without this, parallel
         // dashboard/API requests can all observe an empty cache and mint
         // duplicate installation tokens at the same time.
         let mut cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = cached.as_ref() {
             let now = SystemTime::now();
-            if entry.expires_at > now + REFRESH_MARGIN {
+            if entry.expires_at > now + TOKEN_REFRESH_MARGIN {
                 return Ok(entry.token.clone());
             }
         }
@@ -173,8 +173,7 @@ impl AppAuth {
                 detail: "GitHub returned an empty installation token".into(),
             });
         }
-        let expires_at = parse_github_timestamp(&parsed.expires_at)
-            .ok_or_else(|| AppAuthError::InvalidTimestamp(parsed.expires_at.clone()))?;
+        let expires_at = validate_token_expiration(&parsed.expires_at, SystemTime::now())?;
         Ok((parsed.token, expires_at))
     }
 }
@@ -191,6 +190,24 @@ fn validate_github_id(value: String, field: &'static str) -> Result<String> {
         return Err(AppAuthError::InvalidIdentifier(field));
     }
     Ok(value)
+}
+
+const TOKEN_REFRESH_MARGIN: Duration = Duration::from_secs(120);
+
+/// A successful HTTP response is not enough: never hand a caller a token
+/// that is already expired or too close to expiry to survive a normal request.
+fn validate_token_expiration(raw: &str, now: SystemTime) -> Result<SystemTime> {
+    let expires_at =
+        parse_github_timestamp(raw).ok_or_else(|| AppAuthError::InvalidTimestamp(raw.into()))?;
+    if expires_at
+        .duration_since(now)
+        .map(|remaining| remaining > TOKEN_REFRESH_MARGIN)
+        .unwrap_or(false)
+    {
+        Ok(expires_at)
+    } else {
+        Err(AppAuthError::TokenExpiresTooSoon(raw.into()))
+    }
 }
 
 fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
@@ -309,6 +326,33 @@ mod tests {
         assert!(parse_github_timestamp("2026-09-23T2:00:00Z").is_none());
         assert!(parse_github_timestamp("2026-09-23T12:00:00.Z").is_none());
         assert!(parse_github_timestamp("2026-09-23T12:00:00.123Z").is_some());
+    }
+
+    #[test]
+    fn installation_token_expiration_must_leave_refresh_margin() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        let expires_at = |seconds: u64| {
+            let total = now + Duration::from_secs(seconds);
+            let duration = total.duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let days = (duration / 86_400) as i64;
+            // Use a known valid timestamp and vary the seconds with a compact
+            // RFC 3339 fixture to keep this test independent of wall-clock time.
+            let _ = days;
+            total
+        };
+        assert!(matches!(
+            validate_token_expiration("2026-09-23T12:00:00Z", now),
+            Ok(_)
+        ));
+        assert!(matches!(
+            validate_token_expiration("2026-09-23T11:59:00Z", now),
+            Err(AppAuthError::TokenExpiresTooSoon(_))
+        ));
+        assert!(matches!(
+            validate_token_expiration("2026-09-23T12:01:00Z", now),
+            Err(AppAuthError::TokenExpiresTooSoon(_))
+        ));
+        let _ = expires_at;
     }
 
     #[test]

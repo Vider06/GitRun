@@ -699,9 +699,7 @@ impl GitHubClient {
             })),
             _ => Err(GitHubError::Api {
                 status: 409,
-                detail: format!(
-                    "workflow run {run_id} contains multiple jobs named {job_name:?}"
-                ),
+                detail: format!("workflow run {run_id} contains multiple jobs named {job_name:?}"),
             }),
         }
     }
@@ -1042,7 +1040,9 @@ mod tests {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::LINK,
-            "<https://attacker.example/steal?page=2>; rel=next".parse().unwrap(),
+            "<https://attacker.example/steal?page=2>; rel=next"
+                .parse()
+                .unwrap(),
         );
         assert_eq!(parse_next_link(&headers), None);
     }

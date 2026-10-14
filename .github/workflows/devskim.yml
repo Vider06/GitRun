@@ -28,6 +28,12 @@ jobs:
       - name: Run DevSkim scanner
         uses: microsoft/DevSkim-Action@734c6ed89671b1c7a5211ed334c79db261e3f221 # v1
 
+      - name: Test narrow Tauri CSP exception
+        run: python3 -m unittest scripts.tests.test_devskim_tauri_csp_sarif_filter
+
+      - name: Filter documented Tauri IPC CSP false positives
+        run: python3 scripts/filter_devskim_tauri_csp_sarif.py
+
       - name: Upload DevSkim scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
         with:

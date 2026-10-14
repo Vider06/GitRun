@@ -916,7 +916,8 @@ mod tests {
         let dir = temp_dir("set-persist-failure");
         let mut vault = Vault::open(&dir).unwrap();
         vault.set("existing", "original").unwrap();
-        fs::create_dir(dir.join("secrets.json.tmp")).unwrap();
+        fs::rename(dir.join(SECRETS_FILE), dir.join("secrets.json.saved")).unwrap();
+        fs::create_dir(dir.join(SECRETS_FILE)).unwrap();
 
         assert!(vault.set("new", "value").is_err());
         assert!(matches!(vault.get("new"), Err(VaultError::NotFound(_))));
@@ -929,7 +930,8 @@ mod tests {
         let dir = temp_dir("delete-persist-failure");
         let mut vault = Vault::open(&dir).unwrap();
         vault.set("existing", "value").unwrap();
-        fs::create_dir(dir.join("secrets.json.tmp")).unwrap();
+        fs::rename(dir.join(SECRETS_FILE), dir.join("secrets.json.saved")).unwrap();
+        fs::create_dir(dir.join(SECRETS_FILE)).unwrap();
 
         assert!(vault.delete("existing").is_err());
         assert_eq!(vault.get("existing").unwrap(), "value");
@@ -1005,6 +1007,27 @@ mod tests {
         let reloaded = Vault::open(&dir).unwrap();
         assert!(matches!(
             reloaded.get("key"),
+            Err(VaultError::DecryptionFailed(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_for_repo_fails_closed_when_selected_secret_cannot_decrypt() {
+        let dir = temp_dir("resolve-corrupt");
+        let mut vault = Vault::open(&dir).unwrap();
+        vault
+            .set_scoped("TOKEN", "valid-value", Scope::Global)
+            .unwrap();
+        let entry = vault.data.secrets.get_mut("global\\u{1}TOKEN").unwrap();
+        entry.ciphertext = "not-valid-base64!".to_owned();
+
+        assert!(matches!(
+            vault.resolve_for_repo("owner/repo", &[]),
+            Err(VaultError::DecryptionFailed(_))
+        ));
+        assert!(matches!(
+            vault.effective_contains_for_repo("TOKEN", "owner/repo", &[]),
             Err(VaultError::DecryptionFailed(_))
         ));
         let _ = fs::remove_dir_all(&dir);

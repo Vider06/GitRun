@@ -330,29 +330,18 @@ mod tests {
 
     #[test]
     fn installation_token_expiration_must_leave_refresh_margin() {
-        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
-        let expires_at = |seconds: u64| {
-            let total = now + Duration::from_secs(seconds);
-            let duration = total.duration_since(UNIX_EPOCH).unwrap().as_secs();
-            let days = (duration / 86_400) as i64;
-            // Use a known valid timestamp and vary the seconds with a compact
-            // RFC 3339 fixture to keep this test independent of wall-clock time.
-            let _ = days;
-            total
-        };
+        let raw = "2026-09-23T12:00:00Z";
+        let expires_at = parse_github_timestamp(raw).expect("valid timestamp");
+
+        assert!(validate_token_expiration(raw, expires_at - Duration::from_secs(180)).is_ok());
         assert!(matches!(
-            validate_token_expiration("2026-09-23T12:00:00Z", now),
-            Ok(_)
-        ));
-        assert!(matches!(
-            validate_token_expiration("2026-09-23T11:59:00Z", now),
+            validate_token_expiration(raw, expires_at - Duration::from_secs(60)),
             Err(AppAuthError::TokenExpiresTooSoon(_))
         ));
         assert!(matches!(
-            validate_token_expiration("2026-09-23T12:01:00Z", now),
+            validate_token_expiration(raw, expires_at + Duration::from_secs(60)),
             Err(AppAuthError::TokenExpiresTooSoon(_))
         ));
-        let _ = expires_at;
     }
 
     #[test]

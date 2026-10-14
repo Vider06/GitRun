@@ -1,9 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+static STATE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -51,31 +55,47 @@ impl StateStore {
                 .as_secs(),
             message: message.into(),
         };
-        let tmp = self.temp_path("health.json");
-        fs::write(&tmp, serde_json::to_vec_pretty(&report)?)?;
-        if let Err(error) = fs::rename(&tmp, self.health_path()) {
-            let _ = fs::remove_file(&tmp);
-            return Err(error.into());
-        }
-        Ok(())
+        self.write_atomic("health.json", &serde_json::to_vec_pretty(&report)?)
     }
+
     pub fn record_crash(&self, message: impl Into<String>) -> Result<(), StateError> {
         fs::create_dir_all(&self.root)?;
-        let tmp = self.temp_path("last-crash");
-        fs::write(&tmp, message.into())?;
-        if let Err(error) = fs::rename(&tmp, self.crash_path()) {
-            let _ = fs::remove_file(&tmp);
-            return Err(error.into());
-        }
-        Ok(())
+        self.write_atomic("last-crash", message.into().as_bytes())
     }
-    fn temp_path(&self, name: &str) -> PathBuf {
+
+    fn write_atomic(&self, name: &str, bytes: &[u8]) -> Result<(), StateError> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        self.root
-            .join(format!("{name}.tmp.{}.{}", std::process::id(), nonce))
+        let sequence = STATE_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temp = self.root.join(format!(
+            "{name}.tmp.{}.{nonce}.{sequence}",
+            std::process::id()
+        ));
+        let write_result = (|| -> Result<(), StateError> {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temp)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temp, self.root.join(name))?;
+
+            #[cfg(unix)]
+            fs::File::open(&self.root)?.sync_all()?;
+            Ok(())
+        })();
+
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        write_result
     }
     pub fn read_health(&self) -> Result<Option<HealthReport>, StateError> {
         match fs::read_to_string(self.health_path()) {

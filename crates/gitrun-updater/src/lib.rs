@@ -298,7 +298,9 @@ impl ReleaseManifest {
     /// compatibility/unsafe opt-out for custom unsigned manifests.
     pub fn verify_signature_from_env(&self) -> Result<(), UpdateError> {
         let required = signature_required_from_env(
-            std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED").ok().as_deref(),
+            std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED")
+                .ok()
+                .as_deref(),
         )?;
         let key = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_HEX").ok();
         match (self.signature.as_deref(), key.as_deref()) {

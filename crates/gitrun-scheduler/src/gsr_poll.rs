@@ -150,11 +150,7 @@ impl BanStore {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        let tmp = parent.join(format!(
-            ".gsr-bans.{}.{}.tmp",
-            std::process::id(),
-            nonce
-        ));
+        let tmp = parent.join(format!(".gsr-bans.{}.{}.tmp", std::process::id(), nonce));
 
         // create_new avoids following a pre-created symlink and keeps
         // concurrent saves from truncating one another's temporary file.
@@ -166,8 +162,8 @@ impl BanStore {
             options.mode(0o600);
         }
         let mut file = options.open(&tmp)?;
-        if let Err(error) = std::io::Write::write_all(&mut file, &serialized)
-            .and_then(|()| file.sync_all())
+        if let Err(error) =
+            std::io::Write::write_all(&mut file, &serialized).and_then(|()| file.sync_all())
         {
             let _ = fs::remove_file(&tmp);
             return Err(error.into());

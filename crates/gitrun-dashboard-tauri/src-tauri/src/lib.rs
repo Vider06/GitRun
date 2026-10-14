@@ -373,7 +373,13 @@ fn validate_private_key_path(value: &str) -> Result<String, String> {
     let path = validate_setup_value(value, "private key path")?;
     let path_buf = PathBuf::from(&path);
     secure_private_key_file(&path_buf)?;
-    Ok(path)
+    // Resolve relative paths before elevation: pkexec/sudo may start the
+    // privileged helper in a different working directory.
+    let canonical = path_buf.canonicalize().map_err(|error| {
+        format!("unable to resolve GitHub App private key {}: {error}", path_buf.display())
+    })?;
+    secure_private_key_file(&canonical)?;
+    Ok(canonical.to_string_lossy().into_owned())
 }
 
 /// Harden a user-supplied GitHub App private key before the privileged setup
@@ -396,6 +402,9 @@ fn secure_private_key_file(path: &std::path::Path) -> Result<(), String> {
             "GitHub App private key path is not a regular file: {}",
             path.display()
         ));
+    }
+    if metadata.len() > 1024 * 1024 {
+        return Err("GitHub App private key exceeds the 1 MiB safety limit".into());
     }
 
     #[cfg(unix)]

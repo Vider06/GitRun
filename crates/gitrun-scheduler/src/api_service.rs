@@ -4304,7 +4304,15 @@ mod dock_melt_source_status_tests {
     fn melt_allows_only_exited_or_explicitly_dock_only_sources() {
         assert!(dock_melt_source_status_allowed("exited", false));
         assert!(dock_melt_source_status_allowed("running", true));
-        for status in ["created", "paused", "restarting", "removing", "dead", "unknown", ""] {
+        for status in [
+            "created",
+            "paused",
+            "restarting",
+            "removing",
+            "dead",
+            "unknown",
+            "",
+        ] {
             assert!(
                 !dock_melt_source_status_allowed(status, false),
                 "unexpectedly allowed source status {status:?}"

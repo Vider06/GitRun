@@ -71,7 +71,7 @@ jobs:
   # ─────────────────────────────────────────────── variables verification ──
   variables-verification:
     name: Repository CI variables
-    runs-on: ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -151,7 +151,7 @@ jobs:
   environment:
     name: Runner environment
     needs: variables-verification
-    runs-on: &runner ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: &runner ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
     permissions:
       contents: read

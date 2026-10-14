@@ -2077,9 +2077,20 @@ impl ApiExecutionBackend {
         let status = docker::container_status(&source)
             .map_err(|error| failed(error.to_string()))?
             .unwrap_or_default();
-        if status == "running" {
+        // A dock-only container is intentionally running with its runner
+        // disabled and a marker installed. Ordinary running containers must
+        // never be exported into another container. Only an exited container
+        // or a running container carrying that marker is eligible for MELT.
+        let dock_only_marker_present = if status == "running" {
+            let marker = docker::exec_container(&source, &["test", "-f", DOCK_ONLY_MARKER])
+                .map_err(|error| failed(error.to_string()))?;
+            marker.status.success()
+        } else {
+            false
+        };
+        if !dock_melt_source_status_allowed(&status, dock_only_marker_present) {
             return Err(failed(
-                "GitDockRun --melt requires a stopped or dock-only source container",
+                "GitDockRun --melt requires an exited or dock-only source container",
             ));
         }
 
@@ -4279,6 +4290,29 @@ fn arg<'a>(request: &'a AuthorizedOperation, name: &str) -> Result<&'a str, Exec
 
 fn request_run_id(request: &AuthorizedOperation) -> u64 {
     request.run_id.unwrap_or(0)
+}
+
+fn dock_melt_source_status_allowed(status: &str, dock_only_marker_present: bool) -> bool {
+    status == "exited" || (status == "running" && dock_only_marker_present)
+}
+
+#[cfg(test)]
+mod dock_melt_source_status_tests {
+    use super::dock_melt_source_status_allowed;
+
+    #[test]
+    fn melt_allows_only_exited_or_explicitly_dock_only_sources() {
+        assert!(dock_melt_source_status_allowed("exited", false));
+        assert!(dock_melt_source_status_allowed("running", true));
+        for status in ["created", "paused", "restarting", "removing", "dead", "unknown", ""] {
+            assert!(
+                !dock_melt_source_status_allowed(status, false),
+                "unexpectedly allowed source status {status:?}"
+            );
+        }
+        assert!(!dock_melt_source_status_allowed("running", false));
+        assert!(!dock_melt_source_status_allowed("paused", true));
+    }
 }
 
 fn docker_exec_checked(container: &str, args: &[&str]) -> Result<ExecutionResult, ExecutionError> {

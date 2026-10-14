@@ -294,7 +294,7 @@ impl Vault {
         if let Err(error) = self.persist() {
             // A post-rename directory-sync failure means the new file is
             // already visible. Keep memory aligned with that committed state.
-            if !matches!(error, VaultError::DurabilityUncertain(_)) {
+            if !matches!(&error, VaultError::DurabilityUncertain(_)) {
                 match previous {
                     Some(previous) => {
                         self.data.secrets.insert(key, previous);
@@ -378,7 +378,7 @@ impl Vault {
         if let Err(error) = self.persist() {
             // See set_scoped: after atomic rename, retain the new in-memory
             // state even if the directory fsync reports uncertain durability.
-            if !matches!(error, VaultError::DurabilityUncertain(_)) {
+            if !matches!(&error, VaultError::DurabilityUncertain(_)) {
                 self.data.secrets.insert(key, removed);
             }
             return Err(error);

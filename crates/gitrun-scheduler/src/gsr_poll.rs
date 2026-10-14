@@ -105,6 +105,17 @@ impl BanStore {
         Ok(Self { path, data })
     }
 
+    /// Creates a store handle when persisted ban state cannot currently be
+    /// read. Polling can still enforce Kill/LogOnly, and KillAndBan still
+    /// attempts to terminate a violating container; persistence errors are
+    /// surfaced by ban() rather than disabling all external enforcement.
+    fn unavailable(state_dir: &Path) -> Self {
+        Self {
+            path: state_dir.join("gsr-bans.json"),
+            data: BanFile::default(),
+        }
+    }
+
     fn lock(&self) -> Result<File, GsrPollError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
@@ -133,9 +144,39 @@ impl BanStore {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(&self.data)?)?;
-        fs::rename(&tmp, &self.path)?;
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let serialized = serde_json::to_vec_pretty(&self.data)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let tmp = parent.join(format!(
+            ".gsr-bans.{}.{}.tmp",
+            std::process::id(),
+            nonce
+        ));
+
+        // create_new avoids following a pre-created symlink and keeps
+        // concurrent saves from truncating one another's temporary file.
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        if let Err(error) = std::io::Write::write_all(&mut file, &serialized)
+            .and_then(|()| file.sync_all())
+        {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
+        if let Err(error) = fs::rename(&tmp, &self.path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
+        File::open(parent)?.sync_all()?;
         Ok(())
     }
 
@@ -266,20 +307,25 @@ fn apply_violation_action(
             .err()
             .map(|error| format!("container kill failed: {error}")),
         ViolationAction::KillAndBan => {
-            if let Err(error) = docker::remove_container_on(host, container_name) {
-                return Some(format!(
-                    "container kill failed; ban was not applied: {error}"
-                ));
-            }
-            match repo {
+            // Persist the repo ban first: if container removal subsequently
+            // fails, the scheduler still refuses to create a replacement runner.
+            let ban_error = match repo {
                 Some(repo) => ban_store
                     .ban(repo, DEFAULT_BAN_DURATION)
                     .err()
-                    .map(|error| format!("container killed, but ban persistence failed: {error}")),
+                    .map(|error| format!("repository ban persistence failed: {error}")),
                 None => Some(
-                    "container killed, but repository label was unavailable; ban was not applied"
-                        .to_owned(),
+                    "repository label was unavailable; repository ban was not applied".to_owned(),
                 ),
+            };
+            let kill_error = docker::remove_container_on(host, container_name)
+                .err()
+                .map(|error| format!("container kill failed: {error}"));
+
+            match (ban_error, kill_error) {
+                (Some(ban), Some(kill)) => Some(format!("{ban}; {kill}")),
+                (Some(error), None) | (None, Some(error)) => Some(error),
+                (None, None) => None,
             }
         }
     }
@@ -348,13 +394,14 @@ pub fn run_with_hosts(
     let mut ban_store = match BanStore::load(state_dir) {
         Ok(store) => store,
         Err(error) => {
-            // A corrupt/unreadable ban file must fail closed: continuing with
-            // an empty in-memory store would make KillAndBan ineffective
-            // until the process restarts with a repaired state file.
+            // Do not disable all host-side process enforcement because the
+            // optional ban state is unavailable. Kill/LogOnly remain useful,
+            // and KillAndBan still kills the container while reporting any
+            // persistence failure; the next ban attempt re-reads the file.
             eprintln!(
-                "gitrun-scheduler: gsr_poll could not load ban state; refusing to start enforcement: {error}"
+                "gitrun-scheduler: gsr_poll could not load ban state; continuing enforcement with persistence errors surfaced: {error}"
             );
-            return;
+            BanStore::unavailable(state_dir)
         }
     };
 
@@ -425,6 +472,24 @@ mod tests {
         assert!(reloaded.is_banned("owner/repo"));
         assert!(!reloaded.is_banned("owner/other-repo"));
 
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ban_store_save_does_not_follow_predictable_temp_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_state_dir("temp-symlink");
+        let target = dir.join("must-not-be-truncated");
+        fs::write(&target, "preserve me").unwrap();
+        symlink(&target, dir.join("gsr-bans.json.tmp")).unwrap();
+
+        let mut store = BanStore::load(&dir).unwrap();
+        store.ban("owner/repo", Duration::from_secs(3600)).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "preserve me");
+        assert!(dir.join("gsr-bans.json").is_file());
         fs::remove_dir_all(&dir).ok();
     }
 

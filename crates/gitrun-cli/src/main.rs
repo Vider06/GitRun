@@ -835,36 +835,56 @@ fn verify_repository_access(
     }
 }
 
-fn write_version_file(path: &Path, version: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn atomic_replace_text(
+    path: &Path,
+    content: &str,
+    mode: u32,
+    prefix: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let temp = parent.join(format!(
-        ".gitrun-version-{}.{}.tmp",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ".{prefix}-{}-{nonce}.tmp",
+        std::process::id()
     ));
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o644)
-            .open(&temp)?;
-        file.write_all(format!("{version}\n").as_bytes())?;
-        file.sync_all()?;
-        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o644))?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&temp, format!("{version}\n"))?;
-    }
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(mode)
+                .open(&temp)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+            std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(mode))?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+        }
 
-    if let Err(error) = std::fs::rename(&temp, path) {
+        std::fs::rename(&temp, path)?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+
+    if result.is_err() {
         let _ = std::fs::remove_file(&temp);
-        return Err(error.into());
     }
-    Ok(())
+    result
+}
+
+fn write_version_file(path: &Path, version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    atomic_replace_text(path, &format!("{version}\n"), 0o644, "gitrun-version")
 }
 
 fn write_repositories_to_config(
@@ -895,33 +915,7 @@ fn write_repositories_to_config(
 
     let mut rendered = output.join("\n");
     rendered.push('\n');
-
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let temp = parent.join(format!(
-        ".gitrun-connect-{}.{}.tmp",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-    ));
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)?;
-        file.write_all(rendered.as_bytes())?;
-        file.sync_all()?;
-        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&temp, rendered.as_bytes())?;
-    }
-
-    std::fs::rename(&temp, path)?;
-    Ok(())
+    atomic_replace_text(path, &rendered, 0o600, "gitrun-connect")
 }
 
 fn terminal_setup_command(

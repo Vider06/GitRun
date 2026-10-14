@@ -241,7 +241,7 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result != 0 {
         let error = std::io::Error::last_os_error();
-        if matches!(error.raw_os_error(), Some(libc::EWOULDBLOCK) | Some(libc::EAGAIN)) {
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
             return Err(Error::new(
                 ErrorKind::AlreadyExists,
                 "another gitrun-autoscaler instance holds the scheduler lock",

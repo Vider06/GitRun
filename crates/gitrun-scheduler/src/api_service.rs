@@ -1118,10 +1118,10 @@ impl ApiExecutionBackend {
             }
             GitRunOperation::Exists => {
                 let name = arg(request, "name")?;
-                Ok(success(format!(
-                    "{}\n",
-                    vault.effective_contains_for_repo(name, &request.repository, &groups)
-                )))
+                let exists = vault
+                    .effective_contains_for_repo(name, &request.repository, &groups)
+                    .map_err(|error| failed(error.to_string()))?;
+                Ok(success(format!("{exists}\n")))
             }
             GitRunOperation::Delete => {
                 let name = arg(request, "name")?;
@@ -4500,10 +4500,15 @@ fn redact_vault_values(config: &Config, repository: &str, text: &str) -> String 
     let bridge = crate::gsr_bridge::VaultToGsrBridge::new(&config.state_dir);
     let vault = match Vault::open_with_sink(&config.vault_dir, Box::new(bridge)) {
         Ok(vault) => vault,
-        Err(_) => return text.to_owned(),
+        // Do not emit raw output when secret redaction cannot be guaranteed.
+        Err(_) => return "[output withheld: GitVault unavailable]".to_owned(),
+    };
+    let secrets = match vault.resolve_for_repo(repository, &groups) {
+        Ok(secrets) => secrets,
+        Err(_) => return "[output withheld: GitVault secret resolution failed]".to_owned(),
     };
     let mut result = text.to_owned();
-    for (_, value) in vault.resolve_for_repo(repository, &groups) {
+    for (_, value) in secrets {
         if value.is_empty() {
             continue;
         }

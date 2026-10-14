@@ -895,7 +895,6 @@ fn validate_resource_pressure_paths(value: &str) -> Result<(), ConfigError> {
     }
 
     for path in paths {
-        let parsed = Path::new(path);
         if !is_absolute_filesystem_path(path)
             || path.chars().any(char::is_control)
             || path
@@ -1307,6 +1306,7 @@ mod tests {
 
         config.resource_pressure_paths = "/var/lib/docker; /var/lib/gitrun".into();
         assert!(config.validate().is_ok());
+        assert!(validate_resource_pressure_paths(r"C:\runner\data").is_ok());
 
         for invalid in [
             "",
@@ -1316,6 +1316,7 @@ mod tests {
             "var/lib/docker",
             "/var/lib/../docker",
             "/var/lib/./docker",
+            r"C:\runner\..\data",
             "/var/lib/do\ncker",
         ] {
             config.resource_pressure_paths = invalid.into();

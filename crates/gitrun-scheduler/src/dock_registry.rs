@@ -8,8 +8,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 const REGISTRY_FILE: &str = "dock-registry.json";
@@ -232,7 +232,10 @@ mod tests {
         };
         fs::write(&path, serde_json::to_vec(&duplicate).unwrap()).unwrap();
 
-        assert!(matches!(DockRegistry::load(&dir), Err(DockRegistryError::Invalid(_))));
+        assert!(matches!(
+            DockRegistry::load(&dir),
+            Err(DockRegistryError::Invalid(_))
+        ));
         let _ = fs::remove_dir_all(&dir);
     }
 

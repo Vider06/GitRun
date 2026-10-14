@@ -157,8 +157,7 @@ fn persist_config_as_root(_config: &Config) -> Result<(), String> {
 /// Persists only known settings. On a system installation, the configuration is
 /// root-owned; a desktop-launched dashboard must request authorization rather
 /// than relying on the service's GITRUN_CONFIG_FILE environment.
-fn persist_dashboard_config(config: &Config) -> Result<(), String> {
-    let _write_guard = dashboard_settings_write_guard()?;
+fn persist_dashboard_config_unlocked(config: &Config) -> Result<(), String> {
     config.validate().map_err(|error| error.to_string())?;
     let path = config_path_for_write()?;
 
@@ -178,6 +177,11 @@ fn persist_dashboard_config(config: &Config) -> Result<(), String> {
             path.display()
         )),
     }
+}
+
+fn persist_dashboard_config(config: &Config) -> Result<(), String> {
+    let _write_guard = dashboard_settings_write_guard()?;
+    persist_dashboard_config_unlocked(config)
 }
 
 #[tauri::command]
@@ -2767,37 +2771,37 @@ fn save_dashboard_settings(
                 .into(),
         );
     }
-    let config_path = configured_config_path()
-        .ok_or_else(|| "No persistent GitRun configuration file could be resolved; refusing to save settings to an implicit path".to_owned())?;
-    let original_config = std::fs::read(&config_path)
-        .map_err(|error| format!("unable to back up configuration before saving: {error}"))?;
-    let original_settings = match std::fs::read(&settings_path) {
-        Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(format!(
-                "unable to back up GitRun settings before saving: {error}"
-            ))
-        }
-    };
-    if let Err(error) = gitrun_setup::update_env_file(&config_path, &updated) {
-        return match std::fs::write(&config_path, original_config.clone()) {
-            Ok(()) => Err(format!("GitRun configuration save failed: {error}. Original configuration restored.")),
-            Err(rollback) => Err(format!("GitRun configuration save failed: {error}; restoring the original file also failed: {rollback}")),
-        };
+    // The dashboard may be launched as an unprivileged desktop user while
+    // the canonical system config is root-owned. Use the same trusted
+    // elevation path as the dedicated config command, rather than attempting
+    // a direct write that can never succeed for this installation.
+    if let Err(save_error) = persist_dashboard_config_unlocked(&updated) {
+        let rollback = persist_dashboard_config_unlocked(&current_config);
+        return Err(match rollback {
+            Ok(()) => format!(
+                "GitRun configuration save failed: {save_error}. Previous configuration was restored."
+            ),
+            Err(rollback_error) => format!(
+                "GitRun configuration save failed: {save_error}; restoring the previous configuration also failed: {rollback_error}"
+            ),
+        });
     }
+
     if let Err(save_error) = settings.save(&settings_path) {
-        let config_rollback = std::fs::write(&config_path, original_config);
-        let settings_rollback = match original_settings {
-            Some(bytes) => std::fs::write(&settings_path, bytes).map_err(|error| error.to_string()),
-            None => match std::fs::remove_file(&settings_path) {
+        let config_rollback = persist_dashboard_config_unlocked(&current_config);
+        let settings_rollback = if settings_path.exists() {
+            current_settings
+                .save(&settings_path)
+                .map_err(|error| error.to_string())
+        } else {
+            match std::fs::remove_file(&settings_path) {
                 Ok(()) => Ok(()),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
                 Err(error) => Err(error.to_string()),
-            },
+            }
         };
         let rollback_detail = match (config_rollback, settings_rollback) {
-            (Ok(()), Ok(())) => "Previous files were restored.".to_owned(),
+            (Ok(()), Ok(())) => "Previous configuration and settings were restored.".to_owned(),
             (config_result, settings_result) => format!(
                 "Rollback results: config={:?}; settings={:?}",
                 config_result.err(),

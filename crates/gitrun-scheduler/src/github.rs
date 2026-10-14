@@ -675,25 +675,34 @@ impl GitHubClient {
             encode_path_segment(name)
         );
 
+        let mut matches = Vec::new();
         loop {
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: JobsResponse = response.json()?;
-
-            if let Some(job) = parsed.jobs.into_iter().find(|job| job.name == job_name) {
-                return Ok(Some(WorkflowJobInfo {
-                    id: job.id,
-                    name: job.name,
-                    status: job.status,
-                    conclusion: job.conclusion,
-                    runner_name: job.runner_name,
-                }));
-            }
+            matches.extend(parsed.jobs.into_iter().filter(|job| job.name == job_name));
 
             match next_url {
                 Some(next) => url = next,
-                None => return Ok(None),
+                None => break,
             }
+        }
+
+        match matches.as_slice() {
+            [] => Ok(None),
+            [job] => Ok(Some(WorkflowJobInfo {
+                id: job.id,
+                name: job.name.clone(),
+                status: job.status.clone(),
+                conclusion: job.conclusion.clone(),
+                runner_name: job.runner_name.clone(),
+            })),
+            _ => Err(GitHubError::Api {
+                status: 409,
+                detail: format!(
+                    "workflow run {run_id} contains multiple jobs named {job_name:?}"
+                ),
+            }),
         }
     }
 
@@ -806,6 +815,17 @@ impl GitHubClient {
     /// `workflow_validation::validate_workflows_dir`.
     pub fn workflow_files(&self, repo: &str) -> Result<Vec<(String, String)>> {
         let (owner, name) = split_repo(repo)?;
+        let repository_url = format!(
+            "{API_BASE}/repos/{}/{}",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        // Confirm the repository is accessible before treating a 404 for the
+        // workflow directory as "there are no workflows". GitHub also returns
+        // 404 for private repositories hidden from this token or missing repos;
+        // treating that as an empty directory would silently bypass validation.
+        self.request(reqwest::Method::GET, &repository_url)?;
+
         let list_url = format!(
             "{API_BASE}/repos/{}/{}/contents/.github/workflows",
             encode_path_segment(owner),
@@ -894,7 +914,19 @@ fn parse_next_link(headers: &reqwest::header::HeaderMap) -> Option<String> {
         if !is_next {
             return None;
         }
-        Some(url_part[1..url_part.len() - 1].to_owned())
+        let url = &url_part[1..url_part.len() - 1];
+        // Link headers are response data. Never let a response redirect the
+        // authenticated client to another origin with its bearer token.
+        let parsed = reqwest::Url::parse(url).ok()?;
+        if parsed.scheme() != "https"
+            || parsed.host_str() != Some("api.github.com")
+            || parsed.port().is_some()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return None;
+        }
+        Some(parsed.to_string())
     })
 }
 
@@ -1003,6 +1035,29 @@ mod tests {
     fn no_link_header_means_no_next_page() {
         let headers = reqwest::header::HeaderMap::new();
         assert_eq!(parse_next_link(&headers), None);
+    }
+
+    #[test]
+    fn pagination_rejects_non_github_origins() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::LINK,
+            "<https://attacker.example/steal?page=2>; rel=next".parse().unwrap(),
+        );
+        assert_eq!(parse_next_link(&headers), None);
+    }
+
+    #[test]
+    fn pagination_rejects_insecure_or_nonstandard_github_urls() {
+        for link in [
+            "<http://api.github.com/resource?page=2>; rel=next",
+            "<https://api.github.com:8443/resource?page=2>; rel=next",
+            "<https://user@api.github.com/resource?page=2>; rel=next",
+        ] {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(reqwest::header::LINK, link.parse().unwrap());
+            assert_eq!(parse_next_link(&headers), None, "link: {link}");
+        }
     }
 
     #[test]

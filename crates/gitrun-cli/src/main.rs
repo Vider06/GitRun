@@ -617,8 +617,58 @@ fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn read_privileged_setup_payload(path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        use std::os::unix::fs::MetadataExt;
+
+        let path = Path::new(path);
+        let before = std::fs::symlink_metadata(path)?;
+        if before.file_type().is_symlink() || !before.is_file() {
+            return Err("setup payload must be a regular, non-symlink file".into());
+        }
+        if before.len() > 1024 * 1024 {
+            return Err("setup payload exceeds the 1 MiB safety limit".into());
+        }
+
+        let expected_uid = match std::env::var("PKEXEC_UID").or_else(|_| std::env::var("SUDO_UID")) {
+            Ok(value) => value.parse::<u32>()?,
+            Err(_) => 0,
+        };
+        let mut file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        // Compare the opened inode with lstat's result to reject path swaps
+        // between validation and open, then enforce owner/mode on the handle.
+        if metadata.dev() != before.dev() || metadata.ino() != before.ino() {
+            return Err("setup payload changed during validation".into());
+        }
+        if !metadata.is_file() || metadata.uid() != expected_uid {
+            return Err("setup payload is not owned by the requesting user".into());
+        }
+        if metadata.mode() & 0o077 != 0 {
+            return Err("setup payload permissions must be 0600 or stricter".into());
+        }
+        if metadata.len() > 1024 * 1024 {
+            return Err("setup payload exceeds the 1 MiB safety limit".into());
+        }
+
+        let mut raw = String::with_capacity(metadata.len() as usize);
+        file.read_to_string(&mut raw)?;
+        if raw.len() as u64 > 1024 * 1024 {
+            return Err("setup payload exceeds the 1 MiB safety limit".into());
+        }
+        Ok(raw)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err("privileged setup payload validation is supported on Unix only".into())
+    }
+}
+
 fn reinstall_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let raw = std::fs::read_to_string(path)?;
+    let raw = read_privileged_setup_payload(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
         .ok()
@@ -644,7 +694,7 @@ fn reinstall_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let raw = std::fs::read_to_string(path)?;
+    let raw = read_privileged_setup_payload(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
         .ok()

@@ -1247,6 +1247,21 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_ephemeral_activation_modes_fail_closed() {
+        for activation in [
+            ActivationMode::EphemeralSnapshotRollback,
+            ActivationMode::EphemeralVm,
+        ] {
+            let mut config = sample_vm("runner", "/vms/base.qcow2");
+            config.activation = activation;
+            assert!(
+                matches!(validate_vm_configs(&[config]), Err(VmError::InvalidConfig(_))),
+                "activation mode {activation:?} must not silently run as a persistent VM"
+            );
+        }
+    }
+
+    #[test]
     fn duplicate_names_and_virtualbox_ports_are_rejected() {
         let mut first = sample_vm("Runner", "/vms/a.qcow2");
         first.hypervisor = HypervisorKind::VirtualBox;

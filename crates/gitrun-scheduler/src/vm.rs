@@ -83,14 +83,18 @@ pub enum HypervisorKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActivationMode {
-    /// VM starts on first job, stops after the configured idle timeout.
+    /// VM starts on first use and remains running. Automatic idle shutdown is
+    /// not implemented yet because the scheduler does not own a reliable
+    /// cross-backend signal that every guest workload has finished.
     Standard,
-    /// VM stays running always.
+    /// Explicitly opts into the experimental warm-VM behavior: after first
+    /// startup the VM remains running rather than being stopped automatically.
     AlwaysOnExperimental,
-    /// VM is started for a runner lifecycle and rolled back to the named
-    /// clean snapshot before the next workload is admitted.
+    /// Reserved for runner-lifecycle integration. Validation rejects this
+    /// mode until snapshot rollback is tied to an authoritative idle boundary.
     EphemeralSnapshotRollback,
-    /// VM is recreated from the base image for each runner lifecycle.
+    /// Reserved for runner-lifecycle integration. Validation rejects this
+    /// mode until the scheduler can safely recreate VMs between workloads.
     EphemeralVm,
 }
 
@@ -187,6 +191,21 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
                 "VM '{}' has an invalid base disk image path",
                 config.name
             )));
+        }
+        match config.activation {
+            ActivationMode::EphemeralSnapshotRollback => {
+                return Err(VmError::InvalidConfig(format!(
+                    "VM '{}' requests EphemeralSnapshotRollback, but snapshot reset is not yet wired to an authoritative runner-idle boundary; refusing to risk resetting an active workload",
+                    config.name
+                )));
+            }
+            ActivationMode::EphemeralVm => {
+                return Err(VmError::InvalidConfig(format!(
+                    "VM '{}' requests EphemeralVm, but per-runner VM recreation is not implemented",
+                    config.name
+                )));
+            }
+            ActivationMode::Standard | ActivationMode::AlwaysOnExperimental => {}
         }
         if config.memory_mb == 0 {
             return Err(VmError::InvalidConfig(format!(

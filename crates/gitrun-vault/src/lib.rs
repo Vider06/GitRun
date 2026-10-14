@@ -1019,7 +1019,7 @@ mod tests {
         vault
             .set_scoped("TOKEN", "valid-value", Scope::Global)
             .unwrap();
-        let entry = vault.data.secrets.get_mut("global\\u{1}TOKEN").unwrap();
+        let entry = vault.data.secrets.get_mut("global\u{1}TOKEN").unwrap();
         entry.ciphertext = "not-valid-base64!".to_owned();
 
         assert!(matches!(

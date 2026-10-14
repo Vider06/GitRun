@@ -73,9 +73,6 @@ pub struct ReconcileInput {
     /// targets. A matching queued job gets dedicated dynamic capacity even
     /// when the default runner labels would otherwise satisfy it.
     pub dock_target_jobs: Vec<String>,
-    /// Labels configured on every default GitRun runner. Used to distinguish
-    /// jobs that can use the warm pool from jobs requiring specialized capacity.
-    pub configured_runner_labels: Vec<String>,
     /// Logic Containers rules loaded for this reconciliation cycle. A queued
     /// job matching one of these rules requires dedicated dynamic capacity
     /// so it can be created with the selected backend and image.
@@ -121,25 +118,6 @@ pub enum Action {
     RemoveIdle { name: String },
 }
 
-/// Determines whether a queued job carries at least one label that is not
-/// already present on every default GitRun runner. Such a job needs a
-/// dedicated dynamic runner when Logic Containers routes it to specialized
-/// capacity.
-fn job_requires_specialized_runner(
-    job_labels: &[String],
-    configured_runner_labels: &[String],
-) -> bool {
-    job_labels.iter().any(|job_label| {
-        let job_label = job_label.trim();
-        !job_label.is_empty()
-            && !configured_runner_labels
-                .iter()
-                .map(|label| label.trim())
-                .filter(|label| !label.is_empty())
-                .any(|label| label.eq_ignore_ascii_case(job_label))
-    })
-}
-
 /// Returns whether a queued job needs a dedicated dynamic runner.
 ///
 /// GitDockRun targets always need their own runner, even when the default
@@ -152,9 +130,11 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
         .get(index)
         .is_some_and(|name| input.dock_target_jobs.iter().any(|target| target == name));
 
-    is_dock_target
-        || (crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
-            && job_requires_specialized_runner(labels, &input.configured_runner_labels))
+    // A matching Logic Containers rule selects a specific backend/image,
+    // so it must receive a dynamic runner even if its labels happen to match
+    // the default warm pool. GitDockRun targets likewise need isolated
+    // per-job capacity regardless of label coverage or routing rules.
+    is_dock_target || crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
 }
 
 /// Computes the desired runner count: enough to cover currently busy runners
@@ -378,7 +358,6 @@ mod tests {
             queued_job_names: Vec::new(),
             queued_job_run_ids: Vec::new(),
             dock_target_jobs: Vec::new(),
-            configured_runner_labels: vec!["self-hosted".into(), "Linux".into()],
             logic_rules: Vec::new(),
             idle: Vec::new(),
             recovery_enabled: true,
@@ -488,35 +467,30 @@ mod tests {
     }
 
     #[test]
-    fn specialized_job_gets_dynamic_capacity_without_consuming_minimum_pool() {
+    fn routed_job_gets_dedicated_capacity_even_when_default_labels_match() {
         let mut input = base_input();
         input.queued_jobs = 1;
-        input.queued_job_labels = vec![vec!["self-hosted".into(), "windows".into()]];
+        input.queued_job_labels = vec![vec!["self-hosted".into(), "Linux".into()]];
         input.logic_rules = vec![crate::logic_containers::LogicRule {
-            name: "windows".into(),
-            match_labels: vec!["windows".into()],
+            name: "linux-special-image".into(),
+            match_labels: vec!["Linux".into()],
             backend: crate::logic_containers::Backend::LocalLinux,
-            image: "gitrun-runner:windows".into(),
+            image: "gitrun-runner:custom-linux".into(),
         }];
         let actions = plan(&input);
         assert_eq!(
             actions
                 .iter()
-                .filter(|action| {
-                    matches!(
-                        action,
-                        Action::CreateRunner {
-                            permanent: true,
-                            ..
-                        }
-                    )
-                })
+                .filter(|action| matches!(
+                    action,
+                    Action::CreateRunner { permanent: true, .. }
+                ))
                 .count(),
             3
         );
         assert!(actions.contains(&Action::CreateRunner {
             permanent: false,
-            job_labels: vec!["self-hosted".into(), "windows".into()],
+            job_labels: vec!["self-hosted".into(), "Linux".into()],
             job_name: None,
             job_run_id: None,
         }));

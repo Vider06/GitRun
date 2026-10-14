@@ -80,6 +80,7 @@ fn run() -> Result<(), String> {
             .map_err(|error| format!("cannot flush API request: {error}"))?;
 
         let reader = BufReader::new(stream);
+        let mut finished = false;
         for line in reader.lines() {
             let line = line.map_err(|error| format!("cannot read API response: {error}"))?;
             let response: WireResponse = serde_json::from_str(&line)
@@ -99,6 +100,7 @@ fn run() -> Result<(), String> {
                 WireResponse::Event(ExecutionEvent::Stdout(value)) => print!("{value}"),
                 WireResponse::Event(ExecutionEvent::Stderr(value)) => eprint!("{value}"),
                 WireResponse::Event(ExecutionEvent::Finished { exit_code }) => {
+                    finished = true;
                     if secret_read {
                         eprintln!("GITEXECRUN RESULT: {exit_code}");
                     } else {
@@ -115,6 +117,9 @@ fn run() -> Result<(), String> {
                     break;
                 }
             }
+        }
+        if !finished {
+            return Err("GitRun API connection closed before the Finished event".into());
         }
         Ok(())
     }

@@ -23,6 +23,11 @@ pub struct RateLimitTracker {
     cooldowns: Mutex<HashMap<String, Instant>>,
 }
 
+/// Do not let an untrusted or malformed Retry-After value suspend a repo
+/// for an effectively unbounded period. GitHub's normal reset windows are
+/// far shorter than this defensive ceiling.
+const MAX_COOLDOWN: Duration = Duration::from_secs(24 * 60 * 60);
+
 impl Default for RateLimitTracker {
     fn default() -> Self {
         Self::new()
@@ -43,7 +48,13 @@ impl RateLimitTracker {
     pub fn record_rate_limited(&self, repo: &str, retry_after: Option<Duration>) {
         const FALLBACK_COOLDOWN: Duration = Duration::from_secs(60);
         let now = Instant::now();
-        let until = now + retry_after.unwrap_or(FALLBACK_COOLDOWN);
+        // Retry-After is parsed from an HTTP response and can contain any u64
+        // number of seconds. Adding an unbounded Duration to Instant can panic
+        // on overflow; cap it before constructing the deadline.
+        let cooldown = retry_after
+            .unwrap_or(FALLBACK_COOLDOWN)
+            .min(MAX_COOLDOWN);
+        let until = now + cooldown;
         let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
 
         // Drop expired entries opportunistically before adding the new one,
@@ -105,6 +116,14 @@ mod tests {
         let tracker = RateLimitTracker::new();
         tracker.record_rate_limited("owner/repo", None);
         assert!(tracker.remaining_cooldown("owner/repo").is_some());
+    }
+
+    #[test]
+    fn enormous_retry_after_is_capped_without_panicking() {
+        let tracker = RateLimitTracker::new();
+        tracker.record_rate_limited("owner/repo", Some(Duration::from_secs(u64::MAX)));
+        let remaining = tracker.remaining_cooldown("owner/repo").unwrap();
+        assert!(remaining <= MAX_COOLDOWN);
     }
 
     #[test]

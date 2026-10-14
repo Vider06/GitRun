@@ -444,8 +444,12 @@ impl Vault {
 
     /// Reports whether a secret name is available to a repository without
     /// decrypting unrelated secrets.
-    pub fn effective_contains_for_repo(&self, name: &str, repo: &str, groups: &[String]) -> bool {
-        self.get_effective_for_repo(name, repo, groups).is_ok()
+    pub fn effective_contains_for_repo(&self, name: &str, repo: &str, groups: &[String]) -> Result<bool> {
+        match self.get_effective_for_repo(name, repo, groups) {
+            Ok(_) => Ok(true),
+            Err(VaultError::NotFound(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
     /// Resolves every secret a given repo's runners should receive,
     /// decrypted and ready to inject as environment variables — the
@@ -459,7 +463,7 @@ impl Vault {
     /// global (see `Scope::specificity`). This means an operator can set a
     /// global default and override it for one specific repo without
     /// deleting or renaming anything.
-    pub fn resolve_for_repo(&self, repo: &str, groups: &[String]) -> Vec<(String, String)> {
+    pub fn resolve_for_repo(&self, repo: &str, groups: &[String]) -> Result<Vec<(String, String)>> {
         // Iterate (key, secret) pairs — not just secret values — because the
         // original secret name is encoded in the storage key, not
         // recoverable from `Scope` alone (multiple scopes can share a name).
@@ -483,29 +487,41 @@ impl Vault {
             }
         }
 
-        let mut resolved: Vec<_> = best
-            .into_iter()
-            .filter_map(|(name, (scope, key))| {
-                let entry = self.data.secrets.get(key)?;
-                match self.decrypt_entry(&name, entry) {
-                    Ok(value) => Some((name, value)),
-                    Err(_) => {
-                        let _ = scope;
-                        None
-                    }
-                }
-            })
-            .collect();
+        let mut resolved = Vec::with_capacity(best.len());
+        for (name, (_scope, key)) in best {
+            let entry = self.data.secrets.get(key).ok_or_else(|| {
+                VaultError::Decode(serde_json::Error::io(std::io::Error::other(
+                    "GitVault index references a missing secret entry",
+                )))
+            })?;
+            // A selected secret that cannot be decrypted must fail the entire
+            // resolution. Returning a partial environment could start CI with
+            // silently missing credentials and hide vault tampering.
+            let value = self.decrypt_entry(&name, entry)?;
+            resolved.push((name, value));
+        }
         resolved.sort_by(|a, b| a.0.cmp(&b.0));
-        resolved
+        Ok(resolved)
     }
 
     fn persist(&self) -> Result<()> {
         let path = self.dir.join(SECRETS_FILE);
-        let tmp = path.with_extension("json.tmp");
-        write_secret_file(&tmp, &self.data)?;
-        fs::rename(&tmp, &path)?;
-        Ok(())
+        let nonce = now();
+        let tmp = self.dir.join(format!(
+            ".{SECRETS_FILE}.tmp.{}.{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(nonce)
+        ));
+        let result = (|| {
+            write_secret_file(&tmp, &self.data)?;
+            fs::rename(&tmp, &path)?;
+            sync_parent_dir(&self.dir)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result
     }
 }
 
@@ -538,7 +554,6 @@ fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
 
     let serialized = serde_json::to_string_pretty(data)?;
-    let _ = fs::remove_file(path);
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -647,6 +662,19 @@ fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
     hasher.update(master_key);
     hasher.update(DATA_KEY_CONTEXT);
     hasher.finalize().into()
+}
+
+static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> Result<()> {
+    fs::File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn now() -> u64 {

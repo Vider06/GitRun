@@ -2027,16 +2027,16 @@ mod tests {
 
     #[test]
     fn signature_requirement_defaults_to_required_and_accepts_explicit_values_only() {
-        assert_eq!(signature_required_from_env(None).unwrap(), true);
-        assert_eq!(signature_required_from_env(Some("")).unwrap(), true);
-        assert_eq!(signature_required_from_env(Some("true")).unwrap(), true);
-        assert_eq!(signature_required_from_env(Some("TRUE")).unwrap(), true);
-        assert_eq!(signature_required_from_env(Some("1")).unwrap(), true);
-        assert_eq!(signature_required_from_env(Some("false")).unwrap(), false);
-        assert_eq!(signature_required_from_env(Some("FALSE")).unwrap(), false);
-        assert_eq!(signature_required_from_env(Some("0")).unwrap(), false);
+        assert!(signature_required_from_env(None).unwrap());
+        assert!(signature_required_from_env(Some("")).unwrap());
+        assert!(signature_required_from_env(Some("true")).unwrap());
+        assert!(signature_required_from_env(Some("TRUE")).unwrap());
+        assert!(signature_required_from_env(Some("1")).unwrap());
+        assert!(!signature_required_from_env(Some("false")).unwrap());
+        assert!(!signature_required_from_env(Some("FALSE")).unwrap());
+        assert!(!signature_required_from_env(Some("0")).unwrap());
         assert!(signature_required_from_env(Some("treu")).is_err());
-        assert!(!signature_required_from_env(Some("false ")).is_err());
+        assert!(signature_required_from_env(Some("false ")).is_ok());
         assert!(signature_required_from_env(Some("yes")).is_err());
     }
 

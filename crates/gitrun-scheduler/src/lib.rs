@@ -143,8 +143,17 @@ pub fn run() {
         let _ = std::fs::remove_file(&pid_file);
         std::process::exit(2);
     }
-    spawn_gtuu_thread(&config, &stopping);
-    spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
+    if let Err(error) = spawn_gtuu_thread(&config, &stopping) {
+        eprintln!("gitrun-autoscaler: failed to start GTUU worker: {error}");
+        let _ = std::fs::remove_file(&pid_file);
+        std::process::exit(2);
+    }
+    if let Err(error) = spawn_gsr_poll_thread(&config, &vm_registry, &stopping) {
+        eprintln!("gitrun-autoscaler: failed to start GSR poll worker: {error}");
+        stopping.store(true, Ordering::Relaxed);
+        let _ = std::fs::remove_file(&pid_file);
+        std::process::exit(2);
+    }
 
     println!(
         "gitrun-autoscaler: starting, polling every {}s",
@@ -1248,7 +1257,10 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }
-fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) {
+fn spawn_gtuu_thread(
+    _config: &Config,
+    stopping: &Arc<AtomicBool>,
+) -> std::io::Result<()> {
     let stopping = stopping.clone();
 
     std::thread::Builder::new()
@@ -1292,10 +1304,15 @@ fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) {
                         last_run_date = Some(now.date);
                     }
                 }
-                std::thread::sleep(Duration::from_secs(15));
+                let mut remaining = Duration::from_secs(15);
+                while !remaining.is_zero() && !stopping.load(Ordering::Relaxed) {
+                    let slice = remaining.min(Duration::from_millis(200));
+                    std::thread::sleep(slice);
+                    remaining = remaining.saturating_sub(slice);
+                }
             }
         })
-        .expect("failed to spawn GTUU thread");
+        .map(|_| ())
 }
 /// Spawns GSR's Layer 2 (external, host-side) enforcement poll loop — see
 /// `crate::gsr_poll` for the full design and
@@ -1308,9 +1325,9 @@ fn spawn_gsr_poll_thread(
     config: &Config,
     vm_registry: &VmResolutionRegistry,
     stopping: &Arc<AtomicBool>,
-) {
+) -> std::io::Result<()> {
     let Some(policy) = config.command_policy() else {
-        return;
+        return Ok(());
     };
     let action = config.violation_action();
     let state_dir = PathBuf::from(&config.state_dir);
@@ -1363,7 +1380,7 @@ fn spawn_gsr_poll_thread(
                 move || stopping_check.load(Ordering::Relaxed),
             );
         })
-        .expect("failed to spawn GSR poll thread");
+        .map(|_| ())
 }
 
 /// Minimal HH:MM + date string, UTC by default, without pulling in `chrono`

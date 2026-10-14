@@ -327,6 +327,15 @@ fn resolve_blocking(
 
         match hypervisor_decision::poll(state_dir, &vm_config.name) {
             Ok(Some(record)) => {
+                // The decision file is an IPC boundary with the dashboard.
+                // Never apply a choice unless the record identifies the VM
+                // whose request this worker is waiting on.
+                if record.vm_name != vm_config.name {
+                    return Err(format!(
+                        "hypervisor decision record identity mismatch: expected VM '{}', got '{}'",
+                        vm_config.name, record.vm_name
+                    ));
+                }
                 if let Some(choice) = record.choice {
                     hypervisor_decision::clear(state_dir, &vm_config.name).map_err(|error| {
                         format!(

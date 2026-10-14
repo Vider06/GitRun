@@ -350,7 +350,6 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                 name: info.name.clone(),
             });
             remaining -= 1;
-            current = current.saturating_sub(1);
             if is_permanent {
                 permanent_count = permanent_count.saturating_sub(1);
             }

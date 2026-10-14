@@ -215,14 +215,40 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
         }
         if !config.docker_tls_cert_dir.trim().is_empty() {
             let cert_dir = Path::new(config.docker_tls_cert_dir.trim());
+            if !cert_dir.is_absolute() {
+                return Err(VmError::InvalidConfig(format!(
+                    "VM '{}' Docker TLS credential directory must be an absolute path",
+                    config.name
+                )));
+            }
             for name in ["ca.pem", "cert.pem", "key.pem"] {
                 let path = cert_dir.join(name);
-                if !path.is_file() {
+                let metadata = fs::symlink_metadata(&path).map_err(|error| {
+                    VmError::InvalidConfig(format!(
+                        "VM '{}' Docker TLS credential is missing or unreadable: {} ({error})",
+                        config.name,
+                        path.display()
+                    ))
+                })?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
                     return Err(VmError::InvalidConfig(format!(
-                        "VM '{}' Docker TLS credential is missing: {}",
+                        "VM '{}' Docker TLS credential must be a regular, non-symlink file: {}",
                         config.name,
                         path.display()
                     )));
+                }
+                if name == "key.pem" {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mode = metadata.permissions().mode() & 0o777;
+                        if mode & 0o077 != 0 {
+                            return Err(VmError::InvalidConfig(format!(
+                                "VM '{}' Docker TLS private key must not be group/world-accessible (mode {mode:o})",
+                                config.name
+                            )));
+                        }
+                    }
                 }
             }
         }
@@ -1166,6 +1192,39 @@ mod tests {
             validate_vm_configs(&[config]),
             Err(VmError::InvalidConfig(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn windows_vm_rejects_group_or_world_readable_docker_private_key() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_state_dir("tls-key-permissions");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["ca.pem", "cert.pem", "key.pem"] {
+            std::fs::write(dir.join(name), "test").unwrap();
+        }
+        std::fs::set_permissions(
+            dir.join("key.pem"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+
+        let mut config = sample_vm("win-runner", "/vms/base.qcow2");
+        config.is_windows = true;
+        config.docker_tls_cert_dir = dir.to_string_lossy().into_owned();
+        assert!(matches!(
+            validate_vm_configs(&[config.clone()]),
+            Err(VmError::InvalidConfig(message)) if message.contains("private key")
+        ));
+
+        std::fs::set_permissions(
+            dir.join("key.pem"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        assert!(validate_vm_configs(&[config]).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

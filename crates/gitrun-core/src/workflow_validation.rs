@@ -369,14 +369,23 @@ fn run_zizmor_command(
     // failure of the invocation itself. We only bail on stdout we can't
     // read at all.
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
-        Ok(value) => value,
-        Err(_) => return Ok(Some(Vec::new())),
-    };
+    parse_zizmor_output(&stdout).map(Some)
+}
+
+fn parse_zizmor_output(stdout: &str) -> std::io::Result<Vec<Finding>> {
+    let parsed: serde_json::Value = serde_json::from_str(stdout).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("zizmor returned invalid JSON: {error}"),
+        )
+    })?;
     let Some(items) = parsed.as_array() else {
-        return Ok(Some(Vec::new()));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "zizmor JSON output must be an array of findings",
+        ));
     };
-    let findings = items
+    Ok(items
         .iter()
         .map(|item| Finding {
             file: item
@@ -401,8 +410,7 @@ fn run_zizmor_command(
                 .unwrap_or("zizmor reported a finding with no description")
                 .to_owned(),
         })
-        .collect();
-    Ok(Some(findings))
+        .collect())
 }
 
 /// Static metadata about the optional `zizmor` integration, shown on the
@@ -597,6 +605,18 @@ mod tests {
         let result =
             run_zizmor_command("__gitrun_zizmor_binary_that_should_not_exist__", &dir).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn zizmor_invalid_json_is_reported_instead_of_becoming_no_findings() {
+        let error = parse_zizmor_output("not-json").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn zizmor_unexpected_json_shape_is_reported() {
+        let error = parse_zizmor_output(r#"{"findings":[]}"#).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

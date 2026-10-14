@@ -1471,6 +1471,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn docker_output_capture_is_bounded_and_continues_draining() {
+        let input = vec![b'x'; MAX_DOCKER_OUTPUT_BYTES + 1024];
+        let output = read_bounded_output(std::io::Cursor::new(input)).unwrap();
+        assert!(output.len() <= MAX_DOCKER_OUTPUT_BYTES + 64);
+        assert!(output.ends_with(b"[Docker output truncated at 8 MiB]"));
+    }
+
+    #[test]
     fn sanitize_keeps_safe_characters() {
         assert_eq!(
             sanitize("owner/repo.name_v1-2", '_'),

@@ -16,8 +16,12 @@
 
 use crate::docker::{self, sanitize};
 use crate::github::GitHubClient;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -46,20 +50,23 @@ pub enum UpdateOutcome {
     Offline,
 }
 
-/// Filesystem lock preventing two GTUU runs from overlapping. Mirrors the
-/// Python version's `state_dir/gtuu.lock` directory-as-mutex, which is atomic
-/// on POSIX (`mkdir` fails if the directory already exists).
+/// Filesystem lock preventing two GTUU runs from overlapping.
 ///
-/// `Drop` releases the lock on a normal return or an unwinding panic, but
-/// that alone is not a complete guarantee: a `SIGKILL`, an OOM-kill, or a
-/// host power loss skips `Drop` entirely and can leave the lock directory
-/// behind forever, wedging every future GTUU run. To recover from that,
-/// `acquire` checks whether an *existing* lock is stale — a recorded PID
-/// must be dead, while a lock with no usable PID may be reclaimed after the
-/// conservative age cutoff — and reclaims it atomically instead of
-/// refusing forever.
+/// On Unix, a persistent sidecar file is locked with nonblocking `flock`
+/// before inspecting or reclaiming the legacy PID directory. The kernel
+/// releases that lock on process exit, including SIGKILL, and the sidecar is
+/// deliberately never unlinked: unlinking a lock file can split contenders
+/// across different inodes. Holding this guard across the stale-check and
+/// directory rename prevents concurrent current-version GTUU runs from
+/// reclaiming a newly-created live lock based on an earlier stale observation.
+///
+/// Non-Unix platforms retain the PID-directory fallback; its race and crash
+/// recovery semantics are therefore weaker and must not be described as
+/// cross-platform-safe.
 pub struct GtuuLock {
     path: PathBuf,
+    #[cfg(unix)]
+    _guard: fs::File,
 }
 
 /// Fallback age for a lock that has no usable PID. A valid live PID is
@@ -70,6 +77,11 @@ const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 impl GtuuLock {
     pub fn acquire(state_dir: &Path) -> Result<Self> {
         fs::create_dir_all(state_dir)?;
+        // Serialize stale detection, reclamation, and creation as one critical
+        // section. A PID check followed by rename alone is racy: another
+        // process can replace the stale directory between those operations.
+        #[cfg(unix)]
+        let guard = acquire_guard(state_dir)?;
         let path = state_dir.join("gtuu.lock");
 
         loop {
@@ -80,7 +92,11 @@ impl GtuuLock {
                         let _ = fs::remove_dir_all(&path);
                         return Err(error.into());
                     }
-                    return Ok(Self { path });
+                    return Ok(Self {
+                        path,
+                        #[cfg(unix)]
+                        _guard: guard,
+                    });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     if !is_stale(&path) {
@@ -115,6 +131,36 @@ impl GtuuLock {
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
+    let guard_path = state_dir.join("gtuu.lock.guard");
+    let guard = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .open(guard_path)?;
+    // The guard file is intentionally persistent. Never unlink it after
+    // unlocking, or a waiter could hold the old inode while a third process
+    // locks a newly-created inode at the same path.
+    let result = unsafe {
+        libc::flock(
+            guard.as_raw_fd(),
+            libc::LOCK_EX | libc::LOCK_NB,
+        )
+    };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK)
+            || error.raw_os_error() == Some(libc::EAGAIN)
+        {
+            return Err(GtuuError::AlreadyRunning);
+        }
+        return Err(error.into());
+    }
+    Ok(guard)
 }
 
 /// A lock is stale when its recorded PID is no longer running. If the PID
@@ -161,6 +207,7 @@ impl Drop for GtuuLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(self.path.join("pid"));
         let _ = fs::remove_dir(&self.path);
+        // _guard is dropped after this method, releasing flock automatically.
     }
 }
 

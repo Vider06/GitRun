@@ -31,6 +31,8 @@ pub enum GtuuError {
     GitHub(#[from] crate::github::GitHubError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("GitVault secret resolution failed: {0}")]
+    Vault(String),
 }
 
 pub type Result<T> = std::result::Result<T, GtuuError>;
@@ -187,7 +189,8 @@ pub struct GtuuConfig<'a> {
     /// rather than a fixed list because GTUU updates containers across
     /// potentially many repos in one run, each needing its own repo-scoped
     /// secrets — see `main.rs::vault_env_for_repo`, which this wraps.
-    pub secret_env_for_repo: &'a dyn Fn(&str) -> Vec<(String, String)>,
+    pub secret_env_for_repo:
+        &'a dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String>,
     pub online_wait_timeout: Duration,
     /// See `Config::gsr_docker_socket_hardening` / `RunnerSpec::docker_socket_hardening`.
     pub docker_socket_hardening: bool,
@@ -265,7 +268,7 @@ fn update_one(
     // pulled up and authenticated with GitHub.
     let registration_token = client.registration_token(repo)?;
     let replacement_name = format!("{}-gtuu-{}", sanitize(name, '-'), replacement_suffix());
-    let secret_env = (config.secret_env_for_repo)(repo);
+    let secret_env = (config.secret_env_for_repo)(repo).map_err(GtuuError::Vault)?;
     let docker_socket_enabled = (config.docker_socket_enabled_for_repo)(repo);
 
     docker::create_runner(&crate::docker::RunnerSpec {

@@ -595,15 +595,7 @@ impl Config {
                 self.shared_cache_scope
             )));
         }
-        if self
-            .resource_pressure_paths
-            .split(';')
-            .all(|path| path.trim().is_empty())
-        {
-            return Err(ConfigError::Invalid(
-                "resource pressure paths must contain at least one filesystem path".into(),
-            ));
-        }
+        validate_resource_pressure_paths(&self.resource_pressure_paths)?;
         if !is_valid_docker_name(&self.shared_cache_volume) {
             return Err(ConfigError::Invalid(format!(
                 "shared cache volume must be a valid Docker volume name, got {:?}",
@@ -873,6 +865,36 @@ fn validate_single_line(key: &str, value: &str) -> Result<(), ConfigError> {
         return Err(ConfigError::Invalid(format!(
             "{key} must not contain newlines"
         )));
+    }
+    Ok(())
+}
+
+/// Validate every filesystem used by resource-pressure backpressure. Reject
+/// malformed entries at startup instead of accepting a partial list and
+/// discovering a bad path only when the scheduler samples host pressure.
+fn validate_resource_pressure_paths(value: &str) -> Result<(), ConfigError> {
+    let paths: Vec<&str> = value.split(';').map(str::trim).collect();
+    if paths.is_empty() || paths.iter().any(|path| path.is_empty()) {
+        return Err(ConfigError::Invalid(
+            "resource pressure paths must be a semicolon-separated list of non-empty absolute paths".into(),
+        ));
+    }
+
+    for path in paths {
+        let parsed = Path::new(path);
+        if !parsed.is_absolute()
+            || path.chars().any(char::is_control)
+            || parsed.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::CurDir | std::path::Component::ParentDir
+                )
+            })
+        {
+            return Err(ConfigError::Invalid(format!(
+                "resource pressure path must be a clean absolute path without control characters or dot segments, got {path:?}"
+            )));
+        }
     }
     Ok(())
 }
@@ -1265,6 +1287,32 @@ mod tests {
         assert!(config.validate().is_err());
         config.runner_home_size = "nope".into();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn resource_pressure_paths_require_clean_absolute_paths() {
+        let mut config = Config::default();
+        assert!(config.validate().is_ok());
+
+        config.resource_pressure_paths = "/var/lib/docker; /var/lib/gitrun".into();
+        assert!(config.validate().is_ok());
+
+        for invalid in [
+            "",
+            " ; ",
+            "/var/lib/docker;",
+            "; /var/lib/docker",
+            "var/lib/docker",
+            "/var/lib/../docker",
+            "/var/lib/./docker",
+            "/var/lib/do\ncker",
+        ] {
+            config.resource_pressure_paths = invalid.into();
+            assert!(
+                config.validate().is_err(),
+                "resource pressure paths should reject {invalid:?}"
+            );
+        }
     }
 
     #[test]

@@ -187,7 +187,9 @@ impl MountRegistry {
         let registry = match fs::read_to_string(Self::path(state_dir)) {
             Ok(raw) => serde_json::from_str(&raw)
                 .map_err(|error| format!("decode GitDockRun mount registry: {error}"))?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default())
+            }
             Err(error) => return Err(format!("read GitDockRun mount registry: {error}")),
         };
 
@@ -3584,8 +3586,8 @@ mod mount_runtime_tests {
         ] {
             let registry = MountRegistry { mounts };
             registry.save(&dir).unwrap();
-            let error = MountRegistry::load(&dir)
-                .expect_err("ambiguous mount registry must fail closed");
+            let error =
+                MountRegistry::load(&dir).expect_err("ambiguous mount registry must fail closed");
             assert!(error.contains(expected), "{name}: {error}");
         }
     }
@@ -3622,7 +3624,13 @@ mod mount_runtime_tests {
         let other_repo = record("other-repo", "someone/else", 42, "build", "runner-a");
         let mut other_container = record("other-container", "owner/repo", 42, "build", "runner-a");
         other_container.container_id = "different-container-id".into();
-        let other_runner_same_scope = record("other-runner-same-scope", "owner/repo", 42, "build", "runner-b");
+        let other_runner_same_scope = record(
+            "other-runner-same-scope",
+            "owner/repo",
+            42,
+            "build",
+            "runner-b",
+        );
         let original = MountRegistry {
             mounts: vec![
                 owned_a,

@@ -509,16 +509,49 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
     // Resolve the deterministic home-volume name before removing the container.
     // Callers may intentionally pass an immutable container ID, so deriving
     // the volume name from that ID would leak the per-runner volume.
-    let home_volume = match run_on(host, &["inspect", "-f", "{{.Name}}", name_or_id]) {
-        Ok(output) if output.status.success() => {
-            let resolved = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .trim_start_matches('/')
-                .to_owned();
-            (!resolved.is_empty()).then(|| home_volume_name(&resolved))
-        }
-        _ => None,
-    };
+    let (home_volume, home_volume_resolution_error) =
+        match run_on(host, &["inspect", "-f", "{{.Name}}", name_or_id]) {
+            Ok(output) if output.status.success() => {
+                let resolved = String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .trim_start_matches('/')
+                    .to_owned();
+                if resolved.is_empty() {
+                    (
+                        None,
+                        Some(format!(
+                            "docker inspect returned an empty name for {name_or_id}"
+                        )),
+                    )
+                } else {
+                    (Some(home_volume_name(&resolved)), None)
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                if is_missing_container_error(&stderr) {
+                    // Another cleanup worker may already have removed it.
+                    (None, None)
+                } else {
+                    (
+                        None,
+                        Some(if stderr.is_empty() {
+                            format!("unable to resolve runner home volume for {name_or_id}")
+                        } else {
+                            format!(
+                                "unable to resolve runner home volume for {name_or_id}: {stderr}"
+                            )
+                        }),
+                    )
+                }
+            }
+            Err(error) => (
+                None,
+                Some(format!(
+                    "unable to resolve runner home volume for {name_or_id}: {error}"
+                )),
+            ),
+        };
 
     let output = run_on(host, &["rm", "-f", "-v", name_or_id])?;
     if !output.status.success() {
@@ -549,6 +582,11 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
                 }));
             }
         }
+    }
+    if let Some(error) = home_volume_resolution_error {
+        return Err(DockerError::Command(format!(
+            "container removal completed but runner home volume cleanup could not be verified: {error}"
+        )));
     }
     Ok(())
 }

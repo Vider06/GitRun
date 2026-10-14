@@ -331,10 +331,29 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                 .unwrap_or(false);
             (permanent, std::cmp::Reverse(i.idle_for))
         });
-        for info in candidates.into_iter().take(removable as usize) {
+        let mut remaining = removable;
+        for info in candidates {
+            if remaining == 0 {
+                break;
+            }
+            let is_permanent = live_containers
+                .iter()
+                .find(|container| container.name == info.name)
+                .is_some_and(|container| container.permanent);
+            // Never scale below the permanent warm-pool guarantee just to
+            // reach the total minimum. If dynamic capacity is not idle yet,
+            // temporarily keep the extra container instead.
+            if is_permanent && permanent_count <= input.min_runners {
+                continue;
+            }
             actions.push(Action::RemoveIdle {
                 name: info.name.clone(),
             });
+            remaining -= 1;
+            current = current.saturating_sub(1);
+            if is_permanent {
+                permanent_count = permanent_count.saturating_sub(1);
+            }
         }
     }
 
@@ -860,6 +879,47 @@ mod tests {
                 name: "dyn-1".into()
             }
         );
+    }
+
+    #[test]
+    fn scale_down_preserves_permanent_warm_pool_when_only_permanents_are_idle() {
+        let mut input = base_input();
+        input.min_runners = 2;
+        input.max_runners = 6;
+        input.queued_jobs = 0;
+        input.containers = vec![
+            ContainerView {
+                name: "perm-1".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "perm-2".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "dynamic-busy".into(),
+                health: ContainerHealth::Running,
+                permanent: false,
+            },
+        ];
+        input.idle = vec![
+            IdleInfo {
+                name: "perm-1".into(),
+                idle_for: Duration::from_secs(999),
+            },
+            IdleInfo {
+                name: "perm-2".into(),
+                idle_for: Duration::from_secs(999),
+            },
+        ];
+
+        let actions = plan(&input);
+        assert!(!actions.iter().any(|action| matches!(
+            action,
+            Action::RemoveIdle { name } if name == "perm-1" || name == "perm-2"
+        )));
     }
 
     #[test]

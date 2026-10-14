@@ -551,13 +551,6 @@ fn reconcile_repo(
         queued_job_names,
         queued_job_run_ids,
         dock_target_jobs,
-        configured_runner_labels: config
-            .runner_labels
-            .split(',')
-            .map(str::trim)
-            .filter(|label| !label.is_empty())
-            .map(str::to_owned)
-            .collect(),
         logic_rules,
         idle,
         recovery_enabled: config.auto_container_recovery,

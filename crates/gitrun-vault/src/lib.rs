@@ -81,6 +81,8 @@ pub enum VaultError {
     Io(#[from] std::io::Error),
     #[error("vault storage file is corrupt or tampered with: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("vault index is inconsistent: {0}")]
+    CorruptIndex(String),
     #[error("secret '{0}' not found")]
     NotFound(String),
     #[error("encryption failed for secret '{0}'")]
@@ -489,11 +491,11 @@ impl Vault {
 
         let mut resolved = Vec::with_capacity(best.len());
         for (name, (_scope, key)) in best {
-            let entry = self.data.secrets.get(key).ok_or_else(|| {
-                VaultError::Decode(serde_json::Error::io(std::io::Error::other(
-                    "GitVault index references a missing secret entry",
-                )))
-            })?;
+            let entry = self
+                .data
+                .secrets
+                .get(key)
+                .ok_or_else(|| VaultError::CorruptIndex(name.clone()))?;
             // A selected secret that cannot be decrypted must fail the entire
             // resolution. Returning a partial environment could start CI with
             // silently missing credentials and hide vault tampering.
@@ -963,7 +965,7 @@ mod tests {
         vault
             .set_scoped("SHARED_TOKEN", "shared-value", Scope::Global)
             .unwrap();
-        let resolved = vault.resolve_for_repo("owner/repo", &[]);
+        let resolved = vault.resolve_for_repo("owner/repo", &[]).unwrap();
         assert_eq!(
             resolved,
             vec![("SHARED_TOKEN".to_owned(), "shared-value".to_owned())]
@@ -984,14 +986,14 @@ mod tests {
             .unwrap();
 
         // A repo in the "production" group gets it...
-        let in_group = vault.resolve_for_repo("owner/repo-a", &["production".to_owned()]);
+        let in_group = vault.resolve_for_repo("owner/repo-a", &["production".to_owned()]).unwrap();
         assert_eq!(
             in_group,
             vec![("DEPLOY_KEY".to_owned(), "prod-value".to_owned())]
         );
 
         // ...a repo not in that group does not.
-        let not_in_group = vault.resolve_for_repo("owner/repo-b", &["staging".to_owned()]);
+        let not_in_group = vault.resolve_for_repo("owner/repo-b", &["staging".to_owned()]).unwrap();
         assert!(not_in_group.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1003,7 +1005,7 @@ mod tests {
         vault
             .set_scoped("SECRET", "repo-a-value", Scope::Repo("owner/repo-a".into()))
             .unwrap();
-        let resolved = vault.resolve_for_repo("owner/repo-b", &[]);
+        let resolved = vault.resolve_for_repo("owner/repo-b", &[]).unwrap();
         assert!(resolved.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1023,21 +1025,21 @@ mod tests {
             .unwrap();
 
         // Repo scope should win over both group and global for this repo.
-        let resolved = vault.resolve_for_repo("owner/repo", &["prod".to_owned()]);
+        let resolved = vault.resolve_for_repo("owner/repo", &["prod".to_owned()]).unwrap();
         assert_eq!(
             resolved,
             vec![("API_KEY".to_owned(), "repo-value".to_owned())]
         );
 
         // A different repo in the same group falls back to the group value.
-        let other_repo = vault.resolve_for_repo("owner/other-repo", &["prod".to_owned()]);
+        let other_repo = vault.resolve_for_repo("owner/other-repo", &["prod".to_owned()]).unwrap();
         assert_eq!(
             other_repo,
             vec![("API_KEY".to_owned(), "group-value".to_owned())]
         );
 
         // A repo in no matching group falls back to global.
-        let no_group = vault.resolve_for_repo("owner/unrelated", &[]);
+        let no_group = vault.resolve_for_repo("owner/unrelated", &[]).unwrap();
         assert_eq!(
             no_group,
             vec![("API_KEY".to_owned(), "global-value".to_owned())]

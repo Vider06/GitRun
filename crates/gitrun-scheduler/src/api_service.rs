@@ -308,7 +308,7 @@ pub fn spawn(
                             let service_github = Arc::clone(&github);
                             let service_state = state_dir.clone();
                             let service_authority = Arc::clone(&execution_authority);
-                            std::thread::Builder::new()
+                            if let Err(error) = std::thread::Builder::new()
                                 .name("gitrun-api-request".into())
                                 .spawn(move || {
                                     let _permit = permit;
@@ -322,7 +322,11 @@ pub fn spawn(
                                         eprintln!("gitrun-api: request failed: {error}");
                                     }
                                 })
-                                .ok();
+                            {
+                                // The stream is dropped if thread creation fails. The client
+                                // must treat that EOF as failure unless it received Finished.
+                                eprintln!("gitrun-api: unable to spawn request handler: {error}");
+                            }
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {

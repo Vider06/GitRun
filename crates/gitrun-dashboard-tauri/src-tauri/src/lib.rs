@@ -2751,8 +2751,19 @@ fn save_dashboard_settings(
     let settings_path = gitrun_settings_path(&updated);
     let current_settings = GitRunSettings::load_or_default(gitrun_settings_path(&current_config))
         .map_err(|error| error.to_string())?;
+    let settings_file_existed = match std::fs::symlink_metadata(&settings_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err("GitRun settings path must be a regular, non-symlink file".into());
+        }
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(format!("unable to inspect GitRun settings file: {error}")),
+    };
     if current_config != expected_config {
         return Err("GitRun configuration changed since this screen was loaded. Refresh the view and retry.".into());
+    }
+    if updated.state_dir != current_config.state_dir {
+        return Err("The runtime state directory is setup-managed and cannot be changed from the dashboard settings screen.".into());
     }
     if current_settings != expected_settings {
         return Err("GitRun security settings changed since this screen was loaded. Refresh the view and retry.".into());
@@ -2789,7 +2800,7 @@ fn save_dashboard_settings(
 
     if let Err(save_error) = settings.save(&settings_path) {
         let config_rollback = persist_dashboard_config_unlocked(&current_config);
-        let settings_rollback = if settings_path.exists() {
+        let settings_rollback = if settings_file_existed {
             current_settings
                 .save(&settings_path)
                 .map_err(|error| error.to_string())

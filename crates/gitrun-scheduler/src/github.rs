@@ -1060,7 +1060,7 @@ mod tests {
     #[test]
     fn pagination_rejects_insecure_or_nonstandard_github_urls() {
         for link in [
-            "<http://api.github.com/resource?page=2>; rel=next",
+            "<http://api.github.com/resource?page=2>; rel=next", // DevSkim: ignore DS137138 because this HTTP URL is intentionally rejected by this negative test.
             "<https://api.github.com:8443/resource?page=2>; rel=next",
             "<https://user@api.github.com/resource?page=2>; rel=next",
         ] {

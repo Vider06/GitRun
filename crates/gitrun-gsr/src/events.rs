@@ -36,6 +36,8 @@ pub enum EventError {
     Io(#[from] std::io::Error),
     #[error("invalid event record: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("event record is too large for the bounded queue: {size} bytes")]
+    RecordTooLarge { size: usize },
 }
 
 pub type Result<T> = std::result::Result<T, EventError>;
@@ -210,6 +212,14 @@ fn rotate_queue(path: &Path) -> Result<()> {
 /// GitRun producers and readers across processes.
 pub fn emit(path: &Path, event: &SecurityEvent) -> Result<()> {
     let line = serde_json::to_string(event)?;
+    // A single event must not be able to exceed the queue bound after a
+    // rotation. Return an explicit error rather than silently writing an
+    // oversized active queue record.
+    if line.len().saturating_add(1) as u64 > MAX_QUEUE_BYTES {
+        return Err(EventError::RecordTooLarge {
+            size: line.len().saturating_add(1),
+        });
+    }
     let _lock = QueueLock::acquire(path, true)?;
     if std::fs::metadata(path)
         .map(|metadata| metadata.len().saturating_add(line.len() as u64 + 1) > MAX_QUEUE_BYTES)
@@ -370,6 +380,24 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].message, "hello");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn oversized_event_is_rejected_without_creating_queue() {
+        let path = temp_path("oversized");
+        let _ = std::fs::remove_file(&path);
+        let event = SecurityEvent::new(
+            "test",
+            Severity::Critical,
+            "x".repeat(MAX_QUEUE_BYTES as usize),
+        );
+
+        assert!(matches!(
+            emit(&path, &event),
+            Err(EventError::RecordTooLarge { .. })
+        ));
+        assert!(!path.exists());
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
     }
 
     #[test]

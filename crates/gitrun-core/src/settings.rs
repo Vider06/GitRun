@@ -18,7 +18,11 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
+
+static SETTINGS_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 use thiserror::Error;
 
 pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
@@ -145,7 +149,15 @@ impl GitRunSettings {
         }
 
         let raw = serde_json::to_vec_pretty(self).map_err(SettingsError::Encode)?;
-        let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let sequence = SETTINGS_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temp = path.with_extension(format!(
+            "json.{}-{timestamp:032x}-{sequence:016x}.tmp",
+            std::process::id()
+        ));
 
         let mut temp_created = false;
         let write_result = (|| -> Result<(), SettingsError> {
@@ -169,6 +181,17 @@ impl GitRunSettings {
             }
 
             fs::rename(&temp, path)?;
+
+            // Persist the directory entry as well as the file contents so a
+            // successful save has the strongest practical crash durability.
+            #[cfg(unix)]
+            {
+                let parent = path
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                fs::File::open(parent)?.sync_all()?;
+            }
             Ok(())
         })();
 

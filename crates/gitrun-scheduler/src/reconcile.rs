@@ -504,14 +504,20 @@ mod tests {
     }
 
     #[test]
-    fn dock_target_gets_dedicated_capacity_without_logic_container_rule() {
+    fn dock_target_gets_dedicated_capacity_without_logic_container_rule_or_duplicate() {
         let mut input = base_input();
         input.min_runners = 1;
         input.max_runners = 4;
-        input.queued_jobs = 1;
-        input.queued_job_labels = vec![vec!["self-hosted".into(), "Linux".into()]];
-        input.queued_job_names = vec!["deploy-production".into()];
-        input.queued_job_run_ids = vec![42];
+        input.queued_jobs = 3;
+        input.queued_job_labels = vec![
+            vec!["self-hosted".into(), "Linux".into()],
+            vec!["self-hosted".into(), "Linux".into()],
+        ];
+        input.queued_job_names = vec![
+            "deploy-production".into(),
+            "build-docs".into(),
+        ];
+        input.queued_job_run_ids = vec![42, 43];
         input.dock_target_jobs = vec!["deploy-production".into()];
         input.logic_rules = Vec::new();
 
@@ -522,13 +528,19 @@ mod tests {
             job_name: Some("deploy-production".into()),
             job_run_id: Some(42),
         }));
+        assert!(actions.contains(&Action::CreateRunner {
+            permanent: false,
+            job_labels: vec!["self-hosted".into(), "Linux".into()],
+            job_name: Some("build-docs".into()),
+            job_run_id: Some(43),
+        }));
         assert_eq!(
             actions
                 .iter()
                 .filter(|action| matches!(action, Action::CreateRunner { .. }))
                 .count(),
-            2,
-            "one warm-pool runner plus one dedicated GitDockRun runner"
+            3,
+            "one warm-pool runner, one dedicated GitDockRun runner, and one generic dynamic runner"
         );
     }
 

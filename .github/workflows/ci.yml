@@ -2433,6 +2433,7 @@ jobs:
       - rust-build
       - audit-rust
       - security-hardening
+      - gsr-watchdog
       - runtime-contracts
       - tauri
       - tauri-recovery
@@ -2479,6 +2480,7 @@ jobs:
           rust-build|Rust release build|rust|
           audit-rust|Cargo audit and deny|rust|
           security-hardening|Security hardening regression gate|rust|
+          gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|
           runtime-contracts|Runtime contracts and configuration integration|rust|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend

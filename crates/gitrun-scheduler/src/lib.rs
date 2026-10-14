@@ -563,10 +563,11 @@ fn reconcile_repo(
 
     let actions = reconcile::plan(&input);
     for action in actions {
-        // Each action is executed independently: a failure on one (e.g. a
-        // transient Docker error creating one runner) is logged and the loop
-        // continues with the rest, rather than the Python behavior of one
-        // exception aborting the entire repo's cycle.
+        // The plan is ordered and later actions may rely on earlier removals
+        // or creations having succeeded (for example, RemoveExited followed
+        // by CreateRunner assumes the exited container was actually removed).
+        // Stop this repo's plan at the first failure and re-snapshot/replan on
+        // the next tick; continuing can exceed capacity or act on stale state.
         if let Err(error) = execute(
             client,
             config,
@@ -576,7 +577,8 @@ fn reconcile_repo(
             &action,
             &mut state,
         ) {
-            eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}: {error}");
+            eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}; aborting remaining planned actions until next reconcile: {error}");
+            break;
         }
     }
 

@@ -194,7 +194,20 @@ export async function renderRepository(repo, navigate) {
     if (foot) foot.textContent = "Snapshot: " + (runnerSnapshot.checked_at ? new Date(Number(runnerSnapshot.checked_at)*1000).toLocaleTimeString() : "not checked") + (runnerSnapshot.stale ? " · stale cached data" : " · shared 60-second cache");
   }).catch(() => { /* telemetry failure must not affect the usable policy form */ });
 
+  let saveInProgress = false;
   async function savePolicy() {
+    if (saveInProgress || generation !== window.__gitrunNavigationGeneration) return;
+    saveInProgress = true;
+    const saveButtons = [
+      document.getElementById("save-repo-policy"),
+      document.getElementById("save-repo-policy-bottom")
+    ].filter(Boolean);
+    const previousLabels = saveButtons.map((button) => button.textContent);
+    saveButtons.forEach((button) => {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.textContent = "Saving…";
+    });
     const next = structuredClone(settings);
     next.repositories = next.repositories || {};
     const updatedRepo = next.repositories[repo] || {};
@@ -231,19 +244,32 @@ export async function renderRepository(repo, navigate) {
     let confirmSocketOptOut = false;
     if (enablingSocket) {
       confirmSocketOptOut = await confirmModal("Enable direct Docker socket access?", "This gives workflows in " + repo + " direct Docker daemon access and can bypass isolation boundaries.", "Enable socket access", true);
-      if (!confirmSocketOptOut) return;
+      if (!confirmSocketOptOut || generation !== window.__gitrunNavigationGeneration) return;
     }
+    if (generation !== window.__gitrunNavigationGeneration) return;
     const status = document.getElementById("repo-save-status");
-    status.textContent = "Validating and saving…";
+    if (status) status.textContent = "Validating and saving…";
     try {
       await invoke("save_dashboard_settings",{updated:config,settings:next,confirmSocketOptOut,expectedConfig:config,expectedSettings:settings});
+      if (generation !== window.__gitrunNavigationGeneration) return;
       settings = next;
       repoSettings = (settings.repositories || {})[repo] || {};
       toast("Repository policy saved.");
-      status.textContent = "Saved successfully · " + new Date().toLocaleTimeString();
+      if (status?.isConnected) status.textContent = "Saved successfully · " + new Date().toLocaleTimeString();
     } catch (error) {
-      status.textContent = "Save failed: " + error;
+      if (generation !== window.__gitrunNavigationGeneration) return;
+      if (status?.isConnected) status.textContent = "Save failed: " + error;
       toast("Could not save repository policy: " + error,"error");
+    } finally {
+      saveInProgress = false;
+      if (generation === window.__gitrunNavigationGeneration) {
+        saveButtons.forEach((button, index) => {
+          if (!button.isConnected) return;
+          button.disabled = false;
+          button.removeAttribute("aria-busy");
+          button.textContent = previousLabels[index];
+        });
+      }
     }
   }
 }

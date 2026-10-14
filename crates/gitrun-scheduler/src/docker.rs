@@ -10,7 +10,7 @@
 
 use serde_json::Value;
 use std::io::Read;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -29,6 +29,7 @@ pub type Result<T> = std::result::Result<T, DockerError>;
 
 const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
 const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_DOCKER_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const GITRUN_API_SOCKET_GID: &str = "10000";
 
 /// Where a Docker command actually runs. `Local` is the existing behavior
@@ -49,6 +50,49 @@ pub enum DockerHost {
     Remote(String),
     /// Remote Docker daemon using Docker client TLS/mTLS credentials.
     RemoteTls { endpoint: String, cert_dir: String },
+}
+
+fn read_bounded_output(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut retained = Vec::with_capacity(MAX_DOCKER_OUTPUT_BYTES.min(64 * 1024));
+    let mut chunk = [0u8; 16 * 1024];
+    let mut truncated = false;
+    loop {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = MAX_DOCKER_OUTPUT_BYTES.saturating_sub(retained.len());
+        let keep = remaining.min(count);
+        retained.extend_from_slice(&chunk[..keep]);
+        truncated |= keep < count;
+        // Continue draining after the cap so the child cannot deadlock on a
+        // full pipe, while retained memory stays bounded.
+    }
+    if truncated {
+        retained.extend_from_slice(b"\n[Docker output truncated at 8 MiB]");
+    }
+    Ok(retained)
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn kill(pid: i32, signal: i32) -> i32;
+}
+
+#[cfg(unix)]
+fn kill_command_group(pid: u32) {
+    // run_on places each CLI in its own process group, so kill descendants
+    // that inherited stdout/stderr as well as the direct child.
+    let _ = unsafe { kill(-(pid as i32), 9) };
+}
+
+#[cfg(not(unix))]
+fn kill_command_group(_pid: u32) {}
+
+fn terminate_child(child: &mut Child) {
+    kill_command_group(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
@@ -85,55 +129,70 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
     }
 
     let command_name = args.first().copied().unwrap_or("command");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .args(args)
         .spawn()?;
-    let mut stdout = child.stdout.take().ok_or_else(|| {
-        DockerError::Command(format!("docker {command_name} did not provide stdout"))
-    })?;
-    let mut stderr = child.stderr.take().ok_or_else(|| {
-        DockerError::Command(format!("docker {command_name} did not provide stderr"))
-    })?;
+    let Some(stdout) = child.stdout.take() else {
+        terminate_child(&mut child);
+        return Err(DockerError::Command(format!(
+            "docker {command_name} did not provide stdout"
+        )));
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_child(&mut child);
+        return Err(DockerError::Command(format!(
+            "docker {command_name} did not provide stderr"
+        )));
+    };
 
-    // Drain both pipes concurrently so a chatty Docker CLI can never block
-    // waiting for the parent process to read a full pipe buffer.
-    let stdout_thread = thread::spawn(move || {
-        let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).map(|_| buf)
-    });
-    let stderr_thread = thread::spawn(move || {
-        let mut buf = Vec::new();
-        stderr.read_to_end(&mut buf).map(|_| buf)
-    });
+    // Drain both pipes concurrently with bounded retained output. A child
+    // process must never be able to exhaust scheduler memory by flooding logs.
+    let stdout_thread = thread::spawn(move || read_bounded_output(stdout));
+    let stderr_thread = thread::spawn(move || read_bounded_output(stderr));
 
     let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
     loop {
-        if let Some(status) = child.try_wait()? {
-            let stdout = stdout_thread
-                .join()
-                .map_err(|_| DockerError::Command("docker stdout reader panicked".into()))??;
-            let stderr = stderr_thread
-                .join()
-                .map_err(|_| DockerError::Command("docker stderr reader panicked".into()))??;
-            return Ok(Output {
-                status,
-                stdout,
-                stderr,
-            });
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // A CLI that exits while leaving a descendant holding a pipe
+                // open would otherwise make the reader joins hang forever.
+                kill_command_group(child.id());
+                let stdout = stdout_thread
+                    .join()
+                    .map_err(|_| DockerError::Command("docker stdout reader panicked".into()))??;
+                let stderr = stderr_thread
+                    .join()
+                    .map_err(|_| DockerError::Command("docker stderr reader panicked".into()))??;
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                terminate_child(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Command(format!(
+                    "docker {command_name} timed out after {}s",
+                    DOCKER_COMMAND_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_child(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Spawn(error));
+            }
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-            return Err(DockerError::Command(format!(
-                "docker {command_name} timed out after {}s",
-                DOCKER_COMMAND_TIMEOUT.as_secs()
-            )));
-        }
-        thread::sleep(Duration::from_millis(50));
     }
 }
 

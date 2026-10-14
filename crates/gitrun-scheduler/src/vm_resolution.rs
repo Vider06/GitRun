@@ -394,20 +394,9 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
     config.hypervisor = kind;
     vm::ensure_vm(&config)?;
 
-    // Ephemeral modes are lifecycle policies, not mere labels. Restore the
-    // operator-designated clean snapshot before a new workload is admitted.
-    // The VM is stopped first because both supported hypervisors require
-    // quiesced state for a deterministic rollback.
-    if matches!(
-        config.activation,
-        vm::ActivationMode::EphemeralSnapshotRollback
-    ) {
-        let snapshot = format!("gitrun-clean-{}", config.name);
-        if vm::is_running(kind, &config.name)? {
-            vm::stop(kind, &config.name)?;
-        }
-        vm::restore_snapshot(kind, &config.name, &snapshot)?;
-    }
+    // Ephemeral modes are rejected by validate_vm_config until reset/recreate
+    // is coordinated with an authoritative runner-idle boundary. In particular,
+    // health refreshes must never stop or roll back a guest that may be active.
     if !vm::is_running(kind, &config.name)? {
         vm::start(kind, &config.name)?;
     }

@@ -854,9 +854,7 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
             } else {
                 vec!["unregistervm", config.name.as_str()]
             };
-            if let Err(rollback_error) =
-                run_checked(HypervisorKind::VirtualBox, &unregister_args)
-            {
+            if let Err(rollback_error) = run_checked(HypervisorKind::VirtualBox, &unregister_args) {
                 // Do not remove a disk that a still-registered VM may use.
                 return Err(VmError::Command(format!(
                     "{error}; VirtualBox rollback failed ({rollback_error}); backing disk was preserved"
@@ -1223,11 +1221,8 @@ mod tests {
         for name in ["ca.pem", "cert.pem", "key.pem"] {
             std::fs::write(dir.join(name), "test").unwrap();
         }
-        std::fs::set_permissions(
-            dir.join("key.pem"),
-            std::fs::Permissions::from_mode(0o644),
-        )
-        .unwrap();
+        std::fs::set_permissions(dir.join("key.pem"), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
 
         let mut config = sample_vm("win-runner", "/vms/base.qcow2");
         config.is_windows = true;
@@ -1237,11 +1232,8 @@ mod tests {
             Err(VmError::InvalidConfig(message)) if message.contains("private key")
         ));
 
-        std::fs::set_permissions(
-            dir.join("key.pem"),
-            std::fs::Permissions::from_mode(0o600),
-        )
-        .unwrap();
+        std::fs::set_permissions(dir.join("key.pem"), std::fs::Permissions::from_mode(0o600))
+            .unwrap();
         assert!(validate_vm_configs(&[config]).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1255,7 +1247,10 @@ mod tests {
             let mut config = sample_vm("runner", "/vms/base.qcow2");
             config.activation = activation;
             assert!(
-                matches!(validate_vm_configs(&[config]), Err(VmError::InvalidConfig(_))),
+                matches!(
+                    validate_vm_configs(&[config]),
+                    Err(VmError::InvalidConfig(_))
+                ),
                 "activation mode {activation:?} must not silently run as a persistent VM"
             );
         }

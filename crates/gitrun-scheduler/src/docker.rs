@@ -708,8 +708,28 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
 }
 
 fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
-    let output = run_on(host, &["network", "inspect", network])?;
+    let output = run_on(
+        host,
+        &[
+            "network",
+            "inspect",
+            "--format",
+            "{{.Driver}}|{{index .Labels \\"gitrun.managed\\"}}",
+            network,
+        ],
+    )?;
     if output.status.success() {
+        let metadata = String::from_utf8_lossy(&output.stdout);
+        let (driver, managed) = metadata.trim().split_once('|').ok_or_else(|| {
+            DockerError::Command(format!(
+                "Docker network {network} returned malformed ownership metadata"
+            ))
+        })?;
+        if driver != "bridge" || managed != "true" {
+            return Err(DockerError::Command(format!(
+                "refusing runner network {network}: expected a GitRun-managed bridge (driver={driver}, gitrun.managed={managed})"
+            )));
+        }
         return Ok(());
     }
 

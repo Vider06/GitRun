@@ -161,7 +161,11 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
 /// plus what's queued, clamped to [min, max]. Same formula as the Python
 /// original (`min(max, max(min, busy + queued))`).
 pub fn desired_count(input: &ReconcileInput) -> u32 {
-    let busy = input.runners.iter().filter(|r| r.online && r.busy).count() as u32;
+    // A runner reported busy must still count as occupied even if GitHub
+    // simultaneously reports it offline. Recovery deliberately never
+    // restarts a busy runner, so excluding it here would overprovision based
+    // on the same inconsistent snapshot.
+    let busy = input.runners.iter().filter(|r| r.busy).count() as u32;
     busy.saturating_add(input.queued_jobs)
         .clamp(input.min_runners, input.max_runners)
 }
@@ -403,6 +407,21 @@ mod tests {
             busy: true,
         }];
         assert_eq!(desired_count(&input), u32::MAX);
+    }
+
+    #[test]
+    fn desired_count_includes_busy_runner_even_if_reported_offline() {
+        let mut input = base_input();
+        input.min_runners = 1;
+        input.max_runners = 8;
+        input.runners = vec![RunnerView {
+            name: "offline-but-busy".into(),
+            online: false,
+            busy: true,
+        }];
+        input.queued_jobs = 1;
+
+        assert_eq!(desired_count(&input), 2);
     }
 
     #[test]

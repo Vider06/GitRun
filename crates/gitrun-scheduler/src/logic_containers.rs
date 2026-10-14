@@ -193,10 +193,14 @@ pub fn save_rules(path: &std::path::Path, rules: &[LogicRule]) -> Result<(), Log
     ));
 
     let serialized = serde_json::to_string_pretty(rules)?;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp)?;
     use std::io::Write;
     file.write_all(serialized.as_bytes())?;
     file.write_all(b"\n")?;
@@ -393,6 +397,27 @@ mod tests {
         let loaded = load_rules(&path).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "windows-jobs");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_rules_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-logic-rules-mode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("logic-containers.json");
+        let rules = vec![rule(
+            "windows-jobs",
+            &["windows"],
+            Backend::LocalLinux,
+            "gitrun-runner:windows",
+        )];
+
+        save_rules(&path, &rules).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

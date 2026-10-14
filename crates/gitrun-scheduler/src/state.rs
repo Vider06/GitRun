@@ -15,6 +15,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use thiserror::Error;
 
 static STATE_TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -101,21 +103,36 @@ impl SchedulerState {
             .ok_or_else(|| {
                 StateError::Invalid("scheduler state path has no valid file name".into())
             })?;
+        // Include wall-clock entropy as well as PID and a process-local
+        // sequence. A crash can leave a temp file behind; after PID reuse,
+        // a PID+sequence-only name could collide and make every future save
+        // fail at create_new.
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
         let tmp = parent.join(format!(
-            ".{file_name}.tmp-{}-{sequence}",
+            ".{file_name}.tmp-{}-{timestamp}-{sequence}",
             std::process::id()
         ));
 
         let serialized = serde_json::to_string_pretty(&self.data)?;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&tmp)?;
         use std::io::Write;
-        file.write_all(serialized.as_bytes())?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
+        let write_result = (|| -> std::io::Result<()> {
+            file.write_all(serialized.as_bytes())?;
+            file.write_all(b"\n")?;
+            file.sync_all()
+        })();
         drop(file);
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
 
         if let Err(error) = fs::rename(&tmp, &self.path) {
             let _ = fs::remove_file(&tmp);

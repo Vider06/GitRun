@@ -185,7 +185,7 @@ impl ReplayGuard {
         let expired: Vec<(Vec<u8>, u64)> = self
             .order
             .iter()
-            .filter(|(_, expiry)| *expiry < current)
+            .filter(|entry| entry.1 < current)
             .cloned()
             .collect();
         if !expired.is_empty() {

@@ -1257,10 +1257,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }
-fn spawn_gtuu_thread(
-    _config: &Config,
-    stopping: &Arc<AtomicBool>,
-) -> std::io::Result<()> {
+fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) -> std::io::Result<()> {
     let stopping = stopping.clone();
 
     std::thread::Builder::new()

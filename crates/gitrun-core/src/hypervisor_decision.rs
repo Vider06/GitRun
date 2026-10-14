@@ -181,13 +181,15 @@ fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
 }
 
 fn write_record(path: &Path, record: &PendingDecision) -> Result<()> {
+    use std::io::Write;
+
     let parent = path
         .parent()
         .ok_or_else(|| std::io::Error::other("decision path has no parent directory"))?;
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_err(|error| std::io::Error::other(error.to_string()))?
+        .as_nanos();
     let tmp = parent.join(format!(
         ".{}.{}.{}.tmp",
         path.file_stem()
@@ -196,12 +198,34 @@ fn write_record(path: &Path, record: &PendingDecision) -> Result<()> {
         std::process::id(),
         unique
     ));
-    fs::write(&tmp, serde_json::to_string(record)?)?;
-    if let Err(error) = fs::rename(&tmp, path) {
+    let serialized = serde_json::to_vec(record)?;
+    let result = (|| -> Result<()> {
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp)?
+        };
+        #[cfg(not(unix))]
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+
+        file.write_all(&serialized)?;
+        file.sync_all()?;
+        fs::rename(&tmp, path)?;
+        #[cfg(unix)]
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
         let _ = fs::remove_file(&tmp);
-        return Err(error.into());
     }
-    Ok(())
+    result
 }
 
 // Atomic lock/record handling keeps dashboard responses durable across process boundaries.

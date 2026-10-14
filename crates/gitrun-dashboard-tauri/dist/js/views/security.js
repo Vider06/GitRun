@@ -48,7 +48,12 @@ export async function renderSecurity() {
     updateOperations();
   });
   content.querySelectorAll("[data-open-repo]").forEach((button) => button.addEventListener("click", () => window.dispatchEvent(new CustomEvent("gitrun:navigate",{detail:"repo:"+button.dataset.openRepo}))));
-  document.getElementById("save-api-policy").addEventListener("click", async () => {
+  const apiSaveButton = document.getElementById("save-api-policy");
+  apiSaveButton.addEventListener("click", async () => {
+    if (apiSaveButton.disabled || generation !== window.__gitrunNavigationGeneration) return;
+    apiSaveButton.disabled = true;
+    apiSaveButton.setAttribute("aria-busy", "true");
+    try {
     const nextSettings = structuredClone(settings);
     nextSettings.global = nextSettings.global || { apis: {} };
     nextSettings.global.apis = nextSettings.global.apis || {};
@@ -61,15 +66,27 @@ export async function renderSecurity() {
     let confirmSocketOptOut = false;
     if (socketConfigured) {
       confirmSocketOptOut = await confirmModal("Save policy with direct socket access configured?", "At least one repository has direct Docker socket access enabled. This confirmation is required by the backend danger gate.", "Confirm and save", true);
-      if (!confirmSocketOptOut) return;
+      if (!confirmSocketOptOut || generation !== window.__gitrunNavigationGeneration) return;
     }
     try {
       await invoke("save_dashboard_settings", { updated: config, settings: nextSettings, confirmSocketOptOut, expectedConfig: config, expectedSettings: settings });
+      if (generation !== window.__gitrunNavigationGeneration) return;
       settings = nextSettings;
       toast("Global API policy saved.");
-    } catch (error) { toast("Could not save API policy: " + error, "error"); }
+    } catch (error) { if (generation === window.__gitrunNavigationGeneration) toast("Could not save API policy: " + error, "error"); }
+    } finally {
+      if (generation === window.__gitrunNavigationGeneration && apiSaveButton.isConnected) {
+        apiSaveButton.disabled = false;
+        apiSaveButton.removeAttribute("aria-busy");
+      }
+    }
   });
-  document.getElementById("save-runtime-policy").addEventListener("click", async () => {
+  const runtimeSaveButton = document.getElementById("save-runtime-policy");
+  runtimeSaveButton.addEventListener("click", async () => {
+    if (runtimeSaveButton.disabled || generation !== window.__gitrunNavigationGeneration) return;
+    runtimeSaveButton.disabled = true;
+    runtimeSaveButton.setAttribute("aria-busy", "true");
+    try {
     const next = {
       ...config,
       runner_network: document.getElementById("sec-network").value.trim(),
@@ -92,16 +109,41 @@ export async function renderSecurity() {
       gsr_violation_action: document.getElementById("sec-violation-action").value,
       gsr_workflow_validation_enabled: document.getElementById("sec-workflow-validation").checked
     };
-    try { await invoke("save_config",{updated:next}); config = next; toast("Runtime security policy saved. Active enforcement remains a separate verification."); }
-    catch (error) { toast("Could not save runtime policy: " + error,"error"); }
+    try {
+      await invoke("save_config",{updated:next});
+      if (generation !== window.__gitrunNavigationGeneration) return;
+      config = next;
+      toast("Runtime security policy saved. Active enforcement remains a separate verification.");
+    } catch (error) { if (generation === window.__gitrunNavigationGeneration) toast("Could not save runtime policy: " + error,"error"); }
+    } finally {
+      if (generation === window.__gitrunNavigationGeneration && runtimeSaveButton.isConnected) {
+        runtimeSaveButton.disabled = false;
+        runtimeSaveButton.removeAttribute("aria-busy");
+      }
+    }
   });
-  document.getElementById("save-danger-settings").addEventListener("click", async () => {
+  const dangerSaveButton = document.getElementById("save-danger-settings");
+  dangerSaveButton.addEventListener("click", async () => {
+    if (dangerSaveButton.disabled || generation !== window.__gitrunNavigationGeneration) return;
+    dangerSaveButton.disabled = true;
+    dangerSaveButton.setAttribute("aria-busy", "true");
+    try {
     const next = {...config, gsr_docker_socket_hardening: document.getElementById("security-hardening").checked, gsr_allow_unsafe_runner: document.getElementById("security-unsafe").checked};
     if (config.gsr_docker_socket_hardening && !next.gsr_docker_socket_hardening) {
       const ok = await confirmModal("Disable Docker socket hardening?", "This weakens the host boundary for socket-enabled runners. The unsafe-runner gate must also be enabled. Continue only if you accept this risk.", "Disable hardening", true);
-      if (!ok) return;
+      if (!ok || generation !== window.__gitrunNavigationGeneration) return;
     }
-    try { await invoke("save_config", {updated: next}); config = next; toast("Security configuration saved. Runtime enforcement remains unverified."); }
-    catch (error) { toast("Save failed: " + error, "error"); }
+    try {
+      await invoke("save_config", {updated: next});
+      if (generation !== window.__gitrunNavigationGeneration) return;
+      config = next;
+      toast("Security configuration saved. Runtime enforcement remains unverified.");
+    } catch (error) { if (generation === window.__gitrunNavigationGeneration) toast("Save failed: " + error, "error"); }
+    } finally {
+      if (generation === window.__gitrunNavigationGeneration && dangerSaveButton.isConnected) {
+        dangerSaveButton.disabled = false;
+        dangerSaveButton.removeAttribute("aria-busy");
+      }
+    }
   });
 }

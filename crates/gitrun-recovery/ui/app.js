@@ -6,6 +6,10 @@ const issues = document.querySelector("#issues");
 const meta = document.querySelector("#meta");
 const terminal = document.querySelector("#terminal");
 const buttons = Array.from(document.querySelectorAll(".action"));
+let busyDepth = 0;
+
+health.setAttribute("role", "status");
+health.setAttribute("aria-live", "polite");
 
 function esc(value) {
   return String(value == null ? "" : value)
@@ -18,10 +22,13 @@ function log(message, kind) {
   if (kind) line.className = kind;
   line.textContent = "[" + prefix + "] " + message;
   terminal.appendChild(line);
+  while (terminal.childElementCount > 300) terminal.firstElementChild.remove();
   terminal.scrollTop = terminal.scrollHeight;
 }
 function setBusy(busy, label) {
-  buttons.forEach((button) => { button.disabled = busy; });
+  busyDepth = Math.max(0, busyDepth + (busy ? 1 : -1));
+  const isBusy = busyDepth > 0;
+  buttons.forEach((button) => { button.disabled = isBusy; });
   if (busy) log(label || "Running recovery action…");
 }
 function setMetric(id, value, detail, kind) {
@@ -34,7 +41,12 @@ function setMetric(id, value, detail, kind) {
   if (detailEl) detailEl.textContent = detail || "";
 }
 function render(report) {
-  const found = Array.isArray(report.issues) ? report.issues : [];
+  if (!report || typeof report !== "object") {
+    throw new Error("Recovery returned an invalid diagnostic report.");
+  }
+  const found = Array.isArray(report.issues)
+    ? report.issues.filter((issue) => issue && typeof issue === "object")
+    : [];
   const critical = found.filter((issue) => issue.severity === "Critical");
   const warnings = found.filter((issue) => issue.severity === "Warning");
   const ready = critical.length === 0 && warnings.length === 0;
@@ -52,7 +64,7 @@ function render(report) {
     const severity = String(issue.severity || "Info").toLowerCase();
     return '<article class="issue ' + esc(severity) + '"><div class="issue-top"><strong>' + esc(issue.title) + '</strong><span class="severity">' + esc(issue.severity) + '</span></div><p>' + esc(issue.detail) + '</p>' + (issue.repairable ? '<p class="repair-note">Recovery path available — choose the appropriate action on the right.</p>' : '<p class="repair-note">Manual review may be required.</p>') + '</article>';
   }).join("") : '<article class="issue info"><div class="issue-top"><strong>All inspected checks passed</strong><span class="severity">Info</span></div><p>No blocking issues were reported by the current diagnostic set.</p></article>';
-  const update = report.update || {};
+  const update = report.update && typeof report.update === "object" ? report.update : {};
   let updateTitle = "Update check not completed";
   let updateDetail = "Run GTUU to check GitRun and permanent runner updates.";
   let updateKind = "";

@@ -302,19 +302,34 @@ mod tests {
         );
     }
 
+    fn fresh_test_nonce() -> Vec<u8> {
+        SignedRequest::sign(
+            request(),
+            &ChannelKey::generate().expect("test key generation requires OS randomness"),
+        )
+        .expect("test request signing requires OS randomness")
+        .nonce
+    }
+
     #[test]
     fn replay_cache_does_not_evict_live_nonces_when_full() {
+        // Use production-generated random nonces so the test does not seed the
+        // replay cache with fixed cryptographic values.
+        let first_nonce = fresh_test_nonce();
+        let second_nonce = fresh_test_nonce();
+        assert_ne!(first_nonce, second_nonce);
+
         let mut replay = ReplayGuard::new(1);
-        replay.check_and_record(b"nonce-1", 200, 100).unwrap();
+        replay.check_and_record(&first_nonce, 200, 100).unwrap();
         assert!(matches!(
-            replay.check_and_record(b"nonce-2", 200, 100),
+            replay.check_and_record(&second_nonce, 200, 100),
             Err(ChannelAuthError::ReplayCacheFull)
         ));
         assert!(matches!(
-            replay.check_and_record(b"nonce-1", 200, 100),
+            replay.check_and_record(&first_nonce, 200, 100),
             Err(ChannelAuthError::Replay)
         ));
-        replay.check_and_record(b"nonce-2", 300, 201).unwrap();
+        replay.check_and_record(&second_nonce, 300, 201).unwrap();
     }
 
     #[test]

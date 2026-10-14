@@ -214,8 +214,7 @@ impl Drop for GtuuLock {
     }
 }
 
-type SecretEnvForRepo<'a> =
-    dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String> + 'a;
+type SecretEnvForRepo<'a> = dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String> + 'a;
 
 pub struct GtuuConfig<'a> {
     pub image: &'a str,

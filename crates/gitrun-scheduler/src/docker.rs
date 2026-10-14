@@ -68,7 +68,13 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
                 .env("DOCKER_HOST", "unix:///var/run/docker.sock");
         }
         DockerHost::Remote(addr) => {
-            command.env("DOCKER_HOST", addr);
+            // A plain remote endpoint must not inherit TLS settings from the
+            // scheduler's environment. TLS is enabled only by RemoteTls,
+            // whose endpoint and certificate directory are explicit.
+            command
+                .env_remove("DOCKER_TLS_VERIFY")
+                .env_remove("DOCKER_CERT_PATH")
+                .env("DOCKER_HOST", addr);
         }
         DockerHost::RemoteTls { endpoint, cert_dir } => {
             command

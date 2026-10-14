@@ -19,11 +19,11 @@ use crate::github::GitHubClient;
 use std::fs;
 #[cfg(unix)]
 use std::fs::OpenOptions;
-use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -147,12 +147,7 @@ fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
     // The guard file is intentionally persistent. Never unlink it after
     // unlocking, or a waiter could hold the old inode while a third process
     // locks a newly-created inode at the same path.
-    let result = unsafe {
-        libc::flock(
-            guard.as_raw_fd(),
-            libc::LOCK_EX | libc::LOCK_NB,
-        )
-    };
+    let result = unsafe { libc::flock(guard.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result != 0 {
         let error = std::io::Error::last_os_error();
         if error.raw_os_error() == Some(libc::EWOULDBLOCK)

@@ -345,8 +345,9 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
 /// an optional third-party enhancement (see module docs), and its absence
 /// must never block a job from running. Returns `Ok(Some(findings))` on a
 /// successful run, parsing zizmor's own JSON finding format loosely (only
-/// the fields this module needs) so an unrecognized future zizmor output
-/// shape degrades to "no additional findings" rather than a hard error.
+/// the fields this module needs). Invalid JSON or an unexpected top-level
+/// shape is reported as an error so an analyzer output change cannot silently
+/// appear to be a clean scan.
 pub fn run_zizmor(workflows_dir: &Path) -> std::io::Result<Option<Vec<Finding>>> {
     run_zizmor_command("zizmor", workflows_dir)
 }

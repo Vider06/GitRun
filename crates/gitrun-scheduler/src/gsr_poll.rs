@@ -172,6 +172,7 @@ impl BanStore {
             let _ = fs::remove_file(&tmp);
             return Err(error.into());
         }
+        #[cfg(unix)]
         File::open(parent)?.sync_all()?;
         Ok(())
     }

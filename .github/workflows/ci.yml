@@ -4,7 +4,7 @@ name: GitRun CI
 #  Pipeline map (needs):
 #    variables-verification ─┬─► environment
 #                            └─► detect ─► cargo-lock ─┬─ rust-lint · rust-test · rust-build · audit-rust
-#                                                       ├─ security-hardening · runtime-contracts
+#                                                       ├─ security-hardening · gsr-watchdog · runtime-contracts
 #                                                       ├─ ci-selftest · repository · workflows · shell · powershell
 #                                                       ├─ frontend ─► audit-node
 #                                                       └─ docker
@@ -1812,6 +1812,42 @@ jobs:
       - *report
       - *logs
 
+  # ───────────────────────────────────────────── GSR watchdog lifecycle ──
+  gsr-watchdog:
+    name: GSR watchdog lifecycle and failure detection
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      RUST_COMPONENTS: ""
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - *rust_keys
+      - *c_tc
+      - *c_reg
+      - *c_tgt
+      - *rust_install
+      - *rust_tnote
+      - name: Test watchdog and real process-exit recovery
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          rc=0
+          ci_run "GSR watchdog and security event tests" cargo test --locked -p gitrun-gsr || rc=1
+          ci_run "Build the packaged CLI entrypoint" cargo build --locked -p gitrun-cli --bin gitrun || rc=1
+          ci_run "Inject a real child-process exit into the GSR watchdog" bash scripts/test-runtime-contracts.sh target/debug/gitrun || rc=1
+          exit "$rc"
+      - *rust_prune
+      - *s_tc
+      - *s_reg
+      - *s_tgt
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────── runtime contract gate ──
   runtime-contracts:
     name: Runtime contracts and configuration integration
@@ -1843,9 +1879,6 @@ jobs:
           ci_run "Setup installs the shared CLI and GSR watchdog" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
           ci_run "Partial dashboard repository settings use safe defaults" cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults || rc=1
           ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt || rc=1
-          ci_run "GSR watchdog and security event tests" cargo test --locked -p gitrun-gsr || rc=1
-          ci_run "Build the packaged CLI entrypoint" cargo build --locked -p gitrun-cli --bin gitrun || rc=1
-          ci_run "Inject a real child-process exit into the GSR watchdog" bash scripts/test-runtime-contracts.sh target/debug/gitrun || rc=1
 
           validate_systemd_units() {
             sudo install -Dm0755 target/debug/gitrun /usr/local/bin/gitrun || return 1

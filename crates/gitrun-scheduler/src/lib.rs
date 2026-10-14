@@ -783,7 +783,7 @@ fn create_runner(
     } else {
         String::new()
     };
-    let secret_env = vault_env_for_repo(config, repo);
+    let secret_env = vault_env_for_repo(config, repo)?;
 
     let Some((backend, image, is_windows)) =
         resolve_backend_and_image(config, state_dir, vm_registry, job_labels)
@@ -1094,38 +1094,39 @@ fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
     ]
 }
 
-fn vault_env_for_repo(config: &Config, repo: &str) -> Vec<(String, String)> {
+fn vault_env_for_repo(
+    config: &Config,
+    repo: &str,
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
     if config.vault_dir.trim().is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let bridge = VaultToGsrBridge::new(&config.state_dir);
-    let vault = match Vault::open_with_sink(&config.vault_dir, Box::new(bridge)) {
-        Ok(vault) => vault,
-        Err(error) => {
-            eprintln!(
-                "gitrun-autoscaler: could not open GitVault at {}: {error}",
-                config.vault_dir
-            );
-            return Vec::new();
-        }
-    };
+    let vault = Vault::open_with_sink(&config.vault_dir, Box::new(bridge)).map_err(|error| {
+        std::io::Error::other(format!(
+            "cannot safely create runner for {repo}: GitVault could not be opened: {error}"
+        ))
+    })?;
 
     let groups = config.vault_groups_for_repo(repo);
-    // resolve_for_repo already applies repo > group > global precedence and
-    // only decrypts secrets that actually apply to this repo — see
-    // gitrun-vault's module docs for the full resolution rules.
-    vault
-        .resolve_for_repo(repo, &groups)
-        .into_iter()
-        .filter(|(name, _)| {
-            if is_valid_env_var_name(name) {
-                true
-            } else {
-                eprintln!("gitrun-autoscaler: skipping vault secret '{name}': not a valid environment variable name");
-                false
-            }
-        })
-        .collect()
+    // Never launch a runner with a partial secret environment: any selected
+    // secret decryption failure is fatal and propagated by GitVault.
+    let resolved = vault.resolve_for_repo(repo, &groups).map_err(|error| {
+        std::io::Error::other(format!(
+            "cannot safely create runner for {repo}: GitVault secret resolution failed: {error}"
+        ))
+    })?;
+    let mut env = Vec::with_capacity(resolved.len());
+    for (name, value) in resolved {
+        if is_valid_env_var_name(&name) {
+            env.push((name, value));
+        } else {
+            return Err(std::io::Error::other(format!(
+                "cannot safely create runner for {repo}: GitVault secret name '{name}' is not a valid environment variable name"
+            )).into());
+        }
+    }
+    Ok(env)
 }
 
 /// A conservative environment variable name check: uppercase letters,

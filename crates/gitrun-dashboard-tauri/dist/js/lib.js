@@ -52,7 +52,6 @@ export function confirmModal(title, detail, confirmLabel = "Confirm", danger = f
     const previousFocus = document.activeElement;
     backdrop.innerHTML = '<section class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-detail" tabindex="-1"><h2 id="confirm-title">' + esc(title) + '</h2><p id="confirm-detail">' + esc(detail) + '</p><div class="modal-actions"><button class="btn" data-cancel>Cancel</button><button class="btn ' + (danger ? "btn-danger" : "btn-primary") + '" data-confirm>' + esc(confirmLabel) + '</button></div></section>';
     document.body.appendChild(backdrop);
-    const dialog = backdrop.querySelector('[role="dialog"]');
     const cancelButton = backdrop.querySelector("[data-cancel]");
     const confirmButton = backdrop.querySelector("[data-confirm]");
     let settled = false;

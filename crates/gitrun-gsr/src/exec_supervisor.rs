@@ -98,6 +98,9 @@ mod linux {
     const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
     const CLONE_UNTRACED_FLAG: u32 = 0x0080_0000;
     const SECCOMP_DATA_ARGS_OFFSET: u32 = 16;
+    // x32 shares AUDIT_ARCH_X86_64 but sets this bit in syscall numbers.
+    // Refuse that ABI rather than letting its exec syscalls bypass tracing.
+    const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
     const BPF_LD: u16 = 0x00;
     const BPF_W: u16 = 0x00;
@@ -311,6 +314,20 @@ mod linux {
                 jt: 0,
                 jf: 0,
                 k: SECCOMP_DATA_NR_OFFSET,
+            },
+            libc::sock_filter {
+                // The x32 ABI uses the x86-64 audit architecture with a
+                // syscall-number bit that would otherwise miss every rule below.
+                code: BPF_JMP | BPF_JSET | BPF_K,
+                jt: 0,
+                jf: 1,
+                k: X32_SYSCALL_BIT,
+            },
+            libc::sock_filter {
+                code: BPF_RET | BPF_K,
+                jt: 0,
+                jf: 0,
+                k: SECCOMP_RET_ERRNO | libc::ENOSYS as u32,
             },
             libc::sock_filter {
                 code: BPF_JMP | BPF_JEQ | BPF_K,
@@ -1207,6 +1224,20 @@ mod linux {
                     }
                     if clone3_result != -1 || *libc::__errno_location() != libc::ENOSYS {
                         libc::_exit(105);
+                    }
+
+                    // x32 syscall numbers must not fall through the x86-64
+                    // execve checks without reaching the tracer.
+                    let x32_execve_result = libc::syscall(
+                        (X32_SYSCALL_BIT | libc::SYS_execve as u32) as libc::c_long,
+                        0usize,
+                        0usize,
+                        0usize,
+                    );
+                    if x32_execve_result != -1
+                        || *libc::__errno_location() != libc::ENOSYS
+                    {
+                        libc::_exit(106);
                     }
                     libc::_exit(0);
                 }

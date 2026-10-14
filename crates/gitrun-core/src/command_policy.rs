@@ -212,15 +212,17 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     let pattern_tokens = pattern.split(' ').collect::<Vec<_>>();
     let command_tokens = command_normalized.split(' ').collect::<Vec<_>>();
 
-    // Preserve the established single-token behavior: the token may identify
-    // the executable or a command token in a wrapper invocation.
+    // A single-token whitelist entry authorizes the executable only.
+    // Searching every argument would let an unrelated command smuggle an
+    // allowed word later in argv (for example, `python evil.py cargo`).
+    // Wrapper commands must be explicitly allowlisted as the executable.
     if pattern_tokens.len() == 1 {
         let token = pattern_tokens[0];
-        return command_tokens.iter().any(|candidate| {
-            *candidate == token
-                || candidate.strip_prefix("./").is_some_and(|p| p == token)
-                || candidate.ends_with(&format!("/{token}"))
-        });
+        let Some(executable) = command_tokens.first() else {
+            return false;
+        };
+        let executable_name = executable.rsplit('/').next().unwrap_or(executable);
+        return executable_name == token;
     }
 
     let Some(command_executable) = command_tokens.first() else {
@@ -447,6 +449,30 @@ mod tests {
         };
         assert_eq!(policy.evaluate("cargo build"), Decision::Allowed);
         assert_eq!(policy.evaluate("/usr/bin/cargo test"), Decision::Allowed);
+        assert!(matches!(
+            policy.evaluate("my-cargo-wrapper build"),
+            Decision::Denied { .. }
+        ));
+    }
+
+    #[test]
+    fn single_token_whitelist_does_not_match_later_arguments() {
+        let policy = CommandPolicy {
+            baseline_blacklist: PatternList::default(),
+            user_blacklist: PatternList::default(),
+            user_whitelist: PatternList::new(true, vec!["cargo".into()]),
+        };
+
+        assert_eq!(policy.evaluate("cargo test"), Decision::Allowed);
+        assert_eq!(policy.evaluate("/usr/bin/cargo test"), Decision::Allowed);
+        assert!(matches!(
+            policy.evaluate("python evil.py cargo"),
+            Decision::Denied { .. }
+        ));
+        assert!(matches!(
+            policy.evaluate("echo cargo"),
+            Decision::Denied { .. }
+        ));
         assert!(matches!(
             policy.evaluate("my-cargo-wrapper build"),
             Decision::Denied { .. }

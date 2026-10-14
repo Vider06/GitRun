@@ -632,7 +632,8 @@ fn read_privileged_setup_payload(path: &str) -> Result<String, Box<dyn std::erro
             return Err("setup payload exceeds the 1 MiB safety limit".into());
         }
 
-        let expected_uid = match std::env::var("PKEXEC_UID").or_else(|_| std::env::var("SUDO_UID")) {
+        let expected_uid = match std::env::var("PKEXEC_UID").or_else(|_| std::env::var("SUDO_UID"))
+        {
             Ok(value) => value.parse::<u32>()?,
             Err(_) => 0,
         };
@@ -895,10 +896,7 @@ fn atomic_replace_text(
     #[cfg(not(unix))]
     let _ = mode;
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let temp = parent.join(format!(
-        ".{prefix}-{}-{nonce}.tmp",
-        std::process::id()
-    ));
+    let temp = parent.join(format!(".{prefix}-{}-{nonce}.tmp", std::process::id()));
 
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]

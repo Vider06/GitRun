@@ -164,7 +164,11 @@ pub fn run() {
                     sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
                     continue;
                 }
-                Err(error) => eprintln!("gitrun-autoscaler: host resource pressure check unavailable: {error}; continuing for availability"),
+                Err(error) => {
+                    eprintln!("gitrun-autoscaler: host resource pressure check unavailable: {error}; holding scheduler reconciliation until resource checks recover");
+                    sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
+                    continue;
+                }
             }
         }
         for repo in &config.repositories {

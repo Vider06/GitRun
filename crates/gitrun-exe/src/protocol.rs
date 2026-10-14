@@ -296,7 +296,10 @@ mod tests {
 
         let encoded = serde_json::json!(hex::encode([1u8, 2, 3]));
         let decoded = serde_json::from_value::<ChannelKey>(encoded);
-        assert!(decoded.is_err(), "deserialization must enforce minimum key length");
+        assert!(
+            decoded.is_err(),
+            "deserialization must enforce minimum key length"
+        );
     }
 
     #[test]
@@ -383,7 +386,9 @@ mod tests {
     fn expired_past_timestamp_is_rejected() {
         let key = ChannelKey::generate().unwrap();
         let mut signed = SignedRequest::sign(request(), &key).unwrap();
-        signed.timestamp = now().unwrap().saturating_sub(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
+        signed.timestamp = now()
+            .unwrap()
+            .saturating_sub(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
 
         let mut replay = ReplayGuard::default();
         assert!(matches!(
@@ -396,7 +401,9 @@ mod tests {
     fn expired_future_timestamp_is_rejected() {
         let key = ChannelKey::generate().unwrap();
         let mut signed = SignedRequest::sign(request(), &key).unwrap();
-        signed.timestamp = now().unwrap().saturating_add(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
+        signed.timestamp = now()
+            .unwrap()
+            .saturating_add(DEFAULT_MAX_CLOCK_SKEW_SECS + 1);
 
         let mut replay = ReplayGuard::default();
         assert!(matches!(

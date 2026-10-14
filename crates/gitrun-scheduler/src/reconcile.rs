@@ -140,6 +140,23 @@ fn job_requires_specialized_runner(
     })
 }
 
+/// Returns whether a queued job needs a dedicated dynamic runner.
+///
+/// GitDockRun targets always need their own runner, even when the default
+/// labels already match and no Logic Containers rule is configured. Other
+/// jobs need dedicated capacity only when a Logic Containers rule routes
+/// them and the default runner labels do not cover the request.
+fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[String]) -> bool {
+    let is_dock_target = input
+        .queued_job_names
+        .get(index)
+        .is_some_and(|name| input.dock_target_jobs.iter().any(|target| target == name));
+
+    is_dock_target
+        || (crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
+            && job_requires_specialized_runner(labels, &input.configured_runner_labels))
+}
+
 /// Computes the desired runner count: enough to cover currently busy runners
 /// plus what's queued, clamped to [min, max]. Same formula as the Python
 /// original (`min(max, max(min, busy + queued))`).
@@ -208,15 +225,18 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // 3. Top up to `desired`, permanents first up to `min_runners`, the rest
     // as dynamic overflow. This is the single, non-duplicated version of the
     // Python file's two identical top-up loops.
-    let recreating: u32 = actions
-        .iter()
-        .filter(|a| matches!(a, Action::RecreateOrphaned { .. }))
-        .count() as u32;
-    let mut current = live_containers.len() as u32 + recreating;
+    // Recreating an orphan replaces its existing container; it does not
+    // consume an additional slot. Count permanent containers by their actual
+    // role rather than treating every orphan as permanent.
+    let mut current = live_containers.len() as u32;
     let mut permanent_count =
-        live_containers.iter().filter(|c| c.permanent).count() as u32 + recreating;
+        live_containers.iter().filter(|c| c.permanent).count() as u32;
 
-    while current < desired && permanent_count < input.min_runners {
+    // The permanent warm pool is a separate invariant from total demand:
+    // dynamic/orphaned runners must not satisfy the configured permanent
+    // minimum. Respect the global maximum even when the snapshot is already
+    // at or above the desired total.
+    while current < input.max_runners && permanent_count < input.min_runners {
         actions.push(Action::CreateRunner {
             permanent: true,
             job_labels: Vec::new(),
@@ -239,12 +259,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         .filter_map(|(index, labels)| {
             let job_name = input.queued_job_names.get(index).cloned();
             let job_run_id = input.queued_job_run_ids.get(index).copied();
-            let routed = crate::logic_containers::resolve(&input.logic_rules, labels).is_some();
-            let specialized = routed
-                && (job_requires_specialized_runner(labels, &input.configured_runner_labels)
-                    || job_name.as_deref().is_some_and(|name| {
-                        input.dock_target_jobs.iter().any(|target| target == name)
-                    }));
+            let specialized = job_needs_dedicated_runner(input, index, labels);
 
             specialized.then_some((job_name, job_run_id, labels.clone()))
         })
@@ -274,10 +289,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             .queued_job_labels
             .iter()
             .enumerate()
-            .filter(|(_, labels)| {
-                !(crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
-                    && job_requires_specialized_runner(labels, &input.configured_runner_labels))
-            })
+            .filter(|(index, labels)| !job_needs_dedicated_runner(input, *index, labels))
             .nth(dynamic_index);
 
         let (job_name, job_run_id, job_labels) = next
@@ -472,6 +484,93 @@ mod tests {
             job_name: None,
             job_run_id: None,
         }));
+    }
+
+    #[test]
+    fn dock_target_gets_dedicated_capacity_without_logic_container_rule() {
+        let mut input = base_input();
+        input.min_runners = 1;
+        input.max_runners = 4;
+        input.queued_jobs = 1;
+        input.queued_job_labels = vec![vec!["self-hosted".into(), "Linux".into()]];
+        input.queued_job_names = vec!["deploy-production".into()];
+        input.queued_job_run_ids = vec![42];
+        input.dock_target_jobs = vec!["deploy-production".into()];
+        input.logic_rules = Vec::new();
+
+        let actions = plan(&input);
+        assert!(actions.contains(&Action::CreateRunner {
+            permanent: false,
+            job_labels: vec!["self-hosted".into(), "Linux".into()],
+            job_name: Some("deploy-production".into()),
+            job_run_id: Some(42),
+        }));
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(action, Action::CreateRunner { .. }))
+                .count(),
+            2,
+            "one warm-pool runner plus one dedicated GitDockRun runner"
+        );
+    }
+
+    #[test]
+    fn orphan_recreation_does_not_double_count_orphan_or_promote_dynamic_to_permanent() {
+        let mut input = base_input();
+        input.min_runners = 3;
+        input.max_runners = 8;
+        input.queued_jobs = 1;
+        input.containers = vec![ContainerView {
+            name: "orphan-dynamic".into(),
+            health: ContainerHealth::Running,
+            permanent: false,
+        }];
+        input.runners = Vec::new();
+
+        let actions = plan(&input);
+        assert!(actions.contains(&Action::RecreateOrphaned {
+            name: "orphan-dynamic".into(),
+            permanent: false,
+        }));
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(
+                    action,
+                    Action::CreateRunner { permanent: true, .. }
+                ))
+                .count(),
+            3,
+            "the warm pool must still reach min_runners; the orphan replacement is dynamic"
+        );
+    }
+
+    #[test]
+    fn existing_dynamic_capacity_does_not_satisfy_permanent_warm_pool_minimum() {
+        let mut input = base_input();
+        input.min_runners = 2;
+        input.max_runners = 6;
+        input.queued_jobs = 0;
+        input.containers = (0..2)
+            .map(|i| ContainerView {
+                name: format!("dynamic-{i}"),
+                health: ContainerHealth::Running,
+                permanent: false,
+            })
+            .collect();
+
+        let actions = plan(&input);
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(
+                    action,
+                    Action::CreateRunner { permanent: true, .. }
+                ))
+                .count(),
+            2
+        );
     }
 
     #[test]

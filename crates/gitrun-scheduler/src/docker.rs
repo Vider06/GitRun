@@ -714,7 +714,7 @@ fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
             "network",
             "inspect",
             "--format",
-            "{{.Driver}}|{{index .Labels \\"gitrun.managed\\"}}",
+            "{{.Driver}}|{{index .Labels \"gitrun.managed\"}}",
             network,
         ],
     )?;

@@ -869,6 +869,20 @@ fn validate_single_line(key: &str, value: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// Accept rooted POSIX paths and fully-qualified Windows drive/UNC paths
+/// regardless of the host compiling this crate; configuration can describe a
+/// different runner/host platform than the one running unit tests.
+fn is_absolute_filesystem_path(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        || value.starts_with('/')
+        || (value.len() >= 3
+            && value.as_bytes()[0].is_ascii_alphabetic()
+            && value.as_bytes()[1] == b':'
+            && matches!(value.as_bytes()[2], b'/' | b'\\\\'))
+        || value.starts_with("\\\\\\\\")
+}
+
 /// Validate every filesystem used by resource-pressure backpressure. Reject
 /// malformed entries at startup instead of accepting a partial list and
 /// discovering a bad path only when the scheduler samples host pressure.
@@ -882,14 +896,11 @@ fn validate_resource_pressure_paths(value: &str) -> Result<(), ConfigError> {
 
     for path in paths {
         let parsed = Path::new(path);
-        if !parsed.is_absolute()
+        if !is_absolute_filesystem_path(path)
             || path.chars().any(char::is_control)
-            || parsed.components().any(|component| {
-                matches!(
-                    component,
-                    std::path::Component::CurDir | std::path::Component::ParentDir
-                )
-            })
+            || path
+                .split(['/', '\\\\'])
+                .any(|component| matches!(component, "." | ".."))
         {
             return Err(ConfigError::Invalid(format!(
                 "resource pressure path must be a clean absolute path without control characters or dot segments, got {path:?}"

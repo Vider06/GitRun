@@ -1234,9 +1234,7 @@ mod linux {
                         0usize,
                         0usize,
                     );
-                    if x32_execve_result != -1
-                        || *libc::__errno_location() != libc::ENOSYS
-                    {
+                    if x32_execve_result != -1 || *libc::__errno_location() != libc::ENOSYS {
                         libc::_exit(106);
                     }
                     libc::_exit(0);

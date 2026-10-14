@@ -1881,13 +1881,28 @@ jobs:
           ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt || rc=1
 
           validate_systemd_units() {
+            command -v systemd-analyze >/dev/null 2>&1 || {
+              echo "systemd-analyze is required to validate the service units" >&2
+              return 1
+            }
+            # Build the executable explicitly: the preceding package tests do not
+            # guarantee that Cargo has produced target/debug/gitrun.
+            cargo build --locked -p gitrun-cli --bin gitrun || return 1
             sudo install -Dm0755 target/debug/gitrun /usr/local/bin/gitrun || return 1
             sudo install -Dm0600 config/config.example.env /etc/gitrun/gitrun.env || return 1
             sudo install -Dm0644 systemd/gitrun.service /etc/systemd/system/gitrun.service || return 1
             sudo install -Dm0644 systemd/gitrun-gsr.service /etc/systemd/system/gitrun-gsr.service || return 1
             sudo systemd-analyze verify gitrun.service gitrun-gsr.service || return 1
+
+            # Catch regressions in reboot enablement and restart-on-crash policy.
+            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || return 1
+            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || return 1
+            grep -Fq 'Restart=on-failure' systemd/gitrun.service || return 1
+            grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || return 1
+            grep -Fq 'systemctl").args(["enable", "gitrun.service"])' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'systemctl").args(["enable", "gitrun-gsr.service"])' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs || return 1
           }

@@ -371,7 +371,10 @@ mod tests {
             "UMask=0077",
         ] {
             assert!(SYSTEMD_SERVICE.contains(directive), "missing {directive}");
-            assert!(SYSTEMD_SERVICE_DIRECT.contains(directive), "fallback missing {directive}");
+            assert!(
+                SYSTEMD_SERVICE_DIRECT.contains(directive),
+                "fallback missing {directive}"
+            );
         }
     }
 }

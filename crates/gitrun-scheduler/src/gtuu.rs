@@ -142,6 +142,7 @@ fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .mode(0o600)
         .open(guard_path)?;
     // The guard file is intentionally persistent. Never unlink it after
@@ -213,6 +214,9 @@ impl Drop for GtuuLock {
     }
 }
 
+type SecretEnvForRepo<'a> =
+    dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String> + 'a;
+
 pub struct GtuuConfig<'a> {
     pub image: &'a str,
     pub repositories: &'a [String],
@@ -238,7 +242,7 @@ pub struct GtuuConfig<'a> {
     /// rather than a fixed list because GTUU updates containers across
     /// potentially many repos in one run, each needing its own repo-scoped
     /// secrets — see `main.rs::vault_env_for_repo`, which this wraps.
-    pub secret_env_for_repo: &'a dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String>,
+    pub secret_env_for_repo: &'a SecretEnvForRepo<'a>,
     pub online_wait_timeout: Duration,
     /// See `Config::gsr_docker_socket_hardening` / `RunnerSpec::docker_socket_hardening`.
     pub docker_socket_hardening: bool,

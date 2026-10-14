@@ -1332,8 +1332,13 @@ fn spawn_gsr_poll_thread(
                 },
                 move |violation| {
                     let repo_note = violation.repo.as_deref().unwrap_or("unknown repo");
+                    let action_error = violation
+                        .action_error
+                        .as_deref()
+                        .map(|error| format!("; enforcement error: {error}"))
+                        .unwrap_or_default();
                     let message = format!(
-                        "container {} ({repo_note}) ran a denied command: {} — {} (action: {:?})",
+                        "container {} ({repo_note}) ran a denied command: {} — {} (action: {:?}{action_error})",
                         violation.container_name, violation.command_line, violation.reason, violation.action_taken
                     );
                     eprintln!("gitrun-autoscaler: gsr_poll: {message}");

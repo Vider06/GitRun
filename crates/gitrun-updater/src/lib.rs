@@ -281,15 +281,25 @@ impl ReleaseManifest {
     }
 }
 
+fn signature_required_from_env(value: Option<&str>) -> Result<bool, UpdateError> {
+    match value.map(str::trim) {
+        None | Some("") => Ok(true),
+        Some(value) if value.eq_ignore_ascii_case("true") || value == "1" => Ok(true),
+        Some(value) if value.eq_ignore_ascii_case("false") || value == "0" => Ok(false),
+        Some(_) => Err(UpdateError::InvalidManifest(
+            "GITRUN_UPDATE_SIGNATURE_REQUIRED must be true/false or 1/0".into(),
+        )),
+    }
+}
+
 impl ReleaseManifest {
     /// Verifies an Ed25519 signature. Signed manifests are required by
     /// default; setting GITRUN_UPDATE_SIGNATURE_REQUIRED=false is the explicit
     /// compatibility/unsafe opt-out for custom unsigned manifests.
     pub fn verify_signature_from_env(&self) -> Result<(), UpdateError> {
-        let required = std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED")
-            .ok()
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-            .unwrap_or(true);
+        let required = signature_required_from_env(
+            std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED").ok().as_deref(),
+        )?;
         let key = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_HEX").ok();
         match (self.signature.as_deref(), key.as_deref()) {
             (None, _) if required => Err(UpdateError::InvalidManifest(
@@ -2011,6 +2021,21 @@ mod tests {
             runner_image: None,
             repository: Some("Vider06/GitRun".into()),
         }
+    }
+
+    #[test]
+    fn signature_requirement_defaults_to_required_and_accepts_explicit_values_only() {
+        assert_eq!(signature_required_from_env(None).unwrap(), true);
+        assert_eq!(signature_required_from_env(Some("")).unwrap(), true);
+        assert_eq!(signature_required_from_env(Some("true")).unwrap(), true);
+        assert_eq!(signature_required_from_env(Some("TRUE")).unwrap(), true);
+        assert_eq!(signature_required_from_env(Some("1")).unwrap(), true);
+        assert_eq!(signature_required_from_env(Some("false")).unwrap(), false);
+        assert_eq!(signature_required_from_env(Some("FALSE")).unwrap(), false);
+        assert_eq!(signature_required_from_env(Some("0")).unwrap(), false);
+        assert!(signature_required_from_env(Some("treu")).is_err());
+        assert!(signature_required_from_env(Some("false ")).is_err() == false);
+        assert!(signature_required_from_env(Some("yes")).is_err());
     }
 
     #[test]

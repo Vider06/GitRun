@@ -179,10 +179,15 @@ fn is_stale(lock_path: &Path) -> bool {
 
 #[cfg(unix)]
 fn process_is_alive(pid: u32) -> bool {
+    // PID 0 and values that cannot fit in kill(2)'s signed pid_t are not
+    // valid process IDs here. In particular, casting u32::MAX would turn it
+    // into -1, which has process-group-wide signal semantics.
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     // Signal 0 performs no actual signal delivery, only existence/permission
     // checks (see kill(2)) — the standard portable way to ask "is this PID
-    // alive" without a `/proc` dependency (which isn't guaranteed on every
-    // Unix, though it is on Linux, GitRun's only supported host OS today).
+    // alive" without a `/proc` dependency.
     let result = unsafe { libc_kill(pid as i32, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1) // EPERM: alive, just not ours
 }
@@ -489,6 +494,14 @@ mod tests {
             "expected an old lock without a usable PID to be reclaimed"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_pid_values_are_not_treated_as_live_processes() {
+        assert!(!process_is_alive(0));
+        assert!(!process_is_alive(u32::MAX));
+        assert!(!process_is_alive(i32::MAX as u32 + 1));
     }
 
     #[test]

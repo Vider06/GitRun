@@ -433,6 +433,10 @@ fn reconcile_repo(
     }
 
     let containers = docker::managed_containers(repo)?;
+    // GitDockRun requirements are routing/security metadata: if the file
+    // exists but cannot be read or parsed, abort this repo's reconcile cycle
+    // rather than silently treating targeted jobs as ordinary local jobs.
+    let dock_target_jobs = load_dock_target_jobs(state_dir, repo)?;
     api_service::reconcile_dock_target_containers(client, state_dir, repo, &containers)
         .map_err(std::io::Error::other)?;
     let mut preserved_docks =
@@ -446,9 +450,7 @@ fn reconcile_repo(
                         .workflow_job
                         .as_deref()
                         .map(|job| {
-                            load_dock_target_jobs(state_dir, repo)
-                                .iter()
-                                .any(|target| target == job)
+                            dock_target_jobs.iter().any(|target| target == job)
                         })
                         .unwrap_or(false)
             })
@@ -475,7 +477,6 @@ fn reconcile_repo(
         .map(|job| job.name.clone())
         .collect();
     let queued_job_run_ids: Vec<u64> = queued_jobs_info.iter().map(|job| job.run_id).collect();
-    let dock_target_jobs = load_dock_target_jobs(state_dir, repo);
     let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
         .map_err(|error| {
             std::io::Error::other(format!(
@@ -819,7 +820,7 @@ fn create_runner(
             is_windows,
             workflow_job_name: job_name,
             workflow_run_id: job_run_id,
-            dock_target: load_dock_target_jobs(state_dir, repo)
+            dock_target: load_dock_target_jobs(state_dir, repo)?
                 .into_iter()
                 .any(|target| Some(target.as_str()) == job_name),
             docker_socket_hardening: config.gsr_docker_socket_hardening,
@@ -829,26 +830,37 @@ fn create_runner(
     Ok(())
 }
 
-fn load_dock_target_jobs(state_dir: &std::path::Path, repo: &str) -> Vec<String> {
+fn load_dock_target_jobs(
+    state_dir: &std::path::Path,
+    repo: &str,
+) -> Result<Vec<String>, std::io::Error> {
     let path = state_dir
         .join("workflow-dock-requirements")
         .join(format!("{}.json", docker::sanitize(repo, '_')));
-    let raw = match std::fs::read_to_string(path) {
+    let raw = match std::fs::read_to_string(&path) {
         Ok(raw) => raw,
-        Err(_) => return Vec::new(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(std::io::Error::other(format!(
+                "cannot read GitDockRun requirements at {}: {error}",
+                path.display()
+            )));
+        }
     };
 
-    serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw)
-        .map(|requests| {
-            let mut jobs = Vec::new();
-            for request in requests {
-                if !jobs.iter().any(|job| job == &request.target_job) {
-                    jobs.push(request.target_job);
-                }
-            }
-            jobs
-        })
-        .unwrap_or_default()
+    let requests = serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw).map_err(|error| {
+        std::io::Error::other(format!(
+            "invalid GitDockRun requirements at {}: {error}",
+            path.display()
+        ))
+    })?;
+    let mut jobs = Vec::new();
+    for request in requests {
+        if !jobs.iter().any(|job| job == &request.target_job) {
+            jobs.push(request.target_job);
+        }
+    }
+    Ok(jobs)
 }
 
 /// Combines the globally configured runner labels with the labels of the

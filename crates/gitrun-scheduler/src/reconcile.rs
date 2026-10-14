@@ -230,11 +230,11 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         permanent_count += 1;
     }
 
-    // Specialized queued jobs need capacity in addition to the guaranteed
-    // warm pool when the warm pool's default labels don't cover them. This
-    // intentionally may raise the total above desired_count, but never
-    // above max_runners: the count-based formula assumes runners are
-    // interchangeable, which is not true once Logic Containers exist.
+    // Jobs matched by Logic Containers and GitDockRun targets need capacity
+    // in addition to the guaranteed warm pool. This intentionally may raise
+    // the total above desired_count, but never above max_runners: the
+    // count-based formula assumes runners are interchangeable, which is not
+    // true when jobs require a particular backend/image or isolated target.
     let specialized_jobs: Vec<(Option<String>, Option<u64>, Vec<String>)> = input
         .queued_job_labels
         .iter()

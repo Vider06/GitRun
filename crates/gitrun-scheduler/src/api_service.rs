@@ -2135,7 +2135,11 @@ impl ApiExecutionBackend {
         }
 
         docker::melt_filesystem(&source, &target_id).map_err(|error| failed(error.to_string()))?;
-        let _ = docker::remove_container(&source);
+        docker::remove_container(&source).map_err(|error| {
+            failed(format!(
+                "filesystem transfer completed, but source container removal failed; GitDockRun binding retained for cleanup: {error}"
+            ))
+        })?;
 
         registry
             .bindings

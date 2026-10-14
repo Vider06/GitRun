@@ -250,6 +250,21 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
         return Err(error);
     }
 
+    // Check the marker while holding the lock as well, so a live instance
+    // started by an older version (which may not use the sidecar lock yet)
+    // cannot be overwritten during an upgrade.
+    let existing_pid = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok());
+    if let Some(pid) = existing_pid {
+        if pid != std::process::id() && process_is_alive(pid) {
+            return Err(Error::new(
+                ErrorKind::AlreadyExists,
+                format!("another gitrun-autoscaler instance is already running (pid {pid})"),
+            ));
+        }
+    }
+
     // The kernel lock serializes stale-PID replacement, so no process can
     // delete another live instance's freshly written marker between check and
     // create. PID data is diagnostic/watchdog state; the lock is authority.
@@ -289,6 +304,21 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<Option<std::fs::F
     file.write_all(std::process::id().to_string().as_bytes())?;
     file.sync_all()?;
     Ok(None)
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    // Never cast an untrusted oversized PID to i32: a negative value to
+    // kill(2) targets a process group rather than one process.
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
+    unsafe extern "C" {
+        #[link_name = "kill"]
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    let result = unsafe { kill(pid as i32, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[cfg(not(unix))]

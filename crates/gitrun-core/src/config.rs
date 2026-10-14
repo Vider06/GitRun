@@ -879,8 +879,8 @@ fn is_absolute_filesystem_path(value: &str) -> bool {
         || (value.len() >= 3
             && value.as_bytes()[0].is_ascii_alphabetic()
             && value.as_bytes()[1] == b':'
-            && matches!(value.as_bytes()[2], b'/' | b'\\\\'))
-        || value.starts_with("\\\\\\\\")
+            && matches!(value.as_bytes()[2], b'/' | b'\\'))
+        || value.starts_with("\\\\")
 }
 
 /// Validate every filesystem used by resource-pressure backpressure. Reject
@@ -899,7 +899,7 @@ fn validate_resource_pressure_paths(value: &str) -> Result<(), ConfigError> {
         if !is_absolute_filesystem_path(path)
             || path.chars().any(char::is_control)
             || path
-                .split(['/', '\\\\'])
+                .split(['/', '\\'])
                 .any(|component| matches!(component, "." | ".."))
         {
             return Err(ConfigError::Invalid(format!(

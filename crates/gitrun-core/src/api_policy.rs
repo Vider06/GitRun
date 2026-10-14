@@ -323,6 +323,22 @@ impl PolicyMatrix {
     /// not an authorization bypass: runtime authorization still fails closed.
     pub fn lint(&self) -> Vec<PolicyLintIssue> {
         let mut issues = Vec::new();
+
+        // An entirely empty matrix is the intentional secure default: every
+        // API is denied. Once an operator configures any API explicitly,
+        // surface omissions for the remaining APIs instead of silently
+        // making a partial policy matrix look complete.
+        if !self.apis.is_empty() {
+            for api in GitRunApi::ALL {
+                if !self.apis.contains_key(&api) {
+                    issues.push(PolicyLintIssue {
+                        path: api.as_str().into(),
+                        message: "API has no explicit policy entry; runtime denies it".into(),
+                    });
+                }
+            }
+        }
+
         for (api, policy) in &self.apis {
             if policy.enabled && policy.allowed_operations.is_empty() {
                 issues.push(PolicyLintIssue {
@@ -504,6 +520,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn lint_reports_missing_entries_in_a_partially_configured_matrix() {
+        let mut matrix = PolicyMatrix::default();
+        matrix.set(
+            GitRunApi::GitDockRun,
+            ApiPolicy::enabled_with([GitRunOperation::Connect]),
+        );
+
+        let issues = matrix.lint();
+        assert!(issues.iter().any(|issue| {
+            issue.path == GitRunApi::GitVaultRun.as_str()
+                && issue.message.contains("no explicit policy entry")
+        }));
+        assert!(!issues.iter().any(|issue| {
+            issue.path == GitRunApi::GitDockRun.as_str()
+                && issue.message.contains("no explicit policy entry")
+        }));
+    }
+
+    #[test]
+    fn lint_keeps_the_empty_secure_default_quiet() {
+        assert!(PolicyMatrix::default().lint().is_empty());
     }
 
     #[test]

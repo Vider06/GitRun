@@ -842,6 +842,8 @@ fn atomic_replace_text(
     prefix: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    #[cfg(not(unix))]
+    let _ = mode;
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let temp = parent.join(format!(
         ".{prefix}-{}-{nonce}.tmp",

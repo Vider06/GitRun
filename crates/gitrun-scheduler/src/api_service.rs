@@ -184,7 +184,7 @@ impl MountRegistry {
     }
 
     fn load(state_dir: &Path) -> Result<Self, String> {
-        let registry = match fs::read_to_string(Self::path(state_dir)) {
+        let registry: Self = match fs::read_to_string(Self::path(state_dir)) {
             Ok(raw) => serde_json::from_str(&raw)
                 .map_err(|error| format!("decode GitDockRun mount registry: {error}"))?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

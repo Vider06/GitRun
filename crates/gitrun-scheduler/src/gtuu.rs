@@ -16,7 +16,9 @@
 
 use crate::docker::{self, sanitize};
 use crate::github::GitHubClient;
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(unix)]
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
@@ -360,11 +362,13 @@ fn update_one(
     }
 
     if let Err(error) = docker::remove_container(name) {
-        // The old GitHub registration has already been removed, so don't
-        // risk leaving an unregistered replacement around under a temporary
-        // name if Docker cannot remove the old container. Best effort cleanup
-        // of the replacement is safe because it is not serving any job yet.
-        let _ = docker::remove_container(&replacement_name);
+        // The replacement has already appeared online and may have accepted a
+        // job between the last API poll and this Docker failure. Never remove
+        // it as cleanup: preserve the potentially busy, registered runner and
+        // surface the incomplete swap. The old container may now be
+        // unregistered, but deleting the healthy replacement could interrupt
+        // an active workflow and would turn a recoverable partial swap into
+        // job loss.
         return Err(error.into());
     }
 

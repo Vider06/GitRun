@@ -541,9 +541,7 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
             // Cleanup is idempotent: a volume already removed by another
             // reconciliation worker is not a failure, but any other error
             // must be surfaced because the volume may retain runner credentials.
-            if !(normalized.contains("no such volume")
-                || normalized.contains("volume not found"))
-            {
+            if !(normalized.contains("no such volume") || normalized.contains("volume not found")) {
                 return Err(DockerError::Command(if stderr.is_empty() {
                     format!("container removed but runner home volume cleanup failed for {volume}")
                 } else {

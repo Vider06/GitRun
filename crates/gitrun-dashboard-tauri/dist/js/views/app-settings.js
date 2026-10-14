@@ -16,10 +16,10 @@ export async function renderAppSettings() {
       panel("GitRun cat", '<div class="mascot-inline"><div class="mascot-face"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 19 7 5l13 8a19 19 0 0 1 8 0l13-8-2 14c3 4 4 8 3 13-2 8-9 12-18 12S8 40 6 32c-1-5 0-9 3-13Z" fill="currentColor"/><path d="M15 26h.1M33 26h.1" stroke="#11151d" stroke-width="5" stroke-linecap="round"/><path d="M20 33q4 4 8 0" fill="none" stroke="#11151d" stroke-width="2.5" stroke-linecap="round"/></svg></div><div class="mascot-copy"><strong>GitRun companion</strong><p>A guide to setup, status and recovery — not a substitute for actual telemetry.</p></div></div><label class="checkbox-row"><input id="cat-enabled" type="checkbox" ' + (catEnabled ? "checked" : "") + '><span><strong>Show the cat companion</strong>Show the mascot in the dashboard and onboarding.</span></label><div class="toolbar"><span class="field-hint">Expression states will be tied to verified app status.</span><button class="btn" id="save-cat">Save mascot preference</button></div>') +
     '</div>' +
     '<div class="section">' + panel("Guided tour", '<div class="list-row"><div class="list-row-main"><strong>Dashboard introduction</strong><small>' + (tutorialSeen ? "You have completed the current tour." : "The tour has not been completed on this device.") + '</small></div>' + pill(tutorialSeen ? "Completed" : "Not completed", tutorialSeen ? "good" : "info") + '</div><p class="section-description mt-12">The guided tour introduces Overview, repository policies, security boundaries, GitVault and Recovery. You can restart it at any time.</p><button class="btn btn-primary" id="restart-tour">Start guided tour</button>') + '</div>' +
-    '<div class="section panel panel-pad"><div class="section-heading"><h2>GitRun startup and stop</h2>' + pill(serviceLoadError ? "Status unavailable" : serviceState.service_active ? "Service active" : serviceState.service_installed ? "Service stopped" : "Unit not found", serviceLoadError ? "bad" : serviceState.service_active ? "good" : "warn") + '</div><p class="section-description">These controls affect the host-level systemd service and scheduler, not just this dashboard window. Stopping or restarting it may interrupt runner reconciliation; existing workflow containers may need separate recovery.</p><div class="toolbar"><span class="field-hint">' + (serviceLoadError ? "Could not inspect service status: " + esc(serviceLoadError) : serviceState.service_installed ? "Unit is installed." : "No GitRun systemd unit was found.") + '</span><div class="heading-actions"><button class="btn btn-primary" id="service-start" ' + (serviceLoadError || !serviceState.service_installed || serviceState.service_active ? "disabled" : "") + '>Start service</button><button class="btn" id="service-restart" ' + (serviceLoadError || !serviceState.service_installed ? "disabled" : "") + '>Restart service</button><button class="btn btn-danger" id="service-stop" ' + (serviceLoadError || !serviceState.service_installed || !serviceState.service_active ? "disabled" : "") + '>Stop service</button></div></div><div id="service-operation-status" class="field-hint mt-10"></div></div>' +
+    '<div class="section panel panel-pad"><div class="section-heading"><h2>GitRun startup and stop</h2>' + pill(serviceLoadError ? "Status unavailable" : serviceState.service_active ? "Service active" : serviceState.service_installed ? "Service stopped" : "Unit not found", serviceLoadError ? "bad" : serviceState.service_active ? "good" : "warn") + '</div><p class="section-description">These controls affect the host-level systemd service and scheduler, not just this dashboard window. Stopping or restarting it may interrupt runner reconciliation; existing workflow containers may need separate recovery.</p><div class="toolbar"><span class="field-hint">' + (serviceLoadError ? "Could not inspect service status: " + esc(serviceLoadError) : serviceState.service_installed ? "Unit is installed." : "No GitRun systemd unit was found.") + '</span><div class="heading-actions"><button class="btn btn-primary" id="service-start" ' + (serviceLoadError || !serviceState.service_installed || serviceState.service_active ? "disabled" : "") + '>Start service</button><button class="btn" id="service-restart" ' + (serviceLoadError || !serviceState.service_installed ? "disabled" : "") + '>Restart service</button><button class="btn btn-danger" id="service-stop" ' + (serviceLoadError || !serviceState.service_installed || !serviceState.service_active ? "disabled" : "") + '>Stop service</button></div></div><div id="service-operation-status" class="field-hint mt-10" role="status" aria-live="polite"></div></div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Recommended security preset check</h2><span class="pill info">Read-only</span></div><p class="section-description">Checks whether the saved configuration aligns with GitRun’s recommended baseline. It does not change settings and does not prove runtime enforcement.</p><button class="btn btn-primary" id="run-security-preset-check">Run baseline check</button><div id="app-preset-results" class="mt-12"></div></div>' +
     '<div class="section">' + panel("Support", '<div class="list-row"><div class="list-row-main"><strong>Open a GitRun issue</strong><small>Include the version and a concise reproduction. Never include tokens, private keys or secret values.</small></div><a class="btn" href="https://github.com/Vider06/GitRun/issues" target="_blank" rel="noreferrer">Open issues ↗</a></div>') + '</div>' +
-    '<div class="section panel panel-pad danger-zone"><div class="section-heading"><h2>Installation management</h2>' + pill("Host-level actions","bad") + '</div><p class="section-description">Reinstall downloads and verifies the latest official release while preserving your configuration. Uninstall removes GitRun&#39;s package, services and owned runtime/app data. Shared Docker and unrelated host workloads remain untouched.</p><div class="toolbar"><button class="btn" id="reinstall-gitrun">Reinstall GitRun</button><button class="btn btn-danger" id="uninstall-gitrun">Uninstall GitRun</button></div><div id="installation-status" class="field-hint mt-10"></div></div>';
+    '<div class="section panel panel-pad danger-zone"><div class="section-heading"><h2>Installation management</h2>' + pill("Host-level actions","bad") + '</div><p class="section-description">Reinstall downloads and verifies the latest official release while preserving your configuration. Uninstall removes GitRun&#39;s package, services and owned runtime/app data. Shared Docker and unrelated host workloads remain untouched.</p><div class="toolbar"><button class="btn" id="reinstall-gitrun">Reinstall GitRun</button><button class="btn btn-danger" id="uninstall-gitrun">Uninstall GitRun</button></div><div id="installation-status" class="field-hint mt-10" role="status" aria-live="polite"></div></div>';
   document.getElementById("save-appearance").addEventListener("click", () => {
     const theme = document.getElementById("theme-select").value;
     localStorage.setItem("gitrun-theme", theme);
@@ -64,9 +64,11 @@ export async function renderAppSettings() {
     };
     show();
   });
+  let serviceOperationInProgress = false;
   for (const action of ["start","stop","restart"]) {
     const button = document.getElementById("service-" + action);
     button.addEventListener("click", async () => {
+      if (serviceOperationInProgress || button.disabled) return;
       if (action !== "start") {
         const title = action === "stop" ? "Stop the GitRun service?" : "Restart the GitRun service?";
         const detail = action === "stop"
@@ -75,6 +77,9 @@ export async function renderAppSettings() {
         const ok = await confirmModal(title, detail, action === "stop" ? "Stop service" : "Restart service", true);
         if (!ok) return;
       }
+      serviceOperationInProgress = true;
+      const serviceButtons = ["start", "restart", "stop"].map((name) => document.getElementById("service-" + name));
+      serviceButtons.forEach((item) => { if (item) item.disabled = true; });
       const status = document.getElementById("service-operation-status");
       status.textContent = action.charAt(0).toUpperCase() + action.slice(1) + "ing service…";
       try {
@@ -85,6 +90,9 @@ export async function renderAppSettings() {
       } catch (error) {
         status.textContent = "Operation failed: " + error;
         toast("GitRun service action failed: " + error,"error");
+      } finally {
+        serviceOperationInProgress = false;
+        serviceButtons.forEach((item) => { if (item?.isConnected) item.disabled = false; });
       }
     });
   }
@@ -122,14 +130,19 @@ export async function renderAppSettings() {
     } catch (_) {}
     window.close();
   };
+  let installationInProgress = false;
   const showInstallationProgress = async ({title, action, buttonId, prompt, successText, invokeCommand}) => {
+    if (installationInProgress) return;
     const ok = await confirmModal(title, prompt, action, true);
-    if (!ok) return;
+    if (!ok || installationInProgress) return;
+    installationInProgress = true;
+    const installButtons = ["reinstall-gitrun", "uninstall-gitrun"].map((id) => document.getElementById(id));
+    installButtons.forEach((item) => { if (item) item.disabled = true; });
     const status = document.getElementById("installation-status");
     status.textContent = action + "…";
     const modal = document.createElement("div");
     modal.className = "modal-backdrop";
-    modal.innerHTML = '<section class="modal" role="dialog" aria-modal="true"><h2>' + esc(title) + '</h2><p id="installation-progress-status">Waiting for the operation…</p><div id="installation-progress-terminal" class="terminal" role="log" aria-live="polite"></div></section>';
+    modal.innerHTML = '<section class="modal" role="dialog" aria-modal="true" aria-labelledby="installation-progress-title"><h2 id="installation-progress-title">' + esc(title) + '</h2><p id="installation-progress-status" role="status" aria-live="polite">Waiting for the operation…</p><div id="installation-progress-terminal" class="terminal" role="log" aria-live="polite"></div></section>';
     document.body.appendChild(modal);
     let unlisten = null;
     try {
@@ -157,13 +170,16 @@ export async function renderAppSettings() {
       close.onclick = () => modal.remove();
       modal.querySelector(".modal").appendChild(close);
     } finally {
-      if (unlisten) await unlisten();
+      if (unlisten) {
+        try { await unlisten(); } catch (error) { console.warn("Could not remove GitRun progress listener:", error); }
+      }
+      installationInProgress = false;
+      installButtons.forEach((item) => { if (item?.isConnected) item.disabled = false; });
     }
   };
   document.getElementById("reinstall-gitrun").addEventListener("click", () => showInstallationProgress({
     title: "Reinstall GitRun?",
     action: "Reinstall",
-    buttonId: "reinstall-gitrun",
     prompt: "GitRun will download the latest official release, verify its signed manifest and package checksum, then reinstall it. Existing configuration and credentials are preserved while runtime resources are rebuilt. Administrator authorization may be requested.",
     successText: "Reinstall completed. Closing this dashboard…",
     invokeCommand: "reinstall_gitrun"
@@ -171,7 +187,6 @@ export async function renderAppSettings() {
   document.getElementById("uninstall-gitrun").addEventListener("click", () => showInstallationProgress({
     title: "Uninstall GitRun?",
     action: "Uninstall",
-    buttonId: "uninstall-gitrun",
     prompt: "This permanently removes the GitRun package, services, configuration, logs, app preferences, runner containers, GitRun-managed cache volumes/networks and runner images. Docker itself and unrelated host workloads are preserved. This cannot be undone.",
     successText: "GitRun has been removed. Closing this dashboard…",
     invokeCommand: "uninstall_gitrun"

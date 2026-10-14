@@ -483,7 +483,10 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(
                     action,
-                    Action::CreateRunner { permanent: true, .. }
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
                 ))
                 .count(),
             3

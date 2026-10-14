@@ -184,12 +184,30 @@ impl MountRegistry {
     }
 
     fn load(state_dir: &Path) -> Result<Self, String> {
-        match fs::read_to_string(Self::path(state_dir)) {
+        let registry = match fs::read_to_string(Self::path(state_dir)) {
             Ok(raw) => serde_json::from_str(&raw)
-                .map_err(|error| format!("decode GitDockRun mount registry: {error}")),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(format!("read GitDockRun mount registry: {error}")),
+                .map_err(|error| format!("decode GitDockRun mount registry: {error}"))?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) => return Err(format!("read GitDockRun mount registry: {error}")),
+        };
+
+        // Mount IDs are capabilities used by UNMOUNT and cleanup. A duplicate
+        // ID makes ownership ambiguous and removing by ID could erase unrelated
+        // leases after cleaning only one record. Reject the whole registry.
+        let mut ids = std::collections::BTreeSet::new();
+        for mount in &registry.mounts {
+            if mount.id.trim().is_empty() {
+                return Err("GitDockRun mount registry contains an empty mount ID".into());
+            }
+            if !ids.insert(mount.id.as_str()) {
+                return Err(format!(
+                    "GitDockRun mount registry contains duplicate mount ID {:?}",
+                    mount.id
+                ));
+            }
         }
+
+        Ok(registry)
     }
 
     fn save(&self, state_dir: &Path) -> Result<(), String> {
@@ -358,9 +376,11 @@ pub(crate) fn reconcile_dock_bindings(
     state_dir: &Path,
     repository: &str,
 ) -> Result<(), String> {
-    if let Err(error) = reconcile_completed_mounts(client, state_dir, repository) {
-        eprintln!("gitrun-api: mount cleanup reconciliation failed: {error}");
-    }
+    // Mount leases are the recovery journal for privileged namespace changes.
+    // If the journal cannot be read, locked, reconciled, or durably updated,
+    // do not continue lifecycle reconciliation as if cleanup were trustworthy.
+    reconcile_completed_mounts(client, state_dir, repository)
+        .map_err(|error| format!("reconcile GitDockRun mounts before binding cleanup: {error}"))?;
     let mut registry = DockRegistry::load(state_dir)
         .map_err(|error| format!("load GitDockRun registry: {error}"))?;
     let mut changed = false;
@@ -3529,6 +3549,48 @@ mod mount_runtime_tests {
     }
 
     #[test]
+    fn mount_registry_rejects_duplicate_or_empty_mount_ids() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-registry-duplicate-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _dir_guard = TemporaryDirectory(dir.clone());
+        let record = |id: &str, runner: &str| MountRecord {
+            id: id.into(),
+            repository: "owner/repo".into(),
+            run_id: 42,
+            job: "build".into(),
+            requester_runner: runner.into(),
+            container: "runner-container".into(),
+            container_id: "test-container-id".into(),
+            source: "/tmp/source".into(),
+            target: "/workspace/mount".into(),
+            read_only: true,
+            source_device: Some(1),
+            source_inode: Some(2),
+            kernel_mount_id: Some(10),
+            state: "mounted".into(),
+            created_at: now(),
+        };
+
+        for (name, mounts, expected) in [
+            (
+                "duplicate",
+                vec![record("same-id", "runner-a"), record("same-id", "runner-b")],
+                "duplicate mount ID",
+            ),
+            ("empty", vec![record("  ", "runner-a")], "empty mount ID"),
+        ] {
+            let registry = MountRegistry { mounts };
+            registry.save(&dir).unwrap();
+            let error = MountRegistry::load(&dir)
+                .expect_err("ambiguous mount registry must fail closed");
+            assert!(error.contains(expected), "{name}: {error}");
+        }
+    }
+
+    #[test]
     fn disconnect_mount_cleanup_preserves_leases_on_failure_and_filters_ownership() {
         let dir = std::env::temp_dir().join(format!(
             "gitrun-disconnect-mounts-{}-{}",
@@ -3560,7 +3622,7 @@ mod mount_runtime_tests {
         let other_repo = record("other-repo", "someone/else", 42, "build", "runner-a");
         let mut other_container = record("other-container", "owner/repo", 42, "build", "runner-a");
         other_container.container_id = "different-container-id".into();
-        let duplicate_id_other_runner = record("owned-a", "owner/repo", 42, "build", "runner-b");
+        let other_runner_same_scope = record("other-runner-same-scope", "owner/repo", 42, "build", "runner-b");
         let original = MountRegistry {
             mounts: vec![
                 owned_a,
@@ -3569,7 +3631,7 @@ mod mount_runtime_tests {
                 other_job,
                 other_repo,
                 other_container,
-                duplicate_id_other_runner,
+                other_runner_same_scope,
             ],
         };
         original.save(&dir).expect("persist fixture mount leases");
@@ -3649,7 +3711,7 @@ mod mount_runtime_tests {
                 "other-job",
                 "other-repo",
                 "other-container",
-                "owned-a",
+                "other-runner-same-scope",
             ]
         );
     }

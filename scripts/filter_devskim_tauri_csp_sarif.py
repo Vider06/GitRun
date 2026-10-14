@@ -109,7 +109,8 @@ def main() -> None:
         finally:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
-    print(        f"DevSkim Tauri IPC exception: filtered {removed} exact false-positive result(s); "
+    print(
+        f"DevSkim Tauri IPC exception: filtered {removed} exact false-positive result(s); "
         "all other findings remain in SARIF."
     )
 

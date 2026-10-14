@@ -21,6 +21,7 @@ use thiserror::Error;
 
 const LOCK_WAIT: Duration = Duration::from_millis(20);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(not(target_os = "linux"))]
 const STALE_LOCK_AGE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
@@ -84,15 +85,65 @@ fn lock_path(state_dir: &Path, vm_name: &str) -> PathBuf {
 }
 
 struct DecisionLock {
+    #[cfg(target_os = "linux")]
+    _file: fs::File,
+    #[cfg(not(target_os = "linux"))]
     path: PathBuf,
 }
 
 impl Drop for DecisionLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        // Linux releases flock automatically when the descriptor closes. Do
+        // not unlink the persistent lock file: unlinking a locked inode can
+        // let another process create and lock a different inode at the same
+        // path, breaking mutual exclusion.
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
+#[cfg(target_os = "linux")]
+#[link(name = "c")]
+extern "C" {
+    fn flock(fd: i32, operation: i32) -> i32;
+}
+
+#[cfg(target_os = "linux")]
+fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = lock_path(state_dir, vm_name);
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).mode(0o600);
+    let file = options.open(&path)?;
+    let started = std::time::Instant::now();
+
+    loop {
+        // flock(LOCK_EX | LOCK_NB) is released by the kernel on process exit
+        // or crash, so no age-based deletion can steal a live writer's lock.
+        let result = unsafe { flock(file.as_raw_fd(), 2 | 4) };
+        if result == 0 {
+            return Ok(DecisionLock { _file: file });
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::WouldBlock {
+            return Err(error.into());
+        }
+        if started.elapsed() >= LOCK_TIMEOUT {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("timed out waiting for hypervisor decision lock for VM '{vm_name}'"),
+            )
+            .into());
+        }
+        thread::sleep(LOCK_WAIT);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
 fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
     let path = lock_path(state_dir, vm_name);
     let started = std::time::Instant::now();

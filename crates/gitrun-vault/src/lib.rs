@@ -657,7 +657,7 @@ fn read_master_key(path: &Path) -> Result<[u8; 32]> {
 /// same fix already applied in `gitrun-setup` for `gitrun.env` (avoid the
 /// create-then-chmod window where sensitive material sits world-readable).
 #[cfg(unix)]
-fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
+fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -692,7 +692,7 @@ fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
+fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| std::io::Error::other("master key path has no parent directory"))?;
@@ -752,13 +752,12 @@ fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
 static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(unix)]
-fn sync_parent_dir(path: &Path) -> Result<()> {
-    fs::File::open(path)?.sync_all()?;
-    Ok(())
+fn sync_parent_dir(path: &Path) -> std::io::Result<()> {
+    fs::File::open(path)?.sync_all()
 }
 
 #[cfg(not(unix))]
-fn sync_parent_dir(_path: &Path) -> Result<()> {
+fn sync_parent_dir(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 

@@ -4,7 +4,7 @@ name: GitRun CI
 #  Pipeline map (needs):
 #    variables-verification ─┬─► environment
 #                            └─► detect ─► cargo-lock ─┬─ rust-lint · rust-test · rust-build · audit-rust
-#                                                       ├─ security-hardening · gsr-watchdog · runtime-contracts
+#                                                       ├─ security-hardening · gsr-watchdog · runtime-contracts · systemd-verify
 #                                                       ├─ ci-selftest · repository · workflows · shell · powershell
 #                                                       ├─ frontend ─► audit-node
 #                                                       └─ docker
@@ -1936,6 +1936,67 @@ jobs:
       - *report
       - *logs
 
+  # ───────────────────────────────────────── standalone systemd unit gate ──
+  systemd-verify:
+    name: systemd-analyze unit verification
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Verify scheduler and watchdog units with systemd-analyze
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/ci-lib.sh"
+          if ! command -v systemd-analyze >/dev/null 2>&1; then
+            ci_err "systemd-analyze is required; refusing to skip systemd unit validation"
+            exit 1
+          fi
+
+          unit_dir="$RUNNER_TEMP/gitrun-ci/systemd-units"
+          runtime_dir="$RUNNER_TEMP/gitrun-ci/systemd-runtime"
+          mkdir -p "$unit_dir" "$runtime_dir"
+
+          # Verify copies of the real units in isolation. A harmless executable
+          # shim and a CI-only docker.service satisfy external references without
+          # touching /usr/local/bin or replacing a service on a persistent runner.
+          stub="$runtime_dir/gitrun"
+          printf '#!/bin/sh\nexit 0\n' > "$stub"
+          chmod 0755 "$stub"
+          sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun.service > "$unit_dir/gitrun.service"
+          sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun-gsr.service > "$unit_dir/gitrun-gsr.service"
+          cat > "$unit_dir/docker.service" <<'SYSTEMD_STUB'
+          [Unit]
+          Description=GitRun CI-only Docker dependency stub
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/true
+          RemainAfterExit=yes
+          SYSTEMD_STUB
+
+          rc=0
+          ci_run "systemd-analyze verifies scheduler, watchdog and dependencies" \
+            env TERM=dumb SYSTEMD_COLORS=0 SYSTEMD_PAGER=cat \
+            SYSTEMD_UNIT_PATH="$unit_dir:/etc/systemd/system:/usr/lib/systemd/system:/lib/systemd/system" \
+            systemd-analyze --man=no --recursive-errors=yes verify \
+              "$unit_dir/gitrun.service" "$unit_dir/gitrun-gsr.service" "$unit_dir/docker.service" || rc=1
+
+          # Verify boot/restart contracts as well as parser acceptance.
+          grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || { ci_err "scheduler unit is not enabled for multi-user boot"; rc=1; }
+          grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || { ci_err "GSR unit is not enabled for multi-user boot"; rc=1; }
+          grep -Fq 'Restart=on-failure' systemd/gitrun.service || { ci_err "scheduler restart policy missing"; rc=1; }
+          grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || { ci_err "GSR restart policy missing"; rc=1; }
+          grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || { ci_err "scheduler ExecStart contract changed"; rc=1; }
+          grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || { ci_err "GSR ExecStart contract changed"; rc=1; }
+          exit "$rc"
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────────────────────── rust-test ──
   rust-test:
     name: Rust tests
@@ -2450,6 +2511,7 @@ jobs:
       - security-hardening
       - gsr-watchdog
       - runtime-contracts
+      - systemd-verify
       - tauri
       - tauri-recovery
       - docker
@@ -2497,6 +2559,7 @@ jobs:
           security-hardening|Security hardening regression gate|rust|
           gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|
           runtime-contracts|Runtime contracts and configuration integration|rust|
+          systemd-verify|systemd-analyze unit verification|rust|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|

@@ -189,8 +189,7 @@ pub struct GtuuConfig<'a> {
     /// rather than a fixed list because GTUU updates containers across
     /// potentially many repos in one run, each needing its own repo-scoped
     /// secrets — see `main.rs::vault_env_for_repo`, which this wraps.
-    pub secret_env_for_repo:
-        &'a dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String>,
+    pub secret_env_for_repo: &'a dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String>,
     pub online_wait_timeout: Duration,
     /// See `Config::gsr_docker_socket_hardening` / `RunnerSpec::docker_socket_hardening`.
     pub docker_socket_hardening: bool,

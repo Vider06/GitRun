@@ -461,7 +461,12 @@ impl Vault {
 
     /// Reports whether a secret name is available to a repository without
     /// decrypting unrelated secrets.
-    pub fn effective_contains_for_repo(&self, name: &str, repo: &str, groups: &[String]) -> Result<bool> {
+    pub fn effective_contains_for_repo(
+        &self,
+        name: &str,
+        repo: &str,
+        groups: &[String],
+    ) -> Result<bool> {
         match self.get_effective_for_repo(name, repo, groups) {
             Ok(_) => Ok(true),
             Err(VaultError::NotFound(_)) => Ok(false),
@@ -656,9 +661,9 @@ fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let parent = path.parent().ok_or_else(|| {
-        std::io::Error::other("master key path has no parent directory")
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("master key path has no parent directory"))?;
     let temp = parent.join(format!(
         ".{MASTER_KEY_FILE}.tmp.{}.{}",
         std::process::id(),
@@ -688,16 +693,19 @@ fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
 
 #[cfg(not(unix))]
 fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
-    let parent = path.parent().ok_or_else(|| {
-        std::io::Error::other("master key path has no parent directory")
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("master key path has no parent directory"))?;
     let temp = parent.join(format!(
         ".{MASTER_KEY_FILE}.tmp.{}.{}",
         std::process::id(),
         TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let result = (|| {
-        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
         use std::io::Write;
         file.write_all(key)?;
         file.sync_all()?;
@@ -1084,14 +1092,18 @@ mod tests {
             .unwrap();
 
         // A repo in the "production" group gets it...
-        let in_group = vault.resolve_for_repo("owner/repo-a", &["production".to_owned()]).unwrap();
+        let in_group = vault
+            .resolve_for_repo("owner/repo-a", &["production".to_owned()])
+            .unwrap();
         assert_eq!(
             in_group,
             vec![("DEPLOY_KEY".to_owned(), "prod-value".to_owned())]
         );
 
         // ...a repo not in that group does not.
-        let not_in_group = vault.resolve_for_repo("owner/repo-b", &["staging".to_owned()]).unwrap();
+        let not_in_group = vault
+            .resolve_for_repo("owner/repo-b", &["staging".to_owned()])
+            .unwrap();
         assert!(not_in_group.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1123,14 +1135,18 @@ mod tests {
             .unwrap();
 
         // Repo scope should win over both group and global for this repo.
-        let resolved = vault.resolve_for_repo("owner/repo", &["prod".to_owned()]).unwrap();
+        let resolved = vault
+            .resolve_for_repo("owner/repo", &["prod".to_owned()])
+            .unwrap();
         assert_eq!(
             resolved,
             vec![("API_KEY".to_owned(), "repo-value".to_owned())]
         );
 
         // A different repo in the same group falls back to the group value.
-        let other_repo = vault.resolve_for_repo("owner/other-repo", &["prod".to_owned()]).unwrap();
+        let other_repo = vault
+            .resolve_for_repo("owner/other-repo", &["prod".to_owned()])
+            .unwrap();
         assert_eq!(
             other_repo,
             vec![("API_KEY".to_owned(), "group-value".to_owned())]

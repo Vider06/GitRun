@@ -16,6 +16,21 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: npm
+    directory: /crates/gitrun-dashboard-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      all-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      all-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

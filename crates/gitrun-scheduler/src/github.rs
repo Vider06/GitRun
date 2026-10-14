@@ -1120,7 +1120,10 @@ mod tests {
     #[test]
     fn api_attempts_have_safe_defaults_and_a_hard_upper_bound() {
         assert_eq!(parse_api_attempts(None), DEFAULT_API_ATTEMPTS);
-        assert_eq!(parse_api_attempts(Some("not-a-number")), DEFAULT_API_ATTEMPTS);
+        assert_eq!(
+            parse_api_attempts(Some("not-a-number")),
+            DEFAULT_API_ATTEMPTS
+        );
         assert_eq!(parse_api_attempts(Some("0")), 1);
         assert_eq!(parse_api_attempts(Some(" 4 ")), 4);
         assert_eq!(parse_api_attempts(Some("999999")), MAX_API_ATTEMPTS);

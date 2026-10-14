@@ -103,7 +103,9 @@ fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
     let total_delta = total_b.saturating_sub(total_a);
     let idle_delta = idle_b.saturating_sub(idle_a);
     if total_delta == 0 {
-        return Ok(0.0);
+        // A zero-width sample is not evidence of an idle host. Treat it as
+        // unavailable so the scheduler's caller can fail closed.
+        return Err(ResourcePressureError::Parse);
     }
     Ok(
         ((total_delta.saturating_sub(idle_delta) as f32 / total_delta as f32) * 100.0)

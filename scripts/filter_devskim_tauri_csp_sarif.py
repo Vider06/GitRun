@@ -13,6 +13,8 @@ re-reviewed. Reference: https://v2.tauri.app/security/csp/
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -86,11 +88,28 @@ def main() -> None:
     data = json.loads(SARIF_PATH.read_text(encoding="utf-8"))
     removed = filter_sarif(data)
     if removed:
-        SARIF_PATH.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-    print(
-        f"DevSkim Tauri IPC exception: filtered {removed} exact false-positive result(s); "
+        # DevSkim's container may create a root-owned, read-only SARIF file.
+        # Write a sibling file then atomically replace its directory entry.
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=SARIF_PATH.parent,
+                prefix=f".{SARIF_PATH.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+                json.dump(data, temp_file, ensure_ascii=False, indent=2)
+                temp_file.write("\n")
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            os.replace(temp_path, SARIF_PATH)
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+    print(        f"DevSkim Tauri IPC exception: filtered {removed} exact false-positive result(s); "
         "all other findings remain in SARIF."
     )
 

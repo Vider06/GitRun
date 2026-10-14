@@ -2034,7 +2034,7 @@ mod tests {
         assert_eq!(signature_required_from_env(Some("FALSE")).unwrap(), false);
         assert_eq!(signature_required_from_env(Some("0")).unwrap(), false);
         assert!(signature_required_from_env(Some("treu")).is_err());
-        assert!(signature_required_from_env(Some("false ")).is_err() == false);
+        assert!(!signature_required_from_env(Some("false ")).is_err());
         assert!(signature_required_from_env(Some("yes")).is_err());
     }
 

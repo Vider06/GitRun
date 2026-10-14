@@ -125,13 +125,20 @@ pub fn run() {
     // process instead crashes hard, the file survives with a now-dead PID
     // in it, which is exactly the signal the watchdog looks for.
     let pid_file = state_dir.join("gitrun-autoscaler.pid");
-    if let Err(error) = acquire_pid_file(&pid_file) {
-        eprintln!(
-            "gitrun-autoscaler: could not acquire scheduler PID file at {}: {error}",
-            pid_file.display()
-        );
-        std::process::exit(2);
-    }
+    // Keep the OS lock handle alive for the entire scheduler lifetime. The
+    // sidecar lock file is intentionally persistent: unlinking a locked inode
+    // would let a second process create and lock a different inode at the same
+    // path, defeating singleton enforcement.
+    let _pid_lock = match acquire_pid_file(&pid_file) {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!(
+                "gitrun-autoscaler: could not acquire scheduler PID file at {}: {error}",
+                pid_file.display()
+            );
+            std::process::exit(2);
+        }
+    };
 
     // Only start background workers after every fatal startup check has passed
     // and this process owns the singleton PID file. Otherwise GTUU/GSR/API could
@@ -213,60 +220,75 @@ pub fn run() {
     println!("gitrun-autoscaler: stopped");
 }
 
-fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<()> {
+#[cfg(unix)]
+fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::io::{Error, ErrorKind, Write};
+    use std::os::fd::AsRawFd;
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    match std::fs::OpenOptions::new()
+    let lock_path = path.with_extension("pid.lock");
+    // Do not remove this file after unlocking: flock applies to the opened
+    // inode, so unlinking it can create two independently locked inodes.
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
         .write(true)
-        .create_new(true)
-        .open(path)
-    {
-        Ok(mut file) => {
-            use std::io::Write;
-            file.write_all(std::process::id().to_string().as_bytes())?;
-            file.sync_all()?;
-            Ok(())
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        if matches!(error.raw_os_error(), Some(libc::EWOULDBLOCK) | Some(libc::EAGAIN)) {
+            return Err(Error::new(
+                ErrorKind::AlreadyExists,
+                "another gitrun-autoscaler instance holds the scheduler lock",
+            ));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing_pid = std::fs::read_to_string(path)
-                .ok()
-                .and_then(|raw| raw.trim().parse::<u32>().ok());
-
-            if let Some(pid) = existing_pid {
-                if process_is_alive(pid) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::AlreadyExists,
-                        format!(
-                            "another gitrun-autoscaler instance is already running (pid {pid})"
-                        ),
-                    ));
-                }
-            }
-
-            std::fs::remove_file(path)?;
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)?;
-            use std::io::Write;
-            file.write_all(std::process::id().to_string().as_bytes())?;
-            file.sync_all()?;
-            Ok(())
-        }
-        Err(error) => Err(error),
+        return Err(error);
     }
+
+    // The kernel lock serializes stale-PID replacement, so no process can
+    // delete another live instance's freshly written marker between check and
+    // create. PID data is diagnostic/watchdog state; the lock is authority.
+    let mut pid = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    pid.write_all(std::process::id().to_string().as_bytes())?;
+    pid.sync_all()?;
+    Ok(lock)
 }
 
-#[cfg(unix)]
-fn process_is_alive(pid: u32) -> bool {
-    unsafe extern "C" {
-        #[link_name = "kill"]
-        fn kill(pid: i32, sig: i32) -> i32;
+#[cfg(not(unix))]
+fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
+    use std::io::Write;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-    let result = unsafe { kill(pid as i32, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1)
+    let existing_pid = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok());
+    if let Some(pid) = existing_pid {
+        if process_is_alive(pid) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("another gitrun-autoscaler instance is already running (pid {pid})"),
+            ));
+        }
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    file.write_all(std::process::id().to_string().as_bytes())?;
+    file.sync_all()?;
+    Ok(None)
 }
 
 #[cfg(not(unix))]

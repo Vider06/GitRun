@@ -376,7 +376,10 @@ fn validate_private_key_path(value: &str) -> Result<String, String> {
     // Resolve relative paths before elevation: pkexec/sudo may start the
     // privileged helper in a different working directory.
     let canonical = path_buf.canonicalize().map_err(|error| {
-        format!("unable to resolve GitHub App private key {}: {error}", path_buf.display())
+        format!(
+            "unable to resolve GitHub App private key {}: {error}",
+            path_buf.display()
+        )
     })?;
     secure_private_key_file(&canonical)?;
     Ok(canonical.to_string_lossy().into_owned())

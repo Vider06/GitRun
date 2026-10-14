@@ -449,9 +449,7 @@ fn reconcile_repo(
                     && container
                         .workflow_job
                         .as_deref()
-                        .map(|job| {
-                            dock_target_jobs.iter().any(|target| target == job)
-                        })
+                        .map(|job| dock_target_jobs.iter().any(|target| target == job))
                         .unwrap_or(false)
             })
             .map(|container| container.name.clone()),
@@ -850,12 +848,13 @@ fn load_dock_target_jobs(
         }
     };
 
-    let requests = serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw).map_err(|error| {
-        std::io::Error::other(format!(
-            "invalid GitDockRun requirements at {}: {error}",
-            path.display()
-        ))
-    })?;
+    let requests =
+        serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw).map_err(|error| {
+            std::io::Error::other(format!(
+                "invalid GitDockRun requirements at {}: {error}",
+                path.display()
+            ))
+        })?;
     let mut jobs = Vec::new();
     for request in requests {
         if !jobs.iter().any(|job| job == &request.target_job) {

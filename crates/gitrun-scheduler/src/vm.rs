@@ -705,7 +705,23 @@ fn ensure_vm_kvm(config: &VmConfig) -> Result<()> {
     let _ = fs::remove_file(&tmp_path);
 
     if let Err(error) = result {
-        cleanup_created_disk(&disk, created_disk);
+        // A timeout/non-zero exit does not prove that libvirt rejected the
+        // definition. Preserve the backing disk unless a fresh query confirms
+        // that no VM was created.
+        match vm_exists(HypervisorKind::Kvm, &config.name) {
+            Ok(false) => cleanup_created_disk(&disk, created_disk),
+            Ok(true) => {
+                return Err(VmError::Command(format!(
+                    "{error}; VM '{}' exists despite the failed define command, so its backing disk was preserved",
+                    config.name
+                )));
+            }
+            Err(check_error) => {
+                return Err(VmError::Command(format!(
+                    "{error}; could not verify VM cleanup ({check_error}), so its backing disk was preserved"
+                )));
+            }
+        }
         return Err(error);
     }
     Ok(())
@@ -718,6 +734,7 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
     }
 
     let (disk, created_disk) = create_virtualbox_disk_clone(config)?;
+    let mut vm_created = false;
     let result = (|| -> Result<()> {
         run_checked(
             HypervisorKind::VirtualBox,
@@ -730,6 +747,7 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
                 "--register",
             ],
         )?;
+        vm_created = true;
 
         run_checked(
             HypervisorKind::VirtualBox,
@@ -785,12 +803,21 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
     })();
 
     if let Err(error) = result {
-        let unregister_args = if created_disk {
-            vec!["unregistervm", config.name.as_str(), "--delete"]
-        } else {
-            vec!["unregistervm", config.name.as_str()]
-        };
-        let _ = run_checked(HypervisorKind::VirtualBox, &unregister_args);
+        if vm_created {
+            let unregister_args = if created_disk {
+                vec!["unregistervm", config.name.as_str(), "--delete"]
+            } else {
+                vec!["unregistervm", config.name.as_str()]
+            };
+            if let Err(rollback_error) =
+                run_checked(HypervisorKind::VirtualBox, &unregister_args)
+            {
+                // Do not remove a disk that a still-registered VM may use.
+                return Err(VmError::Command(format!(
+                    "{error}; VirtualBox rollback failed ({rollback_error}); backing disk was preserved"
+                )));
+            }
+        }
         cleanup_created_disk(&disk, created_disk);
         return Err(error);
     }

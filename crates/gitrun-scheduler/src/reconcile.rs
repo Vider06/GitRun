@@ -229,8 +229,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // consume an additional slot. Count permanent containers by their actual
     // role rather than treating every orphan as permanent.
     let mut current = live_containers.len() as u32;
-    let mut permanent_count =
-        live_containers.iter().filter(|c| c.permanent).count() as u32;
+    let mut permanent_count = live_containers.iter().filter(|c| c.permanent).count() as u32;
 
     // The permanent warm pool is a separate invariant from total demand:
     // dynamic/orphaned runners must not satisfy the configured permanent
@@ -538,7 +537,10 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(
                     action,
-                    Action::CreateRunner { permanent: true, .. }
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
                 ))
                 .count(),
             3,
@@ -566,7 +568,10 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(
                     action,
-                    Action::CreateRunner { permanent: true, .. }
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
                 ))
                 .count(),
             2

@@ -270,6 +270,12 @@ fn retry_delay(attempt: usize) -> Duration {
     )
 }
 
+fn rate_limit_reset_delay(reset_epoch: i64, now_epoch: i64) -> Duration {
+    // Header values are untrusted response data. Saturation avoids a debug
+    // panic (or release-mode wrap) if reset_epoch is i64::MIN.
+    Duration::from_secs(reset_epoch.saturating_sub(now_epoch).max(1) as u64)
+}
+
 impl GitHubClient {
     pub fn new(token: impl Into<String>) -> Result<Self> {
         Self::with_timeouts(token, DEFAULT_CONNECT_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)
@@ -373,7 +379,7 @@ impl GitHubClient {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_secs() as i64)
                                 .unwrap_or(0);
-                            Duration::from_secs((reset_epoch - now).max(1) as u64)
+                            rate_limit_reset_delay(reset_epoch, now)
                         })
                 });
                 return Err(GitHubError::RateLimited { retry_after });
@@ -1093,6 +1099,18 @@ mod tests {
         assert!(retryable_status(reqwest::StatusCode::GATEWAY_TIMEOUT));
         assert!(!retryable_status(reqwest::StatusCode::FORBIDDEN));
         assert!(!retryable_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
+    }
+
+    #[test]
+    fn malformed_rate_limit_reset_epoch_cannot_overflow() {
+        assert_eq!(
+            rate_limit_reset_delay(i64::MIN, 1_700_000_000),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            rate_limit_reset_delay(1_700_000_030, 1_700_000_000),
+            Duration::from_secs(30)
+        );
     }
 
     #[test]

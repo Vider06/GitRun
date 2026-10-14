@@ -12,11 +12,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use thiserror::Error;
 
 static STATE_TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);

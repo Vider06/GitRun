@@ -51,9 +51,7 @@ impl RateLimitTracker {
         // Retry-After is parsed from an HTTP response and can contain any u64
         // number of seconds. Adding an unbounded Duration to Instant can panic
         // on overflow; cap it before constructing the deadline.
-        let cooldown = retry_after
-            .unwrap_or(FALLBACK_COOLDOWN)
-            .min(MAX_COOLDOWN);
+        let cooldown = retry_after.unwrap_or(FALLBACK_COOLDOWN).min(MAX_COOLDOWN);
         let until = now + cooldown;
         let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
 

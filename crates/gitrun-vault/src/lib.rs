@@ -273,17 +273,26 @@ impl Vault {
             // secret content; still report them with the correct operation.
             .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
 
-        self.data.secrets.insert(
-            storage_key(name, &scope),
-            StoredSecret {
-                nonce: base64_encode(&nonce_bytes),
-                ciphertext: base64_encode(&ciphertext),
-                updated_at: now(),
-                scope: scope.clone(),
-                key_version: DATA_KEY_VERSION,
-            },
-        );
-        self.persist()?;
+        let key = storage_key(name, &scope);
+        let replacement = StoredSecret {
+            nonce: base64_encode(&nonce_bytes),
+            ciphertext: base64_encode(&ciphertext),
+            updated_at: now(),
+            scope: scope.clone(),
+            key_version: DATA_KEY_VERSION,
+        };
+        let previous = self.data.secrets.insert(key.clone(), replacement);
+        if let Err(error) = self.persist() {
+            match previous {
+                Some(previous) => {
+                    self.data.secrets.insert(key, previous);
+                }
+                None => {
+                    self.data.secrets.remove(&key);
+                }
+            }
+            return Err(error);
+        }
         self.events.on_secret_write(name, &scope);
         Ok(())
     }
@@ -348,10 +357,15 @@ impl Vault {
 
     pub fn delete_scoped(&mut self, name: &str, scope: &Scope) -> Result<()> {
         let key = storage_key(name, scope);
-        if self.data.secrets.remove(&key).is_none() {
-            return Err(VaultError::NotFound(name.to_owned()));
+        let removed = self
+            .data
+            .secrets
+            .remove(&key)
+            .ok_or_else(|| VaultError::NotFound(name.to_owned()))?;
+        if let Err(error) = self.persist() {
+            self.data.secrets.insert(key, removed);
+            return Err(error);
         }
-        self.persist()?;
         self.events.on_secret_delete(name, scope);
         Ok(())
     }
@@ -789,6 +803,31 @@ mod tests {
         let dir = temp_dir("delete-missing");
         let mut vault = Vault::open(&dir).unwrap();
         assert!(matches!(vault.delete("nope"), Err(VaultError::NotFound(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_set_persistence_rolls_back_in_memory_state() {
+        let dir = temp_dir("set-persist-failure");
+        let mut vault = Vault::open(&dir).unwrap();
+        vault.set("existing", "original").unwrap();
+        fs::create_dir(dir.join("secrets.json.tmp")).unwrap();
+
+        assert!(vault.set("new", "value").is_err());
+        assert!(matches!(vault.get("new"), Err(VaultError::NotFound(_))));
+        assert_eq!(vault.get("existing").unwrap(), "original");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_delete_persistence_restores_in_memory_secret() {
+        let dir = temp_dir("delete-persist-failure");
+        let mut vault = Vault::open(&dir).unwrap();
+        vault.set("existing", "value").unwrap();
+        fs::create_dir(dir.join("secrets.json.tmp")).unwrap();
+
+        assert!(vault.delete("existing").is_err());
+        assert_eq!(vault.get("existing").unwrap(), "value");
         let _ = fs::remove_dir_all(&dir);
     }
 

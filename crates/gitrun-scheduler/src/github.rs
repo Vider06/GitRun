@@ -242,13 +242,17 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 const DEFAULT_API_ATTEMPTS: usize = 3;
+const MAX_API_ATTEMPTS: usize = 10;
 
-fn api_attempts() -> usize {
-    std::env::var("GITRUN_API_RETRIES")
-        .ok()
+fn parse_api_attempts(value: Option<&str>) -> usize {
+    value
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(DEFAULT_API_ATTEMPTS)
-        .max(1)
+        .clamp(1, MAX_API_ATTEMPTS)
+}
+
+fn api_attempts() -> usize {
+    parse_api_attempts(std::env::var("GITRUN_API_RETRIES").ok().as_deref())
 }
 
 fn retryable_status(status: reqwest::StatusCode) -> bool {
@@ -1111,6 +1115,15 @@ mod tests {
             rate_limit_reset_delay(1_700_000_030, 1_700_000_000),
             Duration::from_secs(30)
         );
+    }
+
+    #[test]
+    fn api_attempts_have_safe_defaults_and_a_hard_upper_bound() {
+        assert_eq!(parse_api_attempts(None), DEFAULT_API_ATTEMPTS);
+        assert_eq!(parse_api_attempts(Some("not-a-number")), DEFAULT_API_ATTEMPTS);
+        assert_eq!(parse_api_attempts(Some("0")), 1);
+        assert_eq!(parse_api_attempts(Some(" 4 ")), 4);
+        assert_eq!(parse_api_attempts(Some("999999")), MAX_API_ATTEMPTS);
     }
 
     #[test]

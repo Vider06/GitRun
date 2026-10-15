@@ -167,23 +167,24 @@ pub fn run() {
         config.poll_interval
     );
     while !stopping.load(Ordering::Relaxed) {
+        // Pressure is a backpressure signal for capacity growth, not a reason
+        // to stop all lifecycle work. Keep safe cleanup and recovery running,
+        // but fail closed for any action that would create/recreate a runner.
+        let mut allow_new_runner_creation = true;
         if config.resource_pressure_enabled {
             match resource_pressure::sample(&config) {
                 Ok(snapshot) if snapshot.is_pressured(&config) => {
-                    eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), holding new runner creation until pressure falls", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
-                    sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
-                    continue;
+                    eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), deferring runner creation while continuing safe cleanup/recovery", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
+                    allow_new_runner_creation = false;
                 }
                 Ok(_) => {}
                 Err(error @ resource_pressure::ResourcePressureError::Disk { .. }) => {
-                    eprintln!("gitrun-autoscaler: critical filesystem pressure check failed: {error}; holding scheduler reconciliation until the configured disk checks recover");
-                    sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
-                    continue;
+                    eprintln!("gitrun-autoscaler: critical filesystem pressure check failed: {error}; deferring runner creation while continuing safe cleanup/recovery");
+                    allow_new_runner_creation = false;
                 }
                 Err(error) => {
-                    eprintln!("gitrun-autoscaler: host resource pressure check unavailable: {error}; holding scheduler reconciliation until resource checks recover");
-                    sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
-                    continue;
+                    eprintln!("gitrun-autoscaler: host resource pressure check unavailable: {error}; deferring runner creation while continuing safe cleanup/recovery");
+                    allow_new_runner_creation = false;
                 }
             }
         }
@@ -200,7 +201,7 @@ pub fn run() {
                 );
                 continue;
             }
-            if let Err(error) = reconcile_repo(&client, &config, &state_dir, &vm_registry, repo) {
+            if let Err(error) = reconcile_repo(&client, &config, &state_dir, &vm_registry, repo, allow_new_runner_creation) {
                 if let Some(GitHubError::RateLimited { retry_after }) =
                     error.downcast_ref::<GitHubError>()
                 {
@@ -521,6 +522,29 @@ fn record_crash(state_dir: &std::path::Path, message: &str) -> std::io::Result<(
         .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
+
+/// Resource pressure blocks capacity growth, but should not freeze lifecycle
+/// safety work. Suppress whole replacement actions (rather than splitting
+/// remove/create), and suppress scale-down plans computed assuming deferred
+/// creations will succeed.
+fn actions_for_resource_pressure(actions: Vec<reconcile::Action>, allow_creation: bool) -> Vec<reconcile::Action> {
+    if allow_creation {
+        return actions;
+    }
+
+    actions
+        .into_iter()
+        .filter(|action| {
+            !matches!(
+                action,
+                reconcile::Action::CreateRunner { .. }
+                    | reconcile::Action::RecreateOrphaned { .. }
+                    | reconcile::Action::RemoveIdle { .. }
+            )
+        })
+        .collect()
+}
+
 /// Runs one reconcile cycle for a single repository: snapshot, plan, execute.
 fn reconcile_repo(
     client: &GitHubClient,
@@ -528,6 +552,7 @@ fn reconcile_repo(
     state_dir: &std::path::Path,
     vm_registry: &VmResolutionRegistry,
     repo: &str,
+    allow_new_runner_creation: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     api_service::reconcile_dock_bindings(client, state_dir, repo).map_err(std::io::Error::other)?;
 
@@ -662,7 +687,7 @@ fn reconcile_repo(
         idle_timeout: Duration::from_secs(config.idle_timeout),
     };
 
-    let actions = reconcile::plan(&input);
+    let actions = actions_for_resource_pressure(reconcile::plan(&input), allow_new_runner_creation);
     for action in actions {
         // The plan is ordered and later actions may rely on earlier removals
         // or creations having succeeded (for example, RemoveExited followed
@@ -2022,5 +2047,50 @@ mod tests {
         assert!(!is_valid_env_var_name("KEY=value"));
         assert!(!is_valid_env_var_name("KEY$(whoami)"));
         assert!(!is_valid_env_var_name(""));
+    }
+}
+
+#[cfg(test)]
+mod resource_pressure_reconciliation_tests {
+    use super::*;
+    use crate::reconcile::Action;
+
+    #[test]
+    fn pressure_defers_creation_replacement_and_plan_dependent_scale_down_only() {
+        let actions = vec![
+            Action::RemoveExited { name: "exited".into() },
+            Action::CreateRunner {
+                permanent: true,
+                job_labels: Vec::new(),
+                job_name: None,
+                job_run_id: None,
+            },
+            Action::RestartUnresponsive { name: "offline".into() },
+            Action::RecreateOrphaned { name: "orphan".into(), permanent: false },
+            Action::RemoveIdle { name: "idle".into() },
+        ];
+
+        let filtered = actions_for_resource_pressure(actions, false);
+        assert_eq!(
+            filtered,
+            vec![
+                Action::RemoveExited { name: "exited".into() },
+                Action::RestartUnresponsive { name: "offline".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn healthy_resource_sample_preserves_the_full_plan() {
+        let actions = vec![
+            Action::CreateRunner {
+                permanent: false,
+                job_labels: vec!["linux".into()],
+                job_name: Some("build".into()),
+                job_run_id: Some(42),
+            },
+            Action::RemoveIdle { name: "idle".into() },
+        ];
+        assert_eq!(actions_for_resource_pressure(actions.clone(), true), actions);
     }
 }

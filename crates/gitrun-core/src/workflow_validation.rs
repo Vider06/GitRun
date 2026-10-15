@@ -8,9 +8,30 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::io::Read;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn kill(pid: i32, signal: i32) -> i32;
+}
+
+#[cfg(unix)]
+fn kill_analyzer_process_group(pid: u32) {
+    // The analyzer and descendants share a dedicated process group so a
+    // descendant cannot keep captured stdout/stderr open after the parent exits.
+    let _ = unsafe { kill(-(pid as i32), 9) };
+}
+
+#[cfg(not(unix))]
+fn kill_analyzer_process_group(_pid: u32) {}
+
+fn terminate_analyzer(child: &mut Child) {
+    kill_analyzer_process_group(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
 
 /// One finding from either the built-in scan or `zizmor`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -359,6 +380,11 @@ fn run_bounded_command(
     timeout: Duration,
     output_limit: usize,
 ) -> std::io::Result<Output> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -375,13 +401,17 @@ fn run_bounded_command(
 
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => {
+                // The direct analyzer may exit while a helper/descendant still
+                // owns either pipe; kill the group before joining reader threads.
+                kill_analyzer_process_group(child.id());
+                break status;
+            },
             Ok(None) if Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(20));
             }
             Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_analyzer(&mut child);
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
                 return Err(std::io::Error::new(
@@ -699,6 +729,20 @@ mod tests {
         command.arg("5");
         let error = run_bounded_command(command, Duration::from_millis(20), 1024).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn analyzer_exit_kills_descendant_holding_output_pipe() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "(sleep 5) & exit 0"]);
+        let started = Instant::now();
+        let result = run_bounded_command(command, Duration::from_secs(2), 1024).unwrap();
+        assert!(result.status.success());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "descendant kept analyzer output pipe open past parent exit"
+        );
     }
 
     #[cfg(unix)]

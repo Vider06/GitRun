@@ -744,7 +744,16 @@ fn reconcile_repo(
     let input = ReconcileInput {
         min_runners: config.min_runners,
         max_runners: config.max_runners,
-        reserved_runners: preserved_docks.len().min(u32::MAX as usize) as u32,
+        reserved_runners: preserved_docks
+            .iter()
+            .filter(|name| {
+                containers.iter().any(|container| {
+                    container.name == &name
+                        && !container.status.eq_ignore_ascii_case("exited")
+                })
+            })
+            .count()
+            .min(u32::MAX as usize) as u32,
         containers: plan_containers.iter().map(to_container_view).collect(),
         runners: planner_runners,
         queued_jobs,

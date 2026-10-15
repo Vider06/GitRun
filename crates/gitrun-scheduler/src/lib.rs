@@ -685,6 +685,13 @@ fn reconcile_repo(
     // Recovery timestamps must survive for transitional Docker states too;
     // only idle accounting is restricted to running containers.
     state.prune(repo, &tracked_names);
+    for name in &tracked_names {
+        if !live_names.iter().any(|live_name| live_name == name) {
+            // Transitional containers must not retain an old idle timer that
+            // could trigger immediate scale-down after they become running again.
+            state.clear_idle(name);
+        }
+    }
 
     let idle: Vec<IdleInfo> = live_names
         .iter()

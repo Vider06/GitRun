@@ -5142,6 +5142,14 @@ mod gsr_execution_boundary_tests {
     use super::*;
     use std::sync::Mutex;
 
+    struct TemporaryDirectory(std::path::PathBuf);
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[derive(Default)]
     struct RecordingBackend {
         requests: Mutex<Vec<AuthorizedOperation>>,

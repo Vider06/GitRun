@@ -190,12 +190,16 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
     let mut parts = repo.splitn(2, '/');
     match (parts.next(), parts.next()) {
         (Some(owner), Some(name))
-            if is_valid_repo_segment(owner) && is_valid_repo_segment(name) =>
+            if is_valid_owner_segment(owner) && is_valid_repo_segment(name) =>
         {
             Ok((owner, name))
         }
         _ => Err(GitHubError::InvalidRepository(repo.to_owned())),
     }
+}
+
+fn is_valid_owner_segment(segment: &str) -> bool {
+    segment.len() <= 39 && is_valid_repo_segment(segment)
 }
 
 fn is_valid_repo_segment(segment: &str) -> bool {
@@ -1005,6 +1009,11 @@ mod tests {
     #[test]
     fn rejects_missing_slash() {
         assert!(split_repo("octocat").is_err());
+    }
+
+    #[test]
+    fn rejects_owner_segments_longer_than_github_limit() {
+        assert!(split_repo(&format!("{}/repo", "a".repeat(40))).is_err());
     }
 
     #[test]

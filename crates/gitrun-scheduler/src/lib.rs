@@ -992,26 +992,19 @@ fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String
     labels.join(",")
 }
 
-/// Best-effort pre-flight workflow validation, run just before a runner is
-/// created for `repo` — see `gitrun_core::workflow_validation` for the
-/// scanning logic itself and `GitHubClient::workflow_files` for why this
-/// fetches via the Contents API rather than waiting for the runner's own
-/// checkout (too late for a pre-flight check to matter by then).
-///
-/// Deliberately never fails `create_runner` — a network hiccup fetching
-/// workflow files, or a finding in someone's workflow, should not block a
-/// job that would otherwise run fine; this is advisory, not enforcement
-/// (enforcement of *commands actually run* is `gitrun_gsr::agent` and
-/// `gsr_poll`'s job, which unlike this can and does act). Findings are
-/// written to the GSR event log so an operator can review a growing
-/// pattern of risky workflow changes even though no single one blocks
-/// anything by itself.
+/// Best-effort workflow pre-flight validation. Findings and unavailable
+/// checks are reported to the GSR event queue; this advisory scan does not
+/// replace command enforcement in the runner.
 fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, repo: &str) {
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let files = match client.workflow_files(repo) {
         Ok(files) => files,
         Err(error) => {
-            eprintln!("gitrun-autoscaler: workflow validation for {repo}: could not fetch workflow files: {error}");
+            emit_workflow_validation_warning(
+                &events_path,
+                repo,
+                &format!("could not fetch workflow files; built-in and zizmor scans were skipped: {error}"),
+            );
             return;
         }
     };
@@ -1024,31 +1017,47 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
     }
 
     if let Err(error) = save_workflow_dock_requirements(&config.state_dir, repo, &dock_requests) {
-        eprintln!(
-            "gitrun-autoscaler: workflow validation for {repo}: could not persist GitDockRun requirements: {error}"
+        emit_workflow_validation_warning(
+            &events_path,
+            repo,
+            &format!("could not persist GitDockRun requirements: {error}"),
         );
     }
 
     if config.gsr_zizmor_enabled {
-        // zizmor works off files on disk, not in-memory strings - write
-        // the fetched content to a scratch directory under state_dir so
-        // it can run against exactly what was fetched, then clean up
-        // regardless of outcome.
         let scratch_dir = std::path::PathBuf::from(&config.state_dir)
             .join("gsr-workflow-scratch")
             .join(docker::sanitize(repo, '_'));
         if let Err(error) = write_scratch_workflows(&scratch_dir, &files) {
-            eprintln!("gitrun-autoscaler: workflow validation for {repo}: could not stage files for zizmor: {error}");
+            emit_workflow_validation_warning(
+                &events_path,
+                repo,
+                &format!("could not stage files for zizmor; optional scan was skipped: {error}"),
+            );
         } else {
             match gitrun_core::run_zizmor(&scratch_dir) {
                 Ok(Some(zizmor_findings)) => findings.extend(zizmor_findings),
-                Ok(None) => {} // zizmor not installed - silently skipped, per its own design.
-                Err(error) => eprintln!(
-                    "gitrun-autoscaler: workflow validation for {repo}: zizmor run failed: {error}"
+                Ok(None) => emit_workflow_validation_warning(
+                    &events_path,
+                    repo,
+                    "zizmor is enabled but its binary is missing; optional scan was skipped",
+                ),
+                Err(error) => emit_workflow_validation_warning(
+                    &events_path,
+                    repo,
+                    &format!("zizmor run failed; optional scan was skipped: {error}"),
                 ),
             }
         }
-        let _ = std::fs::remove_dir_all(&scratch_dir);
+        if let Err(error) = std::fs::remove_dir_all(&scratch_dir) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                emit_workflow_validation_warning(
+                    &events_path,
+                    repo,
+                    &format!("could not remove workflow scan scratch directory: {error}"),
+                );
+            }
+        }
     }
 
     for finding in findings {
@@ -1066,8 +1075,25 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
             message,
         );
         if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
-            eprintln!("gitrun-autoscaler: workflow validation for {repo}: failed to write security event: {error}");
+            eprintln!("gitrun-autoscaler: workflow validation: failed to write security event: {error}");
         }
+    }
+}
+
+fn emit_workflow_validation_warning(
+    events_path: &std::path::Path,
+    repo: &str,
+    detail: &str,
+) {
+    let message = format!("{repo}: workflow validation warning: {detail}");
+    eprintln!("gitrun-autoscaler: {message}");
+    let event = gitrun_gsr::SecurityEvent::new(
+        "workflow-validation",
+        gitrun_gsr::Severity::Warning,
+        message,
+    );
+    if let Err(error) = gitrun_gsr::events::emit(events_path, &event) {
+        eprintln!("gitrun-autoscaler: unable to persist workflow validation warning: {error}");
     }
 }
 

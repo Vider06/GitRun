@@ -100,7 +100,7 @@ impl QueueLock {
         #[cfg(unix)]
         options
             .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
         let lock = options.open(PathBuf::from(lock_name))?;
         let metadata = lock.metadata()?;
         if !metadata.is_file() {
@@ -202,11 +202,26 @@ fn prune_archives(path: &Path) -> Result<()> {
 }
 
 fn rotate_queue(path: &Path) -> Result<()> {
-    let metadata = match std::fs::metadata(path) {
+    let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "event queue must be a regular, non-symlink file before rotation",
+        )
+        .into());
+    }
+    #[cfg(unix)]
+    if metadata.nlink() != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "event queue must not have hard links before rotation",
+        )
+        .into());
+    }
     if metadata.len() == 0 {
         return Ok(());
     }
@@ -251,7 +266,7 @@ pub fn emit(path: &Path, event: &SecurityEvent) -> Result<()> {
     #[cfg(unix)]
     options
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
     let mut file = options.open(path)?;
     validate_event_file(&file)?;
     #[cfg(unix)]
@@ -284,7 +299,7 @@ fn open_event_file(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
     let file = options.open(path)?;
     validate_event_file(&file)?;
     Ok(file)

@@ -1415,8 +1415,10 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
     child.wait_with_output().map_err(DockerError::Spawn)
 }
 
-/// Executes a command in one managed container while forwarding stdout and
-/// stderr chunks to the caller as they arrive.
+/// Executes a command in one managed container and forwards bounded stdout/stderr
+/// output to the caller. Each stream retains at most `MAX_DOCKER_OUTPUT_BYTES`;
+/// output beyond that cap is drained but not retained. The Docker CLI is killed
+/// after the shared command timeout, including descendants holding its pipes.
 pub fn exec_container_stream<F>(container: &str, args: &[&str], mut on_output: F) -> Result<i32>
 where
     F: FnMut(bool, &[u8]),
@@ -1433,55 +1435,72 @@ where
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
     let mut child = command.spawn()?;
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| DockerError::Command("docker exec did not expose stdout".into()))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| DockerError::Command("docker exec did not expose stderr".into()))?;
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command("docker exec did not expose stdout".into()));
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command("docker exec did not expose stderr".into()));
+        }
+    };
 
-    let stdout_thread = thread::spawn(move || {
-        let mut buffer = [0u8; 8192];
-        let mut chunks = Vec::new();
-        loop {
-            match stdout.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(count) => chunks.push(buffer[..count].to_vec()),
-                Err(_) => break,
+    // Drain both pipes concurrently, but never accumulate one Vec per chunk:
+    // retained memory stays bounded even if a workflow emits unbounded output.
+    let stdout_thread = thread::spawn(move || read_bounded_output(stdout));
+    let stderr_thread = thread::spawn(move || read_bounded_output(stderr));
+    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                kill_command_group(child.id());
+                break status;
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                terminate_child(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Command(format!(
+                    "docker exec timed out after {}s",
+                    DOCKER_COMMAND_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_child(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Spawn(error));
             }
         }
-        chunks
-    });
-    let stderr_thread = thread::spawn(move || {
-        let mut buffer = [0u8; 8192];
-        let mut chunks = Vec::new();
-        loop {
-            match stderr.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(count) => chunks.push(buffer[..count].to_vec()),
-                Err(_) => break,
-            }
-        }
-        chunks
-    });
+    };
 
-    for chunk in stdout_thread
+    let stdout = stdout_thread
         .join()
-        .map_err(|_| DockerError::Command("stdout reader thread panicked".into()))?
-    {
-        on_output(false, &chunk);
+        .map_err(|_| DockerError::Command("stdout reader thread panicked".into()))??;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))??;
+    for chunk in stdout.chunks(8192) {
+        on_output(false, chunk);
     }
-    for chunk in stderr_thread
-        .join()
-        .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))?
-    {
-        on_output(true, &chunk);
+    for chunk in stderr.chunks(8192) {
+        on_output(true, chunk);
     }
 
-    Ok(child.wait()?.code().unwrap_or(1))
+    Ok(status.code().unwrap_or(1))
 }
 
 /// Extra `docker run` flags applied to a Linux runner container when

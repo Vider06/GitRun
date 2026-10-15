@@ -201,7 +201,14 @@ pub fn run() {
                 );
                 continue;
             }
-            if let Err(error) = reconcile_repo(&client, &config, &state_dir, &vm_registry, repo, allow_new_runner_creation) {
+            if let Err(error) = reconcile_repo(
+                &client,
+                &config,
+                &state_dir,
+                &vm_registry,
+                repo,
+                allow_new_runner_creation,
+            ) {
                 if let Some(GitHubError::RateLimited { retry_after }) =
                     error.downcast_ref::<GitHubError>()
                 {
@@ -522,12 +529,14 @@ fn record_crash(state_dir: &std::path::Path, message: &str) -> std::io::Result<(
         .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
-
 /// Resource pressure blocks capacity growth, but should not freeze lifecycle
 /// safety work. Suppress whole replacement actions (rather than splitting
 /// remove/create), and suppress scale-down plans computed assuming deferred
 /// creations will succeed.
-fn actions_for_resource_pressure(actions: Vec<reconcile::Action>, allow_creation: bool) -> Vec<reconcile::Action> {
+fn actions_for_resource_pressure(
+    actions: Vec<reconcile::Action>,
+    allow_creation: bool,
+) -> Vec<reconcile::Action> {
     if allow_creation {
         return actions;
     }
@@ -2058,24 +2067,37 @@ mod resource_pressure_reconciliation_tests {
     #[test]
     fn pressure_defers_creation_replacement_and_plan_dependent_scale_down_only() {
         let actions = vec![
-            Action::RemoveExited { name: "exited".into() },
+            Action::RemoveExited {
+                name: "exited".into(),
+            },
             Action::CreateRunner {
                 permanent: true,
                 job_labels: Vec::new(),
                 job_name: None,
                 job_run_id: None,
             },
-            Action::RestartUnresponsive { name: "offline".into() },
-            Action::RecreateOrphaned { name: "orphan".into(), permanent: false },
-            Action::RemoveIdle { name: "idle".into() },
+            Action::RestartUnresponsive {
+                name: "offline".into(),
+            },
+            Action::RecreateOrphaned {
+                name: "orphan".into(),
+                permanent: false,
+            },
+            Action::RemoveIdle {
+                name: "idle".into(),
+            },
         ];
 
         let filtered = actions_for_resource_pressure(actions, false);
         assert_eq!(
             filtered,
             vec![
-                Action::RemoveExited { name: "exited".into() },
-                Action::RestartUnresponsive { name: "offline".into() },
+                Action::RemoveExited {
+                    name: "exited".into()
+                },
+                Action::RestartUnresponsive {
+                    name: "offline".into()
+                },
             ]
         );
     }
@@ -2089,8 +2111,13 @@ mod resource_pressure_reconciliation_tests {
                 job_name: Some("build".into()),
                 job_run_id: Some(42),
             },
-            Action::RemoveIdle { name: "idle".into() },
+            Action::RemoveIdle {
+                name: "idle".into(),
+            },
         ];
-        assert_eq!(actions_for_resource_pressure(actions.clone(), true), actions);
+        assert_eq!(
+            actions_for_resource_pressure(actions.clone(), true),
+            actions
+        );
     }
 }

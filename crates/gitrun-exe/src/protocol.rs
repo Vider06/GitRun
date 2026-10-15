@@ -15,6 +15,7 @@ use thiserror::Error;
 type HmacSha256 = Hmac<Sha256>;
 
 const NONCE_LEN: usize = 32;
+const MAC_LEN: usize = 32;
 pub const DEFAULT_MAX_CLOCK_SKEW_SECS: u64 = 30;
 const DEFAULT_REPLAY_CACHE_SIZE: usize = 4096;
 
@@ -63,9 +64,9 @@ impl<'de> Deserialize<'de> for ChannelKey {
 pub struct SignedRequest {
     pub request: AuthorizedOperation,
     pub timestamp: u64,
-    #[serde(with = "serde_bytes_hex")]
+    #[serde(serialize_with = "serde_bytes_hex::serialize", deserialize_with = "deserialize_nonce")]
     pub nonce: Vec<u8>,
-    #[serde(with = "serde_bytes_hex")]
+    #[serde(serialize_with = "serde_bytes_hex::serialize", deserialize_with = "deserialize_mac")]
     pub mac: Vec<u8>,
 }
 
@@ -239,6 +240,30 @@ pub enum ChannelAuthError {
     Authentication,
 }
 
+fn deserialize_nonce<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let bytes = hex::decode(value).map_err(serde::de::Error::custom)?;
+    if bytes.len() != NONCE_LEN {
+        return Err(serde::de::Error::custom("invalid nonce length"));
+    }
+    Ok(bytes)
+}
+
+fn deserialize_mac<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let bytes = hex::decode(value).map_err(serde::de::Error::custom)?;
+    if bytes.len() != MAC_LEN {
+        return Err(serde::de::Error::custom("invalid MAC length"));
+    }
+    Ok(bytes)
+}
+
 mod serde_bytes_hex {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -276,6 +301,20 @@ mod tests {
             resource: None,
             arguments: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn deserialization_rejects_wrong_nonce_and_mac_lengths() {
+        let key = ChannelKey::generate().unwrap();
+        let signed = SignedRequest::sign(request(), &key).unwrap();
+        let mut value = serde_json::to_value(&signed).unwrap();
+
+        value["nonce"] = serde_json::json!("00");
+        assert!(serde_json::from_value::<SignedRequest>(value).is_err());
+
+        let mut value = serde_json::to_value(&signed).unwrap();
+        value["mac"] = serde_json::json!("00");
+        assert!(serde_json::from_value::<SignedRequest>(value).is_err());
     }
 
     #[test]

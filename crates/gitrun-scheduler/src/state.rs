@@ -504,6 +504,33 @@ mod tests {
     }
 
     #[test]
+    fn prune_does_not_cross_delete_repositories_with_colliding_legacy_slugs() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-sched-state-collision-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let mut state = SchedulerState::load(&dir).unwrap();
+        let first_repo = "foo-bar/baz";
+        let second_repo = "foo/bar-baz";
+        assert_eq!(
+            crate::docker::sanitize(first_repo, '-'),
+            crate::docker::sanitize(second_repo, '-')
+        );
+
+        let stale_first = format!("{}gone", crate::docker::runner_name_prefix(first_repo));
+        let quarantined_second =
+            format!("{}quarantined", crate::docker::runner_name_prefix(second_repo));
+        state.mark_idle(&stale_first);
+        state.quarantine(&quarantined_second);
+        state.prune(first_repo, &[]);
+
+        assert!(state.idle_entries().iter().all(|(name, _)| name != &stale_first));
+        assert!(state.is_quarantined(&quarantined_second));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn prune_drops_gone_entries_without_cross_repo_deletion() {
         let dir =
             std::env::temp_dir().join(format!("gitrun-sched-state-prune-{}", std::process::id()));

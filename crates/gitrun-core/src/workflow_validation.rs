@@ -7,7 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// One finding from either the built-in scan or `zizmor`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,12 +337,12 @@ fn run_zizmor_command(
     program: &str,
     workflows_dir: &Path,
 ) -> std::io::Result<Option<Vec<Finding>>> {
-    let output = match Command::new(program)
+    let mut command = Command::new(program);
+    command
         .arg("--format")
         .arg("json")
-        .arg(workflows_dir)
-        .output()
-    {
+        .arg(workflows_dir);
+    let output = match run_bounded_command(command, Duration::from_secs(30), 4 * 1024 * 1024) {
         Ok(output) => output,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -349,6 +352,90 @@ fn run_zizmor_command(
     // read at all.
     let stdout = String::from_utf8_lossy(&output.stdout);
     parse_zizmor_output(&stdout).map(Some)
+}
+
+fn run_bounded_command(
+    mut command: Command,
+    timeout: Duration,
+    output_limit: usize,
+) -> std::io::Result<Output> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        std::io::Error::other("failed to capture analyzer stdout")
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        std::io::Error::other("failed to capture analyzer stderr")
+    })?;
+    let stdout_reader = thread::spawn(move || read_bounded_stream(stdout, output_limit));
+    let stderr_reader = thread::spawn(move || read_bounded_stream(stderr, output_limit));
+    let deadline = Instant::now() + timeout;
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "zizmor exceeded the 30-second workflow scan timeout",
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(error);
+            }
+        }
+    };
+
+    let (stdout, stdout_truncated) = stdout_reader
+        .join()
+        .map_err(|_| std::io::Error::other("analyzer stdout reader panicked"))??;
+    let (stderr, stderr_truncated) = stderr_reader
+        .join()
+        .map_err(|_| std::io::Error::other("analyzer stderr reader panicked"))??;
+    if stdout_truncated || stderr_truncated {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "zizmor output exceeded the 4 MiB safety limit",
+        ));
+    }
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn read_bounded_stream(
+    mut reader: impl Read,
+    output_limit: usize,
+) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut output = Vec::with_capacity(output_limit.min(8192));
+    let mut buffer = [0u8; 8192];
+    let mut truncated = false;
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = output_limit.saturating_sub(output.len());
+        let keep = count.min(remaining);
+        output.extend_from_slice(&buffer[..keep]);
+        truncated |= keep < count;
+    }
+    Ok((output, truncated))
 }
 
 fn parse_zizmor_output(stdout: &str) -> std::io::Result<Vec<Finding>> {
@@ -603,6 +690,24 @@ mod tests {
         let result =
             run_zizmor_command("__gitrun_zizmor_binary_that_should_not_exist__", &dir).unwrap();
         assert!(result.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn analyzer_timeout_is_bounded() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 5"]);
+        let error = run_bounded_command(command, Duration::from_millis(20), 1024).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn analyzer_output_limit_is_enforced() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf '1234567890'"]);
+        let error = run_bounded_command(command, Duration::from_secs(1), 4).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

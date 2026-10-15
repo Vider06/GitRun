@@ -606,7 +606,10 @@ fn reconcile_repo(
     // view busy when GitHub still assigns an active job to that runner name;
     // this prevents recovery from killing a job based on inconsistent snapshots.
     for container in &containers {
-        let matches = runners.iter().filter(|runner| runner.name == container.name).count();
+        let matches = runners
+            .iter()
+            .filter(|runner| runner.name == container.name)
+            .count();
         if matches > 1 {
             return Err(std::io::Error::other(format!(
                 "ambiguous GitHub runner identity for managed container {} in {repo}: {matches} registrations share the name",
@@ -620,7 +623,11 @@ fn reconcile_repo(
     // confirms the exact name exists on this host.
     let mut planner_runners: Vec<RunnerView> = runners
         .iter()
-        .filter(|runner| containers.iter().any(|container| container.name == runner.name))
+        .filter(|runner| {
+            containers
+                .iter()
+                .any(|container| container.name == runner.name)
+        })
         .map(|runner| RunnerView {
             name: runner.name.clone(),
             online: runner.is_online(),
@@ -698,8 +705,12 @@ fn reconcile_repo(
     for name in &live_names {
         match runners.iter().find(|runner| &runner.name == name) {
             Some(runner) if runner.is_online() && !runner.busy => state.clear_recovery(name),
-            Some(runner) if !runner.busy => { state.recovery_age(name); }
-            None => { state.recovery_age(name); }
+            Some(runner) if !runner.busy => {
+                state.recovery_age(name);
+            }
+            None => {
+                state.recovery_age(name);
+            }
             _ => {}
         }
     }

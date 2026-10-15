@@ -114,8 +114,8 @@ pub enum Action {
     /// Runner is online in Docker but GitHub doesn't know about it anymore:
     /// remove and recreate, preserving its permanent/dynamic role.
     RecreateOrphaned { name: String, permanent: bool },
-    /// Runner is running but reports offline to GitHub and isn't busy:
-    /// restart in place rather than replace.
+    /// A non-busy managed container is transitional or its runner reports
+    /// offline: restart in place rather than replacing its identity.
     RestartUnresponsive { name: String },
     /// Remove an idle container to scale back down toward the minimum.
     RemoveIdle { name: String },
@@ -185,7 +185,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             let runner = by_name(&container.name);
             match runner {
                 Some(r) if r.busy => {} // never touch a busy runner
-                Some(r) if !r.online => {
+                Some(r) if !r.online || container.health != ContainerHealth::Running => {
                     let age = input
                         .recovery_age
                         .iter()
@@ -804,6 +804,25 @@ mod tests {
         assert!(actions
             .iter()
             .all(|a| !matches!(a, Action::RecreateOrphaned { name, .. } if name == "busy-one")));
+    }
+
+    #[test]
+    fn transitional_container_with_online_registration_waits_for_cooldown() {
+        let mut input = base_input();
+        input.containers = vec![ContainerView {
+            name: "starting".into(),
+            health: ContainerHealth::Starting,
+            permanent: true,
+        }];
+        input.runners = vec![RunnerView {
+            name: "starting".into(),
+            online: true,
+            busy: false,
+        }];
+        input.recovery_age = vec![("starting".into(), Duration::from_secs(59))];
+        assert!(!plan(&input).iter().any(|action| matches!(action, Action::RestartUnresponsive { name } if name == "starting")));
+        input.recovery_age = vec![("starting".into(), Duration::from_secs(60))];
+        assert!(plan(&input).iter().any(|action| matches!(action, Action::RestartUnresponsive { name } if name == "starting")));
     }
 
     #[test]

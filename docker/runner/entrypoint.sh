@@ -73,7 +73,7 @@ chown runner:runner "$SHARED_CACHE_DIR"
 # GitDockRun can temporarily convert a completed runner container into a
 # dock-only resource. The marker lives in the per-runner home volume, so the
 # state survives stop/start without starting another GitHub Actions runner.
-DOCK_ONLY_MARKER=/home/runner/actions-runner/.gitrun-dock-only
+DOCK_ONLY_MARKER=/var/lib/gitrun/dock-only
 if [[ ! -f "$DOCK_ONLY_MARKER" ]]; then
   : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
 fi

@@ -766,6 +766,47 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
     create_runner_on(&DockerHost::Local, spec)
 }
 
+fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
+    const RESERVED_EXACT: &[&str] = &[
+        "GITRUN_API_SOCKET",
+        "GITRUN_SHARED_CACHE_DIR",
+        "HOME",
+        "PATH",
+        "DOCKER_CONFIG",
+        "XDG_CONFIG_HOME",
+        "NPM_CONFIG_CACHE",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "BASH_ENV",
+        "ENV",
+        "IFS",
+    ];
+    for (name, value) in secret_env {
+        let mut chars = name.chars();
+        let valid_name = matches!(chars.next(), Some(c) if c.is_ascii_uppercase() || c == '_')
+            && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        if !valid_name {
+            return Err(DockerError::Command(format!(
+                "refusing GitVault secret with invalid environment variable name: {name:?}"
+            )));
+        }
+        if name.starts_with("RUNNER_")
+            || name.starts_with("GITRUN_GSR_")
+            || RESERVED_EXACT.contains(&name.as_str())
+        {
+            return Err(DockerError::Command(format!(
+                "refusing GitVault secret that overrides a protected runner variable: {name}"
+            )));
+        }
+        if value.contains('\0') {
+            return Err(DockerError::Command(format!(
+                "refusing GitVault secret {name}: environment values cannot contain NUL"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
     let output = run_on(
         host,
@@ -823,6 +864,7 @@ fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
 }
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
+    validate_secret_env(spec.secret_env)?;
     ensure_runner_network(host, spec.network)?;
     if spec.is_windows && spec.docker_socket_enabled {
         return Err(DockerError::Command(
@@ -1501,6 +1543,25 @@ fn ensure_label(labels: &str, extra: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_environment_rejects_protected_runner_variables() {
+        for name in [
+            "RUNNER_TOKEN",
+            "RUNNER_URL",
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED",
+            "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
+            "GITRUN_API_SOCKET",
+            "LD_PRELOAD",
+        ] {
+            assert!(
+                validate_secret_env(&[(name.into(), "value".into())]).is_err(),
+                "{name} must not be overridden by a vault secret"
+            );
+        }
+        assert!(validate_secret_env(&[("DEPLOY_KEY".into(), "secret".into())]).is_ok());
+        assert!(validate_secret_env(&[("DEPLOY_KEY".into(), "bad\0value".into())]).is_err());
+    }
 
     #[test]
     fn docker_output_capture_is_bounded_and_continues_draining() {

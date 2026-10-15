@@ -322,7 +322,7 @@ impl Config {
             }
             let mut content = String::new();
             file.read_to_string(&mut content)?;
-            return Ok(content);
+            Ok(content)
         }
         #[cfg(not(unix))]
         {

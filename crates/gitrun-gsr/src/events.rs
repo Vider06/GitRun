@@ -80,6 +80,32 @@ impl SecurityEvent {
     }
 }
 
+fn validate_event_parent(parent: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(parent)?;
+    if !metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "event queue parent must be a real directory, not a symlink",
+        )
+        .into());
+    }
+    #[cfg(unix)]
+    {
+        let mode = metadata.permissions().mode();
+        // Permit sticky shared temp directories such as /tmp; the sticky bit
+        // prevents other users from replacing files they do not own. Other
+        // group/world-writable parents are not suitable for security events.
+        if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "event queue parent must not be group- or world-writable unless sticky",
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 /// Cross-process queue lock. Writers, rotation, and readers use the same
 /// sidecar lock so a reader cannot observe the queue between archive rename
 /// and the next append.
@@ -92,6 +118,7 @@ impl QueueLock {
             .filter(|parent| !parent.as_os_str().is_empty())
         {
             std::fs::create_dir_all(parent)?;
+            validate_event_parent(parent)?;
         }
         let mut lock_name = path.as_os_str().to_os_string();
         lock_name.push(".lock");
@@ -477,6 +504,26 @@ mod tests {
         let _ = std::fs::remove_file(&target);
         let _ = std::fs::remove_file(format!("{}.lock", path.display()));
         let _ = std::fs::remove_file(format!("{}.lock", hardlink_path.display()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn emit_rejects_symlinked_parent_directory() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-gsr-events-parent-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir(&real).unwrap();
+        symlink(&real, &link).unwrap();
+        let path = link.join("events.jsonl");
+        assert!(emit(&path, &SecurityEvent::new("test", Severity::Critical, "blocked")).is_err());
+        assert!(!real.join("events.jsonl").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[cfg(unix)]

@@ -107,6 +107,7 @@ impl MountRegistryLock {
     fn acquire(state_dir: &Path) -> Result<Self, String> {
         fs::create_dir_all(state_dir)
             .map_err(|error| format!("create mount registry lock directory: {error}"))?;
+        validate_mount_registry_directory(state_dir)?;
         let path = state_dir.join(MOUNT_REGISTRY_LOCK_FILE);
         let mut options = fs::OpenOptions::new();
         options.read(true).write(true).create(true);
@@ -119,16 +120,21 @@ impl MountRegistryLock {
         let file = options
             .open(&path)
             .map_err(|error| format!("open mount registry lock: {error}"))?;
-        if !file
+        let metadata = file
             .metadata()
-            .map_err(|error| format!("inspect mount registry lock: {error}"))?
-            .is_file()
-        {
+            .map_err(|error| format!("inspect mount registry lock: {error}"))?;
+        if !metadata.is_file() {
             return Err("mount registry lock path is not a regular file".into());
         }
         #[cfg(unix)]
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|error| format!("secure mount registry lock permissions: {error}"))?;
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() != 1 {
+                return Err("mount registry lock must not have hard links".into());
+            }
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|error| format!("secure mount registry lock permissions: {error}"))?;
+        }
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
             return Err(format!(
                 "lock GitDockRun mount registry: {}",

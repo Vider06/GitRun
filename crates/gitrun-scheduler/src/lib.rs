@@ -1051,9 +1051,14 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
     }
 
     if config.gsr_zizmor_enabled {
+        let invocation = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         let scratch_dir = std::path::PathBuf::from(&config.state_dir)
             .join("gsr-workflow-scratch")
-            .join(docker::sanitize(repo, '_'));
+            .join(repo_storage_key(repo))
+            .join(format!("{}-{invocation}", std::process::id()));
         if let Err(error) = write_scratch_workflows(&scratch_dir, &files) {
             emit_workflow_validation_warning(
                 &events_path,
@@ -1123,6 +1128,19 @@ fn emit_workflow_validation_warning(
     }
 }
 
+/// Collision-free filesystem key for repository identifiers. Replacing punctuation
+/// with a placeholder is not injective (for example, owner/repo names containing
+/// underscores can collide after replacing the slash), so security state must use
+/// the original bytes encoded losslessly.
+fn repo_storage_key(repo: &str) -> String {
+    let mut key = String::with_capacity(repo.len() * 2);
+    for byte in repo.bytes() {
+        use std::fmt::Write as _;
+        write!(&mut key, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    key
+}
+
 fn save_workflow_dock_requirements(
     state_dir: &str,
     repo: &str,
@@ -1130,7 +1148,7 @@ fn save_workflow_dock_requirements(
 ) -> std::io::Result<()> {
     let directory = std::path::Path::new(state_dir).join("workflow-dock-requirements");
     std::fs::create_dir_all(&directory)?;
-    let path = directory.join(format!("{}.json", docker::sanitize(repo, '_')));
+    let path = directory.join(format!("{}.json", repo_storage_key(repo)));
     if requests.is_empty() {
         match std::fs::remove_file(&path) {
             Ok(()) => return Ok(()),
@@ -1659,6 +1677,15 @@ fn utc_now() -> SimpleNow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repository_storage_keys_are_collision_free_for_sanitization_collisions() {
+        let first = "foo_bar/baz";
+        let second = "foo/bar_baz";
+        assert_eq!(docker::sanitize(first, '_'), docker::sanitize(second, '_'));
+        assert_ne!(repo_storage_key(first), repo_storage_key(second));
+        assert_eq!(repo_storage_key("owner/repo"), "6f776e65722f7265706f");
+    }
 
     #[test]
     fn dynamic_runner_labels_include_job_labels() {

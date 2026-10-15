@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,8 @@ pub enum StateError {
     Decode(#[from] serde_json::Error),
     #[error("invalid persisted scheduler state: {0}")]
     Invalid(String),
+    #[error("unsafe scheduler state path: {0}")]
+    UnsafePath(String),
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct StateFile {
@@ -47,6 +50,64 @@ struct StateFile {
 pub struct SchedulerState {
     path: PathBuf,
     data: StateFile,
+}
+
+fn validate_state_directory(path: &Path) -> Result<(), StateError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(StateError::UnsafePath(format!(
+            "{} must be a real directory",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let mode = metadata.mode();
+        if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+            return Err(StateError::UnsafePath(format!(
+                "{} is group/world-writable without the sticky bit",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_state_file_metadata(metadata: &fs::Metadata, path: &Path) -> Result<(), StateError> {
+    if !metadata.is_file() {
+        return Err(StateError::UnsafePath(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 || metadata.mode() & 0o022 != 0 {
+            return Err(StateError::UnsafePath(format!(
+                "{} must have one link and no group/world write permission",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    validate_state_file_metadata(&file.metadata()?, path)?;
+    let mut raw = String::new();
+    file.read_to_string(&mut raw)?;
+    Ok(Some(serde_json::from_str(&raw)?))
 }
 
 fn validate_state(data: &StateFile) -> Result<(), StateError> {
@@ -77,11 +138,17 @@ fn validate_state(data: &StateFile) -> Result<(), StateError> {
 impl SchedulerState {
     pub fn load(state_dir: &Path) -> Result<Self, StateError> {
         let path = state_dir.join("scheduler-state.json");
-        let data = match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StateFile::default(),
+        match fs::symlink_metadata(state_dir) {
+            Ok(_) => validate_state_directory(state_dir)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    path,
+                    data: StateFile::default(),
+                });
+            }
             Err(error) => return Err(error.into()),
-        };
+        }
+        let data = read_state_file(&path)?.unwrap_or_default();
         validate_state(&data)?;
         Ok(Self { path, data })
     }
@@ -94,6 +161,7 @@ impl SchedulerState {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
+        validate_state_directory(parent)?;
 
         let sequence = STATE_TMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let file_name = self
@@ -120,7 +188,9 @@ impl SchedulerState {
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
-        options.mode(0o600);
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         let mut file = options.open(&tmp)?;
         use std::io::Write;
         let write_result = (|| -> std::io::Result<()> {

@@ -230,7 +230,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("gitrun-gsr-pid-garbage-{}.pid", std::process::id()));
         std::fs::write(&path, "not-a-pid").unwrap();
-        assert_eq!(read_pid(&path), None);
+        assert!(read_pid(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }
 

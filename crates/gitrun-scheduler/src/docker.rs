@@ -1402,12 +1402,88 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = command.spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write as _;
-        stdin.write_all(input)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
     }
-    child.wait_with_output().map_err(DockerError::Spawn)
+
+    let mut child = command.spawn()?;
+    let stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command("docker exec did not expose stdin".into()));
+        }
+    };
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command("docker exec did not expose stdout".into()));
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command("docker exec did not expose stderr".into()));
+        }
+    };
+
+    // Writing input and draining both output streams must happen concurrently;
+    // otherwise a child that fills stdout/stderr before consuming stdin can deadlock.
+    let input = input.to_vec();
+    let stdin_thread = thread::spawn(move || {
+        use std::io::Write as _;
+        let mut stdin = stdin;
+        stdin.write_all(&input)
+    });
+    let stdout_thread = thread::spawn(move || read_bounded_output(stdout));
+    let stderr_thread = thread::spawn(move || read_bounded_output(stderr));
+    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                kill_command_group(child.id());
+                break status;
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                terminate_child(&mut child);
+                let _ = stdin_thread.join();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Command(format!(
+                    "docker exec timed out after {}s",
+                    DOCKER_COMMAND_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_child(&mut child);
+                let _ = stdin_thread.join();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Spawn(error));
+            }
+        }
+    };
+
+    let stdin_result = stdin_thread
+        .join()
+        .map_err(|_| DockerError::Command("docker stdin writer thread panicked".into()))?;
+    let stdout = stdout_thread
+        .join()
+        .map_err(|_| DockerError::Command("stdout reader thread panicked".into()))??;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))??;
+    if let Err(error) = stdin_result {
+        // A command that exited before consuming its bounded input is a failed
+        // operation; do not silently report success after a partial write.
+        return Err(DockerError::Spawn(error));
+    }
+    Ok(Output { status, stdout, stderr })
 }
 
 /// Executes a command in one managed container and forwards bounded stdout/stderr

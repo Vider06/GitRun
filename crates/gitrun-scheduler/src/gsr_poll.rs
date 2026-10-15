@@ -99,8 +99,17 @@ pub const DEFAULT_BAN_DURATION: Duration = Duration::from_secs(60 * 60);
 
 impl BanStore {
     pub fn load(state_dir: &Path) -> Result<Self, GsrPollError> {
-        validate_ban_state_directory(state_dir)?;
         let path = state_dir.join("gsr-bans.json");
+        match fs::symlink_metadata(state_dir) {
+            Ok(_) => validate_ban_state_directory(state_dir)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    path,
+                    data: BanFile::default(),
+                });
+            }
+            Err(error) => return Err(error.into()),
+        }
         let data = read_ban_file(&path)?.unwrap_or_default();
         Ok(Self { path, data })
     }
@@ -118,6 +127,7 @@ impl BanStore {
 
     fn lock(&self) -> Result<File, GsrPollError> {
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
         validate_ban_state_directory(parent)?;
         let lock_path = self.path.with_extension("json.lock");
         let mut options = OpenOptions::new();

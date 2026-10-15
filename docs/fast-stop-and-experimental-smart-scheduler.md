@@ -1,9 +1,9 @@
 # Fast Stop and Experimental Smart Scheduler
 
-**Status:** Proposal / design specification  
-**Target:** GitRun post-1.5.0 follow-up (likely 1.5.x or 1.6.0; release placement TBD)  
-**Scope:** Fast job cancellation, workflow telemetry, predictive workflow models, and bounded adaptive scheduling  
-**Implementation status:** Not implemented by this document
+**Status:** Mixed — Fast Stop implementation added to PR #83; Smart Scheduler remains a design proposal  
+**Target:** Fast Stop is being integrated into the v1.5.0 refactor branch; Smart Scheduler release placement remains TBD  
+**Scope:** Workflow-run force cancellation, workflow telemetry, predictive workflow models, and bounded adaptive scheduling  
+**Verification:** CI intentionally not used as a gate for this work; source and tests still require execution before release
 
 ## Goals
 
@@ -22,18 +22,23 @@ When a job is cancelled, the job can continue for a noticeable period before the
 
 The exact source of the delay must be verified with timestamped logs. Possible contributors include GitHub's cancellation propagation, the runner's processing of the cancellation message, step/job condition evaluation, a GitRun polling interval, a process that does not handle termination, or a container cleanup path. Do not assume that shortening GitRun's polling interval alone will solve a delay that occurs inside the GitHub Actions runner.
 
-### Desired behavior
+### Implemented path in PR #83
 
-- A user cancellation request immediately starts the cancellation path; it must not wait for the next ordinary scheduler poll.
-- GitRun should promptly request cancellation through the supported GitHub Actions API when applicable.
-- The implementation should investigate how to make the active runner process the cancellation promptly. Do not assume GitRun can directly force an internal runner condition evaluation unless a supported mechanism exists.
-- If safe and authorized, GitRun may also signal the exact process/container associated with the cancelled job as a local fast path. This must not affect unrelated jobs or containers.
-- Cancellation state must be observable: **Stop requested → Stopping → Stopped** (or a clearly reported timeout/failure).
-- **Stopped** must only be reported after process/container termination is confirmed, not merely after the API accepts the request.
-- Use a bounded graceful period followed by a controlled force-stop fallback if the workload does not exit.
+- The dashboard lists active workflow runs and exposes a **Fast Stop** action with an explicit confirmation dialog.
+- The CLI exposes `gitrun fast-stop <owner/repo> <run_id> --yes`; `--yes` is required so the destructive action is never triggered accidentally in a script or terminal.
+- Both entry points accept only repositories already present in GitRun's configured repository allowlist and reject a zero run ID.
+- The scheduler's GitHub client uses GitHub's supported `POST /repos/{owner}/{repo}/actions/runs/{run_id}/force-cancel` endpoint. This is designed for runs that remain stuck in cancellation, including workflows whose conditions delay ordinary cancellation.
+- **Important scope boundary:** GitHub exposes this force-cancel API at *workflow-run* scope, not individual-job scope. Fast Stop therefore cancels every job in the selected run. The dashboard says this before the user confirms; it must not be described as a single-job kill.
+- A successful API response means GitHub accepted the force-cancel request; it does **not** prove every runner process has exited. GitRun does not directly kill Docker containers in this first implementation, avoiding unsafe guesses about job-to-container identity and permanent-runner lifecycle. The UI refreshes the snapshot and surfaces API failures.
+
+### Remaining behavior and safety invariants
+
+- Cancellation begins directly from the user action and does not wait for the ordinary scheduler polling interval.
+- If the GitHub API is unavailable or permissions are insufficient, the request fails visibly; GitRun must not claim that cancellation succeeded.
+- Do not claim a fixed cancellation latency independent of GitHub's own propagation and runner behavior. Capture timestamps and measure p50/p95/max before promising latency improvements.
 - Preserve cleanup, event/log delivery, and state reconciliation. A cancelled job must not leave a runner incorrectly marked busy or permanently block capacity.
-- Never remove a permanent runner container merely because one job was cancelled. Reuse, quarantine, or recreate it only according to the established lifecycle policy.
-- Make repeated cancellation requests idempotent and handle races with job completion, runner replacement, GTUU updates, and scheduler reconciliation.
+- Never remove or restart a permanent runner container merely because a workflow was cancelled. Local process/container termination would require a separate, verified job-to-container binding and lifecycle protocol.
+- Repeated force-cancel requests should remain safe; races with run completion, GTUU updates, and scheduler reconciliation must be covered by tests.
 
 ### Investigation and implementation plan
 

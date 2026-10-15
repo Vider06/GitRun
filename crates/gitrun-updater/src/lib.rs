@@ -1232,18 +1232,32 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
         }
     };
     if command.0 == "apt-get" {
-        let mut apt = Command::new("apt-get");
+        let apt_get = linux_system_command("apt-get")
+            .ok_or_else(|| UpdateError::Command("trusted /usr/bin/apt-get was not found".into()))?;
+        let mut apt = Command::new(apt_get);
         apt.args(["update"]);
         if !is_root() {
-            apt = Command::new("sudo");
-            apt.args(["apt-get", "update"]);
+            let sudo = linux_system_command("sudo")
+                .ok_or_else(|| UpdateError::Command("trusted /usr/bin/sudo was not found".into()))?;
+            apt = Command::new(sudo);
+            apt.args([apt_get, "update"]);
         }
         run_command(&mut apt)?;
     }
-    let mut update = if command.0 == "apt-get" && !is_root() {
-        let mut sudo = Command::new("sudo");
-        sudo.arg("apt-get").args(&command.1);
-        sudo
+    let mut update = if command.0 == "apt-get" {
+        let apt_get = linux_system_command("apt-get")
+            .ok_or_else(|| UpdateError::Command("trusted /usr/bin/apt-get was not found".into()))?;
+        if is_root() {
+            let mut apt = Command::new(apt_get);
+            apt.args(&command.1);
+            apt
+        } else {
+            let sudo = linux_system_command("sudo")
+                .ok_or_else(|| UpdateError::Command("trusted /usr/bin/sudo was not found".into()))?;
+            let mut apt = Command::new(sudo);
+            apt.arg(apt_get).args(&command.1);
+            apt
+        }
     } else {
         let mut cmd = Command::new(command.0);
         cmd.args(&command.1);
@@ -1296,11 +1310,23 @@ fn dependency_command(name: &str) -> Option<&'static str> {
     }
 }
 
+fn linux_system_command(name: &str) -> Option<&'static str> {
+    match name {
+        "apt-get" => Some("/usr/bin/apt-get"),
+        "sudo" => Some("/usr/bin/sudo"),
+        "id" => Some("/usr/bin/id"),
+        _ => None,
+    }
+}
+
 fn is_root() -> bool {
     if cfg!(windows) {
         return false;
     }
-    Command::new("id")
+    let Some(id) = linux_system_command("id") else {
+        return false;
+    };
+    Command::new(id)
         .args(["-u"])
         .output()
         .map(|output| {
@@ -2023,6 +2049,14 @@ mod tests {
             runner_image: None,
             repository: Some("Vider06/GitRun".into()),
         }
+    }
+
+    #[test]
+    fn privileged_linux_package_commands_use_fixed_system_paths() {
+        assert_eq!(linux_system_command("apt-get"), Some("/usr/bin/apt-get"));
+        assert_eq!(linux_system_command("sudo"), Some("/usr/bin/sudo"));
+        assert_eq!(linux_system_command("id"), Some("/usr/bin/id"));
+        assert_eq!(linux_system_command("custom"), None);
     }
 
     #[test]

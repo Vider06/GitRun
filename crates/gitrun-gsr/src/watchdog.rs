@@ -1,27 +1,14 @@
-//! Process watchdog: the first concrete piece of GSR's "external, separate
-//! process" design (decided explicitly with the operator: a thread inside
-//! the watched process can't observe that process's own hard crash — only a
-//! genuinely separate process can).
+//! External watchdog for the scheduler process.
 //!
-//! What this does today: polls whether a PID is alive, and when it
-//! disappears unexpectedly (no clean shutdown marker written), logs the
-//! event and attempts to show an error to the operator — graphically if
-//! possible, falling back to a terminal message, always to the log. This is
-//! the "crash/error handler" half of GSR's scope; the "hardening" half
-//! (container escape prevention, command whitelisting) is a separate,
-//! larger piece of work not started in this pass — see the crate-level docs
-//! for the full scope split.
-//!
-//! PID liveness check: same `kill(pid, 0)` technique already used in
-//! `gitrun-scheduler`'s GTUU stale-lock detection (signal 0 delivers
-//! nothing, only checks existence/permission — see that module for the
-//! detailed rationale), duplicated here rather than shared because pulling
-//! in `gitrun-scheduler` as a dependency of `gitrun-gsr` would be backwards:
-//! GSR is meant to supervise the scheduler, not depend on it.
+//! The watchdog monitors a PID file, records unexpected exits as critical
+//! GSR events, and attempts a desktop notification with a terminal fallback.
+//! PID-file reads fail explicitly on malformed, symlinked, non-regular or
+//! hard-linked files so a corrupted file cannot be mistaken for clean shutdown.
 
 use crate::events::{self, Severity};
 use std::path::Path;
 use std::process::Command;
+use std::io::Read;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -68,33 +55,101 @@ pub struct WatchConfig {
 /// process's main loop.
 pub fn run(config: &WatchConfig, should_stop: impl Fn() -> bool) {
     let mut last_known_pid: Option<u32> = None;
+    let mut last_pid_file_error: Option<String> = None;
 
     while !should_stop() {
         match read_pid(&config.pid_file) {
-            Some(pid) => {
+            Ok(Some(pid)) => {
+                last_pid_file_error = None;
                 if process_is_alive(pid) {
                     last_known_pid = Some(pid);
                 } else if last_known_pid == Some(pid) {
-                    // The PID file still names a process we previously saw
-                    // alive, and now it's gone without the file having been
-                    // cleaned up — that's an unclean exit (crash), not a
-                    // deliberate shutdown (which removes the file).
                     handle_crash(config, pid);
                     last_known_pid = None;
                 }
             }
-            None => {
-                // No PID file: either not started yet, or shut down cleanly.
-                // Neither is a crash; just wait for the next poll.
+            Ok(None) => {
+                last_pid_file_error = None;
                 last_known_pid = None;
+            }
+            Err(error) => {
+                let detail = error.to_string();
+                if last_pid_file_error.as_deref() != Some(detail.as_str()) {
+                    handle_pid_file_error(config, &detail);
+                    last_pid_file_error = Some(detail);
+                }
             }
         }
         std::thread::sleep(config.poll_interval);
     }
 }
 
-fn read_pid(path: &Path) -> Option<u32> {
-    std::fs::read_to_string(path).ok()?.trim().parse().ok()
+fn read_pid(path: &Path) -> Result<Option<u32>, std::io::Error> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "watchdog PID file must be a regular file without hard links",
+            ));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        return parse_pid_contents(&raw).map(Some);
+    }
+    #[cfg(not(unix))]
+    {
+        let mut file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if !file.metadata()?.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "watchdog PID file must be a regular file",
+            ));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        parse_pid_contents(&raw).map(Some)
+    }
+}
+
+fn parse_pid_contents(raw: &str) -> Result<u32, std::io::Error> {
+    let pid = raw.trim().parse::<u32>().map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "watchdog PID file is malformed")
+    })?;
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "watchdog PID file contains an out-of-range PID",
+        ));
+    }
+    Ok(pid)
+}
+
+fn handle_pid_file_error(config: &WatchConfig, detail: &str) {
+    let message = format!(
+        "cannot verify {} process because PID file {} is invalid: {detail}",
+        config.watched_name,
+        config.pid_file.display()
+    );
+    let event = crate::events::SecurityEvent::new("gsr-watchdog", Severity::Critical, message.clone());
+    if let Err(error) = events::emit(&config.events_path, &event) {
+        eprintln!("gitrun-gsr: CRITICAL: {message} (additionally failed to write event log: {error})");
+    }
+    show_error(&message);
 }
 
 fn handle_crash(config: &WatchConfig, pid: u32) {
@@ -133,7 +188,7 @@ fn show_error(message: &str) {
 /// headless server, which is a completely normal GitRun deployment target,
 /// not an error condition in itself).
 fn try_graphical_notification(message: &str) -> bool {
-    Command::new("notify-send")
+    Command::new("/usr/bin/notify-send")
         .arg("GitRun — process crashed")
         .arg(message)
         .status()
@@ -158,7 +213,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("gitrun-gsr-pid-test-{}.pid", std::process::id()));
         std::fs::write(&path, "12345\n").unwrap();
-        assert_eq!(read_pid(&path), Some(12345));
+        assert_eq!(read_pid(&path).unwrap(), Some(12345));
         let _ = std::fs::remove_file(&path);
     }
 
@@ -167,7 +222,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("gitrun-gsr-pid-missing-{}.pid", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        assert_eq!(read_pid(&path), None);
+        assert_eq!(read_pid(&path).unwrap(), None);
     }
 
     #[test]
@@ -177,6 +232,21 @@ mod tests {
         std::fs::write(&path, "not-a-pid").unwrap();
         assert_eq!(read_pid(&path), None);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pid_file_symlink_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("gitrun-gsr-pid-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        let link = dir.join("watch.pid");
+        std::fs::write(&target, "12345").unwrap();
+        symlink(&target, &link).unwrap();
+        assert!(read_pid(&link).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

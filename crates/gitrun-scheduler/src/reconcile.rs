@@ -1008,7 +1008,9 @@ mod tests {
 
         let actions = plan(&input);
         assert!(
-            actions.iter().all(|action| !matches!(action, Action::CreateRunner { .. })),
+            actions
+                .iter()
+                .all(|action| !matches!(action, Action::CreateRunner { .. })),
             "seven ordinary runners plus one reserved Dock already consume max_runners"
         );
     }
@@ -1030,9 +1032,20 @@ mod tests {
         let actions = plan(&input);
         let permanent_creates = actions
             .iter()
-            .filter(|action| matches!(action, Action::CreateRunner { permanent: true, .. }))
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
+                )
+            })
             .count();
-        assert_eq!(permanent_creates, 3, "reserved Dock containers are not permanent warm-pool runners");
+        assert_eq!(
+            permanent_creates, 3,
+            "reserved Dock containers are not permanent warm-pool runners"
+        );
         assert!(
             2 + input.containers.len() + permanent_creates <= input.max_runners as usize,
             "reserved plus existing plus planned runners must respect the global maximum"

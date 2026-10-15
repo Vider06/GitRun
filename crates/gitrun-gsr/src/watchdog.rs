@@ -85,6 +85,7 @@ pub fn run(config: &WatchConfig, should_stop: impl Fn() -> bool) {
 }
 
 fn read_pid(path: &Path) -> Result<Option<u32>, std::io::Error> {
+    validate_pid_parent(path)?;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -124,6 +125,34 @@ fn read_pid(path: &Path) -> Result<Option<u32>, std::io::Error> {
         file.read_to_string(&mut raw)?;
         parse_pid_contents(&raw).map(Some)
     }
+}
+
+fn validate_pid_parent(path: &Path) -> Result<(), std::io::Error> {
+    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let metadata = match std::fs::symlink_metadata(parent) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "watchdog PID parent must be a real directory, not a symlink",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode();
+        if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "watchdog PID parent must not be group- or world-writable unless sticky",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn parse_pid_contents(raw: &str) -> Result<u32, std::io::Error> {
@@ -232,6 +261,22 @@ mod tests {
         std::fs::write(&path, "not-a-pid").unwrap();
         assert!(read_pid(&path).is_err());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pid_file_under_symlinked_parent_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("gitrun-gsr-pid-parent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("watch.pid"), "12345").unwrap();
+        symlink(&real, &link).unwrap();
+        assert!(read_pid(&link.join("watch.pid")).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[cfg(unix)]

@@ -505,7 +505,11 @@ pub fn restart_service() -> Result<(), String> {
 }
 
 fn run_systemctl(action: &str, unit: &str) -> Result<(), String> {
-    let mut command = Command::new("systemctl");
+    let systemctl = Path::new("/usr/bin/systemctl");
+    if !is_trusted_root_executable(systemctl) {
+        return Err("trusted /usr/bin/systemctl executable was not found".into());
+    }
+    let mut command = Command::new(systemctl);
     command.arg(action);
     if action != "daemon-reload" {
         command.arg(unit);
@@ -529,7 +533,11 @@ fn command_succeeds(program: &str, args: &[&str]) -> bool {
 }
 
 fn is_root() -> bool {
-    command_succeeds("id", &["-u", "0"])
+    Command::new("/usr/bin/id")
+        .args(["-u", "0"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 pub fn launch_dashboard() -> Result<std::process::ExitStatus, String> {

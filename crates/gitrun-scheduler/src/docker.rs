@@ -1259,7 +1259,12 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
     while export_status.is_none() || extract_status.is_none() {
         if export_status.is_none() {
             match export_child.try_wait() {
-                Ok(status) => export_status = status,
+                Ok(status) => {
+                    if status.is_some() {
+                        kill_command_group(export_child.id());
+                    }
+                    export_status = status;
+                }
                 Err(error) => {
                     terminate_child(&mut export_child);
                     terminate_child(&mut extract_child);
@@ -1273,7 +1278,12 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         }
         if extract_status.is_none() {
             match extract_child.try_wait() {
-                Ok(status) => extract_status = status,
+                Ok(status) => {
+                    if status.is_some() {
+                        kill_command_group(extract_child.id());
+                    }
+                    extract_status = status;
+                }
                 Err(error) => {
                     terminate_child(&mut export_child);
                     terminate_child(&mut extract_child);

@@ -420,8 +420,7 @@ fn run_bounded_command(
                 ));
             }
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_analyzer(&mut child);
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
                 return Err(error);

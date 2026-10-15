@@ -45,7 +45,7 @@ use crate::state::SchedulerState;
 use crate::vm_resolution::VmResolutionRegistry;
 use gitrun_core::{Config, GitHubAuth, StateStore};
 use gitrun_vault::Vault;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -572,11 +572,7 @@ pub fn zizmor_is_installed() -> bool {
 pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
     let mut version_command = Command::new("zizmor");
     version_command.arg("--version");
-    match run_bounded_command(
-        version_command,
-        Duration::from_secs(10),
-        64 * 1024,
-    ) {
+    match run_bounded_command(version_command, Duration::from_secs(10), 64 * 1024) {
         Ok(output) if output.status.success() => return Ok(InstallOutcome::AlreadyInstalled),
         Ok(_) => {
             // A broken installed binary can be repaired by the pinned install below.

@@ -38,6 +38,8 @@ pub enum GitHubError {
     RateLimited { retry_after: Option<Duration> },
     #[error("GitHub API error {status}: {detail}")]
     Api { status: u16, detail: String },
+    #[error("GitHub pagination repeated a previously visited URL: {0}")]
+    PaginationLoop(String),
     #[error("unable to decode workflow content for {file}: {detail}")]
     WorkflowContentDecode { file: String, detail: String },
     #[error("unexpected response shape from GitHub: {0}")]
@@ -50,10 +52,7 @@ pub type Result<T> = std::result::Result<T, GitHubError>;
 /// infinite pagination loop. URLs have already been restricted to api.github.com.
 fn record_page_url(seen: &mut HashSet<String>, url: &str) -> Result<()> {
     if !seen.insert(url.to_owned()) {
-        return Err(GitHubError::Api {
-            status: 502,
-            detail: format!("GitHub pagination repeated a previously visited URL: {url}"),
-        });
+        return Err(GitHubError::PaginationLoop(url.to_owned()));
     }
     Ok(())
 }
@@ -1039,7 +1038,7 @@ mod tests {
         let mut seen = HashSet::new();
         assert!(record_page_url(&mut seen, "https://api.github.com/resource?page=1").is_ok());
         let error = record_page_url(&mut seen, "https://api.github.com/resource?page=1").unwrap_err();
-        assert!(matches!(error, GitHubError::Api { status: 502, .. }));
+        assert!(matches!(error, GitHubError::PaginationLoop(url) if url.ends_with("page=1")));
     }
 
     #[test]

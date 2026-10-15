@@ -1691,8 +1691,8 @@ name = "gitrun-setup"
 version = "0.8.0"
 dependencies = [
  "gitrun-core",
- "libc",
  "gitrun-updater",
+ "libc",
  "thiserror 2.0.21",
 ]
 

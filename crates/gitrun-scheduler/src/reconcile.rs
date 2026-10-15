@@ -992,11 +992,15 @@ mod tests {
         input.runners.clear();
         input.recovery_age = vec![("orphaned".into(), Duration::from_secs(59))];
         let actions = plan(&input);
-        assert!(!actions.iter().any(|action| matches!(action, Action::RecreateOrphaned { name, .. } if name == "orphaned")));
+        assert!(!actions.iter().any(
+            |action| matches!(action, Action::RecreateOrphaned { name, .. } if name == "orphaned")
+        ));
 
         input.recovery_age = vec![("orphaned".into(), Duration::from_secs(60))];
         let actions = plan(&input);
-        assert!(actions.iter().any(|action| matches!(action, Action::RecreateOrphaned { name, .. } if name == "orphaned")));
+        assert!(actions.iter().any(
+            |action| matches!(action, Action::RecreateOrphaned { name, .. } if name == "orphaned")
+        ));
     }
 
     #[test]

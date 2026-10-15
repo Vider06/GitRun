@@ -4715,14 +4715,77 @@ struct RegisteredPath {
     updated_at: u64,
 }
 
+fn validate_register_registry_parent(path: &Path) -> Result<(), ExecutionError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| failed("register registry path has no parent directory"))?;
+    match fs::symlink_metadata(parent) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(failed("register registry parent must be a real directory"));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o022 != 0 {
+                    return Err(failed("register registry parent must not be group- or world-writable"));
+                }
+            }
+            Ok(())
+        }
+        Err(error) => Err(failed(format!("inspect register registry parent: {error}"))),
+    }
+}
+
+fn read_secure_register_registry(path: &Path) -> Result<Option<String>, ExecutionError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(failed(format!("open register registry safely: {error}"))),
+        };
+        let metadata = file.metadata().map_err(|error| failed(error.to_string()))?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(failed("register registry must be a regular file without hard links"));
+        }
+        if metadata.permissions().mode() & 0o022 != 0 {
+            return Err(failed("register registry must not be group- or world-writable"));
+        }
+        let mut raw = String::new();
+        std::io::Read::read_to_string(&mut file, &mut raw)
+            .map_err(|error| failed(format!("read register registry: {error}")))?;
+        return Ok(Some(raw));
+    }
+    #[cfg(not(unix))]
+    {
+        let mut file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(failed(format!("open register registry: {error}"))),
+        };
+        if !file.metadata().map_err(|error| failed(error.to_string()))?.is_file() {
+            return Err(failed("register registry must be a regular file"));
+        }
+        let mut raw = String::new();
+        std::io::Read::read_to_string(&mut file, &mut raw)
+            .map_err(|error| failed(format!("read register registry: {error}")))?;
+        Ok(Some(raw))
+    }
+}
+
 impl RegisterRegistry {
     fn load(path: &Path) -> Result<Self, ExecutionError> {
-        match fs::read_to_string(path) {
-            Ok(raw) => serde_json::from_str(&raw)
-                .map_err(|error| failed(format!("decode register registry: {error}"))),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(failed(format!("read register registry: {error}"))),
-        }
+        validate_register_registry_parent(path)?;
+        let Some(raw) = read_secure_register_registry(path)? else {
+            return Ok(Self::default());
+        };
+        serde_json::from_str(&raw)
+            .map_err(|error| failed(format!("decode register registry: {error}")))
     }
 
     fn upsert(&mut self, entry: RegisteredPath) {
@@ -4741,17 +4804,40 @@ impl RegisterRegistry {
     }
 
     fn save(&self, path: &Path) -> Result<(), ExecutionError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| failed(format!("create register registry directory: {error}")))?;
-        }
-        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let parent = path
+            .parent()
+            .ok_or_else(|| failed("register registry path has no parent directory"))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| failed(format!("create register registry directory: {error}")))?;
+        validate_register_registry_parent(path)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let tmp = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), nonce));
         let raw = serde_json::to_vec_pretty(self)
             .map_err(|error| failed(format!("encode register registry: {error}")))?;
-        fs::write(&tmp, raw)
-            .map_err(|error| failed(format!("write register registry: {error}")))?;
-        fs::rename(&tmp, path)
-            .map_err(|error| failed(format!("commit register registry: {error}")))?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&tmp)
+            .map_err(|error| failed(format!("create register registry temp file: {error}")))?;
+        if let Err(error) = file.write_all(&raw).and_then(|()| file.sync_all()) {
+            let _ = fs::remove_file(&tmp);
+            return Err(failed(format!("write register registry: {error}")));
+        }
+        if let Err(error) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(failed(format!("commit register registry: {error}")));
+        }
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| failed(format!("sync register registry directory: {error}")))?;
         Ok(())
     }
 }

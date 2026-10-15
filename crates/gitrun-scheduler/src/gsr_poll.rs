@@ -34,6 +34,7 @@ use gitrun_core::command_policy::{CommandPolicy, Decision, ViolationAction};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -44,6 +45,8 @@ pub enum GsrPollError {
     Io(#[from] std::io::Error),
     #[error("invalid ban state file: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("unsafe GSR ban state path: {0}")]
+    UnsafePath(String),
 }
 
 /// One violation found on a poll tick, for logging/events — deliberately
@@ -96,12 +99,9 @@ pub const DEFAULT_BAN_DURATION: Duration = Duration::from_secs(60 * 60);
 
 impl BanStore {
     pub fn load(state_dir: &Path) -> Result<Self, GsrPollError> {
+        validate_ban_state_directory(state_dir)?;
         let path = state_dir.join("gsr-bans.json");
-        let data = match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BanFile::default(),
-            Err(error) => return Err(error.into()),
-        };
+        let data = read_ban_file(&path)?.unwrap_or_default();
         Ok(Self { path, data })
     }
 
@@ -117,26 +117,26 @@ impl BanStore {
     }
 
     fn lock(&self) -> Result<File, GsrPollError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        validate_ban_state_directory(parent)?;
         let lock_path = self.path.with_extension("json.lock");
-        let lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(lock_path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let lock = options.open(&lock_path)?;
+        validate_ban_file_metadata(&lock.metadata()?, &lock_path)?;
         lock.lock()?;
         Ok(lock)
     }
 
     fn reload_from_disk(&mut self) -> Result<(), GsrPollError> {
-        self.data = match fs::read_to_string(&self.path) {
-            Ok(raw) => serde_json::from_str(&raw)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BanFile::default(),
-            Err(error) => return Err(error.into()),
-        };
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        validate_ban_state_directory(parent)?;
+        self.data = read_ban_file(&self.path)?.unwrap_or_default();
         Ok(())
     }
 
@@ -206,6 +206,67 @@ impl BanStore {
             .get(repo)
             .is_some_and(|&until| until > now_secs())
     }
+}
+
+fn validate_ban_state_directory(path: &Path) -> Result<(), GsrPollError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(GsrPollError::UnsafePath(format!(
+            "{} must be a real directory",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let mode = metadata.mode();
+        if mode & 0o022 != 0 && !(mode & 0o1000 != 0) {
+            return Err(GsrPollError::UnsafePath(format!(
+                "{} is group/world-writable without the sticky bit",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_ban_file_metadata(metadata: &fs::Metadata, path: &Path) -> Result<(), GsrPollError> {
+    if !metadata.is_file() {
+        return Err(GsrPollError::UnsafePath(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 || metadata.mode() & 0o022 != 0 {
+            return Err(GsrPollError::UnsafePath(format!(
+                "{} must have one link and no group/world write permission",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn read_ban_file(path: &Path) -> Result<Option<BanFile>, GsrPollError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    validate_ban_file_metadata(&file.metadata()?, path)?;
+    let mut raw = String::new();
+    file.read_to_string(&mut raw)?;
+    Ok(Some(serde_json::from_str(&raw)?))
 }
 
 fn now_secs() -> u64 {

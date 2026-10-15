@@ -42,12 +42,23 @@ fn real_shell_for_invocation(invocation: &str) -> &'static str {
 /// supervisor. A disabled master switch intentionally becomes an empty
 /// policy rather than a special execution path, so the two layers keep the
 /// same semantics.
-fn policy_for_config(config: &gitrun_core::Config) -> CommandPolicy {
-    config.command_policy().unwrap_or_else(|| CommandPolicy {
-        baseline_blacklist: gitrun_core::PatternList::default(),
-        user_blacklist: gitrun_core::PatternList::default(),
-        user_whitelist: gitrun_core::PatternList::default(),
-    })
+fn policy_for_config(config: &gitrun_core::Config) -> Result<CommandPolicy, String> {
+    if let Some(policy) = config.command_policy() {
+        return Ok(policy);
+    }
+    if config.gsr_allow_unsafe_runner {
+        // Disabling the command policy is only accepted with the explicit
+        // unsafe-runner opt-in; the disabled state is never silent.
+        return Ok(CommandPolicy {
+            baseline_blacklist: gitrun_core::PatternList::default(),
+            user_blacklist: gitrun_core::PatternList::default(),
+            user_whitelist: gitrun_core::PatternList::default(),
+        });
+    }
+    Err(
+        "GSR command policy is disabled; set GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true to explicitly opt in to this unsafe mode"
+            .into(),
+    )
 }
 
 /// Extracts the command represented by a shell invocation, from sh -c
@@ -91,7 +102,17 @@ pub fn decide(policy: &CommandPolicy, args: &[String], invocation: &str) -> Agen
 /// whole Actions runner process tree instead.
 pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
     let args: Vec<String> = env::args().skip(1).collect();
-    let policy = policy_for_config(config);
+    let policy = match policy_for_config(config) {
+        Ok(policy) => policy,
+        Err(message) => {
+            eprintln!("gitrun-gsr-agent: {message}");
+            let event = SecurityEvent::new("gsr-agent", Severity::Critical, message.clone());
+            if let Err(write_error) = events::emit(events_path, &event) {
+                eprintln!("gitrun-gsr-agent: additionally failed to write policy event: {write_error}");
+            }
+            return 125;
+        }
+    };
     let invocation = env::args().next().unwrap_or_else(|| "sh".to_owned());
 
     match decide(&policy, &args, &invocation) {
@@ -133,7 +154,17 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
 /// falling back to the weaker shell layer would recreate the bypass this
 /// supervisor is specifically meant to close.
 pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
-    let policy = policy_for_config(config);
+    let policy = match policy_for_config(config) {
+        Ok(policy) => policy,
+        Err(message) => {
+            eprintln!("gitrun-gsr-agent: {message}");
+            let event = SecurityEvent::new("gsr-exec-supervisor", Severity::Critical, message.clone());
+            if let Err(write_error) = events::emit(events_path, &event) {
+                eprintln!("gitrun-gsr-agent: additionally failed to write policy event: {write_error}");
+            }
+            return 125;
+        }
+    };
     match crate::exec_supervisor::run_supervisor(events_path, &policy) {
         Ok(code) => code,
         Err(error) => {
@@ -223,13 +254,27 @@ mod tests {
     }
 
     #[test]
-    fn policy_disabled_is_empty_but_still_shared() {
+    fn disabled_policy_fails_closed_without_explicit_unsafe_opt_in() {
         let config = gitrun_core::Config {
             gsr_command_policy_enabled: false,
             ..gitrun_core::Config::default()
         };
+        assert!(policy_for_config(&config)
+            .expect_err("disabled policy must fail closed")
+            .contains("GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true"));
+    }
+
+    #[test]
+    fn disabled_policy_requires_explicit_unsafe_opt_in() {
+        let config = gitrun_core::Config {
+            gsr_command_policy_enabled: false,
+            gsr_allow_unsafe_runner: true,
+            ..gitrun_core::Config::default()
+        };
         assert_eq!(
-            policy_for_config(&config).evaluate("sudo rm -rf /"),
+            policy_for_config(&config)
+                .expect("explicit unsafe opt-in should be accepted")
+                .evaluate("sudo rm -rf /"),
             Decision::Allowed
         );
     }

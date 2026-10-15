@@ -1275,6 +1275,7 @@ fn main() {
             queued,
         } => run_desired(min, max, busy, queued),
         Command::Status { runner } => run_status(runner, &mut presenter),
+        Command::FastStop { repository, run_id, yes: _ } => run_fast_stop(&repository, run_id),
         Command::Setup { terminal } => {
             if terminal {
                 match terminal_setup_command(&mut presenter) {
@@ -1377,6 +1378,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
     match command {
         Command::Config | Command::Settings => ValidationState::Reading,
         Command::Desired { .. } => ValidationState::Working,
+        Command::FastStop { .. } => ValidationState::Working,
         Command::Setup { .. } | Command::InstallRoot { .. } => ValidationState::Setup,
         Command::Cat => ValidationState::Ready,
         Command::Connect { .. } => ValidationState::Connecting,
@@ -1456,6 +1458,16 @@ enum Command {
         /// GitHub Actions runner ID.
         #[arg(long)]
         runner: u64,
+    },
+    /// Immediately force-cancel an entire GitHub Actions workflow run (all jobs in that run).
+    FastStop {
+        /// Repository in owner/repository form; must be configured in GitRun.
+        repository: String,
+        /// GitHub Actions workflow run ID.
+        run_id: u64,
+        /// Required acknowledgement that the entire workflow run will be cancelled.
+        #[arg(long, required = true)]
+        yes: bool,
     },
     /// Check dependencies and prepare config/state/log directories.
     Setup {
@@ -1607,6 +1619,41 @@ fn build_status_github_client(
             connect_timeout,
             request_timeout,
         )?),
+    }
+}
+
+fn run_fast_stop(repository: &str, run_id: u64) -> i32 {
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("GitRun fast-stop: could not load configuration: {error}");
+            return 2;
+        }
+    };
+    if !config.repositories.iter().any(|configured| configured == repository) {
+        eprintln!("GitRun fast-stop: refusing repository {repository:?}; it is not in the configured repository allowlist");
+        return 2;
+    }
+    if run_id == 0 {
+        eprintln!("GitRun fast-stop: workflow run ID must be greater than zero");
+        return 2;
+    }
+    let client = match build_status_github_client(&config) {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("GitRun fast-stop: GitHub authentication failed: {error}");
+            return 1;
+        }
+    };
+    match client.force_cancel_workflow_run(repository, run_id) {
+        Ok(()) => {
+            println!("GitRun fast-stop: GitHub accepted force-cancellation for workflow run {run_id} in {repository}. All jobs in that workflow run are affected.");
+            0
+        }
+        Err(error) => {
+            eprintln!("GitRun fast-stop: force-cancellation failed for workflow run {run_id} in {repository}: {error}");
+            1
+        }
     }
 }
 
@@ -2570,6 +2617,12 @@ mod internal_lifecycle_command_tests {
             "--no-cat must remain available before internal commands"
         );
         cli.command.expect("internal command must be selected")
+    }
+
+    #[test]
+    fn fast_stop_requires_explicit_confirmation() {
+        assert!(Cli::try_parse_from(["gitrun", "fast-stop", "owner/repo", "123"]).is_err());
+        assert!(Cli::try_parse_from(["gitrun", "fast-stop", "owner/repo", "123", "--yes"]).is_ok());
     }
 
     #[test]

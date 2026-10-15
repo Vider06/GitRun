@@ -646,7 +646,7 @@ fn read_private_vault_file(path: &Path, label: &str) -> Result<String> {
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         let mut raw = String::new();
         file.read_to_string(&mut raw)?;
-        return Ok(raw);
+        Ok(raw)
     }
     #[cfg(not(unix))]
     {
@@ -710,9 +710,9 @@ fn read_master_key(path: &Path) -> Result<[u8; 32]> {
         if bytes.len() != 32 {
             return Err(VaultError::InvalidMasterKey(bytes.len()));
         }
-        return bytes
+        bytes
             .try_into()
-            .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()));
+            .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
     }
     #[cfg(not(unix))]
     {

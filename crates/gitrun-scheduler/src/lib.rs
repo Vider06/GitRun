@@ -601,6 +601,33 @@ fn reconcile_repo(
         .cloned()
         .collect();
     let runners = client.list_runners(repo)?;
+    // A runner registration can disappear while its job is still reported as
+    // in progress. Query only these rare orphan cases and mark the planner
+    // view busy when GitHub still assigns an active job to that runner name;
+    // this prevents recovery from killing a job based on inconsistent snapshots.
+    let mut planner_runners: Vec<RunnerView> = runners
+        .iter()
+        .map(|runner| RunnerView {
+            name: runner.name.clone(),
+            online: runner.is_online(),
+            busy: runner.busy,
+        })
+        .collect();
+    for container in plan_containers.iter().filter(|container| {
+        container.status.eq_ignore_ascii_case("running")
+            && !runners.iter().any(|runner| runner.name == container.name)
+    }) {
+        if client
+            .find_active_workflow_job_for_runner(repo, &container.name)?
+            .is_some()
+        {
+            planner_runners.push(RunnerView {
+                name: container.name.clone(),
+                online: false,
+                busy: true,
+            });
+        }
+    }
     // Was: client.queued_self_hosted_jobs(repo)? (count only). Switched to
     // the labels-carrying variant so Logic Containers can route dynamic
     // runners per job; `queued_jobs` below is just this list's length, so
@@ -651,24 +678,15 @@ fn reconcile_repo(
         }
     }
 
-    // Bug fix: a container being tracked as "needs recovery" (via a prior
-    // RestartUnresponsive) that becomes healthy again (online and not busy)
-    // on its own, without ever going through RecreateOrphaned, previously
-    // never had its recovery_since entry cleared — plan()'s "healthy, nothing
-    // to do" branch doesn't emit any Action for it, and execute() only clears
-    // recovery on RemoveExited/RecreateOrphaned. That stale timestamp would
-    // then make a *future*, unrelated recovery episode for the same
-    // container look like it's been ongoing since the old episode, defeating
-    // the cooldown logic. Clear it here, once, based on the actual observed
-    // health, independent of what plan() decides to do this cycle.
+    // Seed recovery cooldowns from the first observed unhealthy snapshot,
+    // including missing registrations. A fresh offline/orphan observation
+    // must not trigger an immediate destructive restart/recreation.
     for name in &live_names {
-        let healthy = runners
-            .iter()
-            .find(|r| &r.name == name)
-            .map(|r| r.is_online() && !r.busy)
-            .unwrap_or(false);
-        if healthy {
-            state.clear_recovery(name);
+        match runners.iter().find(|runner| &runner.name == name) {
+            Some(runner) if runner.is_online() && !runner.busy => state.clear_recovery(name),
+            Some(runner) if !runner.busy => { state.recovery_age(name); }
+            None => { state.recovery_age(name); }
+            _ => {}
         }
     }
 
@@ -679,14 +697,7 @@ fn reconcile_repo(
         max_runners: config.max_runners,
         reserved_runners: preserved_docks.len().min(u32::MAX as usize) as u32,
         containers: plan_containers.iter().map(to_container_view).collect(),
-        runners: runners
-            .iter()
-            .map(|r| RunnerView {
-                name: r.name.clone(),
-                online: r.is_online(),
-                busy: r.busy,
-            })
-            .collect(),
+        runners: planner_runners,
         queued_jobs,
         queued_job_labels,
         queued_job_names,

@@ -83,6 +83,8 @@ pub enum VaultError {
     Decode(#[from] serde_json::Error),
     #[error("vault index is inconsistent: {0}")]
     CorruptIndex(String),
+    #[error("unsafe vault filesystem path: {0}")]
+    UnsafePath(String),
     #[error("vault data was replaced but directory durability could not be confirmed: {0}")]
     DurabilityUncertain(String),
     #[error("secret '{0}' not found")]
@@ -214,6 +216,7 @@ impl Vault {
     ) -> Result<Self> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
+        secure_vault_directory(&dir)?;
         let key_bytes = load_or_create_master_key(&dir, events.as_ref())?;
         let legacy_cipher = Aes256Gcm::new_from_slice(&key_bytes)
             .map_err(|_| VaultError::InvalidMasterKey(key_bytes.len()))?;
@@ -224,13 +227,12 @@ impl Vault {
         let secrets_path = dir.join(SECRETS_FILE);
         let data = match fs::symlink_metadata(&secrets_path) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-                return Err(VaultError::CorruptIndex(
+                return Err(VaultError::UnsafePath(
                     "secrets.json must be a regular, non-symlink file".to_owned(),
                 ));
             }
             Ok(_) => {
-                set_secret_file_permissions(&secrets_path)?;
-                let raw = fs::read_to_string(&secrets_path)?;
+                let raw = read_private_vault_file(&secrets_path, "secrets.json")?;
                 serde_json::from_str(&raw)?
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => VaultFile::default(),
@@ -591,18 +593,62 @@ fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn set_secret_file_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)?;
+fn secure_vault_directory(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(VaultError::UnsafePath(
+            "vault directory must be a real directory, not a symlink".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let directory = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)?;
+        if !directory.metadata()?.is_dir() {
+            return Err(VaultError::UnsafePath(
+                "vault directory changed during validation".into(),
+            ));
+        }
+        directory.set_permissions(fs::Permissions::from_mode(0o700))?;
+    }
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn set_secret_file_permissions(_path: &Path) -> Result<()> {
-    Ok(())
+fn read_private_vault_file(path: &Path, label: &str) -> Result<String> {
+    use std::io::Read;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(VaultError::UnsafePath(format!(
+                "{label} must be a regular file without hard links"
+            )));
+        }
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        return Ok(raw);
+    }
+    #[cfg(not(unix))]
+    {
+        let mut file = options.open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(VaultError::UnsafePath(format!(
+                "{label} must be a regular file"
+            )));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        Ok(raw)
+    }
 }
 
 fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<[u8; 32]> {
@@ -635,22 +681,44 @@ fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<
 }
 
 fn read_master_key(path: &Path) -> Result<[u8; 32]> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(VaultError::InvalidMasterKey(0));
-    }
+    use std::io::Read;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(VaultError::InvalidMasterKey(0));
+        }
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        let mut bytes = Vec::with_capacity(32);
+        file.read_to_end(&mut bytes)?;
+        if bytes.len() != 32 {
+            return Err(VaultError::InvalidMasterKey(bytes.len()));
+        }
+        return bytes
+            .try_into()
+            .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()));
     }
-    let bytes = fs::read(path)?;
-    if bytes.len() != 32 {
-        return Err(VaultError::InvalidMasterKey(bytes.len()));
+    #[cfg(not(unix))]
+    {
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(VaultError::InvalidMasterKey(0));
+        }
+        let mut file = options.open(path)?;
+        let mut bytes = Vec::with_capacity(32);
+        file.read_to_end(&mut bytes)?;
+        if bytes.len() != 32 {
+            return Err(VaultError::InvalidMasterKey(bytes.len()));
+        }
+        bytes
+            .try_into()
+            .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
     }
-    bytes
-        .try_into()
-        .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
 }
 
 /// Writes the master key with 0600 permissions set atomically at creation —
@@ -862,6 +930,36 @@ mod tests {
             vault.set_scoped("key", "value", Scope::Repo("bad\u{1}repo".into())),
             Err(VaultError::InvalidIdentifier)
         ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vault_directory_is_private_and_symlink_directories_are_rejected() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let base = temp_dir("directory-perms");
+        fs::create_dir_all(&base).unwrap();
+        let vault_dir = base.join("vault");
+        let _vault = Vault::open(&vault_dir).unwrap();
+        assert_eq!(fs::metadata(&vault_dir).unwrap().permissions().mode() & 0o777, 0o700);
+
+        let linked = base.join("linked-vault");
+        symlink(&vault_dir, &linked).unwrap();
+        assert!(matches!(Vault::open(&linked), Err(VaultError::UnsafePath(_))));
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secrets_file_symlink_is_rejected_without_reading_target() {
+        use std::os::unix::fs::symlink;
+        let dir = temp_dir("secrets-symlink");
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("outside.json");
+        fs::write(&target, "{\"secrets\":{}}").unwrap();
+        symlink(&target, dir.join(SECRETS_FILE)).unwrap();
+        assert!(matches!(Vault::open(&dir), Err(VaultError::UnsafePath(_))));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "{\"secrets\":{}}");
         let _ = fs::remove_dir_all(&dir);
     }
 

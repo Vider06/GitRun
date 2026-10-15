@@ -1141,23 +1141,64 @@ fn write_scratch_workflows(
     use std::path::Component;
 
     std::fs::create_dir_all(dir)?;
+    let directory_metadata = std::fs::symlink_metadata(dir)?;
+    if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workflow scratch path must be a real directory",
+        ));
+    }
     for (name, content) in files {
         let relative = std::path::Path::new(name);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|component| component == Component::ParentDir)
-        {
+        let mut components = relative.components();
+        let is_single_file_name = matches!(components.next(), Some(Component::Normal(_)))
+            && components.next().is_none();
+        if relative.is_absolute() || !is_single_file_name {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("workflow path escapes scratch directory: {name}"),
+                format!("workflow path must be a direct filename: {name}"),
             ));
         }
         let target = dir.join(relative);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(target, content)?;
+        write_scratch_file_atomic(&target, content)?;
+    }
+    Ok(())
+}
+
+fn write_scratch_file_atomic(
+    target: &std::path::Path,
+    content: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = target.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "workflow target has no parent")
+    })?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp = parent.join(format!(
+        ".gitrun-workflow-{}-{nonce}.tmp",
+        std::process::id()
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = options.open(&temp)?;
+    if let Err(error) = file.write_all(content.as_bytes()).and_then(|_| file.sync_all()) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    drop(file);
+    if let Err(error) = std::fs::rename(&temp, target) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
     }
     Ok(())
 }
@@ -1608,6 +1649,37 @@ mod tests {
         let labels =
             runner_labels_for_job("self-hosted,Linux,gitrun-ci", true, &["windows".into()]);
         assert_eq!(labels, "self-hosted,Linux,gitrun-ci");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workflow_scratch_writer_replaces_symlinks_without_touching_targets() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-workflow-scratch-symlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let target = base.join("outside");
+        let scratch = base.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let workflow = scratch.join("ci.yml");
+        std::fs::write(&target, "keep").unwrap();
+        symlink(&target, &workflow).unwrap();
+        write_scratch_workflows(
+            &scratch,
+            &[("ci.yml".into(), "name: safe".into())],
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&workflow).unwrap(), "name: safe");
+        assert!(write_scratch_workflows(
+            &scratch,
+            &[("../outside".into(), "bad".into())],
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

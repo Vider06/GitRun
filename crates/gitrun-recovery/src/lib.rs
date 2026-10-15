@@ -490,8 +490,7 @@ pub fn restart_service() -> Result<(), String> {
 
     let gitrun = find_trusted_installed_gitrun_binary()
         .ok_or("trusted installed GitRun executable was not found for privileged service repair")?;
-    let pkexec = find_trusted_pkexec()
-        .ok_or("trusted /usr/bin/pkexec executable was not found")?;
+    let pkexec = find_trusted_pkexec().ok_or("trusted /usr/bin/pkexec executable was not found")?;
     let status = Command::new(pkexec)
         .arg(gitrun)
         .arg("repair-service")

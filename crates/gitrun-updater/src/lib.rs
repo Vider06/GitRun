@@ -1237,8 +1237,9 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
         let mut apt = Command::new(apt_get);
         apt.args(["update"]);
         if !is_root() {
-            let sudo = linux_system_command("sudo")
-                .ok_or_else(|| UpdateError::Command("trusted /usr/bin/sudo was not found".into()))?;
+            let sudo = linux_system_command("sudo").ok_or_else(|| {
+                UpdateError::Command("trusted /usr/bin/sudo was not found".into())
+            })?;
             apt = Command::new(sudo);
             apt.args([apt_get, "update"]);
         }
@@ -1252,8 +1253,9 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
             apt.args(&command.1);
             apt
         } else {
-            let sudo = linux_system_command("sudo")
-                .ok_or_else(|| UpdateError::Command("trusted /usr/bin/sudo was not found".into()))?;
+            let sudo = linux_system_command("sudo").ok_or_else(|| {
+                UpdateError::Command("trusted /usr/bin/sudo was not found".into())
+            })?;
             let mut apt = Command::new(sudo);
             apt.arg(apt_get).args(&command.1);
             apt

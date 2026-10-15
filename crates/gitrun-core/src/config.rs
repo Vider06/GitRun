@@ -270,14 +270,14 @@ impl Config {
     }
 
     pub fn from_env_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
-        let content = fs::read_to_string(path)?;
+        let content = read_config_file(path.as_ref())?;
         let mut lookup = std::collections::HashMap::new();
         for (line_index, raw) in content.lines().enumerate() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let Some((key, value)) = line.split_once('=') else {
+            let Some((raw_key, value)) = line.split_once('=') else {
                 // Do not echo the malformed line: it may be a pasted secret
                 // or token that accidentally omitted its key and '='.
                 return Err(ConfigError::Invalid(format!(
@@ -285,12 +285,60 @@ impl Config {
                     line_index + 1
                 )));
             };
-            lookup.insert(key.trim().to_owned(), unquote(value.trim()));
+            let key = raw_key.trim();
+            let mut chars = key.chars();
+            let valid_key = matches!(chars.next(), Some(c) if c.is_ascii_uppercase() || c == '_')
+                && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            if !valid_key {
+                return Err(ConfigError::Invalid(format!(
+                    "invalid environment variable name at line {}",
+                    line_index + 1
+                )));
+            }
+            if lookup.contains_key(key) {
+                return Err(ConfigError::Invalid(format!(
+                    "duplicate environment variable at line {}",
+                    line_index + 1
+                )));
+            }
+            lookup.insert(key.to_owned(), unquote(value.trim()));
         }
         Self::from_lookup(&lookup)
     }
 
-    /// Shared field-by-field build, driven by a plain string lookup. Both
+    fn read_config_file(path: &Path) -> Result<String, ConfigError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(ConfigError::Invalid(
+                "configuration path must be a regular file without hard links".into(),
+            ));
+        }
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        return Ok(content);
+    }
+    #[cfg(not(unix))]
+    {
+        let mut file = options.open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(ConfigError::Invalid(
+                "configuration path must be a regular file".into(),
+            ));
+        }
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        Ok(content)
+    }
+}
+
+/// Shared field-by-field build, driven by a plain string lookup. Both
     /// `from_env` (process environment) and `from_env_file` (a `.env`-style
     /// file) funnel into this single place so the 14 config fields are only
     /// ever enumerated once instead of twice in lockstep.
@@ -1183,6 +1231,32 @@ mod tests {
             unowned.is_empty(),
             "environment keys in config/config.example.env have no runtime owner: {unowned:?}"
         );
+    }
+
+    #[test]
+    fn env_file_rejects_duplicate_and_invalid_keys() {
+        let dir = std::env::temp_dir().join(format!("gitrun-config-duplicate-{}", std::process::id()));
+        let _ = fs::remove_file(&dir);
+        fs::write(&dir, "GITRUN_GSR_COMMAND_POLICY_ENABLED=true\nGITRUN_GSR_COMMAND_POLICY_ENABLED=false\n").unwrap();
+        assert!(matches!(Config::from_env_file(&dir), Err(ConfigError::Invalid(_))));
+        fs::write(&dir, "=true\n").unwrap();
+        assert!(matches!(Config::from_env_file(&dir), Err(ConfigError::Invalid(_))));
+        let _ = fs::remove_file(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_file_rejects_symlink_paths() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("gitrun-config-symlink-{}", std::process::id()));
+        let target = dir.with_extension("target");
+        let _ = fs::remove_file(&dir);
+        let _ = fs::remove_file(&target);
+        fs::write(&target, "GITRUN_GSR_COMMAND_POLICY_ENABLED=false\n").unwrap();
+        symlink(&target, &dir).unwrap();
+        assert!(matches!(Config::from_env_file(&dir), Err(ConfigError::Io(_))));
+        let _ = fs::remove_file(&dir);
+        let _ = fs::remove_file(&target);
     }
 
     #[test]

@@ -696,7 +696,8 @@ fn reconcile_repo(
         idle_timeout: Duration::from_secs(config.idle_timeout),
     };
 
-    let actions = actions_for_resource_pressure(reconcile::plan(&input), allow_new_runner_creation);
+    let actions =
+        actions_for_resource_pressure(reconcile::plan(&input), allow_new_runner_creation);
     for action in actions {
         // The plan is ordered and later actions may rely on earlier removals
         // or creations having succeeded (for example, RemoveExited followed

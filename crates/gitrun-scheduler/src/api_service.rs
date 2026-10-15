@@ -4576,22 +4576,49 @@ fn restore_runner(container: &str) -> Result<(), ExecutionError> {
 }
 
 fn make_dock_only(container: &str, state_dir: &Path) -> Result<(), ExecutionError> {
-    match docker::container_status(container).map_err(|error| failed(error.to_string()))? {
-        Some(status) if status == "running" => {
+    let status = docker::container_status(container)
+        .map_err(|error| failed(error.to_string()))?
+        .ok_or_else(|| failed("dock source container disappeared"))?;
+    let was_running = status == "running";
+    let mut marker_may_exist = false;
+
+    let result = (|| {
+        if was_running {
             docker_exec_checked(container, &["touch", "--", DOCK_ONLY_MARKER])?;
+            marker_may_exist = true;
             docker::stop_container(container).map_err(|error| failed(error.to_string()))?;
-        }
-        Some(_) => {
+        } else {
             let marker = state_dir.join(format!(".dock-marker-{}-{}", std::process::id(), now()));
             fs::write(&marker, b"GitDockRun\n").map_err(|error| failed(error.to_string()))?;
-            docker::copy_to_container(container, &marker, DOCK_ONLY_MARKER)
-                .map_err(|error| failed(error.to_string()))?;
+            // Treat a failed copy as potentially partial: rollback removes the
+            // marker from the exact immutable container ID supplied by caller.
+            marker_may_exist = true;
+            let copy_result = docker::copy_to_container(container, &marker, DOCK_ONLY_MARKER)
+                .map_err(|error| failed(error.to_string()));
             let _ = fs::remove_file(&marker);
+            copy_result?;
         }
-        None => return Err(failed("dock source container disappeared")),
-    }
 
-    docker::start_container(container).map_err(|error| failed(error.to_string()))?;
+        docker::start_container(container).map_err(|error| failed(error.to_string()))?;
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        if marker_may_exist {
+            let rollback = if was_running {
+                restore_runner(container)
+            } else {
+                docker::remove_file_in_container(container, DOCK_ONLY_MARKER)
+                    .map_err(|rollback_error| failed(rollback_error.to_string()))
+            };
+            if let Err(rollback_error) = rollback {
+                return Err(failed(format!(
+                    "make runner dock-only failed: {error}; rollback also failed: {rollback_error}"
+                )));
+            }
+        }
+        return Err(error);
+    }
     Ok(())
 }
 

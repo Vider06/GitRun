@@ -1372,16 +1372,11 @@ fn is_full_container_id(value: &str) -> bool {
 /// Executes a command in a managed container after the caller has already
 /// passed the relevant GSR authorization gate.
 pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
-    let mut command = Command::new("/usr/bin/docker");
-    command
-        .env_remove("DOCKER_CONTEXT")
-        .env_remove("DOCKER_TLS_VERIFY")
-        .env_remove("DOCKER_CERT_PATH")
-        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
-        .arg("exec")
-        .arg(container)
-        .args(args);
-    command.output().map_err(DockerError::Spawn)
+    // Reuse the bounded-output/timeout runner instead of Command::output(),
+    // which would buffer arbitrary workflow-controlled output in scheduler RAM.
+    let mut command_args = vec!["exec", container];
+    command_args.extend_from_slice(args);
+    run_on(&DockerHost::Local, &command_args)
 }
 
 /// Executes a command in a managed container and writes a bounded payload to

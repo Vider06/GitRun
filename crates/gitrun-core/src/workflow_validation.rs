@@ -1,34 +1,9 @@
-//! Pre-flight validation of a repository's `.github/workflows/*.yml` files,
-//! run before a job is handed to a runner (see `Config::gsr_workflow_validation_enabled`).
+//! Static checks for GitHub Actions workflow risks and GitDockRun references.
 //!
-//! This is deliberately a *line-pattern* scan, not a full YAML parser: the
-//! workflow text is attacker-influenced (anyone who can open a PR can shape
-//! it), and a full parser is itself attack surface we'd rather not carry
-//! here, on top of the workspace's existing pinned-toolchain fragility (see
-//! the project's session notes on `Cargo.lock`/edition2024 constraints —
-//! adding a YAML crate is more dependency-graph risk than this module's
-//! job justifies). The tradeoff is the same one made in
-//! `command_policy::CommandPolicy::evaluate`: some false negatives on
-//! deliberately obfuscated YAML, in exchange for a scanner that cannot
-//! itself be exploited via crafted input and has no new dependencies.
-//!
-//! Two layers, matching the operator's request:
-//! 1. Our own built-in checks (`scan`), always available, based on the
-//!    well-documented GitHub Actions risk patterns (`pull_request_target`
-//!    combined with an explicit checkout of the PR head, unquoted/untrusted
-//!    `${{ }}` expansion directly in `run:`, `ACTIONS_ALLOW_UNSECURE_COMMANDS`).
-//! 2. An optional shell-out to the third-party `zizmor` static analyzer
-//!    (MIT license, <https://github.com/zizmorcore/zizmor> — credited in
-//!    this project's README/NOTICE) if installed and enabled via
-//!    `Config::gsr_zizmor_enabled`. `zizmor` is a far more thorough
-//!    workflow analyzer than anything reasonable to reimplement here; we
-//!    do not vendor it as a Rust library dependency because it is
-//!    published and versioned as a CLI tool (not a stable embeddable
-//!    library) and because it targets a newer Rust edition than this
-//!    workspace's pinned toolchain currently supports. Invoking it as a
-//!    subprocess avoids both problems. A missing binary is not an error —
-//!    see `run_zizmor` — since it's an optional enhancement, not a
-//!    dependency GitRun installs on the operator's behalf.
+//! The built-in scanner is deliberately dependency-light and advisory. The
+//! optional zizmor integration adds findings when enabled and installed;
+//! callers must report missing or failed scans rather than treating them as
+//! a clean result.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -323,7 +298,10 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
             path.extension().and_then(|e| e.to_str()),
             Some("yml") | Some("yaml")
         );
-        if !is_yaml || !path.is_file() {
+        // Do not follow workflow symlinks out of the scanned directory.
+        // Repositories control these entries and a symlink must not redirect
+        // a privileged scanner to arbitrary host files.
+        if !is_yaml || !entry.file_type()?.is_file() {
             continue;
         }
         let content = std::fs::read_to_string(&path)?;
@@ -592,6 +570,25 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].file, "risky.yml");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_workflows_dir_ignores_symlinked_workflow_files() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-workflows-symlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = dir.with_extension("outside.yml");
+        std::fs::write(&outside, "env:\\n  ACTIONS_ALLOW_UNSECURE_COMMANDS: true\\n").unwrap();
+        symlink(&outside, dir.join("linked.yml")).unwrap();
+        let report = validate_workflows_dir(&dir).unwrap();
+        assert!(report.is_clean());
+        std::fs::remove_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_file(outside);
     }
 
     #[test]

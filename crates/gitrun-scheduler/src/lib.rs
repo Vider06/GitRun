@@ -956,19 +956,73 @@ fn load_dock_target_jobs(
     state_dir: &std::path::Path,
     repo: &str,
 ) -> Result<Vec<String>, std::io::Error> {
-    let path = state_dir
-        .join("workflow-dock-requirements")
-        .join(format!("{}.json", repo_storage_key(repo)));
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(raw) => raw,
+    use std::io::Read;
+
+    let state_metadata = match std::fs::symlink_metadata(state_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    if state_metadata.file_type().is_symlink() || !state_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "GitDockRun requirement state root must be a real directory",
+        ));
+    }
+
+    let directory = state_dir.join("workflow-dock-requirements");
+    let directory_metadata = match std::fs::symlink_metadata(&directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "GitDockRun requirements path must be a real directory",
+        ));
+    }
+
+    let path = directory.join(format!("{}.json", repo_storage_key(repo)));
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = match options.open(&path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
             return Err(std::io::Error::other(format!(
-                "cannot read GitDockRun requirements at {}: {error}",
+                "cannot safely read GitDockRun requirements at {}: {error}",
                 path.display()
             )));
         }
     };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("GitDockRun requirements at {} are not a regular file", path.display()),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 || metadata.mode() & 0o022 != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "GitDockRun requirements at {} must have one link and no group/world write permission",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    let mut raw = String::new();
+    file.read_to_string(&mut raw)?;
 
     let requests =
         serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw).map_err(|error| {

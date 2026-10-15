@@ -3631,6 +3631,26 @@ mod mount_runtime_tests {
         assert!(workflow_job_is_completed("COMPLETED", Some("success")));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn mount_registry_rejects_symlinked_and_hard_linked_files() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-registry-links-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _dir_guard = TemporaryDirectory(dir.clone());
+        let path = MountRegistry::path(&dir);
+        let target = dir.join("target.json");
+        fs::write(&target, r#"{"mounts":[]}"#).unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(MountRegistry::load(&dir).is_err());
+        fs::remove_file(&path).unwrap();
+        fs::hard_link(&target, &path).unwrap();
+        assert!(MountRegistry::load(&dir).is_err());
+    }
+
     #[test]
     fn mount_registry_rejects_duplicate_or_empty_mount_ids() {
         let dir = std::env::temp_dir().join(format!(

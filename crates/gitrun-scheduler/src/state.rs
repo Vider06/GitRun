@@ -241,27 +241,31 @@ impl SchedulerState {
     /// Removes tracking only for containers belonging to `repo` that no longer exist.
     /// Entries belonging to other repositories remain untouched in the shared state file.
     pub fn prune(&mut self, repo: &str, live_names: &[String]) {
-        let safe_repo: String = repo
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
-                    c
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        let repo_prefix = format!("gitrun-{safe_repo}-");
+        let repo_prefix = crate::docker::runner_name_prefix(repo);
+        // Older releases used a lossy sanitized-repository prefix. Only prune
+        // those legacy entries when neither segment contains the delimiter
+        // that made collisions possible; ambiguous legacy entries are retained
+        // rather than accidentally deleting another repository's state.
+        let legacy_prefix = repo.split_once('/').and_then(|(owner, name)| {
+            (!owner.contains('-') && !name.contains('-'))
+                .then(|| format!("gitrun-{}-", crate::docker::sanitize(repo, '-')))
+        });
         let live_names: std::collections::HashSet<&str> =
             live_names.iter().map(String::as_str).collect();
+        let belongs_to_repo = |name: &str| {
+            name.starts_with(&repo_prefix)
+                || legacy_prefix
+                    .as_deref()
+                    .is_some_and(|prefix| name.starts_with(prefix))
+        };
         self.data.idle_since.retain(|name, _| {
-            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
+            !belongs_to_repo(name) || live_names.contains(name.as_str())
         });
         self.data.recovery_since.retain(|name, _| {
-            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
+            !belongs_to_repo(name) || live_names.contains(name.as_str())
         });
         self.data.quarantined_since.retain(|name, _| {
-            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
+            !belongs_to_repo(name) || live_names.contains(name.as_str())
         });
     }
     /// Returns how long a container has been marked as needing recovery,

@@ -228,7 +228,7 @@ fn read_registry_file(path: &Path) -> Result<Option<String>, DockRegistryError> 
         }
         let mut raw = String::new();
         file.read_to_string(&mut raw)?;
-        return Ok(Some(raw));
+        Ok(Some(raw))
     }
     #[cfg(not(unix))]
     {

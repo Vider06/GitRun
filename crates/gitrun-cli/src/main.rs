@@ -1275,7 +1275,11 @@ fn main() {
             queued,
         } => run_desired(min, max, busy, queued),
         Command::Status { runner } => run_status(runner, &mut presenter),
-        Command::FastStop { repository, run_id, yes: _ } => run_fast_stop(&repository, run_id),
+        Command::FastStop {
+            repository,
+            run_id,
+            yes: _,
+        } => run_fast_stop(&repository, run_id),
         Command::Setup { terminal } => {
             if terminal {
                 match terminal_setup_command(&mut presenter) {
@@ -1630,7 +1634,11 @@ fn run_fast_stop(repository: &str, run_id: u64) -> i32 {
             return 2;
         }
     };
-    if !config.repositories.iter().any(|configured| configured == repository) {
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == repository)
+    {
         eprintln!("GitRun fast-stop: refusing repository {repository:?}; it is not in the configured repository allowlist");
         return 2;
     }

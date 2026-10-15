@@ -514,9 +514,16 @@ impl GitHubClient {
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: WorkflowRunsResponse = response.json()?;
-            runs.extend(parsed.workflow_runs.into_iter().filter(|run| {
-                run.status.eq_ignore_ascii_case("in_progress")
-            }).map(|run| WorkflowRunInfo { id: run.id, name: run.name }));
+            runs.extend(
+                parsed
+                    .workflow_runs
+                    .into_iter()
+                    .filter(|run| run.status.eq_ignore_ascii_case("in_progress"))
+                    .map(|run| WorkflowRunInfo {
+                        id: run.id,
+                        name: run.name,
+                    }),
+            );
             match next_url {
                 Some(next) => url = next,
                 None => break,

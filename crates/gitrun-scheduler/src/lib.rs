@@ -605,8 +605,22 @@ fn reconcile_repo(
     // in progress. Query only these rare orphan cases and mark the planner
     // view busy when GitHub still assigns an active job to that runner name;
     // this prevents recovery from killing a job based on inconsistent snapshots.
+    for container in &containers {
+        let matches = runners.iter().filter(|runner| runner.name == container.name).count();
+        if matches > 1 {
+            return Err(std::io::Error::other(format!(
+                "ambiguous GitHub runner identity for managed container {} in {repo}: {matches} registrations share the name",
+                container.name
+            )).into());
+        }
+    }
+    // The repository-level GitHub API also returns self-hosted runners that
+    // are not owned by GitRun. They must not inflate this scheduler's busy
+    // count or be joined to a managed container unless the Docker inventory
+    // confirms the exact name exists on this host.
     let mut planner_runners: Vec<RunnerView> = runners
         .iter()
+        .filter(|runner| containers.iter().any(|container| container.name == runner.name))
         .map(|runner| RunnerView {
             name: runner.name.clone(),
             online: runner.is_online(),

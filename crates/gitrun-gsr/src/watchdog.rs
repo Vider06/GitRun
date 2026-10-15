@@ -106,7 +106,7 @@ fn read_pid(path: &Path) -> Result<Option<u32>, std::io::Error> {
         }
         let mut raw = String::new();
         file.read_to_string(&mut raw)?;
-        return parse_pid_contents(&raw).map(Some);
+        parse_pid_contents(&raw).map(Some)
     }
     #[cfg(not(unix))]
     {

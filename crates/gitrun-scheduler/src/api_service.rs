@@ -4733,6 +4733,7 @@ fn validate_register_registry_parent(path: &Path) -> Result<(), ExecutionError> 
             }
             Ok(())
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(failed(format!("inspect register registry parent: {error}"))),
     }
 }

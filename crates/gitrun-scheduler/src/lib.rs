@@ -726,7 +726,9 @@ fn reconcile_repo(
     for name in &tracked_names {
         let container_running = live_names.iter().any(|live_name| live_name == name);
         match runners.iter().find(|runner| &runner.name == name) {
-            Some(runner) if container_running && runner.is_online() && !runner.busy => state.clear_recovery(name),
+            Some(runner) if container_running && runner.is_online() && !runner.busy => {
+                state.clear_recovery(name)
+            }
             Some(runner) if !runner.busy && (!runner.is_online() || !container_running) => {
                 state.recovery_age(name);
             }

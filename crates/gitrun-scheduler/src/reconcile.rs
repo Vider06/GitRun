@@ -820,9 +820,13 @@ mod tests {
             busy: false,
         }];
         input.recovery_age = vec![("starting".into(), Duration::from_secs(59))];
-        assert!(!plan(&input).iter().any(|action| matches!(action, Action::RestartUnresponsive { name } if name == "starting")));
+        assert!(!plan(&input).iter().any(
+            |action| matches!(action, Action::RestartUnresponsive { name } if name == "starting")
+        ));
         input.recovery_age = vec![("starting".into(), Duration::from_secs(60))];
-        assert!(plan(&input).iter().any(|action| matches!(action, Action::RestartUnresponsive { name } if name == "starting")));
+        assert!(plan(&input).iter().any(
+            |action| matches!(action, Action::RestartUnresponsive { name } if name == "starting")
+        ));
     }
 
     #[test]

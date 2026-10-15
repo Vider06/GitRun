@@ -232,6 +232,16 @@ pub fn sanitize(value: &str, replacement: char) -> String {
         .collect()
 }
 
+/// Collision-resistant, URL-safe repository prefix for runner container names.
+/// The short readable prefix is cosmetic; the full unpadded Base64URL encoding
+/// makes distinct repository identifiers map to distinct prefixes.
+pub fn runner_name_prefix(repo: &str) -> String {
+    use base64::Engine as _;
+    let readable: String = sanitize(repo, '-').chars().take(16).collect();
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(repo.as_bytes());
+    format!("gitrun-{readable}-{encoded}-")
+}
+
 #[derive(Debug, Clone)]
 pub struct ManagedContainer {
     pub name: String,

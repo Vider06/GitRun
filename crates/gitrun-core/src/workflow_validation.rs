@@ -416,7 +416,7 @@ fn run_bounded_command(
                 let _ = stderr_reader.join();
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
-                    "zizmor exceeded the 30-second workflow scan timeout",
+                    format!("analyzer command exceeded its {timeout:?} timeout"),
                 ));
             }
             Err(error) => {
@@ -437,7 +437,7 @@ fn run_bounded_command(
     if stdout_truncated || stderr_truncated {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "zizmor output exceeded the 4 MiB safety limit",
+            format!("analyzer command output exceeded the {output_limit}-byte safety limit"),
         ));
     }
     Ok(Output {
@@ -556,27 +556,46 @@ pub fn zizmor_info() -> ZizmorInfo {
 /// Already-installed is treated as success with no reinstall — this is an
 /// idempotent "make sure it's available" call, not a forced upgrade.
 pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
-    if Command::new("zizmor")
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-    {
-        return Ok(InstallOutcome::AlreadyInstalled);
+    match run_bounded_command(
+        Command::new("zizmor").arg("--version"),
+        Duration::from_secs(10),
+        64 * 1024,
+    ) {
+        Ok(output) if output.status.success() => return Ok(InstallOutcome::AlreadyInstalled),
+        Ok(_) => {
+            // A broken installed binary can be repaired by the pinned install below.
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Expected first-install path.
+        }
+        Err(error) => {
+            return Ok(InstallOutcome::Failed(format!(
+                "could not verify existing zizmor binary: {error}"
+            )));
+        }
     }
-    let output = Command::new("cargo")
-        .arg("install")
-        .arg("--locked")
-        .arg("--version")
-        .arg("1.30.1")
-        .arg("zizmor")
-        .output()?;
+
+    // cargo install is a network/build operation, so bound both its lifetime
+    // and retained diagnostics rather than using Command::output() indefinitely.
+    let output = run_bounded_command(
+        Command::new("cargo")
+            .arg("install")
+            .arg("--locked")
+            .arg("--version")
+            .arg("1.30.1")
+            .arg("zizmor"),
+        Duration::from_secs(15 * 60),
+        16 * 1024 * 1024,
+    )?;
     if output.status.success() {
         Ok(InstallOutcome::Installed)
     } else {
-        Ok(InstallOutcome::Failed(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ))
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Ok(InstallOutcome::Failed(if stderr.is_empty() {
+            format!("cargo install zizmor exited with {}", output.status)
+        } else {
+            stderr
+        }))
     }
 }
 

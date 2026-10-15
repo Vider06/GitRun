@@ -695,8 +695,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn analyzer_timeout_is_bounded() {
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", "sleep 5"]);
+        let mut command = Command::new("/bin/sleep");
+        command.arg("5");
         let error = run_bounded_command(command, Duration::from_millis(20), 1024).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
     }

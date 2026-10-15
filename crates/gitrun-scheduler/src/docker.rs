@@ -30,6 +30,7 @@ pub type Result<T> = std::result::Result<T, DockerError>;
 const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
 const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_DOCKER_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+const DOCKER_OUTPUT_TRUNCATION_MARKER: &[u8] = b"\n[Docker output truncated at 8 MiB]";
 const GITRUN_API_SOCKET_GID: &str = "10000";
 
 /// Where a Docker command actually runs. `Local` is the existing behavior
@@ -69,9 +70,13 @@ fn read_bounded_output(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
         // full pipe, while retained memory stays bounded.
     }
     if truncated {
-        retained.extend_from_slice(b"\n[Docker output truncated at 8 MiB]");
+        retained.extend_from_slice(DOCKER_OUTPUT_TRUNCATION_MARKER);
     }
     Ok(retained)
+}
+
+fn output_was_truncated(output: &[u8]) -> bool {
+    output.ends_with(DOCKER_OUTPUT_TRUNCATION_MARKER)
 }
 
 #[cfg(unix)]
@@ -170,6 +175,11 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
                 let stderr = stderr_thread
                     .join()
                     .map_err(|_| DockerError::Command("docker stderr reader panicked".into()))??;
+                if output_was_truncated(&stdout) || output_was_truncated(&stderr) {
+                    return Err(DockerError::Command(format!(
+                        "docker {command_name} output exceeded the 8 MiB safety limit"
+                    )));
+                }
                 return Ok(Output {
                     status,
                     stdout,
@@ -1597,6 +1607,11 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
     let stderr = stderr_thread
         .join()
         .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))??;
+    if output_was_truncated(&stdout) || output_was_truncated(&stderr) {
+        return Err(DockerError::Command(
+            "docker exec output exceeded the 8 MiB safety limit".into(),
+        ));
+    }
     if let Err(error) = stdin_result {
         // A command that exited before consuming its bounded input is a failed
         // operation; do not silently report success after a partial write.
@@ -1683,6 +1698,11 @@ where
     let stderr = stderr_thread
         .join()
         .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))??;
+    if output_was_truncated(&stdout) || output_was_truncated(&stderr) {
+        return Err(DockerError::Command(
+            "docker exec output exceeded the 8 MiB safety limit".into(),
+        ));
+    }
     for chunk in stdout.chunks(8192) {
         on_output(false, chunk);
     }

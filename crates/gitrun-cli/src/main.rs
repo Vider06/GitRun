@@ -111,16 +111,15 @@ fn system_install_paths() -> Option<(PathBuf, PathBuf)> {
         return None;
     }
 
-    let version_file = std::env::var("GITRUN_VERSION_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/usr/share/gitrun/version.txt"));
+    // Never let inherited environment variables redirect a privileged update.
+    let version_file = PathBuf::from("/usr/share/gitrun/version.txt");
     Some((executable, version_file))
 }
 
 fn running_as_root() -> bool {
     #[cfg(unix)]
     {
-        std::process::Command::new("id")
+        std::process::Command::new("/usr/bin/id")
             .args(["-u"])
             .output()
             .map(|output| {
@@ -139,59 +138,15 @@ const DEFAULT_UPDATE_PUBLIC_KEY_HEX: &str =
 const DEFAULT_UPDATE_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
 
 fn update_signing_environment() -> Vec<(String, String)> {
-    const KEYS: [&str; 3] = [
-        "GITRUN_UPDATE_PUBLIC_KEY_HEX",
-        "GITRUN_UPDATE_PUBLIC_KEY_ID",
-        "GITRUN_UPDATE_SIGNATURE_REQUIRED",
-    ];
-
-    let mut values = Vec::new();
-    for key in KEYS {
-        if let Ok(value) = std::env::var(key) {
-            if !value.trim().is_empty() {
-                values.push((key.to_owned(), value));
-            }
-        }
-    }
-
-    if let Some(path) = persistent_config_path() {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            for raw in content.lines() {
-                let line = raw.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                let Some((key, value)) = line.split_once('=') else {
-                    continue;
-                };
-                let key = key.trim();
-                if KEYS.contains(&key) && !values.iter().any(|(existing, _)| existing == key) {
-                    let value = value.trim().trim_matches(['"', '\\']);
-                    if !value.is_empty() {
-                        values.push((key.to_owned(), value.to_owned()));
-                    }
-                }
-            }
-        }
-    }
-
-    // The official release verification key is a trust anchor, not a secret.
-    // Keep updates verifiable on existing installs whose generated config
-    // predates the signing settings. Explicit operator values take precedence.
-    for (key, value) in [
-        (
-            "GITRUN_UPDATE_PUBLIC_KEY_HEX",
-            DEFAULT_UPDATE_PUBLIC_KEY_HEX,
-        ),
-        ("GITRUN_UPDATE_PUBLIC_KEY_ID", DEFAULT_UPDATE_PUBLIC_KEY_ID),
-        ("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true"),
-    ] {
-        if !values.iter().any(|(existing, _)| existing == key) {
-            values.push((key.to_owned(), value.to_owned()));
-        }
-    }
-
-    values
+    // This function is used only to cross the privilege boundary for a system
+    // update. Never forward caller-controlled key material or signature policy
+    // into the root process: the official release key and mandatory signature
+    // verification are fixed trust anchors for the installed system binary.
+    vec![
+        ("GITRUN_UPDATE_PUBLIC_KEY_HEX".to_owned(), DEFAULT_UPDATE_PUBLIC_KEY_HEX.to_owned()),
+        ("GITRUN_UPDATE_PUBLIC_KEY_ID".to_owned(), DEFAULT_UPDATE_PUBLIC_KEY_ID.to_owned()),
+        ("GITRUN_UPDATE_SIGNATURE_REQUIRED".to_owned(), "true".to_owned()),
+    ]
 }
 
 fn elevate_system_update(
@@ -204,7 +159,7 @@ fn elevate_system_update(
     presenter.prepare_for_external_process();
 
     let executable = std::env::current_exe()?;
-    let mut command = std::process::Command::new("sudo");
+    let mut command = std::process::Command::new("/usr/bin/sudo");
     for (key, value) in update_signing_environment() {
         command.arg("env").arg(format!("{key}={value}"));
     }
@@ -256,7 +211,7 @@ fn run_embedded_privileged_helper(
         file.write_all(script.as_bytes())?;
         file.sync_all()?;
         presenter.prepare_for_external_process();
-        let status = std::process::Command::new("bash")
+        let status = std::process::Command::new("/bin/bash")
             .arg(&script_path)
             .arg(&executable)
             .status()?;
@@ -425,9 +380,7 @@ fn update_command(
     let config_path = persistent_config_path();
     let system_install = system_install_paths();
     let work_root = match system_install {
-        Some(_) => PathBuf::from(
-            std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| "/var/lib/gitrun/update".into()),
-        ),
+        Some(_) => PathBuf::from("/var/lib/gitrun/update"),
         None => PathBuf::from(
             std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| ".gitrun-update".into()),
         ),
@@ -440,9 +393,8 @@ fn update_command(
     println!("checksum: PASS");
 
     if let Some((gitrun_binary, version_file)) = system_install {
-        let backup_root = PathBuf::from(
-            std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "/var/lib/gitrun/backups".into()),
-        );
+        // System-update backup destinations are fixed even when running as root.
+        let backup_root = PathBuf::from("/var/lib/gitrun/backups");
         let artifacts = [InstalledArtifact {
             archive_name: "gitrun".into(),
             destination: gitrun_binary.clone(),
@@ -1105,7 +1057,7 @@ fn terminal_setup_command(
         let executable = std::env::current_exe()?;
         println!();
         println!("Installing GitRun with elevated privileges...");
-        let uid = std::process::Command::new("id").arg("-u").output()?;
+        let uid = std::process::Command::new("/usr/bin/id").arg("-u").output()?
         let running_as_root =
             uid.status.success() && String::from_utf8_lossy(&uid.stdout).trim() == "0";
         let status = if running_as_root {
@@ -1114,7 +1066,7 @@ fn terminal_setup_command(
                 .arg(&path)
                 .status()?
         } else {
-            std::process::Command::new("sudo")
+            std::process::Command::new("/usr/bin/sudo")
                 .arg(&executable)
                 .arg("--install-root")
                 .arg(&path)
@@ -2335,7 +2287,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         println!("GitRun reinstall: verified latest release metadata for {version}");
         download_and_verify(&url, &artifact_sha256, &package_file)?;
 
-        let package_name = std::process::Command::new("dpkg-deb")
+        let package_name = std::process::Command::new("/usr/bin/dpkg-deb")
             .arg("-f")
             .arg(&package_file)
             .arg("Package")
@@ -2345,7 +2297,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("verified release artifact is not the GitRun Debian package".into());
         }
-        let package_version = std::process::Command::new("dpkg-deb")
+        let package_version = std::process::Command::new("/usr/bin/dpkg-deb")
             .arg("-f")
             .arg(&package_file)
             .arg("Version")
@@ -2357,14 +2309,14 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
             return Err("Debian package version does not match the signed release manifest".into());
         }
 
-        let installed = std::process::Command::new("dpkg-query")
+        let installed = std::process::Command::new("/usr/bin/dpkg-query")
             .args(["-W", "-f=${db:Status-Status}", "gitrun"])
             .output()
             .is_ok_and(|output| {
                 output.status.success()
                     && String::from_utf8_lossy(&output.stdout).trim() == "installed"
             });
-        let mut apt = std::process::Command::new("apt-get");
+        let mut apt = std::process::Command::new("/usr/bin/apt-get");
         apt.args(["install", "--yes", "--no-install-recommends"]);
         if installed {
             apt.arg("--reinstall");

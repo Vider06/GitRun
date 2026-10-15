@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
@@ -49,21 +49,21 @@ pub struct DockRegistry {
 
 impl DockRegistry {
     pub fn load(state_dir: impl AsRef<Path>) -> Result<Self, DockRegistryError> {
+        let state_dir = state_dir.as_ref();
+        validate_state_directory(state_dir)?;
         let path = path_for(state_dir);
-        match fs::read_to_string(path) {
-            Ok(raw) => {
-                let registry: Self = serde_json::from_str(&raw)?;
-                registry.validate_unique_bindings()?;
-                Ok(registry)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(error.into()),
-        }
+        let Some(raw) = read_registry_file(&path)? else {
+            return Ok(Self::default());
+        };
+        let registry: Self = serde_json::from_str(&raw)?;
+        registry.validate_unique_bindings()?;
+        Ok(registry)
     }
 
     pub fn save(&self, state_dir: impl AsRef<Path>) -> Result<(), DockRegistryError> {
         let state_dir = state_dir.as_ref();
         fs::create_dir_all(state_dir)?;
+        validate_state_directory(state_dir)?;
         let path = path_for(state_dir);
         let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let tmp = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), sequence));
@@ -93,10 +93,26 @@ impl DockRegistry {
 
     fn validate_unique_bindings(&self) -> Result<(), DockRegistryError> {
         let mut keys = std::collections::HashSet::with_capacity(self.bindings.len());
+        let mut containers = std::collections::HashSet::with_capacity(self.bindings.len());
         for binding in &self.bindings {
+            if binding.repository.trim().is_empty()
+                || binding.run_id == 0
+                || binding.job.trim().is_empty()
+                || binding.container.trim().is_empty()
+                || binding.requester_runner.trim().is_empty()
+            {
+                return Err(DockRegistryError::Invalid(
+                    "binding contains an empty identity field or zero run ID".into(),
+                ));
+            }
             if !keys.insert((&binding.repository, binding.run_id, &binding.job)) {
                 return Err(DockRegistryError::Invalid(
                     "duplicate repository/run/job binding".into(),
+                ));
+            }
+            if !containers.insert(binding.container.as_str()) {
+                return Err(DockRegistryError::Invalid(
+                    "a Docker container is bound to more than one workflow job".into(),
                 ));
             }
         }
@@ -140,6 +156,7 @@ impl DockRegistry {
             !(existing.repository == binding.repository
                 && existing.run_id == binding.run_id
                 && existing.job == binding.job)
+                && existing.container != binding.container
         });
         self.bindings.push(binding);
         self.bindings.sort_by(|a, b| {
@@ -158,6 +175,75 @@ impl DockRegistry {
         let original = self.bindings.len();
         self.bindings.retain(|binding| existing(&binding.container));
         original != self.bindings.len()
+    }
+}
+
+fn validate_state_directory(state_dir: &Path) -> Result<(), DockRegistryError> {
+    match fs::symlink_metadata(state_dir) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(DockRegistryError::Invalid(
+                    "registry state path must be a real directory, not a symlink or other file".into(),
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o022 != 0 {
+                    return Err(DockRegistryError::Invalid(
+                        "registry state directory must not be group- or world-writable".into(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn read_registry_file(path: &Path) -> Result<Option<String>, DockRegistryError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(DockRegistryError::Invalid(
+                "registry file must be a regular file without hard links".into(),
+            ));
+        }
+        if metadata.permissions().mode() & 0o022 != 0 {
+            return Err(DockRegistryError::Invalid(
+                "registry file must not be group- or world-writable".into(),
+            ));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        return Ok(Some(raw));
+    }
+    #[cfg(not(unix))]
+    {
+        let mut file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if !file.metadata()?.is_file() {
+            return Err(DockRegistryError::Invalid(
+                "registry path must be a regular file".into(),
+            ));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        Ok(Some(raw))
     }
 }
 
@@ -237,6 +323,36 @@ mod tests {
             Err(DockRegistryError::Invalid(_))
         ));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upsert_replaces_stale_binding_for_reused_container_name() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 1,
+            job: "old-job".into(),
+            container: "runner-a".into(),
+            container_id: "old-id".into(),
+            dynamic: true,
+            dock_only: false,
+            requester_runner: "runner-main".into(),
+            connected_at: 1,
+        });
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 2,
+            job: "new-job".into(),
+            container: "runner-a".into(),
+            container_id: "new-id".into(),
+            dynamic: false,
+            dock_only: false,
+            requester_runner: "runner-main".into(),
+            connected_at: 2,
+        });
+        assert_eq!(registry.bindings.len(), 1);
+        assert_eq!(registry.bindings[0].run_id, 2);
+        assert_eq!(registry.bindings[0].container_id, "new-id");
     }
 
     #[test]

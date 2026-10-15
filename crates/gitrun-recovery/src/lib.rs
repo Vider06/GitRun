@@ -356,6 +356,45 @@ pub fn find_gitrun_binary() -> Option<PathBuf> {
     candidates.into_iter().flatten().find(|path| path.is_file())
 }
 
+// This resolver is deliberately separate from find_gitrun_binary(): that
+// function supports development/test overrides and must never select the
+// executable used for a privileged pkexec handoff.
+fn installed_gitrun_candidates() -> [PathBuf; 2] {
+    [
+        PathBuf::from("/usr/local/bin/gitrun"),
+        PathBuf::from("/usr/bin/gitrun"),
+    ]
+}
+
+#[cfg(unix)]
+fn is_trusted_root_executable(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    metadata.is_file() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0
+}
+
+#[cfg(not(unix))]
+fn is_trusted_root_executable(_path: &Path) -> bool {
+    false
+}
+
+fn find_trusted_installed_gitrun_binary() -> Option<PathBuf> {
+    installed_gitrun_candidates()
+        .into_iter()
+        .find(|path| is_trusted_root_executable(path))
+        .and_then(|path| fs::canonicalize(path).ok())
+}
+
+fn find_trusted_pkexec() -> Option<PathBuf> {
+    let path = PathBuf::from("/usr/bin/pkexec");
+    is_trusted_root_executable(&path)
+        .then(|| fs::canonicalize(path).ok())
+        .flatten()
+}
+
 pub fn configured_config_file() -> Option<PathBuf> {
     std::env::var("GITRUN_CONFIG_FILE")
         .ok()
@@ -446,9 +485,11 @@ pub fn restart_service() -> Result<(), String> {
         return repair_service_unit();
     }
 
-    let gitrun = find_gitrun_binary()
-        .ok_or("GitRun executable was not found for privileged service repair")?;
-    let status = Command::new("pkexec")
+    let gitrun = find_trusted_installed_gitrun_binary()
+        .ok_or("trusted installed GitRun executable was not found for privileged service repair")?;
+    let pkexec = find_trusted_pkexec()
+        .ok_or("trusted /usr/bin/pkexec executable was not found")?;
+    let status = Command::new(pkexec)
         .arg(gitrun)
         .arg("repair-service")
         .status()
@@ -552,6 +593,23 @@ fn set_file_mode(_path: &Path, _mode: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn privileged_repair_candidates_ignore_environment_and_adjacent_executables() {
+        let candidates = installed_gitrun_candidates();
+        assert_eq!(
+            candidates,
+            [
+                PathBuf::from("/usr/local/bin/gitrun"),
+                PathBuf::from("/usr/bin/gitrun"),
+            ]
+        );
+        assert!(!candidates.iter().any(|path| {
+            path == &PathBuf::from(
+                std::env::var("GITRUN_BINARY_PATH").unwrap_or_default()
+            )
+        }));
+    }
 
     #[test]
     fn critical_report_is_detected() {

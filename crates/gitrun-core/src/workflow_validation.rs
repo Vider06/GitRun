@@ -545,6 +545,19 @@ pub fn zizmor_info() -> ZizmorInfo {
     }
 }
 
+/// Checks whether the optional analyzer is available without allowing an
+/// unbounded version-probe subprocess to hang the dashboard.
+pub fn zizmor_is_installed() -> bool {
+    matches!(
+        run_bounded_command(
+            Command::new("zizmor").arg("--version"),
+            Duration::from_secs(10),
+            64 * 1024,
+        ),
+        Ok(output) if output.status.success()
+    )
+}
+
 /// Installs `zizmor` via `cargo install zizmor` if it isn't already on
 /// `PATH`. Called by the dashboard's "enable" flow ONLY after the operator
 /// has accepted the license/terms dialog (see

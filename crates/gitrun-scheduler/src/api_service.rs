@@ -3656,6 +3656,7 @@ mod mount_runtime_tests {
             now()
         ));
         let _dir_guard = TemporaryDirectory(dir.clone());
+        fs::create_dir_all(&dir).unwrap();
         let path = MountRegistry::path(&dir);
         let target = dir.join("target.json");
         fs::write(&target, r#"{"mounts":[]}"#).unwrap();
@@ -4775,7 +4776,7 @@ fn read_secure_register_registry(path: &Path) -> Result<Option<String>, Executio
         let mut raw = String::new();
         std::io::Read::read_to_string(&mut file, &mut raw)
             .map_err(|error| failed(format!("read register registry: {error}")))?;
-        return Ok(Some(raw));
+        Ok(Some(raw))
     }
     #[cfg(not(unix))]
     {
@@ -5216,6 +5217,7 @@ mod gsr_execution_boundary_tests {
             now()
         ));
         let _dir_guard = TemporaryDirectory(dir.clone());
+        fs::create_dir_all(&dir).unwrap();
         let path = dir.join("register-registry.json");
         let target = dir.join("target.json");
         fs::write(&target, r#"{"entries":[]}"#).unwrap();

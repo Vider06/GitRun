@@ -527,6 +527,20 @@ mod tests {
     }
 
     #[test]
+    fn ban_store_first_run_accepts_missing_state_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-gsr-poll-first-run-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let mut store = BanStore::load(&dir).unwrap();
+        assert!(!store.is_banned("owner/repo"));
+        store.ban("owner/repo", Duration::from_secs(60)).unwrap();
+        assert!(store.is_banned("owner/repo"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn ban_store_round_trips_and_expires() {
         let dir = temp_state_dir("roundtrip");
         let mut store = BanStore::load(&dir).unwrap();

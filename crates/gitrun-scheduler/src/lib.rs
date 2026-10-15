@@ -1146,17 +1146,44 @@ fn save_workflow_dock_requirements(
     repo: &str,
     requests: &[gitrun_core::DockRequest],
 ) -> std::io::Result<()> {
-    let directory = std::path::Path::new(state_dir).join("workflow-dock-requirements");
-    std::fs::create_dir_all(&directory)?;
+    let state_root = std::path::Path::new(state_dir);
+    let root_metadata = std::fs::symlink_metadata(state_root)?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workflow state root must be a real directory",
+        ));
+    }
+
+    let directory = state_root.join("workflow-dock-requirements");
+    match std::fs::create_dir(&directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let directory_metadata = std::fs::symlink_metadata(&directory)?;
+    if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workflow requirements path must be a real directory",
+        ));
+    }
+
     let path = directory.join(format!("{}.json", repo_storage_key(repo)));
     if requests.is_empty() {
         match std::fs::remove_file(&path) {
-            Ok(()) => return Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error),
-        }
+            Ok(()) => sync_directory(&directory),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }?;
+        return Ok(());
     }
-    let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp = path.with_extension(format!("json.{}-{nonce}.tmp", std::process::id()));
     let raw = serde_json::to_vec_pretty(requests).map_err(std::io::Error::other)?;
     {
         let mut options = std::fs::OpenOptions::new();
@@ -1164,20 +1191,36 @@ fn save_workflow_dock_requirements(
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         }
         let mut file = options.open(&temp)?;
         use std::io::Write;
-        file.write_all(&raw)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
+        if let Err(error) = file
+            .write_all(&raw)
+            .and_then(|_| file.write_all(b"\n"))
+            .and_then(|_| file.sync_all())
+        {
+            let _ = std::fs::remove_file(&temp);
+            return Err(error);
+        }
     }
     if let Err(error) = std::fs::rename(&temp, &path) {
         let _ = std::fs::remove_file(&temp);
         return Err(error);
     }
+    sync_directory(&directory)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
+
 fn write_scratch_workflows(
     dir: &std::path::Path,
     files: &[(String, String)],

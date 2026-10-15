@@ -748,7 +748,7 @@ fn reconcile_repo(
             .iter()
             .filter(|name| {
                 containers.iter().any(|container| {
-                    container.name == &name
+                    &container.name == *name
                         && !container.status.eq_ignore_ascii_case("exited")
                 })
             })

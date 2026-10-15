@@ -706,9 +706,7 @@ fn execute(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         Action::RemoveExited { name } => {
-            if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
-                return Ok(());
-            }
+            ensure_not_dock_bound(state_dir, repo, name, "remove exited container")?;
             // An exited runner crosses a trust boundary: never restart/reuse
             // its filesystem or credentials. Quarantine the identity first,
             // then remove the container and create a fresh runner if capacity
@@ -746,6 +744,7 @@ fn execute(
             )?;
         }
         Action::RecreateOrphaned { name, permanent } => {
+            ensure_not_dock_bound(state_dir, repo, name, "recreate orphaned runner")?;
             deregister_and_remove(client, repo, name)?;
             // Recreation isn't tied to a specific queued job (it's replacing
             // a container GitHub lost track of, not opening new capacity),
@@ -766,6 +765,7 @@ fn execute(
             state.clear_recovery(name);
         }
         Action::RestartUnresponsive { name } => {
+            ensure_not_dock_bound(state_dir, repo, name, "restart unresponsive runner")?;
             // Track when this container first needed a restart, so the
             // cooldown in ReconcileInput.recovery_age is meaningful on the
             // *next* cycle. This call also seeds the timer on first sight.
@@ -773,14 +773,40 @@ fn execute(
             docker::restart_container(name)?;
         }
         Action::RemoveIdle { name } => {
-            if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
-                return Ok(());
-            }
+            ensure_not_dock_bound(state_dir, repo, name, "remove idle runner")?;
             let _ = remove_if_still_idle(client, repo, name)?;
             state.clear_idle(name);
         }
     }
     Ok(())
+}
+
+/// A bound GitDockRun target is owned by the active dock lifecycle, not
+/// ordinary autoscaler recovery. Refuse destructive actions explicitly so
+/// reconciliation stops before later actions can overprovision around a
+/// container it deliberately left in place.
+fn ensure_not_dock_bound(
+    state_dir: &std::path::Path,
+    repo: &str,
+    name: &str,
+    operation: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
+        return Ok(());
+    }
+    let message = format!(
+        "refusing to {operation} GitDockRun-bound runner {name} for {repo}; dock lifecycle ownership must be resolved first"
+    );
+    let events_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
+    let event = gitrun_gsr::SecurityEvent::new(
+        "scheduler",
+        gitrun_gsr::Severity::Critical,
+        message.clone(),
+    );
+    if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
+        eprintln!("gitrun-autoscaler: {message} (failed to emit GSR event: {error})");
+    }
+    Err(std::io::Error::other(message).into())
 }
 
 fn deregister_and_remove(

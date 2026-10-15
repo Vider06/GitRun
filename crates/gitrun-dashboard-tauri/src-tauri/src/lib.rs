@@ -1285,8 +1285,8 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
         let mut workflow_repositories_checked = 0usize;
         let mut active_workflow_repositories_checked = 0usize;
         for repo in &config.repositories {
-            // These two GitHub endpoints are independent. Fetch them together
-            // so a slow workflow history request does not hold up runner state.
+            // These GitHub endpoints are independent. Fetch them concurrently so a
+            // slow workflow-history or active-run query does not serialize runner state.
             let (runner_result, workflow_result, active_result) = std::thread::scope(|scope| {
                 let runner_query =
                     scope.spawn(|| client.list_runners(repo).map_err(|error| error.to_string()));

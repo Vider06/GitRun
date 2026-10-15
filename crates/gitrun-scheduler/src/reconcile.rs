@@ -982,6 +982,24 @@ mod tests {
     }
 
     #[test]
+    fn orphaned_runner_waits_for_recovery_cooldown() {
+        let mut input = base_input();
+        input.containers = vec![ContainerView {
+            name: "orphaned".into(),
+            health: ContainerHealth::Running,
+            permanent: true,
+        }];
+        input.runners.clear();
+        input.recovery_age = vec![("orphaned".into(), Duration::from_secs(59))];
+        let actions = plan(&input);
+        assert!(!actions.iter().any(|action| matches!(action, Action::RecreateOrphaned { name, .. } if name == "orphaned")));
+
+        input.recovery_age = vec![("orphaned".into(), Duration::from_secs(60))];
+        let actions = plan(&input);
+        assert!(actions.iter().any(|action| matches!(action, Action::RecreateOrphaned { name, .. } if name == "orphaned")));
+    }
+
+    #[test]
     fn recovery_pass_runs_when_no_jobs_are_queued() {
         // Runner health and orphan cleanup are lifecycle invariants, not a function of queue depth.
         let mut input = base_input();

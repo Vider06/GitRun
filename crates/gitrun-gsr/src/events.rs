@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -93,14 +95,31 @@ impl QueueLock {
         }
         let mut lock_name = path.as_os_str().to_os_string();
         lock_name.push(".lock");
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(PathBuf::from(lock_name))?;
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        let lock = options.open(PathBuf::from(lock_name))?;
+        let metadata = lock.metadata()?;
+        if !metadata.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "event queue lock is not a regular file",
+            )
+            .into());
+        }
         #[cfg(unix)]
         {
+            if metadata.nlink() != 1 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "event queue lock must not have hard links",
+                )
+                .into());
+            }
+            lock.set_permissions(std::fs::Permissions::from_mode(0o600))?;
             let mode = if exclusive {
                 libc::LOCK_EX
             } else {
@@ -227,21 +246,64 @@ pub fn emit(path: &Path, event: &SecurityEvent) -> Result<()> {
     {
         rotate_queue(path)?;
     }
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let mut options = OpenOptions::new();
+    options.create(true).append(true).write(true);
+    #[cfg(unix)]
+    options
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = options.open(path)?;
+    validate_event_file(&file)?;
+    #[cfg(unix)]
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     writeln!(file, "{line}")?;
     Ok(())
 }
 
-fn read_file_all(path: &Path) -> Result<Vec<SecurityEvent>> {
-    match std::fs::read_to_string(path) {
-        Ok(raw) => raw
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str(line).map_err(EventError::from))
-            .collect(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.into()),
+fn validate_event_file(file: &File) -> Result<()> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "event queue is not a regular file",
+        )
+        .into());
     }
+    #[cfg(unix)]
+    if metadata.nlink() != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "event queue must not have hard links",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn open_event_file(path: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let file = options.open(path)?;
+    validate_event_file(&file)?;
+    Ok(file)
+}
+
+fn read_file_all(path: &Path) -> Result<Vec<SecurityEvent>> {
+    let mut file = match open_event_file(path) {
+        Ok(file) => file,
+        Err(EventError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new())
+        }
+        Err(error) => return Err(error),
+    };
+    let mut raw = String::new();
+    file.read_to_string(&mut raw)?;
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).map_err(EventError::from))
+        .collect()
 }
 
 /// Reads retained archives followed by the active queue under a shared lock.
@@ -262,10 +324,10 @@ pub fn count_critical_since(path: &Path, cutoff: u64) -> Result<u32> {
     let mut files = archive_paths(path)?;
     files.push(path.to_path_buf());
     for queue in files {
-        let file = match File::open(&queue) {
+        let file = match open_event_file(&queue) {
             Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
+            Err(EventError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
         };
         for line in std::io::BufReader::new(file).lines() {
             let line = line?;
@@ -304,10 +366,12 @@ pub fn read_last(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
 }
 
 fn read_last_file(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
-    let mut file = match File::open(path) {
+    let mut file = match open_event_file(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
+        Err(EventError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new())
+        }
+        Err(error) => return Err(error),
     };
     let mut position = file.metadata()?.len();
     if position == 0 {
@@ -369,6 +433,47 @@ mod tests {
             "gitrun-gsr-events-test-{label}-{}.jsonl",
             std::process::id()
         ))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn emit_rejects_symlink_and_hardlinked_queue_files() {
+        use std::os::unix::fs::symlink;
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = temp_path("symlink-queue");
+        let target = temp_path("symlink-target");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&target);
+        std::fs::write(&target, "do not append").unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(emit(&path, &SecurityEvent::new("test", Severity::Info, "blocked")).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "do not append");
+        let _ = std::fs::remove_file(&path);
+
+        let hardlink_path = temp_path("hardlink-queue");
+        let _ = std::fs::remove_file(&hardlink_path);
+        std::fs::write(&target, "").unwrap();
+        std::fs::hard_link(&target, &hardlink_path).unwrap();
+        assert!(emit(&hardlink_path, &SecurityEvent::new("test", Severity::Info, "blocked")).is_err());
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_ne!(mode, 0o600, "rejected hard link must not be chmodded");
+        let _ = std::fs::remove_file(&hardlink_path);
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+        let _ = std::fs::remove_file(format!("{}.lock", hardlink_path.display()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn emitted_queue_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_path("private-mode");
+        let _ = std::fs::remove_file(&path);
+        emit(&path, &SecurityEvent::new("test", Severity::Info, "private")).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
     }
 
     #[test]

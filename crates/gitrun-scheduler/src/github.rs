@@ -18,6 +18,7 @@
 
 use gitrun_core::AppAuth;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -44,6 +45,18 @@ pub enum GitHubError {
 }
 
 pub type Result<T> = std::result::Result<T, GitHubError>;
+
+/// Prevent malformed/repeated Link headers from trapping the scheduler in an
+/// infinite pagination loop. URLs have already been restricted to api.github.com.
+fn record_page_url(seen: &mut HashSet<String>, url: &str) -> Result<()> {
+    if !seen.insert(url.to_owned()) {
+        return Err(GitHubError::Api {
+            status: 502,
+            detail: format!("GitHub pagination repeated a previously visited URL: {url}"),
+        });
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Runner {
@@ -413,7 +426,9 @@ impl GitHubClient {
     fn get_all_runner_pages(&self, path: &str, per_page: u32) -> Result<Vec<Runner>> {
         let mut url = format!("{API_BASE}{path}?per_page={per_page}");
         let mut runners = Vec::new();
+        let mut seen_pages = HashSet::new();
         loop {
+            record_page_url(&mut seen_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: RunnersResponse = response.json()?;
@@ -616,8 +631,10 @@ impl GitHubClient {
             encode_path_segment(name)
         );
         let mut matches = Vec::new();
+        let mut seen_run_pages = HashSet::new();
 
         loop {
+            record_page_url(&mut seen_run_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: WorkflowRunsResponse = response.json()?;
@@ -629,7 +646,9 @@ impl GitHubClient {
                     encode_path_segment(name),
                     run.id
                 );
+                let mut seen_job_pages = HashSet::new();
                 loop {
+                    record_page_url(&mut seen_job_pages, &jobs_url)?;
                     let response = self.request(reqwest::Method::GET, &jobs_url)?;
                     let jobs_next = parse_next_link(response.headers());
                     let jobs: JobsResponse = response.json()?;
@@ -686,7 +705,9 @@ impl GitHubClient {
         );
 
         let mut matches = Vec::new();
+        let mut seen_pages = HashSet::new();
         loop {
+            record_page_url(&mut seen_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: JobsResponse = response.json()?;
@@ -743,8 +764,10 @@ impl GitHubClient {
             encode_path_segment(name)
         );
         let mut url = format!("{API_BASE}{runs_path}?status=queued&per_page=100");
+        let mut seen_pages = HashSet::new();
 
         loop {
+            record_page_url(&mut seen_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: WorkflowRunsResponse = response.json()?;
@@ -774,8 +797,10 @@ impl GitHubClient {
             encode_path_segment(owner),
             encode_path_segment(name)
         );
+        let mut seen_pages = HashSet::new();
 
         loop {
+            record_page_url(&mut seen_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: JobsResponse = response.json()?;
@@ -1007,6 +1032,14 @@ mod tests {
             GitHubClient::new("   "),
             Err(GitHubError::MissingToken)
         ));
+    }
+
+    #[test]
+    fn repeated_pagination_url_is_rejected() {
+        let mut seen = HashSet::new();
+        assert!(record_page_url(&mut seen, "https://api.github.com/resource?page=1").is_ok());
+        let error = record_page_url(&mut seen, "https://api.github.com/resource?page=1").unwrap_err();
+        assert!(matches!(error, GitHubError::Api { status: 502, .. }));
     }
 
     #[test]

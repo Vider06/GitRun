@@ -221,8 +221,34 @@ pub fn run() {
 }
 
 #[cfg(unix)]
+fn open_protected_pid_file(
+    path: &std::path::Path,
+    read: bool,
+    write: bool,
+    create: bool,
+) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(read).write(write).create(create).truncate(false);
+    options
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "scheduler PID/lock file must be a regular file without hard links",
+        ));
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+#[cfg(unix)]
 fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-    use std::io::{Error, ErrorKind, Write};
+    use std::io::{Error, ErrorKind, Read, Write};
     use std::os::fd::AsRawFd;
 
     if let Some(parent) = path.parent() {
@@ -232,12 +258,7 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     let lock_path = path.with_extension("pid.lock");
     // Do not remove this file after unlocking: flock applies to the opened
     // inode, so unlinking it can create two independently locked inodes.
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)?;
+    let lock = open_protected_pid_file(&lock_path, true, true, true)?;
     let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result != 0 {
         let error = std::io::Error::last_os_error();
@@ -252,10 +273,23 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
 
     // Check the marker while holding the lock as well, so a live instance
     // started by an older version (which may not use the sidecar lock yet)
-    // cannot be overwritten during an upgrade.
-    let existing_pid = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u32>().ok());
+    // cannot be overwritten during an upgrade. A malformed or unsafe marker
+    // is an error, not an invitation to overwrite an unknown file.
+    let existing_pid = match open_protected_pid_file(path, true, false, false) {
+        Ok(mut file) => {
+            let mut raw = String::new();
+            file.read_to_string(&mut raw)?;
+            let pid = raw.trim().parse::<u32>().map_err(|_| {
+                Error::new(ErrorKind::InvalidData, "scheduler PID file is malformed")
+            })?;
+            if pid == 0 || pid > i32::MAX as u32 {
+                return Err(Error::new(ErrorKind::InvalidData, "scheduler PID is out of range"));
+            }
+            Some(pid)
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
     if let Some(pid) = existing_pid {
         if pid != std::process::id() && process_is_alive(pid) {
             return Err(Error::new(
@@ -265,14 +299,11 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
         }
     }
 
-    // The kernel lock serializes stale-PID replacement, so no process can
-    // delete another live instance's freshly written marker between check and
-    // create. PID data is diagnostic/watchdog state; the lock is authority.
-    let mut pid = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
+    // The kernel lock serializes stale-PID replacement. Open without truncation,
+    // validate the inode, and only then truncate it so symlink/hardlink targets
+    // are never followed or modified.
+    let mut pid = open_protected_pid_file(path, false, true, true)?;
+    pid.set_len(0)?;
     pid.write_all(std::process::id().to_string().as_bytes())?;
     pid.sync_all()?;
     Ok(lock)
@@ -1584,6 +1615,45 @@ mod tests {
         assert!(env.is_empty());
         assert!(!dir.exists(), "missing vault must not be initialized implicitly");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scheduler_pid_file_rejects_symlink_without_modifying_target() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-scheduler-pid-symlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        let pid_path = dir.join("gitrun-autoscaler.pid");
+        std::fs::write(&target, "preserve me").unwrap();
+        symlink(&target, &pid_path).unwrap();
+        assert!(acquire_pid_file(&pid_path).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "preserve me");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scheduler_pid_lock_rejects_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-scheduler-lock-symlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        let pid_path = dir.join("gitrun-autoscaler.pid");
+        let lock_path = pid_path.with_extension("pid.lock");
+        std::fs::write(&target, "preserve me").unwrap();
+        symlink(&target, &lock_path).unwrap();
+        assert!(acquire_pid_file(&pid_path).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "preserve me");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

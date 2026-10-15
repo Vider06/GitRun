@@ -500,6 +500,10 @@ pub(crate) fn preserved_dock_containers(
     Ok(names)
 }
 
+fn dock_binding_matches_current_id(binding_id: &str, current_id: &str) -> bool {
+    !binding_id.is_empty() && binding_id == current_id
+}
+
 pub(crate) fn is_dock_bound(
     state_dir: &Path,
     repository: &str,
@@ -507,10 +511,24 @@ pub(crate) fn is_dock_bound(
 ) -> Result<bool, String> {
     let registry = DockRegistry::load(state_dir)
         .map_err(|error| format!("load GitDockRun registry: {error}"))?;
-    Ok(registry
+    for binding in registry
         .bindings
         .iter()
-        .any(|binding| binding.repository == repository && binding.container == container))
+        .filter(|binding| binding.repository == repository && binding.container == container)
+    {
+        // A binding protects only the exact Docker object captured at connect
+        // time. Reusing a container name must not inherit an old job's
+        // lifecycle protection.
+        let Some(current_id) = docker::container_id(&binding.container)
+            .map_err(|error| format!("resolve bound Dock {}: {error}", binding.container))?
+        else {
+            continue;
+        };
+        if dock_binding_matches_current_id(&binding.container_id, &current_id) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(unix)]
@@ -4948,6 +4966,14 @@ mod gsr_execution_boundary_tests {
             gitrun_core::ApiPolicy::enabled_with([GitRunOperation::Status]),
         );
         settings
+    }
+
+    #[test]
+    fn dock_binding_requires_exact_nonempty_container_identity() {
+        assert!(dock_binding_matches_current_id("sha256:abc", "sha256:abc"));
+        assert!(!dock_binding_matches_current_id("sha256:old", "sha256:new"));
+        assert!(!dock_binding_matches_current_id("", "sha256:new"));
+        assert!(!dock_binding_matches_current_id("sha256:abc", ""));
     }
 
     #[test]

@@ -1340,12 +1340,20 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
     let export_stderr = export_stderr_thread
         .join()
         .map_err(|_| DockerError::Command("docker export stderr reader panicked".into()))??;
-    let _extract_stdout = extract_stdout_thread
+    let extract_stdout = extract_stdout_thread
         .join()
         .map_err(|_| DockerError::Command("docker exec stdout reader panicked".into()))??;
     let extract_stderr = extract_stderr_thread
         .join()
         .map_err(|_| DockerError::Command("docker exec stderr reader panicked".into()))??;
+    if output_was_truncated(&export_stderr)
+        || output_was_truncated(&extract_stdout)
+        || output_was_truncated(&extract_stderr)
+    {
+        return Err(DockerError::Command(
+            "filesystem melt diagnostics exceeded the 8 MiB safety limit".into(),
+        ));
+    }
 
     let export_status = export_status.expect("loop exits only when export status is available");
     let extract_status = extract_status.expect("loop exits only when extract status is available");
@@ -1811,6 +1819,8 @@ mod tests {
         let output = read_bounded_output(std::io::Cursor::new(input)).unwrap();
         assert!(output.len() <= MAX_DOCKER_OUTPUT_BYTES + 64);
         assert!(output.ends_with(b"[Docker output truncated at 8 MiB]"));
+        assert!(output_was_truncated(&output));
+        assert!(!output_was_truncated(b"complete output"));
     }
 
     #[test]

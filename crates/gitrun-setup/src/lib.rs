@@ -1508,8 +1508,7 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
 
 pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     config.validate().map_err(|e| e.to_string())?;
-    let original =
-        fs::read_to_string(path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
+    let original = read_existing_env_file(path)?;
     let values = config_env_values(config);
 
     // Environment-file values are emitted as one physical line per key.
@@ -1523,17 +1522,37 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     let mut seen = std::collections::BTreeSet::new();
     let mut output = Vec::new();
 
-    for line in original.lines() {
+    for (line_index, line) in original.lines().enumerate() {
         let trimmed = line.trim();
-        if let Some((key, _)) = trimmed.split_once('=') {
-            let key = key.trim();
-            if managed.contains(key) {
-                if let Some((_, value)) = values.iter().find(|(k, _)| *k == key) {
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            output.push(line.to_owned());
+            continue;
+        }
+        let Some((raw_key, _)) = trimmed.split_once('=') else {
+            return Err(format!(
+                "invalid environment file syntax at line {}: expected KEY=VALUE",
+                line_index + 1
+            ));
+        };
+        let key = raw_key.trim();
+        if !is_valid_env_key(key) {
+            return Err(format!(
+                "invalid environment variable name at line {}",
+                line_index + 1
+            ));
+        }
+        if managed.contains(key) {
+            if let Some((_, value)) = values.iter().find(|(k, _)| *k == key) {
+                if seen.insert(key) {
                     output.push(format!("{key}={value}"));
-                    seen.insert(key);
-                    continue;
                 }
+                continue;
             }
+        } else if !seen.insert(key) {
+            return Err(format!(
+                "duplicate unmanaged environment variable at line {}",
+                line_index + 1
+            ));
         }
         output.push(line.to_owned());
     }
@@ -1548,6 +1567,51 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     // permissions: this file can contain the GitHub PAT.
     write_resource(path, &(output.join("\n") + "\n"), 0o600).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn is_valid_env_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_uppercase() || c == '_')
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+fn read_existing_env_file(path: &Path) -> Result<String, String> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = options
+            .open(path)
+            .map_err(|error| format!("unable to read {}: {error}", path.display()))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("unable to inspect {}: {error}", path.display()))?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(format!(
+                "refusing unsafe environment file {}",
+                path.display()
+            ));
+        }
+        let mut content = String::new();
+        file.read_to_string(&mut content)
+            .map_err(|error| format!("unable to read {}: {error}", path.display()))?;
+        return Ok(content);
+    }
+    #[cfg(not(unix))]
+    {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| format!("unable to inspect {}: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(format!(
+                "refusing unsafe environment file {}",
+                path.display()
+            ));
+        }
+        fs::read_to_string(path).map_err(|error| format!("unable to read {}: {error}", path.display()))
+    }
 }
 
 fn validate_env_file_value(key: &str, value: &str) -> Result<(), String> {
@@ -1771,6 +1835,51 @@ mod tests {
         assert!(!content.contains("GITRUN_MIN_RUNNERS=1"));
 
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn update_env_file_collapses_managed_duplicates_and_rejects_unmanaged_duplicates() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-duplicates-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "GITRUN_MIN_RUNNERS=1\nGITRUN_MIN_RUNNERS=2\nUNMANAGED=value\n",
+        )
+        .unwrap();
+        update_env_file(&path, &Config::default()).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content.matches("GITRUN_MIN_RUNNERS=").count(), 1);
+        assert!(content.contains("UNMANAGED=value"));
+        fs::write(&path, "UNMANAGED=one\nUNMANAGED=two\n").unwrap();
+        assert!(update_env_file(&path, &Config::default())
+            .unwrap_err()
+            .contains("duplicate unmanaged"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn update_env_file_rejects_symlink_path() {
+        use std::os::unix::fs::symlink;
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-symlink-{}.env",
+            std::process::id()
+        ));
+        let target = path.with_extension("target");
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&target);
+        fs::write(&target, "GITRUN_MIN_RUNNERS=1\n").unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(update_env_file(&path, &Config::default())
+            .unwrap_err()
+            .contains("unable to read"));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&target);
     }
 
     #[test]

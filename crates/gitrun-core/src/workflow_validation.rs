@@ -547,9 +547,11 @@ pub fn zizmor_info() -> ZizmorInfo {
 /// Checks whether the optional analyzer is available without allowing an
 /// unbounded version-probe subprocess to hang the dashboard.
 pub fn zizmor_is_installed() -> bool {
+    let mut command = Command::new("zizmor");
+    command.arg("--version");
     matches!(
         run_bounded_command(
-            Command::new("zizmor").arg("--version"),
+            command,
             Duration::from_secs(10),
             64 * 1024,
         ),
@@ -568,8 +570,10 @@ pub fn zizmor_is_installed() -> bool {
 /// Already-installed is treated as success with no reinstall — this is an
 /// idempotent "make sure it's available" call, not a forced upgrade.
 pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
+    let mut version_command = Command::new("zizmor");
+    version_command.arg("--version");
     match run_bounded_command(
-        Command::new("zizmor").arg("--version"),
+        version_command,
         Duration::from_secs(10),
         64 * 1024,
     ) {
@@ -589,13 +593,15 @@ pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
 
     // cargo install is a network/build operation, so bound both its lifetime
     // and retained diagnostics rather than using Command::output() indefinitely.
+    let mut install_command = Command::new("cargo");
+    install_command
+        .arg("install")
+        .arg("--locked")
+        .arg("--version")
+        .arg("1.30.1")
+        .arg("zizmor");
     let output = run_bounded_command(
-        Command::new("cargo")
-            .arg("install")
-            .arg("--locked")
-            .arg("--version")
-            .arg("1.30.1")
-            .arg("zizmor"),
+        install_command,
         Duration::from_secs(15 * 60),
         16 * 1024 * 1024,
     )?;

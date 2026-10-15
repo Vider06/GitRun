@@ -1427,11 +1427,9 @@ impl ApiExecutionBackend {
             )));
         }
 
-        if dynamic && completed {
-            make_dock_only(&runner_name, &self.state_dir)
-                .map_err(|error| failed(error.to_string()))?;
-        }
-
+        // Load and prepare the registry before changing container lifecycle;
+        // a registry read/decode failure must not leave a runner disabled with
+        // no durable binding describing why.
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
         registry.upsert(DockBinding {
@@ -1445,9 +1443,22 @@ impl ApiExecutionBackend {
             requester_runner: self.caller.runner.clone(),
             connected_at: now(),
         });
-        registry
-            .save(&self.state_dir)
-            .map_err(|error| failed(error.to_string()))?;
+        if dynamic && completed {
+            // Use the immutable Docker ID captured above, not a name that
+            // could be rebound between lookup and mutation.
+            make_dock_only(&container_id, &self.state_dir)
+                .map_err(|error| failed(error.to_string()))?;
+        }
+        if let Err(error) = registry.save(&self.state_dir) {
+            if dynamic && completed {
+                if let Err(rollback_error) = restore_runner(&container_id) {
+                    return Err(failed(format!(
+                        "persist GitDockRun binding failed: {error}; additionally failed to restore runner after rollback: {rollback_error}"
+                    )));
+                }
+            }
+            return Err(failed(format!("persist GitDockRun binding: {error}")));
+        }
 
         Ok(success(format!(
             "GitDockRun CONNECT: PASS\njob={job}\ncontainer={runner_name}\nid={container_id}\n"

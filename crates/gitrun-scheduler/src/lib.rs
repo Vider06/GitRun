@@ -566,7 +566,14 @@ fn reconcile_repo(
     // GTUU replaces permanent runners. Hold its process-shared lifecycle lock
     // across the complete snapshot/plan/execute cycle so an update cannot
     // replace a container between inventory and a destructive scheduler action.
-    let _lifecycle_lock = GtuuLock::acquire(state_dir)?;
+    let _lifecycle_lock = match GtuuLock::acquire(state_dir) {
+        Ok(lock) => lock,
+        Err(crate::gtuu::GtuuError::AlreadyRunning) => {
+            eprintln!("gitrun-autoscaler: deferring reconciliation for {repo}; GTUU owns the runner lifecycle lock");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
     api_service::reconcile_dock_bindings(client, state_dir, repo).map_err(std::io::Error::other)?;
 
     if config.gsr_workflow_validation_enabled {

@@ -238,7 +238,6 @@ impl MountRegistry {
         // ID makes ownership ambiguous and removing by ID could erase unrelated
         // leases after cleaning only one record. Reject the whole registry.
         let mut ids = std::collections::BTreeSet::new();
-        let mut targets = std::collections::BTreeSet::new();
         for mount in &registry.mounts {
             if mount.id.trim().is_empty() {
                 return Err("GitDockRun mount registry contains an empty mount ID".into());
@@ -257,12 +256,6 @@ impl MountRegistry {
                 || mount.target.trim().is_empty()
             {
                 return Err("GitDockRun mount registry contains an incomplete ownership record".into());
-            }
-            if !targets.insert((mount.container_id.as_str(), mount.target.as_str())) {
-                return Err(format!(
-                    "GitDockRun mount registry contains duplicate target {:?} for container {}",
-                    mount.target, mount.container_id
-                ));
             }
         }
 

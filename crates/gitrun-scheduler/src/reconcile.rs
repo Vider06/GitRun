@@ -53,6 +53,9 @@ pub struct IdleInfo {
 pub struct ReconcileInput {
     pub min_runners: u32,
     pub max_runners: u32,
+    /// GitRun-managed runner containers reserved by active GitDockRun bindings.
+    /// They are excluded from ordinary planning but still consume the repository's global capacity.
+    pub reserved_runners: u32,
     pub containers: Vec<ContainerView>,
     pub runners: Vec<RunnerView>,
     pub queued_jobs: u32,
@@ -177,7 +180,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // deciding how many *more* containers to create, so a container that's
     // about to be recreated isn't double-counted as "already satisfying
     // desired".
-    if input.recovery_enabled && input.queued_jobs > 0 {
+    if input.recovery_enabled {
         for container in &live_containers {
             let runner = by_name(&container.name);
             match runner {
@@ -212,7 +215,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // Recreating an orphan replaces its existing container; it does not
     // consume an additional slot. Count permanent containers by their actual
     // role rather than treating every orphan as permanent.
-    let mut current = live_containers.len() as u32;
+    let mut current = (live_containers.len() as u32).saturating_add(input.reserved_runners);
     let mut permanent_count = live_containers.iter().filter(|c| c.permanent).count() as u32;
 
     // The permanent warm pool is a separate invariant from total demand:
@@ -232,7 +235,8 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
 
     // Jobs matched by Logic Containers and GitDockRun targets need capacity
     // in addition to the guaranteed warm pool. This intentionally may raise
-    // the total above desired_count, but never above max_runners: the
+    // the total above desired_count, but never above max_runners, including
+    // containers reserved by the GitDockRun lifecycle: the
     // count-based formula assumes runners are interchangeable, which is not
     // true when jobs require a particular backend/image or isolated target.
     let specialized_jobs: Vec<(Option<String>, Option<u64>, Vec<String>)> = input
@@ -351,6 +355,7 @@ mod tests {
         ReconcileInput {
             min_runners: 3,
             max_runners: 8,
+            reserved_runners: 0,
             containers: Vec::new(),
             runners: Vec::new(),
             queued_jobs: 0,
@@ -961,8 +966,8 @@ mod tests {
     }
 
     #[test]
-    fn recovery_pass_is_skipped_when_no_jobs_queued() {
-        // Matches the Python behavior: recovery only runs when `queued > 0`.
+    fn recovery_pass_runs_when_no_jobs_are_queued() {
+        // Runner health and orphan cleanup are lifecycle invariants, not a function of queue depth.
         let mut input = base_input();
         input.containers = vec![ContainerView {
             name: "gone-from-github".into(),
@@ -972,9 +977,66 @@ mod tests {
         input.queued_jobs = 0;
         input.runners = Vec::new();
         let actions = plan(&input);
-        assert!(actions.iter().all(
-            |a| !matches!(a, Action::RecreateOrphaned { name, .. } if name == "gone-from-github")
+        assert!(actions.iter().any(
+            |a| matches!(a, Action::RecreateOrphaned { name, .. } if name == "gone-from-github")
         ));
+    }
+
+    #[test]
+    fn reserved_dock_runners_count_toward_global_maximum() {
+        let mut input = base_input();
+        input.min_runners = 3;
+        input.max_runners = 8;
+        input.reserved_runners = 1;
+        input.containers = (0..7)
+            .map(|i| ContainerView {
+                name: format!("runner-{i}"),
+                health: ContainerHealth::Running,
+                permanent: i < 3,
+            })
+            .collect();
+        input.runners = input
+            .containers
+            .iter()
+            .map(|container| RunnerView {
+                name: container.name.clone(),
+                online: true,
+                busy: false,
+            })
+            .collect();
+        input.queued_jobs = 20;
+
+        let actions = plan(&input);
+        assert!(
+            actions.iter().all(|action| !matches!(action, Action::CreateRunner { .. })),
+            "seven ordinary runners plus one reserved Dock already consume max_runners"
+        );
+    }
+
+    #[test]
+    fn reserved_dock_capacity_does_not_satisfy_permanent_warm_pool_minimum() {
+        let mut input = base_input();
+        input.min_runners = 3;
+        input.max_runners = 8;
+        input.reserved_runners = 2;
+        input.containers = (0..2)
+            .map(|i| ContainerView {
+                name: format!("dynamic-{i}"),
+                health: ContainerHealth::Running,
+                permanent: false,
+            })
+            .collect();
+
+        let actions = plan(&input);
+        let permanent_creates = actions
+            .iter()
+            .filter(|action| matches!(action, Action::CreateRunner { permanent: true, .. }))
+            .count();
+        assert_eq!(permanent_creates, 3, "reserved Dock containers are not permanent warm-pool runners");
+        assert!(
+            2 + input.containers.len() + permanent_creates <= input.max_runners as usize,
+            "reserved plus existing plus planned runners must respect the global maximum"
+        );
     }
 
     #[test]

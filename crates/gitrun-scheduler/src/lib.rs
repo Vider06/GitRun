@@ -1129,6 +1129,10 @@ fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
             config.gsr_command_policy_enabled.to_string(),
         ),
         (
+            "GITRUN_GSR_ALLOW_UNSAFE_RUNNER".into(),
+            config.gsr_allow_unsafe_runner.to_string(),
+        ),
+        (
             "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED".into(),
             config.gsr_command_baseline_blacklist_enabled.to_string(),
         ),
@@ -1161,6 +1165,18 @@ fn vault_env_for_repo(
 ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
     if config.vault_dir.trim().is_empty() {
         return Ok(Vec::new());
+    }
+    let vault_path = Path::new(&config.vault_dir);
+    match std::fs::symlink_metadata(vault_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "gitrun-autoscaler: GitVault directory {} is missing; creating runner without vault secrets",
+                vault_path.display()
+            );
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.into()),
     }
     let bridge = VaultToGsrBridge::new(&config.state_dir);
     let vault = Vault::open_with_sink(&config.vault_dir, Box::new(bridge)).map_err(|error| {
@@ -1535,6 +1551,39 @@ mod tests {
         let labels =
             runner_labels_for_job("self-hosted,Linux,gitrun-ci", true, &["windows".into()]);
         assert_eq!(labels, "self-hosted,Linux,gitrun-ci");
+    }
+
+    #[test]
+    fn gsr_policy_env_preserves_explicit_unsafe_runner_opt_in() {
+        let config = Config {
+            gsr_command_policy_enabled: false,
+            gsr_allow_unsafe_runner: true,
+            ..Config::default()
+        };
+        let env = gsr_policy_env(&config);
+        assert!(env.iter().any(|(key, value)| {
+            key == "GITRUN_GSR_COMMAND_POLICY_ENABLED" && value == "false"
+        }));
+        assert!(env.iter().any(|(key, value)| {
+            key == "GITRUN_GSR_ALLOW_UNSAFE_RUNNER" && value == "true"
+        }));
+    }
+
+    #[test]
+    fn missing_configured_vault_does_not_get_initialized_silently() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-scheduler-missing-vault-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = Config {
+            vault_dir: dir.to_string_lossy().into_owned(),
+            ..Config::default()
+        };
+        let env = vault_env_for_repo(&config, "owner/repo").unwrap();
+        assert!(env.is_empty());
+        assert!(!dir.exists(), "missing vault must not be initialized implicitly");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

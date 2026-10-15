@@ -4835,6 +4835,7 @@ impl RegisterRegistry {
             let _ = fs::remove_file(&tmp);
             return Err(failed(format!("commit register registry: {error}")));
         }
+        #[cfg(unix)]
         fs::File::open(parent)
             .and_then(|directory| directory.sync_all())
             .map_err(|error| failed(format!("sync register registry directory: {error}")))?;
@@ -5175,6 +5176,26 @@ mod gsr_execution_boundary_tests {
         assert!(!dock_binding_matches_current_id("sha256:old", "sha256:new"));
         assert!(!dock_binding_matches_current_id("", "sha256:new"));
         assert!(!dock_binding_matches_current_id("sha256:abc", ""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn register_registry_rejects_symlink_and_hard_link_files() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-register-registry-links-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _dir_guard = TemporaryDirectory(dir.clone());
+        let path = dir.join("register-registry.json");
+        let target = dir.join("target.json");
+        fs::write(&target, r#"{"entries":[]}"#).unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(RegisterRegistry::load(&path).is_err());
+        fs::remove_file(&path).unwrap();
+        fs::hard_link(&target, &path).unwrap();
+        assert!(RegisterRegistry::load(&path).is_err());
     }
 
     #[test]

@@ -199,10 +199,22 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                     }
                 }
                 None => {
-                    actions.push(Action::RecreateOrphaned {
-                        name: container.name.clone(),
-                        permanent: container.permanent,
-                    });
+                    // A missing registration is ambiguous while a workflow job
+                    // may still be running under this runner name. The caller
+                    // marks such jobs as busy; otherwise require the same
+                    // recovery cooldown used for offline registrations.
+                    let age = input
+                        .recovery_age
+                        .iter()
+                        .find(|(name, _)| name == &container.name)
+                        .map(|(_, age)| *age)
+                        .unwrap_or_default();
+                    if age >= input.recovery_cooldown {
+                        actions.push(Action::RecreateOrphaned {
+                            name: container.name.clone(),
+                            permanent: container.permanent,
+                        });
+                    }
                 }
                 _ => {} // online and not busy: healthy, nothing to do
             }
@@ -758,8 +770,9 @@ mod tests {
             health: ContainerHealth::Running,
             permanent: false,
         }];
-        input.queued_jobs = 1; // recovery pass only runs when there's demand
+        input.queued_jobs = 1;
         input.runners = Vec::new(); // no matching runner registered anymore
+        input.recovery_age = vec![("gone-from-github".into(), Duration::from_secs(60))];
         let actions = plan(&input);
         assert!(actions.contains(&Action::RecreateOrphaned {
             name: "gone-from-github".into(),
@@ -976,6 +989,7 @@ mod tests {
         }];
         input.queued_jobs = 0;
         input.runners = Vec::new();
+        input.recovery_age = vec![("gone-from-github".into(), Duration::from_secs(60))];
         let actions = plan(&input);
         assert!(actions.iter().any(
             |a| matches!(a, Action::RecreateOrphaned { name, .. } if name == "gone-from-github")

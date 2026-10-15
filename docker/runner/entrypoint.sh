@@ -93,8 +93,24 @@ unset GITRUN_GSR_ALLOW_UNSAFE_RUNNER
   exec sudo -P -u runner -E /bin/bash -c 'exec sleep infinity'
 fi
 
-mkdir -p "$HOME" "$XDG_CONFIG_HOME"
-chown runner:runner "$HOME" "$XDG_CONFIG_HOME"
+ensure_runner_owned_dir() {
+  local path="$1"
+  if [[ -L "$path" ]]; then
+    echo "gitrun-runner: refusing symlinked runner state directory: $path" >&2
+    exit 1
+  fi
+  mkdir -p -- "$path"
+  if [[ -L "$path" || ! -d "$path" ]]; then
+    echo "gitrun-runner: runner state path is not a real directory: $path" >&2
+    exit 1
+  fi
+  # -h avoids following a symlink if an untrusted runner process races the
+  # checks above and replaces the final path component before chown executes.
+  chown --no-dereference runner:runner -- "$path"
+}
+
+ensure_runner_owned_dir "$HOME"
+ensure_runner_owned_dir "$XDG_CONFIG_HOME"
 
 sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/cargo" \
@@ -102,8 +118,22 @@ sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/pip" \
   "$SHARED_CACHE_DIR/npm"
 
+for runner_state in .runner .credentials .credentials_rsaparams; do
+  if [[ -L "$runner_state" ]]; then
+    echo "gitrun-runner: refusing symlinked runner credential/state file: $runner_state" >&2
+    exit 1
+  fi
+done
 if [[ -f .runner ]]; then
-  chown runner:runner .runner .credentials .credentials_rsaparams 2>/dev/null || true
+  for runner_state in .runner .credentials .credentials_rsaparams; do
+    if [[ -e "$runner_state" ]]; then
+      if [[ ! -f "$runner_state" ]]; then
+        echo "gitrun-runner: runner credential/state path is not a regular file: $runner_state" >&2
+        exit 1
+      fi
+      chown --no-dereference runner:runner -- "$runner_state"
+    fi
+  done
 fi
 
 if [[ ! -f .runner ]]; then

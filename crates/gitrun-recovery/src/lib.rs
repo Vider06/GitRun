@@ -373,7 +373,10 @@ fn is_trusted_root_executable(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
-    metadata.is_file() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0
+    metadata.is_file()
+        && metadata.uid() == 0
+        && metadata.mode() & 0o111 != 0
+        && metadata.mode() & 0o022 == 0
 }
 
 #[cfg(not(unix))]

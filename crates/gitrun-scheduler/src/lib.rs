@@ -1147,12 +1147,25 @@ fn save_workflow_dock_requirements(
     requests: &[gitrun_core::DockRequest],
 ) -> std::io::Result<()> {
     let state_root = std::path::Path::new(state_dir);
-    let root_metadata = std::fs::symlink_metadata(state_root)?;
-    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "workflow state root must be a real directory",
-        ));
+    match std::fs::symlink_metadata(state_root) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workflow state root must be a real directory",
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(state_root)?;
+            let metadata = std::fs::symlink_metadata(state_root)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "workflow state root must be a real directory",
+                ));
+            }
+        }
+        Err(error) => return Err(error),
     }
 
     let directory = state_root.join("workflow-dock-requirements");
@@ -1720,6 +1733,41 @@ fn utc_now() -> SimpleNow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workflow_dock_requirements_use_exact_repo_key_and_remove_atomically() {
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-workflow-requirements-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repo = "owner/repo";
+        let request = gitrun_core::DockRequest {
+            file: "ci.yml".into(),
+            line: 4,
+            calling_job: Some("build".into()),
+            target_job: "cache".into(),
+            operation: gitrun_core::DockOperation::Connect,
+        };
+        save_workflow_dock_requirements(
+            base.to_str().unwrap(),
+            repo,
+            std::slice::from_ref(&request),
+        )
+        .unwrap();
+        let path = base
+            .join("workflow-dock-requirements")
+            .join(format!("{}.json", repo_storage_key(repo)));
+        let stored: Vec<gitrun_core::DockRequest> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(stored, vec![request]);
+        save_workflow_dock_requirements(base.to_str().unwrap(), repo, &[]).unwrap();
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
 
     #[test]
     fn repository_storage_keys_are_collision_free_for_sanitization_collisions() {

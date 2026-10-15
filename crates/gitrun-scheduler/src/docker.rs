@@ -1152,10 +1152,8 @@ pub fn container_logs(name: &str) -> Result<String> {
 
 pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
     // Docker does not provide a literal "merge two container namespaces"
-    // primitive. GitDockRun melt therefore merges the source container's
-    // exported filesystem into the target container's writable filesystem.
-    // Runtime/pseudo filesystems and the Actions runner installation are
-    // deliberately excluded: the target remains the runner container.
+    // primitive. GitDockRun melt merges an exported source filesystem into
+    // the target writable filesystem, excluding runtime/runner state.
     let mut export = Command::new("/usr/bin/docker");
     export
         .env_remove("DOCKER_CONTEXT")
@@ -1173,25 +1171,13 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         .env_remove("DOCKER_CERT_PATH")
         .env("DOCKER_HOST", "unix:///var/run/docker.sock")
         .args([
-            "exec",
-            "-i",
-            target,
-            "tar",
-            "-xpf",
-            "-",
-            "-C",
-            "/",
+            "exec", "-i", target, "tar", "-xpf", "-", "-C", "/",
             "--no-same-owner",
-            "--exclude=./proc",
-            "--exclude=./proc/*",
-            "--exclude=./sys",
-            "--exclude=./sys/*",
-            "--exclude=./dev",
-            "--exclude=./dev/*",
-            "--exclude=./run",
-            "--exclude=./run/*",
-            "--exclude=./var/run",
-            "--exclude=./var/run/*",
+            "--exclude=./proc", "--exclude=./proc/*",
+            "--exclude=./sys", "--exclude=./sys/*",
+            "--exclude=./dev", "--exclude=./dev/*",
+            "--exclude=./run", "--exclude=./run/*",
+            "--exclude=./var/run", "--exclude=./var/run/*",
             "--exclude=./home/runner/actions-runner",
             "--exclude=./home/runner/actions-runner/*",
         ])
@@ -1199,48 +1185,161 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        export.process_group(0);
+        extract.process_group(0);
+    }
+
     let mut export_child = export.spawn()?;
-    let mut extract_child = extract.spawn()?;
-    let mut export_stdout = export_child
-        .stdout
-        .take()
-        .ok_or_else(|| DockerError::Command("docker export did not expose stdout".into()))?;
-    let mut extract_stdin = extract_child
-        .stdin
-        .take()
-        .ok_or_else(|| DockerError::Command("docker exec did not expose stdin".into()))?;
+    let mut extract_child = match extract.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            terminate_child(&mut export_child);
+            return Err(DockerError::Spawn(error));
+        }
+    };
 
-    let pipe = std::thread::spawn(move || std::io::copy(&mut export_stdout, &mut extract_stdin));
+    let export_stdout = match export_child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command("docker export did not expose stdout".into()));
+        }
+    };
+    let extract_stdin = match extract_child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command("docker exec did not expose stdin".into()));
+        }
+    };
+    let export_stderr = match export_child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command("docker export did not expose stderr".into()));
+        }
+    };
+    let extract_stdout = match extract_child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command("docker exec did not expose stdout".into()));
+        }
+    };
+    let extract_stderr = match extract_child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command("docker exec did not expose stderr".into()));
+        }
+    };
 
-    let extract_output = extract_child.wait_with_output()?;
-    let export_status = export_child.wait()?;
-    let copied = pipe
+    // Drain both stderr pipes and extract stdout while streaming the tar bytes.
+    // Otherwise a full stderr pipe can deadlock the export->extract pipeline.
+    let export_stderr_thread = thread::spawn(move || read_bounded_output(export_stderr));
+    let extract_stdout_thread = thread::spawn(move || read_bounded_output(extract_stdout));
+    let extract_stderr_thread = thread::spawn(move || read_bounded_output(extract_stderr));
+    let pipe_thread = thread::spawn(move || {
+        let mut export_stdout = export_stdout;
+        let mut extract_stdin = extract_stdin;
+        std::io::copy(&mut export_stdout, &mut extract_stdin)
+    });
+
+    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
+    let mut export_status = None;
+    let mut extract_status = None;
+    while export_status.is_none() || extract_status.is_none() {
+        if export_status.is_none() {
+            match export_child.try_wait() {
+                Ok(status) => export_status = status,
+                Err(error) => {
+                    terminate_child(&mut export_child);
+                    terminate_child(&mut extract_child);
+                    let _ = pipe_thread.join();
+                    let _ = export_stderr_thread.join();
+                    let _ = extract_stdout_thread.join();
+                    let _ = extract_stderr_thread.join();
+                    return Err(DockerError::Spawn(error));
+                }
+            }
+        }
+        if extract_status.is_none() {
+            match extract_child.try_wait() {
+                Ok(status) => extract_status = status,
+                Err(error) => {
+                    terminate_child(&mut export_child);
+                    terminate_child(&mut extract_child);
+                    let _ = pipe_thread.join();
+                    let _ = export_stderr_thread.join();
+                    let _ = extract_stdout_thread.join();
+                    let _ = extract_stderr_thread.join();
+                    return Err(DockerError::Spawn(error));
+                }
+            }
+        }
+        if export_status.is_some() && extract_status.is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            let _ = pipe_thread.join();
+            let _ = export_stderr_thread.join();
+            let _ = extract_stdout_thread.join();
+            let _ = extract_stderr_thread.join();
+            return Err(DockerError::Command(format!(
+                "filesystem melt timed out after {}s",
+                DOCKER_COMMAND_TIMEOUT.as_secs()
+            )));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let copied = pipe_thread
         .join()
         .map_err(|_| DockerError::Command("melt pipe thread panicked".into()))?
         .map_err(DockerError::Spawn)?;
+    let export_stderr = export_stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("docker export stderr reader panicked".into()))??;
+    let _extract_stdout = extract_stdout_thread
+        .join()
+        .map_err(|_| DockerError::Command("docker exec stdout reader panicked".into()))??;
+    let extract_stderr = extract_stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("docker exec stderr reader panicked".into()))??;
 
+    let export_status = export_status.expect("loop exits only when export status is available");
+    let extract_status = extract_status.expect("loop exits only when extract status is available");
     if !export_status.success() {
-        return Err(DockerError::Command(format!(
-            "docker export {source} failed"
-        )));
-    }
-    if !extract_output.status.success() {
-        let stderr = String::from_utf8_lossy(&extract_output.stderr)
-            .trim()
-            .to_owned();
-        return Err(DockerError::Command(if stderr.is_empty() {
-            format!("filesystem melt into {target} failed")
+        let detail = String::from_utf8_lossy(&export_stderr).trim().to_owned();
+        return Err(DockerError::Command(if detail.is_empty() {
+            format!("docker export {source} failed")
         } else {
-            stderr
+            format!("docker export {source} failed: {detail}")
         }));
     }
-
+    if !extract_status.success() {
+        let detail = String::from_utf8_lossy(&extract_stderr).trim().to_owned();
+        return Err(DockerError::Command(if detail.is_empty() {
+            format!("filesystem melt into {target} failed")
+        } else {
+            format!("filesystem melt into {target} failed: {detail}")
+        }));
+    }
     if copied == 0 {
         return Err(DockerError::Command(
             "filesystem melt copied no data from source container".into(),
         ));
     }
-
     Ok(())
 }
 

@@ -1754,6 +1754,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn runner_name_prefix_is_collision_free_and_within_docker_name_limit() {
+        let first = "foo-bar/baz";
+        let second = "foo/bar-baz";
+        assert_eq!(sanitize(first, '-'), sanitize(second, '-'));
+        assert_ne!(runner_name_prefix(first), runner_name_prefix(second));
+
+        let maximum_repo = format!("{}/{}", "a".repeat(39), "b".repeat(100));
+        // uuid_like_suffix is at most 36 ASCII characters; the encoded
+        // prefix must leave room under Docker's 255-character name limit.
+        assert!(runner_name_prefix(&maximum_repo).len() + 36 <= 255);
+    }
+
+    #[test]
     fn secret_environment_rejects_protected_runner_variables() {
         for name in [
             "RUNNER_TOKEN",

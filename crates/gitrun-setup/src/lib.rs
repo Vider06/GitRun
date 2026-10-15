@@ -181,7 +181,7 @@ pub fn uninstall_linux() -> Result<(), SetupError> {
 
     if package_registered {
         println!("[GitRun uninstall] Purging package registration with dpkg");
-        run_command(Command::new("dpkg").args(["--purge", "gitrun"]))?;
+        run_command(Command::new("/usr/bin/dpkg").args(["--purge", "gitrun"]))?;
     }
 
     // Catch leftovers from previous manual installs and old package layouts.
@@ -215,7 +215,7 @@ fn validate_uninstall_host() -> Result<(), SetupError> {
 }
 
 fn deb_package_registered() -> bool {
-    let Ok(output) = Command::new("dpkg-query")
+    let Ok(output) = Command::new("/usr/bin/dpkg-query")
         .args(["-W", "-f=${db:Status-Status}", "gitrun"])
         .output()
     else {
@@ -237,15 +237,15 @@ fn deb_package_registered() -> bool {
 fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
     println!("[GitRun uninstall] Stopping and disabling GitRun systemd units");
     for unit in ["gitrun-gsr.service", "gitrun.service"] {
-        let _ = Command::new("systemctl")
+        let _ = Command::new("/usr/bin/systemctl")
             .args(["disable", "--now", unit])
             .status();
-        if Command::new("systemctl")
+        if Command::new("/usr/bin/systemctl")
             .args(["is-active", "--quiet", unit])
             .status()
             .is_ok_and(|status| status.success())
         {
-            run_command(Command::new("systemctl").args(["stop", unit]))?;
+            run_command(Command::new("/usr/bin/systemctl").args(["stop", unit]))?;
         }
     }
 
@@ -393,7 +393,7 @@ fn reload_systemd() -> Result<(), SetupError> {
     if !command_exists("systemctl") {
         return Ok(());
     }
-    run_command(Command::new("systemctl").args(["daemon-reload"]))
+    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))
 }
 
 fn verify_uninstall_complete() -> Result<(), SetupError> {
@@ -426,11 +426,11 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
         return Ok(());
     }
 
-    let daemon_ready = Command::new("docker")
+    let daemon_ready = Command::new("/usr/bin/docker")
         .arg("info")
         .output()
         .is_ok_and(|output| output.status.success());
-    let docker_was_active = Command::new("systemctl")
+    let docker_was_active = Command::new("/usr/bin/systemctl")
         .args(["is-active", "--quiet", "docker.service"])
         .status()
         .is_ok_and(|status| status.success());
@@ -442,14 +442,14 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
                 "Docker daemon is unavailable and systemd cannot start it for cleanup".into(),
             ));
         }
-        run_command(Command::new("systemctl").args(["start", "docker.service"]))?;
-        let ready = Command::new("docker")
+        run_command(Command::new("/usr/bin/systemctl").args(["start", "docker.service"]))?;
+        let ready = Command::new("/usr/bin/docker")
             .arg("info")
             .output()
             .is_ok_and(|output| output.status.success());
         if !ready {
             if !docker_was_active {
-                let _ = Command::new("systemctl")
+                let _ = Command::new("/usr/bin/systemctl")
                     .args(["stop", "docker.service"])
                     .status();
             }
@@ -484,7 +484,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
             vec!["image", "ls", "-q", "--filter", "label=gitrun.managed=true"],
             vec!["image", "ls", "-q", "--filter", "reference=gitrun-runner:*"],
         ] {
-            let output = Command::new("docker").args(args).output()?;
+            let output = Command::new("/usr/bin/docker").args(args).output()?;
             if !output.status.success() {
                 return Err(SetupError::Command(format!(
                     "unable to enumerate GitRun images: {}",
@@ -500,7 +500,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
             );
         }
         for image in image_ids {
-            run_command(Command::new("docker").args(["image", "rm", "-f", &image]))?;
+            run_command(Command::new("/usr/bin/docker").args(["image", "rm", "-f", &image]))?;
         }
         Ok(())
     })();
@@ -508,7 +508,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     // Do not change Docker's pre-existing service state. If Docker was stopped
     // before uninstall, restore that state even when object cleanup fails.
     let restore_result = if started_temporarily {
-        run_command(Command::new("systemctl").args(["stop", "docker.service"]))
+        run_command(Command::new("/usr/bin/systemctl").args(["stop", "docker.service"]))
     } else {
         Ok(())
     };
@@ -517,7 +517,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
 }
 
 fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> {
-    let output = Command::new("docker")
+    let output = Command::new("/usr/bin/docker")
         .args(["ps", "-aq", "--filter", "label=gitrun.runner=true"])
         .output()?;
     if !output.status.success() {
@@ -536,7 +536,7 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
         // <container-name>-home and do not carry the shared-volume label.
         // Resolve names before removing containers so these per-runner volumes
         // do not survive an otherwise successful uninstall.
-        let inspect = Command::new("docker")
+        let inspect = Command::new("/usr/bin/docker")
             .args(["inspect", "-f", "{{.Name}}", id])
             .output()?;
         let container_name = if inspect.status.success() {
@@ -548,7 +548,7 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
             String::new()
         };
 
-        run_command(Command::new("docker").args(["rm", "-f", "-v", id]))?;
+        run_command(Command::new("/usr/bin/docker").args(["rm", "-f", "-v", id]))?;
 
         if container_name.starts_with("gitrun-") && !container_name.chars().any(char::is_control) {
             remove_volume_if_present(&format!("{container_name}-home"))?;
@@ -557,7 +557,7 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
 
     // Catch orphaned runner-home volumes left by prior crashes or older
     // versions that failed between container removal and volume cleanup.
-    let volumes = Command::new("docker")
+    let volumes = Command::new("/usr/bin/docker")
         .args(["volume", "ls", "-q"])
         .output()?;
     if !volumes.status.success() {
@@ -577,11 +577,11 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
 }
 
 fn remove_volume_if_present(name: &str) -> Result<(), SetupError> {
-    let inspect = Command::new("docker")
+    let inspect = Command::new("/usr/bin/docker")
         .args(["volume", "inspect", name])
         .output()?;
     if inspect.status.success() {
-        run_command(Command::new("docker").args(["volume", "rm", "-f", name]))?;
+        run_command(Command::new("/usr/bin/docker").args(["volume", "rm", "-f", name]))?;
     }
     Ok(())
 }
@@ -591,7 +591,7 @@ fn remove_docker_items(
     remove_prefix: &[&str],
     label: &str,
 ) -> Result<(), SetupError> {
-    let output = Command::new("docker").args(list_args).output()?;
+    let output = Command::new("/usr/bin/docker").args(list_args).output()?;
     if !output.status.success() {
         return Err(SetupError::Command(format!(
             "unable to enumerate GitRun Docker {label}: {}",
@@ -603,7 +603,7 @@ fn remove_docker_items(
         .map(str::trim)
         .filter(|id| !id.is_empty())
     {
-        let mut command = Command::new("docker");
+        let mut command = Command::new("/usr/bin/docker");
         command.args(remove_prefix).arg(id);
         run_command(&mut command)?;
     }
@@ -650,10 +650,10 @@ pub fn reinstall_linux_with_auth(
     let existing_config = fs::read_to_string(config_path)?;
 
     println!("[GitRun reinstall] Stopping the existing GitRun services");
-    let _ = Command::new("systemctl")
+    let _ = Command::new("/usr/bin/systemctl")
         .args(["disable", "--now", "gitrun-gsr.service"])
         .status();
-    let _ = Command::new("systemctl")
+    let _ = Command::new("/usr/bin/systemctl")
         .args(["disable", "--now", "gitrun.service"])
         .status();
 
@@ -666,10 +666,10 @@ pub fn reinstall_linux_with_auth(
     ] {
         remove_path_if_present(Path::new(path))?;
     }
-    let _ = Command::new("docker")
+    let _ = Command::new("/usr/bin/docker")
         .args(["image", "rm", "-f", "gitrun-runner:latest"])
         .status();
-    let _ = Command::new("systemctl").args(["daemon-reload"]).status();
+    let _ = Command::new("/usr/bin/systemctl").args(["daemon-reload"]).status();
 
     let report = bootstrap_linux_with_auth(auth, repositories, app_binary, owner_uid)?;
 
@@ -677,10 +677,10 @@ pub fn reinstall_linux_with_auth(
     if let Some(uid) = owner_uid {
         chown_path(config_path, uid)?;
     }
-    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
 
     println!("GitRun reinstall: PASS");
     Ok(report)
@@ -839,13 +839,13 @@ pub fn bootstrap_linux_with_auth_and_profile(
     }
 
     setup_progress(9, "Enabling and starting the GitRun service");
-    run_command(Command::new("systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["enable", "gitrun-gsr.service"]))?;
-    run_command(Command::new("systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),
@@ -864,9 +864,8 @@ fn setup_progress(step: u8, message: &str) {
 
 fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {
     [
-        std::env::var("GITRUN_RECOVERY_BINARY")
-            .ok()
-            .map(PathBuf::from),
+        // This resolver is used while bootstrapping with elevated privileges.
+        // Do not let an inherited environment variable select a root-installed binary.
         Some(PathBuf::from("/usr/local/bin/gitrun-recovery")),
         app_binary.parent().map(|parent| {
             parent.join(if cfg!(windows) {
@@ -982,9 +981,9 @@ fn ensure_docker() -> Result<(), SetupError> {
         return Err(SetupError::MissingCommand("apt-get".into()));
     }
 
-    run_command(Command::new("apt-get").args(["update"]))?;
-    run_command(Command::new("apt-get").args(["install", "-y", "docker.io", "docker-compose-v2"]))?;
-    run_command(Command::new("systemctl").args(["enable", "--now", "docker"]))?;
+    run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
+    run_command(Command::new("/usr/bin/apt-get").args(["install", "-y", "docker.io", "docker-compose-v2"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "--now", "docker"]))?;
 
     if !docker_daemon_ready() || !compose_ready() {
         return Err(SetupError::Command(
@@ -995,7 +994,7 @@ fn ensure_docker() -> Result<(), SetupError> {
 }
 
 fn docker_buildx_ready() -> bool {
-    Command::new("docker")
+    Command::new("/usr/bin/docker")
         .args(["buildx", "version"])
         .status()
         .is_ok_and(|status| status.success())
@@ -1016,14 +1015,14 @@ fn ensure_buildx() -> Result<(), SetupError> {
     }
 
     println!("[GitRun setup] Docker Buildx is missing; installing the distro plugin");
-    run_command(Command::new("apt-get").args(["update"]))?;
+    run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
 
-    let plugin_status = Command::new("apt-get")
+    let plugin_status = Command::new("/usr/bin/apt-get")
         .args(["install", "-y", "docker-buildx-plugin"])
         .status()?;
     if !plugin_status.success() {
         // Ubuntu/Debian may package the same plugin under this name instead.
-        run_command(Command::new("apt-get").args(["install", "-y", "docker-buildx"]))?;
+        run_command(Command::new("/usr/bin/apt-get").args(["install", "-y", "docker-buildx"]))?;
     }
 
     if !docker_buildx_ready() {
@@ -1038,7 +1037,7 @@ fn build_image(tag: &str, context: &Path, dockerfile: &Path) -> Result<(), Setup
     // Use Buildx explicitly: docker build may select the legacy builder on
     // otherwise healthy Docker installations, which cannot process cache mounts.
     run_command(
-        Command::new("docker")
+        Command::new("/usr/bin/docker")
             .args(["buildx", "build", "--load", "-t", tag, "-f"])
             .arg(dockerfile)
             .arg(context),
@@ -1199,7 +1198,7 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
 }
 
 fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
-    let user = Command::new("getent")
+    let user = Command::new("/usr/bin/getent")
         .args(["passwd", &uid.to_string()])
         .output()
         .ok()
@@ -1207,11 +1206,11 @@ fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .and_then(|line| line.split(':').next().map(str::to_owned))
         .ok_or_else(|| SetupError::Command(format!("unable to resolve username for uid {uid}")))?;
-    run_command(Command::new("usermod").args(["-aG", "docker", &user]))
+    run_command(Command::new("/usr/sbin/usermod").args(["-aG", "docker", &user]))
 }
 
 fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {
-    run_command(Command::new("chown").arg(uid.to_string()).arg(path))
+    run_command(Command::new("/usr/bin/chown").arg(uid.to_string()).arg(path))
 }
 
 fn valid_repo(value: &str) -> bool {
@@ -1229,23 +1228,40 @@ fn valid_repo(value: &str) -> bool {
 }
 
 fn running_as_root() -> bool {
-    Command::new("id")
+    Command::new("/usr/bin/id")
         .args(["-u"])
         .output()
         .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "0")
         .unwrap_or(false)
 }
 
+fn trusted_command_path(name: &str) -> Option<&'static str> {
+    match name {
+        "docker" => Some("/usr/bin/docker"),
+        "git" => Some("/usr/bin/git"),
+        "systemctl" => Some("/usr/bin/systemctl"),
+        "dpkg" => Some("/usr/bin/dpkg"),
+        "dpkg-query" => Some("/usr/bin/dpkg-query"),
+        "apt-get" => Some("/usr/bin/apt-get"),
+        "getent" => Some("/usr/bin/getent"),
+        "usermod" => Some("/usr/sbin/usermod"),
+        "chown" => Some("/usr/bin/chown"),
+        "id" => Some("/usr/bin/id"),
+        _ => None,
+    }
+}
+
 fn command_exists(name: &str) -> bool {
-    Command::new("sh")
-        .args(["-c", &format!("command -v {name} >/dev/null 2>&1")])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    let Some(path) = trusted_command_path(name) else {
+        return false;
+    };
+    fs::metadata(path).is_ok_and(|metadata| {
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    })
 }
 
 fn docker_daemon_ready() -> bool {
-    Command::new("docker")
+    Command::new("/usr/bin/docker")
         .arg("info")
         .output()
         .map(|o| o.status.success())
@@ -1269,7 +1285,7 @@ fn docker_daemon_status() -> DependencyStatus {
 }
 
 fn compose_ready() -> bool {
-    Command::new("docker")
+    Command::new("/usr/bin/docker")
         .args(["compose", "version"])
         .output()
         .map(|o| o.status.success())
@@ -1281,7 +1297,7 @@ fn compose_status() -> DependencyStatus {
         DependencyStatus {
             name: "docker compose",
             available: true,
-            version: Command::new("docker")
+            version: Command::new("/usr/bin/docker")
                 .args(["compose", "version"])
                 .output()
                 .ok()
@@ -1302,7 +1318,14 @@ fn compose_status() -> DependencyStatus {
 }
 
 fn command_status(name: &'static str, args: &[&str]) -> DependencyStatus {
-    match Command::new(name).args(args).output() {
+    let Some(path) = trusted_command_path(name) else {
+        return DependencyStatus {
+            name,
+            available: false,
+            version: None,
+        };
+    };
+    match Command::new(path).args(args).output() {
         Ok(output) if output.status.success() => DependencyStatus {
             name,
             available: true,
@@ -1541,6 +1564,16 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn privileged_host_commands_use_fixed_paths_and_reject_unknown_names() {
+        assert_eq!(trusted_command_path("docker"), Some("/usr/bin/docker"));
+        assert_eq!(trusted_command_path("systemctl"), Some("/usr/bin/systemctl"));
+        assert_eq!(trusted_command_path("dpkg"), Some("/usr/bin/dpkg"));
+        assert_eq!(trusted_command_path("apt-get"), Some("/usr/bin/apt-get"));
+        assert_eq!(trusted_command_path("id"), Some("/usr/bin/id"));
+        assert_eq!(trusted_command_path("unknown-command"), None);
+    }
 
     #[test]
     fn setup_flag_parser_accepts_only_the_expected_marker() {

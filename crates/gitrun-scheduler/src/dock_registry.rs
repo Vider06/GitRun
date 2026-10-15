@@ -272,13 +272,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn load_rejects_hard_linked_registry_file() {
-        use std::os::unix::fs::hard_link;
         let dir = std::env::temp_dir().join(format!("gitrun-dock-registry-hardlink-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = path_for(&dir);
         fs::write(&path, r#"{"bindings":[]}"#).unwrap();
-        hard_link(&path, dir.join("alias.json")).unwrap();
+        fs::hard_link(&path, dir.join("alias.json")).unwrap();
         assert!(DockRegistry::load(&dir).is_err());
         let _ = fs::remove_dir_all(&dir);
     }

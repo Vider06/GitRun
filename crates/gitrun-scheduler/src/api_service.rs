@@ -627,7 +627,15 @@ fn read_api_request_with_timeout(
             .set_read_timeout(Some(remaining))
             .map_err(|error| format!("set API request read deadline: {error}"))?;
 
-        match reader.read(&mut chunk) {
+        let read_result = reader.read(&mut chunk);
+        // A read can complete successfully after the OS timeout when the
+        // process is descheduled or the peer's final byte races the deadline.
+        // Enforce the absolute deadline after the syscall as well as before it.
+        if Instant::now() >= deadline {
+            return Err("API request read deadline exceeded".into());
+        }
+
+        match read_result {
             Ok(0) if encoded.is_empty() => return Ok(None),
             Ok(0) => {
                 return Err("API request ended before its newline terminator".into());

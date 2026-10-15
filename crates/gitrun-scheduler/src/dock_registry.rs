@@ -207,7 +207,7 @@ fn read_registry_file(path: &Path) -> Result<Option<String>, DockRegistryError> 
     options.read(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
         let mut file = match options.open(path) {
             Ok(file) => file,

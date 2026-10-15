@@ -889,8 +889,7 @@ fn create_runner(
     let registration_token = client.registration_token(repo)?;
 
     let gsr_policy_env = gsr_policy_env(config);
-    let safe = docker::sanitize(repo, '-');
-    let name = format!("gitrun-{safe}-{}", uuid_like_suffix());
+    let name = format!("{}{}", docker::runner_name_prefix(repo), uuid_like_suffix());
     docker::ensure_shared_cache_volume(&config.shared_cache_volume)?;
     let settings = gitrun_core::GitRunSettings::load_or_default(
         gitrun_core::GitRunSettings::path_for_state_dir(state_dir),

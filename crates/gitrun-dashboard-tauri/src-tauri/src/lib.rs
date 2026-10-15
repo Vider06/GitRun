@@ -1879,11 +1879,7 @@ pub struct ZizmorDashboardInfo {
 #[tauri::command]
 fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
     let config = load_config()?;
-    let already_installed = std::process::Command::new("zizmor")
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false);
+    let already_installed = gitrun_core::zizmor_is_installed();
     Ok(ZizmorDashboardInfo {
         info: gitrun_core::zizmor_info(),
         license_accepted: config.gsr_zizmor_license_accepted,

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{env, fs, path::Path};
+use std::{env, fs, io::Read, path::Path};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -270,7 +270,7 @@ impl Config {
     }
 
     pub fn from_env_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
-        let content = read_config_file(path.as_ref())?;
+        let content = Self::read_config_file(path.as_ref())?;
         let mut lookup = std::collections::HashMap::new();
         for (line_index, raw) in content.lines().enumerate() {
             let line = raw.trim();

@@ -155,6 +155,18 @@ fn api_from_invocation(invocation: &str) -> Result<GitRunApi, String> {
     }
 }
 
+fn insert_argument(
+    values: &mut BTreeMap<String, String>,
+    key: &str,
+    value: String,
+) -> Result<(), String> {
+    if values.contains_key(key) {
+        return Err(format!("argument {key} may only be specified once"));
+    }
+    values.insert(key.to_owned(), value);
+    Ok(())
+}
+
 fn select_operation(
     selected: &mut Option<GitRunOperation>,
     next: GitRunOperation,
@@ -181,12 +193,12 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
         if args[0].trim().is_empty() {
             return Err("GitInstallRun package cannot be empty".into());
         }
-        values.insert("package".into(), args[0].clone());
+        insert_argument(&mut values, "package", args[0].clone())?;
         if let Some(version) = args.get(1) {
             if version.trim().is_empty() {
                 return Err("GitInstallRun version cannot be empty".into());
             }
-            values.insert("version".into(), version.clone());
+            insert_argument(&mut values, "version", version.clone())?;
         }
         return Ok((GitRunOperation::Install, None, values));
     }
@@ -202,7 +214,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                     } else {
                         "path"
                     };
-                    values.insert(key.into(), args[i].clone());
+                    insert_argument(&mut values, key, args[i].clone())?;
                     i += 1;
                 }
             }
@@ -215,11 +227,11 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                     } else {
                         "path"
                     };
-                    values.insert(key.into(), args[i].clone());
+                    insert_argument(&mut values, key, args[i].clone())?;
                     i += 1;
                 }
                 if i < args.len() {
-                    values.insert("value".into(), args[i].clone());
+                    insert_argument(&mut values, "value", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -227,7 +239,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 select_operation(&mut operation, GitRunOperation::Exists)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("name".into(), args[i].clone());
+                    insert_argument(&mut values, "name", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -235,7 +247,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 select_operation(&mut operation, GitRunOperation::Delete)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("name".into(), args[i].clone());
+                    insert_argument(&mut values, "name", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -255,7 +267,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 select_operation(&mut operation, GitRunOperation::Execute)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("command".into(), args[i..].join(" "));
+                    insert_argument(&mut values, "command", args[i..].join(" "))?;
                 }
                 i = args.len();
             }
@@ -263,7 +275,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 select_operation(&mut operation, GitRunOperation::Melt)?;
                 i += 1;
                 if i < args.len() && !args[i].starts_with('-') {
-                    values.insert("target".into(), args[i].clone());
+                    insert_argument(&mut values, "target", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -271,14 +283,14 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 select_operation(&mut operation, GitRunOperation::Mount)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("source".into(), args[i].clone());
+                    insert_argument(&mut values, "source", args[i].clone())?;
                     i += 1;
                 }
             }
             "--target" => {
                 i += 1;
                 if i < args.len() {
-                    values.insert("target".into(), args[i].clone());
+                    insert_argument(&mut values, "target", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -300,7 +312,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 select_operation(&mut operation, GitRunOperation::Unmount)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("mount_id".into(), args[i].clone());
+                    insert_argument(&mut values, "mount_id", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -308,7 +320,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 select_operation(&mut operation, GitRunOperation::File)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("path".into(), args[i].clone());
+                    insert_argument(&mut values, "path", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -319,33 +331,33 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
             "--namefile" => {
                 i += 1;
                 if i < args.len() {
-                    values.insert("namefile".into(), args[i].clone());
+                    insert_argument(&mut values, "namefile", args[i].clone())?;
                     i += 1;
                 }
             }
             "--name" => {
                 i += 1;
                 if i < args.len() {
-                    values.insert("name".into(), args[i].clone());
+                    insert_argument(&mut values, "name", args[i].clone())?;
                     i += 1;
                 }
             }
             "--entry" => {
                 i += 1;
                 if i < args.len() {
-                    values.insert("entry".into(), args[i].clone());
+                    insert_argument(&mut values, "entry", args[i].clone())?;
                     i += 1;
                 }
             }
             "--permanent" => {
-                values.insert("permanent".into(), "true".into());
+                insert_argument(&mut values, "permanent", "true".into())?;
                 i += 1;
             }
             "--remove" => {
                 select_operation(&mut operation, GitRunOperation::Remove)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("package".into(), args[i].clone());
+                    insert_argument(&mut values, "package", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -353,7 +365,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 select_operation(&mut operation, GitRunOperation::Update)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("package".into(), args[i].clone());
+                    insert_argument(&mut values, "package", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -373,7 +385,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 if i >= args.len() {
                     return Err("--job requires a job name".into());
                 }
-                values.insert("job".into(), args[i].clone());
+                insert_argument(&mut values, "job", args[i].clone())?;
                 i += 1;
             }
             value => return Err(format!("unknown argument {value}")),
@@ -450,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_rejects_conflicting_mount_modes_and_duplicate_targets() {
+    fn parser_rejects_conflicting_mount_modes_and_duplicate_resources() {
         assert!(parse_api(
             GitRunApi::GitDockRun,
             &[

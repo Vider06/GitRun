@@ -956,7 +956,7 @@ mod linux {
                     crate::Severity::Critical,
                     format!("blocked execve for pid {pid}: {command_line:?} — {reason}"),
                 );
-                let _ = crate::events::emit(events_path, &event);
+                emit_security_event(events_path, &event);
                 Ok(ExecDecision::Deny)
             }
         }
@@ -1145,13 +1145,22 @@ mod linux {
         }
     }
 
+    fn emit_security_event(events_path: &Path, event: &crate::SecurityEvent) {
+        if let Err(error) = crate::events::emit(events_path, event) {
+            eprintln!(
+                "gitrun-gsr-agent: unable to persist critical GSR event to {}: {error}",
+                events_path.display()
+            );
+        }
+    }
+
     fn emit_inspection_failure(events_path: &Path, pid: libc::pid_t, detail: &str) {
         let event = crate::SecurityEvent::new(
             "gsr-exec-supervisor",
             crate::Severity::Critical,
             format!("blocked exec inspection for pid {pid}: {detail}; refusing the exec"),
         );
-        let _ = crate::events::emit(events_path, &event);
+        emit_security_event(events_path, &event);
     }
 
     fn is_stopped(status: i32) -> bool {

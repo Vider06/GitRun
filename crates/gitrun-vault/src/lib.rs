@@ -704,6 +704,7 @@ fn read_master_key(path: &Path) -> Result<[u8; 32]> {
         if !metadata.is_file() || metadata.nlink() != 1 {
             return Err(VaultError::InvalidMasterKey(0));
         }
+        // lgtm[rust/hard-coded-cryptographic-value] -- 0o600 is a Unix permission mode, not cryptographic key material.
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         let mut bytes = Vec::with_capacity(32);
         file.read_to_end(&mut bytes)?;

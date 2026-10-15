@@ -1041,8 +1041,11 @@ mod linux {
     where
         F: FnMut(u64, &mut [u8]) -> Result<usize, SupervisorError>,
     {
+        // Linux may accept a NULL argv pointer as an empty argument vector,
+        // but policy inspection must not silently downgrade to executable-path
+        // only. Treat an absent argv table as incomplete inspection and deny it.
         if address == 0 {
-            return Ok(Vec::new());
+            return Err(SupervisorError::InspectFailed(pid));
         }
 
         const CHUNK: usize = 32;
@@ -1303,6 +1306,14 @@ mod linux {
                 Ok(no_nul.len())
             });
             assert!(decoded.is_err());
+        }
+
+        #[test]
+        fn argv_reader_rejects_null_argument_vector_without_reading_memory() {
+            let result = read_argv_with(test_pid(), 0, |_, _| {
+                panic!("NULL argv must be rejected before reading tracee memory")
+            });
+            assert!(matches!(result, Err(SupervisorError::InspectFailed(pid)) if pid == test_pid()));
         }
 
         #[test]

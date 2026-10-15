@@ -96,7 +96,7 @@ fn terminate_child(child: &mut Child) {
 }
 
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
-    let mut command = Command::new("docker");
+    let mut command = Command::new("/usr/bin/docker");
 
     // A Docker context inherited from the scheduler environment must never
     // override the host selected explicitly by GitRun.
@@ -1114,7 +1114,7 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
     // exported filesystem into the target container's writable filesystem.
     // Runtime/pseudo filesystems and the Actions runner installation are
     // deliberately excluded: the target remains the runner container.
-    let mut export = Command::new("docker");
+    let mut export = Command::new("/usr/bin/docker");
     export
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
@@ -1124,7 +1124,7 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut extract = Command::new("docker");
+    let mut extract = Command::new("/usr/bin/docker");
     extract
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
@@ -1258,6 +1258,17 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
         return Ok(None);
     }
 
+    // A peer may exit and its PID may be reused while Docker is being
+    // queried. Re-check the cgroup after the lookup before trusting its labels.
+    let cgroup_final = match std::fs::read_to_string(format!("/proc/{pid}/cgroup")) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if container_id_from_cgroup(&cgroup_final).as_deref() != Some(container_id.as_str()) {
+        return Ok(None);
+    }
+
     let raw = String::from_utf8_lossy(&output.stdout);
     let mut parts = raw.trim().splitn(6, '|');
     let resolved_id = parts.next().unwrap_or_default();
@@ -1267,7 +1278,10 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     let workflow_job = parts.next().unwrap_or_default();
     let workflow_run_id = parts.next().and_then(|value| value.parse::<u64>().ok());
 
-    if runner_label != "true" || resolved_id.is_empty() || name.is_empty() || repository.is_empty()
+    if runner_label != "true"
+        || resolved_id != container_id
+        || name.is_empty()
+        || repository.is_empty()
     {
         return Ok(None);
     }
@@ -1289,16 +1303,34 @@ pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
 /// Extracts a Docker-style 64-hex container id from a Linux cgroup path.
 #[cfg(target_os = "linux")]
 fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
-    cgroup
-        .split(|ch: char| !ch.is_ascii_hexdigit())
-        .find(|part| part.len() == 64)
-        .map(str::to_owned)
+    for component in cgroup.split('/') {
+        if is_full_container_id(component) {
+            return Some(component.to_owned());
+        }
+        let scoped_id = component
+            .strip_prefix("docker-")
+            .and_then(|value| value.strip_suffix(".scope"))
+            .or_else(|| {
+                component
+                    .strip_prefix("cri-containerd-")
+                    .and_then(|value| value.strip_suffix(".scope"))
+            });
+        if let Some(id) = scoped_id.filter(|value| is_full_container_id(value)) {
+            return Some(id.to_owned());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn is_full_container_id(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Executes a command in a managed container after the caller has already
 /// passed the relevant GSR authorization gate.
 pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
-    let mut command = Command::new("docker");
+    let mut command = Command::new("/usr/bin/docker");
     command
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
@@ -1319,7 +1351,7 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
         ));
     }
 
-    let mut command = Command::new("docker");
+    let mut command = Command::new("/usr/bin/docker");
     command
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
@@ -1347,7 +1379,7 @@ pub fn exec_container_stream<F>(container: &str, args: &[&str], mut on_output: F
 where
     F: FnMut(bool, &[u8]),
 {
-    let mut command = Command::new("docker");
+    let mut command = Command::new("/usr/bin/docker");
     command
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
@@ -1577,6 +1609,20 @@ mod tests {
         assert_eq!(
             container_id_from_cgroup("0::/user.slice/user-1000.slice/session-42.scope"),
             None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cgroup_parser_rejects_unrelated_hex_text_and_accepts_docker_scope() {
+        let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            container_id_from_cgroup(&format!("0::/user.slice/session-{id}-scope")),
+            None
+        );
+        assert_eq!(
+            container_id_from_cgroup(&format!("0::/system.slice/docker-{id}.scope")).as_deref(),
+            Some(id)
         );
     }
 

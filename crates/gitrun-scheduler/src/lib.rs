@@ -958,7 +958,7 @@ fn load_dock_target_jobs(
 ) -> Result<Vec<String>, std::io::Error> {
     let path = state_dir
         .join("workflow-dock-requirements")
-        .join(format!("{}.json", docker::sanitize(repo, '_')));
+        .join(format!("{}.json", repo_storage_key(repo)));
     let raw = match std::fs::read_to_string(&path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

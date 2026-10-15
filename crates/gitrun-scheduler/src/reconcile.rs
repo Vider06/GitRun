@@ -314,8 +314,11 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // 4. Scale down idle containers beyond the minimum, oldest-idle first,
     // preferring to keep permanents (same tie-break as the Python version:
     // sort by (is_permanent, -age) so dynamic+oldest goes first).
-    if !input.ephemeral && current > input.min_runners {
-        let removable = current - input.min_runners;
+    // Reserved Dock containers count against the global maximum, but they
+    // must not reduce the ordinary runner pool's minimum guarantee.
+    let minimum_total = input.min_runners.saturating_add(input.reserved_runners);
+    if !input.ephemeral && current > minimum_total {
+        let removable = current - minimum_total;
         let mut candidates: Vec<&IdleInfo> = input
             .idle
             .iter()

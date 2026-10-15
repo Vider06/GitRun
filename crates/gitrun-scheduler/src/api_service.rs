@@ -178,25 +178,67 @@ struct MountRegistry {
 }
 
 #[cfg(target_os = "linux")]
+fn validate_mount_registry_directory(state_dir: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(state_dir) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err("GitDockRun registry state path must be a real directory".into());
+            }
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o022 != 0 {
+                return Err("GitDockRun registry state directory must not be group- or world-writable".into());
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("inspect GitDockRun registry state directory: {error}")),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn read_secure_mount_registry(path: &Path) -> Result<Option<String>, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let mut options = fs::OpenOptions::new();
+    options.read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("open GitDockRun mount registry safely: {error}")),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("inspect GitDockRun mount registry: {error}"))?;
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        return Err("GitDockRun mount registry must be a regular file without hard links".into());
+    }
+    if metadata.permissions().mode() & 0o022 != 0 {
+        return Err("GitDockRun mount registry must not be group- or world-writable".into());
+    }
+    let mut raw = String::new();
+    file.read_to_string(&mut raw)
+        .map_err(|error| format!("read GitDockRun mount registry: {error}"))?;
+    Ok(Some(raw))
+}
+
+#[cfg(target_os = "linux")]
 impl MountRegistry {
     fn path(state_dir: &Path) -> PathBuf {
         state_dir.join(MOUNT_REGISTRY_FILE)
     }
 
     fn load(state_dir: &Path) -> Result<Self, String> {
-        let registry: Self = match fs::read_to_string(Self::path(state_dir)) {
-            Ok(raw) => serde_json::from_str(&raw)
-                .map_err(|error| format!("decode GitDockRun mount registry: {error}"))?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default())
-            }
-            Err(error) => return Err(format!("read GitDockRun mount registry: {error}")),
+        validate_mount_registry_directory(state_dir)?;
+        let Some(raw) = read_secure_mount_registry(&Self::path(state_dir))? else {
+            return Ok(Self::default());
         };
+        let registry: Self = serde_json::from_str(&raw)
+            .map_err(|error| format!("decode GitDockRun mount registry: {error}"))?;
 
         // Mount IDs are capabilities used by UNMOUNT and cleanup. A duplicate
         // ID makes ownership ambiguous and removing by ID could erase unrelated
         // leases after cleaning only one record. Reject the whole registry.
         let mut ids = std::collections::BTreeSet::new();
+        let mut targets = std::collections::BTreeSet::new();
         for mount in &registry.mounts {
             if mount.id.trim().is_empty() {
                 return Err("GitDockRun mount registry contains an empty mount ID".into());
@@ -207,6 +249,21 @@ impl MountRegistry {
                     mount.id
                 ));
             }
+            if mount.repository.trim().is_empty()
+                || mount.run_id == 0
+                || mount.job.trim().is_empty()
+                || mount.container_id.trim().is_empty()
+                || mount.requester_runner.trim().is_empty()
+                || mount.target.trim().is_empty()
+            {
+                return Err("GitDockRun mount registry contains an incomplete ownership record".into());
+            }
+            if !targets.insert((mount.container_id.as_str(), mount.target.as_str())) {
+                return Err(format!(
+                    "GitDockRun mount registry contains duplicate target {:?} for container {}",
+                    mount.target, mount.container_id
+                ));
+            }
         }
 
         Ok(registry)
@@ -215,6 +272,7 @@ impl MountRegistry {
     fn save(&self, state_dir: &Path) -> Result<(), String> {
         fs::create_dir_all(state_dir)
             .map_err(|error| format!("create mount registry directory: {error}"))?;
+        validate_mount_registry_directory(state_dir)?;
         let path = Self::path(state_dir);
         let temp = path.with_extension(format!(
             "json.{}.{}.tmp",

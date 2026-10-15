@@ -344,6 +344,68 @@ impl SchedulerState {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlinked_state_file() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-sched-state-symlink-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("external.json");
+        fs::write(&target, r#"{"idle_since":{},"recovery_since":{},"quarantined_since":{}}"#)
+            .unwrap();
+        symlink(&target, dir.join("scheduler-state.json")).unwrap();
+        assert!(matches!(
+            SchedulerState::load(&dir),
+            Err(StateError::Io(_)) | Err(StateError::UnsafePath(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_hard_linked_state_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-sched-state-hardlink-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("external.json");
+        fs::write(&target, r#"{"idle_since":{},"recovery_since":{},"quarantined_since":{}}"#)
+            .unwrap();
+        fs::hard_link(&target, dir.join("scheduler-state.json")).unwrap();
+        assert!(matches!(
+            SchedulerState::load(&dir),
+            Err(StateError::UnsafePath(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlinked_state_directory() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-sched-state-dir-link-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let target = base.join("real");
+        let link = base.join("link");
+        fs::create_dir_all(&target).unwrap();
+        symlink(&target, &link).unwrap();
+        assert!(matches!(
+            SchedulerState::load(&link),
+            Err(StateError::UnsafePath(_))
+        ));
+        let _ = fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn mark_idle_is_stable_across_calls() {
         let dir = std::env::temp_dir().join(format!("gitrun-sched-state-{}", std::process::id()));

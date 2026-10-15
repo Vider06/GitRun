@@ -672,12 +672,19 @@ fn reconcile_repo(
         })?;
 
     let mut state = SchedulerState::load(state_dir)?;
+    let tracked_names: Vec<String> = plan_containers
+        .iter()
+        .filter(|container| !container.status.eq_ignore_ascii_case("exited"))
+        .map(|container| container.name.clone())
+        .collect();
     let live_names: Vec<String> = plan_containers
         .iter()
-        .filter(|c| c.status == "running")
-        .map(|c| c.name.clone())
+        .filter(|container| container.status.eq_ignore_ascii_case("running"))
+        .map(|container| container.name.clone())
         .collect();
-    state.prune(repo, &live_names);
+    // Recovery timestamps must survive for transitional Docker states too;
+    // only idle accounting is restricted to running containers.
+    state.prune(repo, &tracked_names);
 
     let idle: Vec<IdleInfo> = live_names
         .iter()
@@ -702,10 +709,11 @@ fn reconcile_repo(
     // Seed recovery cooldowns from the first observed unhealthy snapshot,
     // including missing registrations. A fresh offline/orphan observation
     // must not trigger an immediate destructive restart/recreation.
-    for name in &live_names {
+    for name in &tracked_names {
+        let container_running = live_names.iter().any(|live_name| live_name == name);
         match runners.iter().find(|runner| &runner.name == name) {
-            Some(runner) if runner.is_online() && !runner.busy => state.clear_recovery(name),
-            Some(runner) if !runner.busy => {
+            Some(runner) if container_running && runner.is_online() && !runner.busy => state.clear_recovery(name),
+            Some(runner) if !runner.busy && (!runner.is_online() || !container_running) => {
                 state.recovery_age(name);
             }
             None => {

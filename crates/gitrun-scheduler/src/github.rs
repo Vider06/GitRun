@@ -32,6 +32,8 @@ pub enum GitHubError {
     MissingToken,
     #[error("invalid repository name: {0} (expected owner/repo)")]
     InvalidRepository(String),
+    #[error("workflow run ID must be greater than zero")]
+    InvalidWorkflowRunId,
     #[error("network error contacting GitHub: {0}")]
     Network(#[from] reqwest::Error),
     #[error("GitHub API rate limit exceeded, retry after {retry_after:?}")]
@@ -493,6 +495,51 @@ impl GitHubClient {
             }
         }
         Ok(summary)
+    }
+
+    /// Lists every currently in-progress workflow run, following GitHub pagination.
+    /// This is intentionally separate from the recent-run summary: an old but
+    /// still-running workflow must remain eligible for explicit force-cancellation.
+    pub fn list_active_workflow_runs(&self, repo: &str) -> Result<Vec<WorkflowRunInfo>> {
+        let (owner, name) = split_repo(repo)?;
+        let mut url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs?status=in_progress&per_page=100",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        let mut seen = HashSet::new();
+        let mut runs = Vec::new();
+        loop {
+            record_page_url(&mut seen, &url)?;
+            let response = self.request(reqwest::Method::GET, &url)?;
+            let next_url = parse_next_link(response.headers());
+            let parsed: WorkflowRunsResponse = response.json()?;
+            runs.extend(parsed.workflow_runs.into_iter().filter(|run| {
+                run.status.eq_ignore_ascii_case("in_progress")
+            }).map(|run| WorkflowRunInfo { id: run.id, name: run.name }));
+            match next_url {
+                Some(next) => url = next,
+                None => break,
+            }
+        }
+        Ok(runs)
+    }
+
+    /// Force-cancels an entire workflow run through GitHub's supported API.
+    /// GitHub exposes force-cancel at run scope, not individual-job scope, so
+    /// callers must identify the run explicitly and warn that all its jobs are affected.
+    pub fn force_cancel_workflow_run(&self, repo: &str, run_id: u64) -> Result<()> {
+        if run_id == 0 {
+            return Err(GitHubError::InvalidWorkflowRunId);
+        }
+        let (owner, name) = split_repo(repo)?;
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs/{run_id}/force-cancel",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        self.request(reqwest::Method::POST, &url)?;
+        Ok(())
     }
 
     /// Fetches repository metadata and pull-request totals for dashboard use.
@@ -1110,6 +1157,15 @@ mod tests {
             headers.insert(reqwest::header::LINK, link.parse().unwrap());
             assert_eq!(parse_next_link(&headers), None, "link: {link}");
         }
+    }
+
+    #[test]
+    fn force_cancel_rejects_zero_run_id_without_network_access() {
+        let client = GitHubClient::new("test-token").unwrap();
+        assert!(matches!(
+            client.force_cancel_workflow_run("owner/repo", 0),
+            Err(GitHubError::InvalidWorkflowRunId)
+        ));
     }
 
     #[test]

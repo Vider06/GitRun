@@ -120,6 +120,7 @@ RUN chmod 0755 /entrypoint.sh \
 RUN install -d -o root -g root -m 0755 /run/gitrun \
     && printf '%s\n' \
        'GITRUN_GSR_COMMAND_POLICY_ENABLED=true' \
+       'GITRUN_GSR_ALLOW_UNSAFE_RUNNER=false' \
        'GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED=true' \
        'GITRUN_GSR_COMMAND_BLACKLIST_ENABLED=false' \
        'GITRUN_GSR_COMMAND_BLACKLIST=' \

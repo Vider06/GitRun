@@ -164,7 +164,7 @@ Each automatic action should have a reason, source data window, model version, c
 ## 4. Delivery sequence
 
 1. **Stabilize and map the existing scheduler.** Verify runner inventory, effective capacity, protected GitDockRun accounting, concurrency, recovery, and global maximum invariants.
-2. **Implement Fast Stop as a separate change.** Measure the actual cancellation delay first, then implement and test the shortest safe path.
+2. **Harden Fast Stop independently.** The initial run-level force-cancel path is wired in the dashboard and CLI; add timestamped end-to-end measurements and exercise permission failures, already-completed runs, and cancellation races before release.
 3. **Add telemetry and model schema.** Observation-only, bounded resource cost, retention rules, and no automatic scaling changes.
 4. **Add passive predictions.** Report accuracy and confidence against real outcomes.
 5. **Enable predictive prewarming.** Opt-in, bounded by existing hard limits, with clear fallback.
@@ -175,12 +175,13 @@ Keep Fast Stop independent of Smart Scheduler so either feature can ship, be tes
 ## 5. Acceptance criteria
 
 ### Fast Stop
-- Cancellation begins without waiting for the normal scheduler polling interval.
-- End-to-end timing identifies where latency is spent.
-- The target job stops promptly in tested cases; the UI distinguishes requested, stopping, stopped, and failed/timed-out states.
-- No unrelated job or container is terminated.
-- Repeated requests, API failures, runner races, and force-stop fallback are tested.
-- p50/p95/max latency is recorded for a documented test workload.
+- [x] Dashboard exposes Fast Stop for active workflow runs with an explicit whole-run confirmation.
+- [x] CLI exposes `gitrun fast-stop <owner/repo> <run_id> --yes`; repository allowlist and positive run ID are enforced.
+- [x] Uses GitHub's force-cancel run endpoint directly, without waiting for scheduler polling; failures are returned to the caller.
+- [x] Does not locally kill or remove runner containers, and explicitly documents that force-cancel affects every job in the selected workflow run.
+- [ ] End-to-end timing identifies where latency is spent.
+- [ ] API permission failures, already-completed runs, repeated requests, and cancellation races are exercised.
+- [ ] p50/p95/max latency is recorded for a documented test workload; no fixed-latency promise is made before this evidence exists.
 
 ### Smart Scheduler
 - Requested jobs and actually executed jobs are represented separately.

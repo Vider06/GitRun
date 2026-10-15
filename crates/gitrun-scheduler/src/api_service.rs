@@ -1103,7 +1103,8 @@ impl ApiExecutionBackend {
                     .get_effective_for_repo(name, &request.repository, &groups)
                     .map_err(|error| failed(error.to_string()))?;
 
-                Ok(success(format!("::add-mask::{value}\n{value}\n")))
+                let mask_data = escape_workflow_command_data(&value);
+                Ok(success(format!("::add-mask::{mask_data}\n{value}\n")))
             }
             GitRunOperation::Write => {
                 let name = arg(request, "name")?;
@@ -4491,6 +4492,15 @@ fn ensure_safe_package(value: &str) -> Result<(), ExecutionError> {
     Ok(())
 }
 
+/// Escapes GitHub Actions workflow-command data so a multiline secret
+/// cannot terminate the add-mask command and leave later lines unmasked.
+fn escape_workflow_command_data(value: &str) -> String {
+    value
+        .replace('%', "%25")
+        .replace('\r', "%0D")
+        .replace('\n', "%0A")
+}
+
 fn redact_vault_values(config: &Config, repository: &str, text: &str) -> String {
     if config.vault_dir.trim().is_empty() {
         return text.to_owned();
@@ -4938,6 +4948,15 @@ mod gsr_execution_boundary_tests {
             gitrun_core::ApiPolicy::enabled_with([GitRunOperation::Status]),
         );
         settings
+    }
+
+    #[test]
+    fn workflow_mask_command_data_escapes_percent_and_line_breaks() {
+        assert_eq!(
+            escape_workflow_command_data("first%\r\n::warning::injected"),
+            "first%25%0D%0A::warning::injected"
+        );
+        assert_eq!(escape_workflow_command_data("single-line"), "single-line");
     }
 
     #[test]

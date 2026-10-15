@@ -642,6 +642,7 @@ fn read_private_vault_file(path: &Path, label: &str) -> Result<String> {
                 "{label} must be a regular file without hard links"
             )));
         }
+        // lgtm[rust/hard-coded-cryptographic-value] -- 0o600 is a Unix permission mode, not cryptographic key material.
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         let mut raw = String::new();
         file.read_to_string(&mut raw)?;

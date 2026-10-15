@@ -1227,15 +1227,25 @@ fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, Str
         return Err("workflow run ID must be greater than zero".into());
     }
     let config = load_config()?;
-    if !config.repositories.iter().any(|configured| configured == &repository) {
-        return Err(format!("refusing to cancel run for unconfigured repository {repository:?}"));
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repository)
+    {
+        return Err(format!(
+            "refusing to cancel run for unconfigured repository {repository:?}"
+        ));
     }
     let client = dashboard_github_client(&config)?;
     client
         .force_cancel_workflow_run(&repository, run_id)
-        .map_err(|error| format!("GitHub force-cancel failed for {repository} run {run_id}: {error}"))?;
+        .map_err(|error| {
+            format!("GitHub force-cancel failed for {repository} run {run_id}: {error}")
+        })?;
     if let Some(cache) = DASHBOARD_RUNNER_CACHE.get() {
-        let mut cache = cache.lock().map_err(|_| "runner snapshot cache lock poisoned".to_owned())?;
+        let mut cache = cache
+            .lock()
+            .map_err(|_| "runner snapshot cache lock poisoned".to_owned())?;
         *cache = None;
     }
     Ok(format!("GitHub accepted force-cancellation for workflow run {run_id} in {repository}; all jobs in the run are affected."))
@@ -1286,7 +1296,9 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                         .map_err(|error| error.to_string())
                 });
                 let active_query = scope.spawn(|| {
-                    client.list_active_workflow_runs(repo).map_err(|error| error.to_string())
+                    client
+                        .list_active_workflow_runs(repo)
+                        .map_err(|error| error.to_string())
                 });
                 let runners = runner_query
                     .join()
@@ -1341,14 +1353,18 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
             match active_result {
                 Ok(active) => {
                     active_workflow_repositories_checked += 1;
-                    active_workflows.extend(active.into_iter().map(|run| DashboardActiveWorkflowRun {
-                        repository: repo.clone(),
-                        id: run.id,
-                        name: run.name,
-                        status: "in_progress".into(),
+                    active_workflows.extend(active.into_iter().map(|run| {
+                        DashboardActiveWorkflowRun {
+                            repository: repo.clone(),
+                            id: run.id,
+                            name: run.name,
+                            status: "in_progress".into(),
+                        }
                     }));
                 }
-                Err(error) => warnings.push(format!("{repo}: active workflow inventory failed: {error}")),
+                Err(error) => {
+                    warnings.push(format!("{repo}: active workflow inventory failed: {error}"))
+                }
             }
             let Some(remote_runners) = remote_runners else {
                 continue;

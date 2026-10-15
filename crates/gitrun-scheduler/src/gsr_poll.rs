@@ -535,19 +535,46 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn ban_store_save_does_not_follow_predictable_temp_symlink() {
+    fn ban_store_lock_rejects_symlink_without_modifying_target() {
         use std::os::unix::fs::symlink;
 
-        let dir = temp_state_dir("temp-symlink");
-        let target = dir.join("must-not-be-truncated");
+        let dir = temp_state_dir("lock-symlink");
+        let target = dir.join("must-not-be-touched");
         fs::write(&target, "preserve me").unwrap();
-        symlink(&target, dir.join("gsr-bans.json.tmp")).unwrap();
+        symlink(&target, dir.join("gsr-bans.json.lock")).unwrap();
 
         let mut store = BanStore::load(&dir).unwrap();
-        store.ban("owner/repo", Duration::from_secs(3600)).unwrap();
-
+        assert!(store.ban("owner/repo", Duration::from_secs(3600)).is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "preserve me");
-        assert!(dir.join("gsr-bans.json").is_file());
+        assert!(!dir.join("gsr-bans.json").exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ban_store_load_rejects_symlink_without_reading_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_state_dir("state-symlink");
+        let target = dir.join("external-state.json");
+        fs::write(&target, r#"{"banned_until":{}}"#).unwrap();
+        symlink(&target, dir.join("gsr-bans.json")).unwrap();
+
+        assert!(BanStore::load(&dir).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), r#"{"banned_until":{}}"#);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ban_store_load_rejects_hard_linked_state() {
+        let dir = temp_state_dir("state-hardlink");
+        let target = dir.join("external-state.json");
+        let state = dir.join("gsr-bans.json");
+        fs::write(&target, r#"{"banned_until":{}}"#).unwrap();
+        fs::hard_link(&target, &state).unwrap();
+
+        assert!(BanStore::load(&dir).is_err());
         fs::remove_dir_all(&dir).ok();
     }
 

@@ -99,6 +99,8 @@ pub enum VaultError {
     InvalidMasterKey(usize),
     #[error("secret name must not be empty")]
     EmptyName,
+    #[error("secret value contains NUL and cannot be injected into a process environment")]
+    InvalidValue,
     #[error("secret identifier contains a reserved control character")]
     InvalidIdentifier,
     #[error("cryptographic randomness unavailable: {0}")]
@@ -267,6 +269,9 @@ impl Vault {
     pub fn set_scoped(&mut self, name: &str, value: &str, scope: Scope) -> Result<()> {
         validate_name(name)?;
         validate_scope(&scope)?;
+        if value.contains('\0') {
+            return Err(VaultError::InvalidValue);
+        }
         let mut nonce_bytes = [0u8; NONCE_LEN];
         let mut rng = SysRng;
         if let Err(error) = rng.try_fill_bytes(&mut nonce_bytes) {
@@ -362,6 +367,11 @@ impl Vault {
             self.events.on_decryption_failure(name);
             VaultError::DecryptionFailed(name.to_owned())
         })?;
+        // Unix process environments cannot represent NUL bytes. Reject legacy
+        // or externally modified records before callers pass them to Command::env.
+        if value.contains('\0') {
+            return Err(VaultError::InvalidValue);
+        }
         self.events.on_secret_read(name, &entry.scope);
         Ok(value)
     }
@@ -552,7 +562,7 @@ fn validate_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
         return Err(VaultError::EmptyName);
     }
-    if name.chars().any(|c| c == '\u{1}') {
+    if name.chars().any(|c| c == '\u{1}' || c == '=' || c == '\0') {
         return Err(VaultError::InvalidIdentifier);
     }
     Ok(())
@@ -982,6 +992,23 @@ mod tests {
         let dir = temp_dir("missing");
         let vault = Vault::open(&dir).unwrap();
         assert!(matches!(vault.get("nope"), Err(VaultError::NotFound(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn environment_incompatible_secret_names_and_values_are_rejected() {
+        let dir = temp_dir("invalid-environment-values");
+        let mut vault = Vault::open(&dir).unwrap();
+        for name in ["bad=name", "bad\0name"] {
+            assert!(matches!(
+                vault.set(name, "value"),
+                Err(VaultError::InvalidIdentifier)
+            ));
+        }
+        assert!(matches!(
+            vault.set("VALID_NAME", "bad\0value"),
+            Err(VaultError::InvalidValue)
+        ));
         let _ = fs::remove_dir_all(&dir);
     }
 

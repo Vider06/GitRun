@@ -255,6 +255,34 @@ pub fn path_for(state_dir: impl AsRef<Path>) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlinked_registry_file() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("gitrun-dock-registry-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target.json");
+        fs::write(&target, r#"{"bindings":[]}"#).unwrap();
+        symlink(&target, path_for(&dir)).unwrap();
+        assert!(DockRegistry::load(&dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_hard_linked_registry_file() {
+        use std::os::unix::fs::hard_link;
+        let dir = std::env::temp_dir().join(format!("gitrun-dock-registry-hardlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = path_for(&dir);
+        fs::write(&path, r#"{"bindings":[]}"#).unwrap();
+        hard_link(&path, dir.join("alias.json")).unwrap();
+        assert!(DockRegistry::load(&dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn registry_round_trips() {
         let dir =

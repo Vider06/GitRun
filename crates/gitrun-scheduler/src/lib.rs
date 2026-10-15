@@ -563,6 +563,10 @@ fn reconcile_repo(
     repo: &str,
     allow_new_runner_creation: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // GTUU replaces permanent runners. Hold its process-shared lifecycle lock
+    // across the complete snapshot/plan/execute cycle so an update cannot
+    // replace a container between inventory and a destructive scheduler action.
+    let _lifecycle_lock = GtuuLock::acquire(state_dir)?;
     api_service::reconcile_dock_bindings(client, state_dir, repo).map_err(std::io::Error::other)?;
 
     if config.gsr_workflow_validation_enabled {
@@ -673,6 +677,7 @@ fn reconcile_repo(
     let input = ReconcileInput {
         min_runners: config.min_runners,
         max_runners: config.max_runners,
+        reserved_runners: preserved_docks.len().min(u32::MAX as usize) as u32,
         containers: plan_containers.iter().map(to_container_view).collect(),
         runners: runners
             .iter()

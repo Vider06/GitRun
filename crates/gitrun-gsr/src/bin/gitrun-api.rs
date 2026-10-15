@@ -155,6 +155,17 @@ fn api_from_invocation(invocation: &str) -> Result<GitRunApi, String> {
     }
 }
 
+fn select_operation(
+    selected: &mut Option<GitRunOperation>,
+    next: GitRunOperation,
+) -> Result<(), String> {
+    if selected.is_some() {
+        return Err("only one GitRun API operation may be specified".into());
+    }
+    *selected = Some(next);
+    Ok(())
+}
+
 type ParsedApiRequest = (GitRunOperation, Option<String>, BTreeMap<String, String>);
 
 fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String> {
@@ -164,8 +175,17 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
     let mut i = 0usize;
 
     if api == GitRunApi::GitInstallRun && !args.is_empty() && !args[0].starts_with('-') {
+        if args.len() > 2 {
+            return Err("GitInstallRun accepts only <package> [version]".into());
+        }
+        if args[0].trim().is_empty() {
+            return Err("GitInstallRun package cannot be empty".into());
+        }
         values.insert("package".into(), args[0].clone());
         if let Some(version) = args.get(1) {
+            if version.trim().is_empty() {
+                return Err("GitInstallRun version cannot be empty".into());
+            }
             values.insert("version".into(), version.clone());
         }
         return Ok((GitRunOperation::Install, None, values));
@@ -174,7 +194,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
     while i < args.len() {
         match args[i].as_str() {
             "--read" | "--get" => {
-                operation = Some(GitRunOperation::Read);
+                select_operation(&mut operation, GitRunOperation::Read)?;
                 i += 1;
                 if i < args.len() {
                     let key = if api == GitRunApi::GitVaultRun {
@@ -187,7 +207,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--write" => {
-                operation = Some(GitRunOperation::Write);
+                select_operation(&mut operation, GitRunOperation::Write)?;
                 i += 1;
                 if i < args.len() {
                     let key = if api == GitRunApi::GitVaultRun {
@@ -204,7 +224,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--exists" => {
-                operation = Some(GitRunOperation::Exists);
+                select_operation(&mut operation, GitRunOperation::Exists)?;
                 i += 1;
                 if i < args.len() {
                     values.insert("name".into(), args[i].clone());
@@ -212,7 +232,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--delete" => {
-                operation = Some(GitRunOperation::Delete);
+                select_operation(&mut operation, GitRunOperation::Delete)?;
                 i += 1;
                 if i < args.len() {
                     values.insert("name".into(), args[i].clone());
@@ -220,19 +240,19 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--list" => {
-                operation = Some(GitRunOperation::List);
+                select_operation(&mut operation, GitRunOperation::List)?;
                 i += 1;
             }
             "--connect" => {
-                operation = Some(GitRunOperation::Connect);
+                select_operation(&mut operation, GitRunOperation::Connect)?;
                 i += 1;
             }
             "--disconnect" => {
-                operation = Some(GitRunOperation::Disconnect);
+                select_operation(&mut operation, GitRunOperation::Disconnect)?;
                 i += 1;
             }
             "--execute" => {
-                operation = Some(GitRunOperation::Execute);
+                select_operation(&mut operation, GitRunOperation::Execute)?;
                 i += 1;
                 if i < args.len() {
                     values.insert("command".into(), args[i..].join(" "));
@@ -240,7 +260,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 i = args.len();
             }
             "--melt" => {
-                operation = Some(GitRunOperation::Melt);
+                select_operation(&mut operation, GitRunOperation::Melt)?;
                 i += 1;
                 if i < args.len() && !args[i].starts_with('-') {
                     values.insert("target".into(), args[i].clone());
@@ -248,7 +268,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--mount" => {
-                operation = Some(GitRunOperation::Mount);
+                select_operation(&mut operation, GitRunOperation::Mount)?;
                 i += 1;
                 if i < args.len() {
                     values.insert("source".into(), args[i].clone());
@@ -263,15 +283,21 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--read-only" => {
+                if values.contains_key("read_only") {
+                    return Err("--read-only/--read-write may be specified only once".into());
+                }
                 values.insert("read_only".into(), "true".into());
                 i += 1;
             }
             "--read-write" => {
+                if values.contains_key("read_only") {
+                    return Err("--read-only/--read-write may be specified only once".into());
+                }
                 values.insert("read_only".into(), "false".into());
                 i += 1;
             }
             "--unmount" => {
-                operation = Some(GitRunOperation::Unmount);
+                select_operation(&mut operation, GitRunOperation::Unmount)?;
                 i += 1;
                 if i < args.len() {
                     values.insert("mount_id".into(), args[i].clone());
@@ -279,7 +305,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--file" => {
-                operation = Some(GitRunOperation::File);
+                select_operation(&mut operation, GitRunOperation::File)?;
                 i += 1;
                 if i < args.len() {
                     values.insert("path".into(), args[i].clone());
@@ -287,7 +313,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--logs" => {
-                operation = Some(GitRunOperation::Logs);
+                select_operation(&mut operation, GitRunOperation::Logs)?;
                 i += 1;
             }
             "--namefile" => {
@@ -316,7 +342,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 i += 1;
             }
             "--remove" => {
-                operation = Some(GitRunOperation::Remove);
+                select_operation(&mut operation, GitRunOperation::Remove)?;
                 i += 1;
                 if i < args.len() {
                     values.insert("package".into(), args[i].clone());
@@ -324,7 +350,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 }
             }
             "--update" => {
-                operation = Some(GitRunOperation::Update);
+                select_operation(&mut operation, GitRunOperation::Update)?;
                 i += 1;
                 if i < args.len() {
                     values.insert("package".into(), args[i].clone());
@@ -335,6 +361,9 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 i += 1;
                 if i >= args.len() {
                     return Err("--docked requires a container id".into());
+                }
+                if resource.is_some() {
+                    return Err("--docked may be specified only once".into());
                 }
                 resource = Some(args[i].clone());
                 i += 1;
@@ -355,7 +384,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
         if !values.contains_key("name") || !values.contains_key("entry") {
             return Err("GitRegisterRun requires --name <name> --entry <path>".into());
         }
-        operation = Some(GitRunOperation::Register);
+        select_operation(&mut operation, GitRunOperation::Register)?;
         values
             .entry("permanent".into())
             .or_insert_with(|| "false".into());
@@ -405,4 +434,51 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
     }
 
     Ok((operation, resource, values))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parser_rejects_multiple_operations() {
+        assert!(parse_api(
+            GitRunApi::GitVaultRun,
+            &["--read".into(), "first".into(), "--delete".into(), "second".into()]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parser_rejects_conflicting_mount_modes_and_duplicate_targets() {
+        assert!(parse_api(
+            GitRunApi::GitDockRun,
+            &[
+                "--mount".into(), "/source".into(),
+                "--target".into(), "/target".into(),
+                "--docked".into(), "runner-1".into(),
+                "--read-only".into(), "--read-write".into(),
+            ]
+        )
+        .is_err());
+        assert!(parse_api(
+            GitRunApi::GitDockRun,
+            &[
+                "--mount".into(), "/source".into(),
+                "--target".into(), "/target".into(),
+                "--docked".into(), "runner-1".into(),
+                "--docked".into(), "runner-2".into(),
+            ]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn install_shortcut_rejects_ignored_extra_arguments() {
+        assert!(parse_api(
+            GitRunApi::GitInstallRun,
+            &["package".into(), "1.0".into(), "unexpected".into()]
+        )
+        .is_err());
+    }
 }

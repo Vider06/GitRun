@@ -1788,6 +1788,44 @@ fn utc_now() -> SimpleNow {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn dock_requirement_reader_rejects_symlinked_file() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-dock-requirements-link-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let directory = base.join("workflow-dock-requirements");
+        std::fs::create_dir_all(&directory).unwrap();
+        let repo = "owner/repo";
+        let target = base.join("external.json");
+        std::fs::write(&target, "[]").unwrap();
+        symlink(&target, directory.join(format!("{}.json", repo_storage_key(repo)))).unwrap();
+        assert!(load_dock_target_jobs(&base, repo).is_err());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dock_requirement_reader_rejects_hard_linked_file() {
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-dock-requirements-hardlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let directory = base.join("workflow-dock-requirements");
+        std::fs::create_dir_all(&directory).unwrap();
+        let repo = "owner/repo";
+        let target = base.join("external.json");
+        let path = directory.join(format!("{}.json", repo_storage_key(repo)));
+        std::fs::write(&target, "[]").unwrap();
+        std::fs::hard_link(&target, &path).unwrap();
+        assert!(load_dock_target_jobs(&base, repo).is_err());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     #[test]
     fn workflow_dock_requirements_use_exact_repo_key_and_remove_atomically() {
         let base = std::env::temp_dir().join(format!(

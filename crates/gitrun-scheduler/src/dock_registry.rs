@@ -183,7 +183,8 @@ fn validate_state_directory(state_dir: &Path) -> Result<(), DockRegistryError> {
         Ok(metadata) => {
             if !metadata.is_dir() {
                 return Err(DockRegistryError::Invalid(
-                    "registry state path must be a real directory, not a symlink or other file".into(),
+                    "registry state path must be a real directory, not a symlink or other file"
+                        .into(),
                 ));
             }
             #[cfg(unix)]
@@ -259,7 +260,10 @@ mod tests {
     #[test]
     fn load_rejects_symlinked_registry_file() {
         use std::os::unix::fs::symlink;
-        let dir = std::env::temp_dir().join(format!("gitrun-dock-registry-symlink-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-symlink-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let target = dir.join("target.json");
@@ -272,7 +276,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn load_rejects_hard_linked_registry_file() {
-        let dir = std::env::temp_dir().join(format!("gitrun-dock-registry-hardlink-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-hardlink-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = path_for(&dir);

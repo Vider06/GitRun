@@ -108,7 +108,9 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
             eprintln!("gitrun-gsr-agent: {message}");
             let event = SecurityEvent::new("gsr-agent", Severity::Critical, message.clone());
             if let Err(write_error) = events::emit(events_path, &event) {
-                eprintln!("gitrun-gsr-agent: additionally failed to write policy event: {write_error}");
+                eprintln!(
+                    "gitrun-gsr-agent: additionally failed to write policy event: {write_error}"
+                );
             }
             return 125;
         }
@@ -158,9 +160,12 @@ pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Con
         Ok(policy) => policy,
         Err(message) => {
             eprintln!("gitrun-gsr-agent: {message}");
-            let event = SecurityEvent::new("gsr-exec-supervisor", Severity::Critical, message.clone());
+            let event =
+                SecurityEvent::new("gsr-exec-supervisor", Severity::Critical, message.clone());
             if let Err(write_error) = events::emit(events_path, &event) {
-                eprintln!("gitrun-gsr-agent: additionally failed to write policy event: {write_error}");
+                eprintln!(
+                    "gitrun-gsr-agent: additionally failed to write policy event: {write_error}"
+                );
             }
             return 125;
         }

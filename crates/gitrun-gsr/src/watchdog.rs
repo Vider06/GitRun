@@ -6,9 +6,9 @@
 //! hard-linked files so a corrupted file cannot be mistaken for clean shutdown.
 
 use crate::events::{self, Severity};
+use std::io::Read;
 use std::path::Path;
 use std::process::Command;
-use std::io::Read;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -128,7 +128,9 @@ fn read_pid(path: &Path) -> Result<Option<u32>, std::io::Error> {
 }
 
 fn validate_pid_parent(path: &Path) -> Result<(), std::io::Error> {
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     let metadata = match std::fs::symlink_metadata(parent) {
         Ok(metadata) => metadata,
@@ -157,7 +159,10 @@ fn validate_pid_parent(path: &Path) -> Result<(), std::io::Error> {
 
 fn parse_pid_contents(raw: &str) -> Result<u32, std::io::Error> {
     let pid = raw.trim().parse::<u32>().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "watchdog PID file is malformed")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "watchdog PID file is malformed",
+        )
     })?;
     if pid == 0 || pid > i32::MAX as u32 {
         return Err(std::io::Error::new(
@@ -174,9 +179,12 @@ fn handle_pid_file_error(config: &WatchConfig, detail: &str) {
         config.watched_name,
         config.pid_file.display()
     );
-    let event = crate::events::SecurityEvent::new("gsr-watchdog", Severity::Critical, message.clone());
+    let event =
+        crate::events::SecurityEvent::new("gsr-watchdog", Severity::Critical, message.clone());
     if let Err(error) = events::emit(&config.events_path, &event) {
-        eprintln!("gitrun-gsr: CRITICAL: {message} (additionally failed to write event log: {error})");
+        eprintln!(
+            "gitrun-gsr: CRITICAL: {message} (additionally failed to write event log: {error})"
+        );
     }
     show_error(&message);
 }
@@ -267,7 +275,8 @@ mod tests {
     #[test]
     fn pid_file_under_symlinked_parent_is_rejected() {
         use std::os::unix::fs::symlink;
-        let base = std::env::temp_dir().join(format!("gitrun-gsr-pid-parent-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("gitrun-gsr-pid-parent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         let real = base.join("real");

@@ -669,7 +669,9 @@ pub fn reinstall_linux_with_auth(
     let _ = Command::new("/usr/bin/docker")
         .args(["image", "rm", "-f", "gitrun-runner:latest"])
         .status();
-    let _ = Command::new("/usr/bin/systemctl").args(["daemon-reload"]).status();
+    let _ = Command::new("/usr/bin/systemctl")
+        .args(["daemon-reload"])
+        .status();
 
     let report = bootstrap_linux_with_auth(auth, repositories, app_binary, owner_uid)?;
 
@@ -678,9 +680,17 @@ pub fn reinstall_linux_with_auth(
         chown_path(config_path, uid)?;
     }
     run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun.service",
+    ]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun-gsr.service",
+    ]))?;
 
     println!("GitRun reinstall: PASS");
     Ok(report)
@@ -842,10 +852,18 @@ pub fn bootstrap_linux_with_auth_and_profile(
     run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun.service"]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun.service",
+    ]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-gsr.service"]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun-gsr.service",
+    ]))?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),
@@ -982,7 +1000,12 @@ fn ensure_docker() -> Result<(), SetupError> {
     }
 
     run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
-    run_command(Command::new("/usr/bin/apt-get").args(["install", "-y", "docker.io", "docker-compose-v2"]))?;
+    run_command(Command::new("/usr/bin/apt-get").args([
+        "install",
+        "-y",
+        "docker.io",
+        "docker-compose-v2",
+    ]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["enable", "--now", "docker"]))?;
 
     if !docker_daemon_ready() || !compose_ready() {
@@ -1210,7 +1233,11 @@ fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
 }
 
 fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {
-    run_command(Command::new("/usr/bin/chown").arg(uid.to_string()).arg(path))
+    run_command(
+        Command::new("/usr/bin/chown")
+            .arg(uid.to_string())
+            .arg(path),
+    )
 }
 
 fn valid_repo(value: &str) -> bool {
@@ -1255,9 +1282,8 @@ fn command_exists(name: &str) -> bool {
     let Some(path) = trusted_command_path(name) else {
         return false;
     };
-    fs::metadata(path).is_ok_and(|metadata| {
-        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-    })
+    fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 fn docker_daemon_ready() -> bool {
@@ -1610,7 +1636,8 @@ fn read_existing_env_file(path: &Path) -> Result<String, String> {
                 path.display()
             ));
         }
-        fs::read_to_string(path).map_err(|error| format!("unable to read {}: {error}", path.display()))
+        fs::read_to_string(path)
+            .map_err(|error| format!("unable to read {}: {error}", path.display()))
     }
 }
 
@@ -1632,7 +1659,10 @@ mod tests {
     #[test]
     fn privileged_host_commands_use_fixed_paths_and_reject_unknown_names() {
         assert_eq!(trusted_command_path("docker"), Some("/usr/bin/docker"));
-        assert_eq!(trusted_command_path("systemctl"), Some("/usr/bin/systemctl"));
+        assert_eq!(
+            trusted_command_path("systemctl"),
+            Some("/usr/bin/systemctl")
+        );
         assert_eq!(trusted_command_path("dpkg"), Some("/usr/bin/dpkg"));
         assert_eq!(trusted_command_path("apt-get"), Some("/usr/bin/apt-get"));
         assert_eq!(trusted_command_path("id"), Some("/usr/bin/id"));

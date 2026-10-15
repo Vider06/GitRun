@@ -20,9 +20,9 @@
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -489,7 +489,11 @@ mod tests {
         let _ = std::fs::remove_file(&target);
         std::fs::write(&target, "do not append").unwrap();
         symlink(&target, &path).unwrap();
-        assert!(emit(&path, &SecurityEvent::new("test", Severity::Info, "blocked")).is_err());
+        assert!(emit(
+            &path,
+            &SecurityEvent::new("test", Severity::Info, "blocked")
+        )
+        .is_err());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "do not append");
         let _ = std::fs::remove_file(&path);
 
@@ -497,7 +501,11 @@ mod tests {
         let _ = std::fs::remove_file(&hardlink_path);
         std::fs::write(&target, "").unwrap();
         std::fs::hard_link(&target, &hardlink_path).unwrap();
-        assert!(emit(&hardlink_path, &SecurityEvent::new("test", Severity::Info, "blocked")).is_err());
+        assert!(emit(
+            &hardlink_path,
+            &SecurityEvent::new("test", Severity::Info, "blocked")
+        )
+        .is_err());
         let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
         assert_ne!(mode, 0o600, "rejected hard link must not be chmodded");
         let _ = std::fs::remove_file(&hardlink_path);
@@ -510,10 +518,8 @@ mod tests {
     #[test]
     fn emit_rejects_symlinked_parent_directory() {
         use std::os::unix::fs::symlink;
-        let base = std::env::temp_dir().join(format!(
-            "gitrun-gsr-events-parent-{}",
-            std::process::id()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("gitrun-gsr-events-parent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         let real = base.join("real");
@@ -521,7 +527,11 @@ mod tests {
         std::fs::create_dir(&real).unwrap();
         symlink(&real, &link).unwrap();
         let path = link.join("events.jsonl");
-        assert!(emit(&path, &SecurityEvent::new("test", Severity::Critical, "blocked")).is_err());
+        assert!(emit(
+            &path,
+            &SecurityEvent::new("test", Severity::Critical, "blocked")
+        )
+        .is_err());
         assert!(!real.join("events.jsonl").exists());
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -532,8 +542,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let path = temp_path("private-mode");
         let _ = std::fs::remove_file(&path);
-        emit(&path, &SecurityEvent::new("test", Severity::Info, "private")).unwrap();
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        emit(
+            &path,
+            &SecurityEvent::new("test", Severity::Info, "private"),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.lock", path.display()));
     }

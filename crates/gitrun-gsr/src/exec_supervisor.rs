@@ -1313,7 +1313,9 @@ mod linux {
             let result = read_argv_with(test_pid(), 0, |_, _| {
                 panic!("NULL argv must be rejected before reading tracee memory")
             });
-            assert!(matches!(result, Err(SupervisorError::InspectFailed(pid)) if pid == test_pid()));
+            assert!(
+                matches!(result, Err(SupervisorError::InspectFailed(pid)) if pid == test_pid())
+            );
         }
 
         #[test]

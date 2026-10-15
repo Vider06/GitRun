@@ -1046,7 +1046,8 @@ mod tests {
     fn repeated_pagination_url_is_rejected() {
         let mut seen = HashSet::new();
         assert!(record_page_url(&mut seen, "https://api.github.com/resource?page=1").is_ok());
-        let error = record_page_url(&mut seen, "https://api.github.com/resource?page=1").unwrap_err();
+        let error =
+            record_page_url(&mut seen, "https://api.github.com/resource?page=1").unwrap_err();
         assert!(matches!(error, GitHubError::PaginationLoop(url) if url.ends_with("page=1")));
     }
 

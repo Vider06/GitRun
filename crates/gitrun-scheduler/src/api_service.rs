@@ -192,12 +192,17 @@ fn validate_mount_registry_directory(state_dir: &Path) -> Result<(), String> {
             }
             use std::os::unix::fs::PermissionsExt;
             if metadata.permissions().mode() & 0o022 != 0 {
-                return Err("GitDockRun registry state directory must not be group- or world-writable".into());
+                return Err(
+                    "GitDockRun registry state directory must not be group- or world-writable"
+                        .into(),
+                );
             }
             Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("inspect GitDockRun registry state directory: {error}")),
+        Err(error) => Err(format!(
+            "inspect GitDockRun registry state directory: {error}"
+        )),
     }
 }
 
@@ -205,7 +210,9 @@ fn validate_mount_registry_directory(state_dir: &Path) -> Result<(), String> {
 fn read_secure_mount_registry(path: &Path) -> Result<Option<String>, String> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
     let mut options = fs::OpenOptions::new();
-    options.read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
     let mut file = match options.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -261,7 +268,9 @@ impl MountRegistry {
                 || mount.requester_runner.trim().is_empty()
                 || mount.target.trim().is_empty()
             {
-                return Err("GitDockRun mount registry contains an incomplete ownership record".into());
+                return Err(
+                    "GitDockRun mount registry contains an incomplete ownership record".into(),
+                );
             }
         }
 
@@ -4728,7 +4737,9 @@ fn validate_register_registry_parent(path: &Path) -> Result<(), ExecutionError> 
             {
                 use std::os::unix::fs::PermissionsExt;
                 if metadata.permissions().mode() & 0o022 != 0 {
-                    return Err(failed("register registry parent must not be group- or world-writable"));
+                    return Err(failed(
+                        "register registry parent must not be group- or world-writable",
+                    ));
                 }
             }
             Ok(())
@@ -4752,10 +4763,14 @@ fn read_secure_register_registry(path: &Path) -> Result<Option<String>, Executio
         };
         let metadata = file.metadata().map_err(|error| failed(error.to_string()))?;
         if !metadata.is_file() || metadata.nlink() != 1 {
-            return Err(failed("register registry must be a regular file without hard links"));
+            return Err(failed(
+                "register registry must be a regular file without hard links",
+            ));
         }
         if metadata.permissions().mode() & 0o022 != 0 {
-            return Err(failed("register registry must not be group- or world-writable"));
+            return Err(failed(
+                "register registry must not be group- or world-writable",
+            ));
         }
         let mut raw = String::new();
         std::io::Read::read_to_string(&mut file, &mut raw)
@@ -4769,7 +4784,11 @@ fn read_secure_register_registry(path: &Path) -> Result<Option<String>, Executio
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(failed(format!("open register registry: {error}"))),
         };
-        if !file.metadata().map_err(|error| failed(error.to_string()))?.is_file() {
+        if !file
+            .metadata()
+            .map_err(|error| failed(error.to_string()))?
+            .is_file()
+        {
             return Err(failed("register registry must be a regular file"));
         }
         let mut raw = String::new();

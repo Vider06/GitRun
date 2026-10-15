@@ -164,8 +164,13 @@ mod tests {
 
         assert!(matches!(result, Err(ExecutionError::Unsupported { .. })));
         assert!(matches!(events.first(), Some(ExecutionEvent::Started)));
-        assert!(matches!(events.get(1), Some(ExecutionEvent::Stderr(message)) if message.contains("does not implement")));
-        assert!(matches!(events.last(), Some(ExecutionEvent::Finished { exit_code: 1 })));
+        assert!(
+            matches!(events.get(1), Some(ExecutionEvent::Stderr(message)) if message.contains("does not implement"))
+        );
+        assert!(matches!(
+            events.last(),
+            Some(ExecutionEvent::Finished { exit_code: 1 })
+        ));
     }
 
     #[test]

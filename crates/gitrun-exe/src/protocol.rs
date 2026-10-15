@@ -64,9 +64,15 @@ impl<'de> Deserialize<'de> for ChannelKey {
 pub struct SignedRequest {
     pub request: AuthorizedOperation,
     pub timestamp: u64,
-    #[serde(serialize_with = "serde_bytes_hex::serialize", deserialize_with = "deserialize_nonce")]
+    #[serde(
+        serialize_with = "serde_bytes_hex::serialize",
+        deserialize_with = "deserialize_nonce"
+    )]
     pub nonce: Vec<u8>,
-    #[serde(serialize_with = "serde_bytes_hex::serialize", deserialize_with = "deserialize_mac")]
+    #[serde(
+        serialize_with = "serde_bytes_hex::serialize",
+        deserialize_with = "deserialize_mac"
+    )]
     pub mac: Vec<u8>,
 }
 

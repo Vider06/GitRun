@@ -1191,13 +1191,25 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         .env_remove("DOCKER_CERT_PATH")
         .env("DOCKER_HOST", "unix:///var/run/docker.sock")
         .args([
-            "exec", "-i", target, "tar", "-xpf", "-", "-C", "/",
+            "exec",
+            "-i",
+            target,
+            "tar",
+            "-xpf",
+            "-",
+            "-C",
+            "/",
             "--no-same-owner",
-            "--exclude=./proc", "--exclude=./proc/*",
-            "--exclude=./sys", "--exclude=./sys/*",
-            "--exclude=./dev", "--exclude=./dev/*",
-            "--exclude=./run", "--exclude=./run/*",
-            "--exclude=./var/run", "--exclude=./var/run/*",
+            "--exclude=./proc",
+            "--exclude=./proc/*",
+            "--exclude=./sys",
+            "--exclude=./sys/*",
+            "--exclude=./dev",
+            "--exclude=./dev/*",
+            "--exclude=./run",
+            "--exclude=./run/*",
+            "--exclude=./var/run",
+            "--exclude=./var/run/*",
             "--exclude=./home/runner/actions-runner",
             "--exclude=./home/runner/actions-runner/*",
         ])
@@ -1226,7 +1238,9 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         None => {
             terminate_child(&mut export_child);
             terminate_child(&mut extract_child);
-            return Err(DockerError::Command("docker export did not expose stdout".into()));
+            return Err(DockerError::Command(
+                "docker export did not expose stdout".into(),
+            ));
         }
     };
     let extract_stdin = match extract_child.stdin.take() {
@@ -1234,7 +1248,9 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         None => {
             terminate_child(&mut export_child);
             terminate_child(&mut extract_child);
-            return Err(DockerError::Command("docker exec did not expose stdin".into()));
+            return Err(DockerError::Command(
+                "docker exec did not expose stdin".into(),
+            ));
         }
     };
     let export_stderr = match export_child.stderr.take() {
@@ -1242,7 +1258,9 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         None => {
             terminate_child(&mut export_child);
             terminate_child(&mut extract_child);
-            return Err(DockerError::Command("docker export did not expose stderr".into()));
+            return Err(DockerError::Command(
+                "docker export did not expose stderr".into(),
+            ));
         }
     };
     let extract_stdout = match extract_child.stdout.take() {
@@ -1250,7 +1268,9 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         None => {
             terminate_child(&mut export_child);
             terminate_child(&mut extract_child);
-            return Err(DockerError::Command("docker exec did not expose stdout".into()));
+            return Err(DockerError::Command(
+                "docker exec did not expose stdout".into(),
+            ));
         }
     };
     let extract_stderr = match extract_child.stderr.take() {
@@ -1258,7 +1278,9 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         None => {
             terminate_child(&mut export_child);
             terminate_child(&mut extract_child);
-            return Err(DockerError::Command("docker exec did not expose stderr".into()));
+            return Err(DockerError::Command(
+                "docker exec did not expose stderr".into(),
+            ));
         }
     };
 
@@ -1550,21 +1572,27 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
         Some(stdin) => stdin,
         None => {
             terminate_child(&mut child);
-            return Err(DockerError::Command("docker exec did not expose stdin".into()));
+            return Err(DockerError::Command(
+                "docker exec did not expose stdin".into(),
+            ));
         }
     };
     let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
         None => {
             terminate_child(&mut child);
-            return Err(DockerError::Command("docker exec did not expose stdout".into()));
+            return Err(DockerError::Command(
+                "docker exec did not expose stdout".into(),
+            ));
         }
     };
     let stderr = match child.stderr.take() {
         Some(stderr) => stderr,
         None => {
             terminate_child(&mut child);
-            return Err(DockerError::Command("docker exec did not expose stderr".into()));
+            return Err(DockerError::Command(
+                "docker exec did not expose stderr".into(),
+            ));
         }
     };
 
@@ -1625,7 +1653,11 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
         // operation; do not silently report success after a partial write.
         return Err(DockerError::Spawn(error));
     }
-    Ok(Output { status, stdout, stderr })
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// Executes a command in one managed container and forwards bounded stdout/stderr
@@ -1659,14 +1691,18 @@ where
         Some(stdout) => stdout,
         None => {
             terminate_child(&mut child);
-            return Err(DockerError::Command("docker exec did not expose stdout".into()));
+            return Err(DockerError::Command(
+                "docker exec did not expose stdout".into(),
+            ));
         }
     };
     let stderr = match child.stderr.take() {
         Some(stderr) => stderr,
         None => {
             terminate_child(&mut child);
-            return Err(DockerError::Command("docker exec did not expose stderr".into()));
+            return Err(DockerError::Command(
+                "docker exec did not expose stderr".into(),
+            ));
         }
     };
 

@@ -6,8 +6,8 @@
 //! a clean result.
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::io::Read;
+use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -359,10 +359,7 @@ fn run_zizmor_command(
     workflows_dir: &Path,
 ) -> std::io::Result<Option<Vec<Finding>>> {
     let mut command = Command::new(program);
-    command
-        .arg("--format")
-        .arg("json")
-        .arg(workflows_dir);
+    command.arg("--format").arg("json").arg(workflows_dir);
     let output = match run_bounded_command(command, Duration::from_secs(30), 4 * 1024 * 1024) {
         Ok(output) => output,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -389,12 +386,14 @@ fn run_bounded_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        std::io::Error::other("failed to capture analyzer stdout")
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        std::io::Error::other("failed to capture analyzer stderr")
-    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("failed to capture analyzer stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("failed to capture analyzer stderr"))?;
     let stdout_reader = thread::spawn(move || read_bounded_stream(stdout, output_limit));
     let stderr_reader = thread::spawn(move || read_bounded_stream(stderr, output_limit));
     let deadline = Instant::now() + timeout;
@@ -406,7 +405,7 @@ fn run_bounded_command(
                 // owns either pipe; kill the group before joining reader threads.
                 kill_analyzer_process_group(child.id());
                 break status;
-            },
+            }
             Ok(None) if Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(20));
             }
@@ -724,14 +723,16 @@ mod tests {
     #[test]
     fn validate_workflows_dir_ignores_symlinked_workflow_files() {
         use std::os::unix::fs::symlink;
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-workflows-symlink-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-workflows-symlink-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let outside = dir.with_extension("outside.yml");
-        std::fs::write(&outside, "env:\\n  ACTIONS_ALLOW_UNSECURE_COMMANDS: true\\n").unwrap();
+        std::fs::write(
+            &outside,
+            "env:\\n  ACTIONS_ALLOW_UNSECURE_COMMANDS: true\\n",
+        )
+        .unwrap();
         symlink(&outside, dir.join("linked.yml")).unwrap();
         let report = validate_workflows_dir(&dir).unwrap();
         assert!(report.is_clean());

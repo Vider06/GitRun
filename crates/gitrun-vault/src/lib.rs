@@ -951,11 +951,17 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         let vault_dir = base.join("vault");
         let _vault = Vault::open(&vault_dir).unwrap();
-        assert_eq!(fs::metadata(&vault_dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::metadata(&vault_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
 
         let linked = base.join("linked-vault");
         symlink(&vault_dir, &linked).unwrap();
-        assert!(matches!(Vault::open(&linked), Err(VaultError::UnsafePath(_))));
+        assert!(matches!(
+            Vault::open(&linked),
+            Err(VaultError::UnsafePath(_))
+        ));
         let _ = fs::remove_dir_all(base);
     }
 

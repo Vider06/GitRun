@@ -143,9 +143,18 @@ fn update_signing_environment() -> Vec<(String, String)> {
     // into the root process: the official release key and mandatory signature
     // verification are fixed trust anchors for the installed system binary.
     vec![
-        ("GITRUN_UPDATE_PUBLIC_KEY_HEX".to_owned(), DEFAULT_UPDATE_PUBLIC_KEY_HEX.to_owned()),
-        ("GITRUN_UPDATE_PUBLIC_KEY_ID".to_owned(), DEFAULT_UPDATE_PUBLIC_KEY_ID.to_owned()),
-        ("GITRUN_UPDATE_SIGNATURE_REQUIRED".to_owned(), "true".to_owned()),
+        (
+            "GITRUN_UPDATE_PUBLIC_KEY_HEX".to_owned(),
+            DEFAULT_UPDATE_PUBLIC_KEY_HEX.to_owned(),
+        ),
+        (
+            "GITRUN_UPDATE_PUBLIC_KEY_ID".to_owned(),
+            DEFAULT_UPDATE_PUBLIC_KEY_ID.to_owned(),
+        ),
+        (
+            "GITRUN_UPDATE_SIGNATURE_REQUIRED".to_owned(),
+            "true".to_owned(),
+        ),
     ]
 }
 
@@ -1057,7 +1066,9 @@ fn terminal_setup_command(
         let executable = std::env::current_exe()?;
         println!();
         println!("Installing GitRun with elevated privileges...");
-        let uid = std::process::Command::new("/usr/bin/id").arg("-u").output()?;
+        let uid = std::process::Command::new("/usr/bin/id")
+            .arg("-u")
+            .output()?;
         let running_as_root =
             uid.status.success() && String::from_utf8_lossy(&uid.stdout).trim() == "0";
         let status = if running_as_root {

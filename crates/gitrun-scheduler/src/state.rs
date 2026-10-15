@@ -258,15 +258,15 @@ impl SchedulerState {
                     .as_deref()
                     .is_some_and(|prefix| name.starts_with(prefix))
         };
-        self.data.idle_since.retain(|name, _| {
-            !belongs_to_repo(name) || live_names.contains(name.as_str())
-        });
-        self.data.recovery_since.retain(|name, _| {
-            !belongs_to_repo(name) || live_names.contains(name.as_str())
-        });
-        self.data.quarantined_since.retain(|name, _| {
-            !belongs_to_repo(name) || live_names.contains(name.as_str())
-        });
+        self.data
+            .idle_since
+            .retain(|name, _| !belongs_to_repo(name) || live_names.contains(name.as_str()));
+        self.data
+            .recovery_since
+            .retain(|name, _| !belongs_to_repo(name) || live_names.contains(name.as_str()));
+        self.data
+            .quarantined_since
+            .retain(|name, _| !belongs_to_repo(name) || live_names.contains(name.as_str()));
     }
     /// Returns how long a container has been marked as needing recovery,
     /// starting the clock now if this is the first time we've seen it.
@@ -352,15 +352,16 @@ mod tests {
     #[test]
     fn load_rejects_symlinked_state_file() {
         use std::os::unix::fs::symlink;
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-sched-state-symlink-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-symlink-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let target = dir.join("external.json");
-        fs::write(&target, r#"{"idle_since":{},"recovery_since":{},"quarantined_since":{}}"#)
-            .unwrap();
+        fs::write(
+            &target,
+            r#"{"idle_since":{},"recovery_since":{},"quarantined_since":{}}"#,
+        )
+        .unwrap();
         symlink(&target, dir.join("scheduler-state.json")).unwrap();
         assert!(matches!(
             SchedulerState::load(&dir),
@@ -379,8 +380,11 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let target = dir.join("external.json");
-        fs::write(&target, r#"{"idle_since":{},"recovery_since":{},"quarantined_since":{}}"#)
-            .unwrap();
+        fs::write(
+            &target,
+            r#"{"idle_since":{},"recovery_since":{},"quarantined_since":{}}"#,
+        )
+        .unwrap();
         fs::hard_link(&target, dir.join("scheduler-state.json")).unwrap();
         assert!(matches!(
             SchedulerState::load(&dir),
@@ -519,13 +523,18 @@ mod tests {
         );
 
         let stale_first = format!("{}gone", crate::docker::runner_name_prefix(first_repo));
-        let quarantined_second =
-            format!("{}quarantined", crate::docker::runner_name_prefix(second_repo));
+        let quarantined_second = format!(
+            "{}quarantined",
+            crate::docker::runner_name_prefix(second_repo)
+        );
         state.mark_idle(&stale_first);
         state.quarantine(&quarantined_second);
         state.prune(first_repo, &[]);
 
-        assert!(state.idle_entries().iter().all(|(name, _)| name != &stale_first));
+        assert!(state
+            .idle_entries()
+            .iter()
+            .all(|(name, _)| name != &stale_first));
         assert!(state.is_quarantined(&quarantined_second));
         let _ = fs::remove_dir_all(&dir);
     }

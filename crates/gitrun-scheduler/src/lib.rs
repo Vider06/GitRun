@@ -230,7 +230,11 @@ fn open_protected_pid_file(
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
     let mut options = std::fs::OpenOptions::new();
-    options.read(read).write(write).create(create).truncate(false);
+    options
+        .read(read)
+        .write(write)
+        .create(create)
+        .truncate(false);
     options
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
@@ -283,7 +287,10 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
                 Error::new(ErrorKind::InvalidData, "scheduler PID file is malformed")
             })?;
             if pid == 0 || pid > i32::MAX as u32 {
-                return Err(Error::new(ErrorKind::InvalidData, "scheduler PID is out of range"));
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "scheduler PID is out of range",
+                ));
             }
             Some(pid)
         }
@@ -1004,7 +1011,10 @@ fn load_dock_target_jobs(
     if !metadata.is_file() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("GitDockRun requirements at {} are not a regular file", path.display()),
+            format!(
+                "GitDockRun requirements at {} are not a regular file",
+                path.display()
+            ),
         ));
     }
     #[cfg(unix)]
@@ -1159,16 +1169,14 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
             message,
         );
         if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
-            eprintln!("gitrun-autoscaler: workflow validation: failed to write security event: {error}");
+            eprintln!(
+                "gitrun-autoscaler: workflow validation: failed to write security event: {error}"
+            );
         }
     }
 }
 
-fn emit_workflow_validation_warning(
-    events_path: &std::path::Path,
-    repo: &str,
-    detail: &str,
-) {
+fn emit_workflow_validation_warning(events_path: &std::path::Path, repo: &str, detail: &str) {
     let message = format!("{repo}: workflow validation warning: {detail}");
     eprintln!("gitrun-autoscaler: {message}");
     let event = gitrun_gsr::SecurityEvent::new(
@@ -1257,7 +1265,9 @@ fn save_workflow_dock_requirements(
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         }
         let mut file = options.open(&temp)?;
         use std::io::Write;
@@ -1304,8 +1314,8 @@ fn write_scratch_workflows(
     for (name, content) in files {
         let relative = std::path::Path::new(name);
         let mut components = relative.components();
-        let is_single_file_name = matches!(components.next(), Some(Component::Normal(_)))
-            && components.next().is_none();
+        let is_single_file_name =
+            matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
         if relative.is_absolute() || !is_single_file_name {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -1318,13 +1328,13 @@ fn write_scratch_workflows(
     Ok(())
 }
 
-fn write_scratch_file_atomic(
-    target: &std::path::Path,
-    content: &str,
-) -> std::io::Result<()> {
+fn write_scratch_file_atomic(target: &std::path::Path, content: &str) -> std::io::Result<()> {
     use std::io::Write;
     let parent = target.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "workflow target has no parent")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workflow target has no parent",
+        )
     })?;
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1344,7 +1354,10 @@ fn write_scratch_file_atomic(
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     }
     let mut file = options.open(&temp)?;
-    if let Err(error) = file.write_all(content.as_bytes()).and_then(|_| file.sync_all()) {
+    if let Err(error) = file
+        .write_all(content.as_bytes())
+        .and_then(|_| file.sync_all())
+    {
         let _ = std::fs::remove_file(&temp);
         return Err(error);
     }
@@ -1801,7 +1814,11 @@ mod tests {
         let repo = "owner/repo";
         let target = base.join("external.json");
         std::fs::write(&target, "[]").unwrap();
-        symlink(&target, directory.join(format!("{}.json", repo_storage_key(repo)))).unwrap();
+        symlink(
+            &target,
+            directory.join(format!("{}.json", repo_storage_key(repo))),
+        )
+        .unwrap();
         assert!(load_dock_target_jobs(&base, repo).is_err());
         let _ = std::fs::remove_dir_all(base);
     }
@@ -1902,18 +1919,12 @@ mod tests {
         let workflow = scratch.join("ci.yml");
         std::fs::write(&target, "keep").unwrap();
         symlink(&target, &workflow).unwrap();
-        write_scratch_workflows(
-            &scratch,
-            &[("ci.yml".into(), "name: safe".into())],
-        )
-        .unwrap();
+        write_scratch_workflows(&scratch, &[("ci.yml".into(), "name: safe".into())]).unwrap();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
         assert_eq!(std::fs::read_to_string(&workflow).unwrap(), "name: safe");
-        assert!(write_scratch_workflows(
-            &scratch,
-            &[("../outside".into(), "bad".into())],
-        )
-        .is_err());
+        assert!(
+            write_scratch_workflows(&scratch, &[("../outside".into(), "bad".into())],).is_err()
+        );
         let _ = std::fs::remove_dir_all(base);
     }
 
@@ -1928,9 +1939,9 @@ mod tests {
         assert!(env.iter().any(|(key, value)| {
             key == "GITRUN_GSR_COMMAND_POLICY_ENABLED" && value == "false"
         }));
-        assert!(env.iter().any(|(key, value)| {
-            key == "GITRUN_GSR_ALLOW_UNSAFE_RUNNER" && value == "true"
-        }));
+        assert!(env
+            .iter()
+            .any(|(key, value)| { key == "GITRUN_GSR_ALLOW_UNSAFE_RUNNER" && value == "true" }));
     }
 
     #[test]
@@ -1946,7 +1957,10 @@ mod tests {
         };
         let env = vault_env_for_repo(&config, "owner/repo").unwrap();
         assert!(env.is_empty());
-        assert!(!dir.exists(), "missing vault must not be initialized implicitly");
+        assert!(
+            !dir.exists(),
+            "missing vault must not be initialized implicitly"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -307,38 +307,38 @@ impl Config {
     }
 
     fn read_config_file(path: &Path) -> Result<String, ConfigError> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
-        let mut file = options.open(path)?;
-        let metadata = file.metadata()?;
-        if !metadata.is_file() || metadata.nlink() != 1 {
-            return Err(ConfigError::Invalid(
-                "configuration path must be a regular file without hard links".into(),
-            ));
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+            let mut file = options.open(path)?;
+            let metadata = file.metadata()?;
+            if !metadata.is_file() || metadata.nlink() != 1 {
+                return Err(ConfigError::Invalid(
+                    "configuration path must be a regular file without hard links".into(),
+                ));
+            }
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            return Ok(content);
         }
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        return Ok(content);
-    }
-    #[cfg(not(unix))]
-    {
-        let mut file = options.open(path)?;
-        if !file.metadata()?.is_file() {
-            return Err(ConfigError::Invalid(
-                "configuration path must be a regular file".into(),
-            ));
+        #[cfg(not(unix))]
+        {
+            let mut file = options.open(path)?;
+            if !file.metadata()?.is_file() {
+                return Err(ConfigError::Invalid(
+                    "configuration path must be a regular file".into(),
+                ));
+            }
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            Ok(content)
         }
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        Ok(content)
     }
-}
 
-/// Shared field-by-field build, driven by a plain string lookup. Both
+    /// Shared field-by-field build, driven by a plain string lookup. Both
     /// `from_env` (process environment) and `from_env_file` (a `.env`-style
     /// file) funnel into this single place so the 14 config fields are only
     /// ever enumerated once instead of twice in lockstep.
@@ -1235,12 +1235,23 @@ mod tests {
 
     #[test]
     fn env_file_rejects_duplicate_and_invalid_keys() {
-        let dir = std::env::temp_dir().join(format!("gitrun-config-duplicate-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-config-duplicate-{}", std::process::id()));
         let _ = fs::remove_file(&dir);
-        fs::write(&dir, "GITRUN_GSR_COMMAND_POLICY_ENABLED=true\nGITRUN_GSR_COMMAND_POLICY_ENABLED=false\n").unwrap();
-        assert!(matches!(Config::from_env_file(&dir), Err(ConfigError::Invalid(_))));
+        fs::write(
+            &dir,
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED=true\nGITRUN_GSR_COMMAND_POLICY_ENABLED=false\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            Config::from_env_file(&dir),
+            Err(ConfigError::Invalid(_))
+        ));
         fs::write(&dir, "=true\n").unwrap();
-        assert!(matches!(Config::from_env_file(&dir), Err(ConfigError::Invalid(_))));
+        assert!(matches!(
+            Config::from_env_file(&dir),
+            Err(ConfigError::Invalid(_))
+        ));
         let _ = fs::remove_file(&dir);
     }
 
@@ -1248,13 +1259,17 @@ mod tests {
     #[test]
     fn env_file_rejects_symlink_paths() {
         use std::os::unix::fs::symlink;
-        let dir = std::env::temp_dir().join(format!("gitrun-config-symlink-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-config-symlink-{}", std::process::id()));
         let target = dir.with_extension("target");
         let _ = fs::remove_file(&dir);
         let _ = fs::remove_file(&target);
         fs::write(&target, "GITRUN_GSR_COMMAND_POLICY_ENABLED=false\n").unwrap();
         symlink(&target, &dir).unwrap();
-        assert!(matches!(Config::from_env_file(&dir), Err(ConfigError::Io(_))));
+        assert!(matches!(
+            Config::from_env_file(&dir),
+            Err(ConfigError::Io(_))
+        ));
         let _ = fs::remove_file(&dir);
         let _ = fs::remove_file(&target);
     }

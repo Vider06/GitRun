@@ -135,7 +135,9 @@ impl BanStore {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         }
         let lock = options.open(&lock_path)?;
         validate_ban_file_metadata(&lock.metadata()?, &lock_path)?;
@@ -531,7 +533,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "gitrun-gsr-poll-first-run-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let mut store = BanStore::load(&dir).unwrap();
         assert!(!store.is_banned("owner/repo"));
@@ -585,7 +590,10 @@ mod tests {
         symlink(&target, dir.join("gsr-bans.json")).unwrap();
 
         assert!(BanStore::load(&dir).is_err());
-        assert_eq!(fs::read_to_string(&target).unwrap(), r#"{"banned_until":{}}"#);
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            r#"{"banned_until":{}}"#
+        );
         fs::remove_dir_all(&dir).ok();
     }
 

@@ -456,7 +456,12 @@ mod tests {
     fn parser_rejects_multiple_operations() {
         assert!(parse_api(
             GitRunApi::GitVaultRun,
-            &["--read".into(), "first".into(), "--delete".into(), "second".into()]
+            &[
+                "--read".into(),
+                "first".into(),
+                "--delete".into(),
+                "second".into()
+            ]
         )
         .is_err());
     }
@@ -466,20 +471,28 @@ mod tests {
         assert!(parse_api(
             GitRunApi::GitDockRun,
             &[
-                "--mount".into(), "/source".into(),
-                "--target".into(), "/target".into(),
-                "--docked".into(), "runner-1".into(),
-                "--read-only".into(), "--read-write".into(),
+                "--mount".into(),
+                "/source".into(),
+                "--target".into(),
+                "/target".into(),
+                "--docked".into(),
+                "runner-1".into(),
+                "--read-only".into(),
+                "--read-write".into(),
             ]
         )
         .is_err());
         assert!(parse_api(
             GitRunApi::GitDockRun,
             &[
-                "--mount".into(), "/source".into(),
-                "--target".into(), "/target".into(),
-                "--docked".into(), "runner-1".into(),
-                "--docked".into(), "runner-2".into(),
+                "--mount".into(),
+                "/source".into(),
+                "--target".into(),
+                "/target".into(),
+                "--docked".into(),
+                "runner-1".into(),
+                "--docked".into(),
+                "runner-2".into(),
             ]
         )
         .is_err());

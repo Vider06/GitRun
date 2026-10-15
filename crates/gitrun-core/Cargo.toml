@@ -9,5 +9,6 @@ description = "Rust core primitives for GitRun"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }

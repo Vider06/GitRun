@@ -17,7 +17,7 @@ export async function renderOverview(navigate, cachedOverview = null, background
   if (generation !== window.__gitrunNavigationGeneration) return;
 
   const snapshotPromise = resolvedSnapshots ? Promise.resolve(resolvedSnapshots) : Promise.all([
-    invoke("get_runner_snapshot", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[String(error)]})),
+    invoke("get_runner_snapshot", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],active_workflows:[],runners:[],warnings:[String(error)]})),
     invoke("get_repository_activity", {forceRefresh}).catch((error) => ({checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[String(error)]})),
     invoke("get_host_resource_snapshot", {forceRefresh}).catch((error) => ({sampled_at:0,stale:true,error:String(error)}))
   ]);
@@ -38,7 +38,7 @@ export async function renderOverview(navigate, cachedOverview = null, background
   } else {
     // Render useful local/configuration data quickly; telemetry can arrive
     // later without blocking the whole view on a slow GitHub endpoint.
-    runnerSnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],runners:[],warnings:[]};
+    runnerSnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,workflow_repositories_checked:0,workflow_runs:[],active_workflows:[],runners:[],warnings:[]};
     activitySnapshot = {checked_at:0,stale:true,complete:false,repositories_checked:0,repositories_total:0,repositories:[],warnings:[]};
     resourceSnapshot = {sampled_at:0,stale:true,error:"Resource sample is still loading."};
     snapshotPromise.then((resolved) => {
@@ -59,6 +59,7 @@ export async function renderOverview(navigate, cachedOverview = null, background
   const runners = Array.isArray(runnerSnapshot.runners) ? runnerSnapshot.runners : [];
   const runnerCountsKnown = repos.length === 0 || (runnerSnapshot.repositories_total === repos.length && runnerSnapshot.repositories_checked === runnerSnapshot.repositories_total);
   const workflowRuns = Array.isArray(runnerSnapshot.workflow_runs) ? runnerSnapshot.workflow_runs : [];
+  const activeWorkflows = Array.isArray(runnerSnapshot.active_workflows) ? runnerSnapshot.active_workflows : [];
   const workflowCountsKnown = runnerSnapshot.workflow_repositories_checked === repos.length;
   const workflowQueued = workflowRuns.reduce((sum,item)=>sum+Number(item.queued||0),0);
   const workflowActive = workflowRuns.reduce((sum,item)=>sum+Number(item.in_progress||0),0);
@@ -111,10 +112,36 @@ export async function renderOverview(navigate, cachedOverview = null, background
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Recent workflow runs</h2><span class="muted">' + (workflowCountsKnown ? 'Latest 100 runs per repository' : 'Partial / unavailable') + '</span></div>' +
       (workflowRuns.length ? '<div class="table-wrap"><table><thead><tr><th>Repository</th><th>Total</th><th>Queued</th><th>In progress</th><th>Success</th><th>Failed</th><th>Cancelled</th></tr></thead><tbody>' + workflowRuns.map((item) => '<tr><td>' + esc(item.repository) + '</td><td>' + esc(item.total) + '</td><td>' + esc(item.queued) + '</td><td>' + esc(item.in_progress) + '</td><td>' + esc(item.succeeded) + '</td><td>' + pill(item.failed, Number(item.failed)>0?"bad":"good") + '</td><td>' + esc(item.cancelled) + '</td></tr>').join("") + '</tbody></table></div>' : empty("Workflow run data unavailable","GitHub Actions permissions or API access may be missing.")) +
       '<p class="field-hint mt-10">Workflow run snapshots share the 60-second cache with runner inventory.</p></div>' +
+    '<div class="section panel panel-pad"><div class="section-heading"><h2>Fast Stop</h2><span class="muted">' + activeWorkflows.length + ' active run(s)</span></div>' +
+      (activeWorkflows.length ? '<p class="field-hint">Force-cancellation uses GitHub’s workflow-run endpoint and affects every job in that run, not just one job. Use it only when you intend to stop the entire run.</p><div class="table-wrap"><table><thead><tr><th>Repository</th><th>Workflow</th><th>Run ID</th><th>Action</th></tr></thead><tbody>' + activeWorkflows.map((run) => '<tr><td>' + esc(run.repository) + '</td><td><strong>' + esc(run.name || "Unnamed workflow") + '</strong><div class="subtle">' + esc(run.status || "in_progress") + '</div></td><td class="mono">' + esc(run.id) + '</td><td><button class="btn" data-fast-stop-run data-run-repo="' + esc(run.repository) + '" data-run-id="' + esc(run.id) + '">Fast Stop</button></td></tr>').join("") + '</tbody></table></div>' : empty("No active workflow runs", "GitHub reports no in-progress workflow runs for the configured repositories.")) +
+      '</div>' +
     '<div class="two-col section">' +
       panel("Runner pool", '<div class="kv-grid"><div class="kv"><small>Minimum target</small><strong>' + esc(data.min_runners) + '</strong></div><div class="kv"><small>Maximum target</small><strong>' + esc(data.max_runners) + '</strong></div><div class="kv"><small>Observed runners</small><strong>' + (runnerCountsKnown ? esc(runners.length) : "Unknown") + '</strong></div><div class="kv"><small>Busy runners</small><strong>' + (runnerCountsKnown ? esc(busyRunners) : "Unknown") + '</strong></div></div>') +
       panel("System signals", '<div class="activity-item"><span class="activity-mark ' + (data.gsr_watching ? "good" : "bad") + '"></span><div><strong>GSR watchdog</strong><p>' + (data.gsr_watching ? "Process detected; enforcement still requires verification." : "Watchdog process was not detected.") + '</p></div></div><div class="activity-item"><span class="activity-mark ' + (data.vault_enabled ? "good" : "") + '"></span><div><strong>GitVault</strong><p>' + (data.vault_enabled ? "A vault directory is configured; storage health is not yet confirmed." : "Vault directory is not configured.") + '</p></div></div><div class="activity-item"><span class="activity-mark ' + (data.recent_critical_events == null ? "warn" : Number(data.recent_critical_events) > 0 ? "bad" : "good") + '"></span><div><strong>Security events</strong><p>' + (data.recent_critical_events == null ? "Unknown — event queue could not be read." : esc(data.recent_critical_events) + ' critical event(s) recorded in the last 24 hours.') + '</p></div></div>')
     + '</div>';
   content.querySelectorAll("[data-open-repo]").forEach((button) => button.addEventListener("click", () => navigate("repo:" + button.dataset.openRepo)));
+  content.querySelectorAll("[data-fast-stop-run]").forEach((button) => button.addEventListener("click", async () => {
+    const repository = button.dataset.runRepo || "";
+    const runId = Number(button.dataset.runId);
+    if (!repository || !Number.isSafeInteger(runId) || runId <= 0) {
+      toast("Fast Stop refused: invalid repository or workflow run ID.", "error");
+      return;
+    }
+    if (!window.confirm("Force-cancel workflow run " + runId + " in " + repository + "? This affects every job in the workflow run, not just one job.")) return;
+    button.disabled = true;
+    button.textContent = "Requesting…";
+    try {
+      const result = await invoke("fast_stop_workflow_run", {repository, runId});
+      toast(result, "success");
+      window.__gitrunForceRefresh = true;
+      await renderOverview(navigate, data, false);
+    } catch (error) {
+      toast("Fast Stop failed: " + error, "error");
+      button.disabled = false;
+      button.textContent = "Fast Stop";
+    } finally {
+      window.__gitrunForceRefresh = false;
+    }
+  }));
   setFooter("Overview refreshed · " + new Date().toLocaleTimeString());
 }

@@ -1,11 +1,10 @@
 //! Runtime command policy for what may execute inside a runner container.
 //!
-//! Design (agreed with the operator): three independent layers, each with
-//! its own on/off switch, so an operator can mix them freely rather than
-//! being forced into one enforcement style:
+//! Enforcement model: three independent layers, each with its own explicit
+//! switch so deployments can choose the appropriate policy strictness:
 //!
 //! 1. **Baseline blacklist** (`gsr_command_baseline_blacklist_enabled`,
-//!    default **on**) — a list of commands/patterns *we* ship, covering
+//!    default **on**) — built-in commands/patterns covering
 //!    well-known container-escape and credential-theft vectors (`sudo`,
 //!    raw `mount`, `ptrace`-capable debuggers, cloud metadata endpoint
 //!    access, etc.). This is deliberately not exhaustive — it is a safety

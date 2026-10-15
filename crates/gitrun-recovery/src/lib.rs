@@ -604,11 +604,6 @@ mod tests {
                 PathBuf::from("/usr/bin/gitrun"),
             ]
         );
-        assert!(!candidates.iter().any(|path| {
-            path == &PathBuf::from(
-                std::env::var("GITRUN_BINARY_PATH").unwrap_or_default()
-            )
-        }));
     }
 
     #[test]

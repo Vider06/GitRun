@@ -123,8 +123,10 @@ pub struct VmConfig {
     /// Port the Docker daemon inside the VM listens on (commonly 2376 for
     /// TLS-secured remote Docker).
     pub docker_port: u16,
-    /// Directory containing ca.pem, cert.pem, and key.pem for the VM Docker daemon.
-    /// Required for Windows VM runners; an empty value keeps legacy Linux VM configs readable.
+    /// Directory containing ca.pem, cert.pem, and key.pem for authenticated
+    /// Docker TLS to this VM's remote daemon. Provisioning fails closed when
+    /// empty; serde default only keeps legacy config files parseable so the
+    /// operator receives an explicit runtime configuration error.
     #[serde(default)]
     pub docker_tls_cert_dir: String,
     pub activation: ActivationMode,

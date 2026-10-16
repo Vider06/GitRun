@@ -433,7 +433,7 @@ fn update_command(
             }
             if let Some(config_file) = config_path.as_deref() {
                 if let Err(error) = pin_runner_image(config_file, image) {
-                    let rollback_error = rollback_installed_update(&backup).err();
+                    let rollback_error = rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
                     return Err(match rollback_error {
                         Some(rollback_error) => format!(
                             "runner configuration update failed: {error}; GitRun rollback also failed: {rollback_error}"

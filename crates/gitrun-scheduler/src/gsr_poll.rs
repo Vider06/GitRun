@@ -309,73 +309,126 @@ pub fn poll_once(
 ) -> docker::Result<Vec<PolledViolation>> {
     let mut violations = Vec::new();
     for container_name in docker::all_managed_container_names_on(host)? {
-        let command_lines = match docker::container_command_lines_on(host, &container_name) {
-            Ok(command_lines) => command_lines,
+        // Pin the Docker object identity before inspecting its processes. Every
+        // subsequent read and enforcement action uses this ID, never the
+        // mutable name: a container recreated under the same name between
+        // inspection and enforcement must not be killed as the original.
+        let container_id = match docker::container_id_on(host, &container_name) {
+            Ok(Some(id)) => id,
+            Ok(None) => continue,
             Err(error) => {
                 eprintln!(
-                        "gitrun-scheduler: gsr_poll could not inspect {container_name} on {host:?}: {error}"
-                    );
+                    "gitrun-scheduler: gsr_poll could not pin Docker identity for {container_name} on {host:?}; skipping this container for this tick: {error}"
+                );
                 continue;
             }
         };
-        let mut container_already_handled = false;
-        for command_line in command_lines {
-            let Decision::Denied { reason } = policy.evaluate(&command_line) else {
-                continue;
-            };
-            if !container_already_handled {
-                container_already_handled = true;
-                let (repo, repo_error) =
-                    match docker::container_repo_label_on(host, &container_name) {
-                        Ok(repo) => (repo, None),
-                        Err(error) => {
-                            let detail = format!(
-                                "unable to inspect repo label for {container_name}: {error}"
-                            );
-                            eprintln!("gitrun-scheduler: gsr_poll: {detail}");
-                            (None, Some(detail))
-                        }
-                    };
-                let action_error = apply_violation_action(
-                    host,
-                    &container_name,
-                    repo.as_deref(),
-                    action,
-                    ban_store,
-                );
-                let action_error = match (repo_error, action_error) {
-                    (Some(repo_error), Some(action_error)) => {
-                        Some(format!("{repo_error}; {action_error}"))
-                    }
-                    (Some(error), None) | (None, Some(error)) => Some(error),
-                    (None, None) => None,
-                };
-                violations.push(PolledViolation {
-                    container_name: container_name.clone(),
-                    repo,
-                    command_line: redact_command_line(&command_line),
-                    reason,
-                    action_taken: action,
-                    action_error,
-                });
-            }
-        }
+
+        violations.extend(poll_container_with_identity(
+            host,
+            &container_name,
+            &container_id,
+            policy,
+            action,
+            ban_store,
+            |target| docker::container_command_lines_on(host, target),
+            |target| docker::container_repo_label_on(host, target),
+            |target, repo, action, store| {
+                apply_violation_action(host, target, repo, action, store)
+            },
+        ));
     }
     Ok(violations)
 }
 
-fn apply_violation_action(
+/// Process one container using a pinned immutable Docker ID. The operations
+/// are injected only to make the identity flow deterministic in regression
+/// tests; production supplies the real Docker inspection and enforcement
+/// calls above.
+fn poll_container_with_identity<P, R, A, ProcessError, RepoError>(
     host: &DockerHost,
     container_name: &str,
+    container_id: &str,
+    policy: &CommandPolicy,
+    action: ViolationAction,
+    ban_store: &mut BanStore,
+    mut read_processes: P,
+    mut read_repo: R,
+    mut enforce: A,
+) -> Vec<PolledViolation>
+where
+    P: FnMut(&str) -> Result<Vec<String>, ProcessError>,
+    ProcessError: std::fmt::Display,
+    R: FnMut(&str) -> Result<Option<String>, RepoError>,
+    RepoError: std::fmt::Display,
+    A: FnMut(&str, Option<&str>, ViolationAction, &mut BanStore) -> Option<String>,
+{
+    let command_lines = match read_processes(container_id) {
+        Ok(command_lines) => command_lines,
+        Err(error) => {
+            eprintln!(
+                "gitrun-scheduler: gsr_poll could not inspect {container_name} ({container_id}) on {host:?}: {error}"
+            );
+            return Vec::new();
+        }
+    };
+
+    let mut violations = Vec::new();
+    let mut container_already_handled = false;
+    for command_line in command_lines {
+        let Decision::Denied { reason } = policy.evaluate(&command_line) else {
+            continue;
+        };
+        if container_already_handled {
+            continue;
+        }
+        container_already_handled = true;
+
+        // Query the repo label and enforce against the same object whose
+        // process list produced this violation.
+        let (repo, repo_error) = match read_repo(container_id) {
+            Ok(repo) => (repo, None),
+            Err(error) => {
+                let detail = format!(
+                    "unable to inspect repo label for {container_name} ({container_id}): {error}"
+                );
+                eprintln!("gitrun-scheduler: gsr_poll: {detail}");
+                (None, Some(detail))
+            }
+        };
+        let action_error = enforce(container_id, repo.as_deref(), action, ban_store);
+        let action_error = match (repo_error, action_error) {
+            (Some(repo_error), Some(action_error)) => {
+                Some(format!("{repo_error}; {action_error}"))
+            }
+            (Some(error), None) | (None, Some(error)) => Some(error),
+            (None, None) => None,
+        };
+        violations.push(PolledViolation {
+            container_name: container_name.to_owned(),
+            repo,
+            command_line: redact_command_line(&command_line),
+            reason,
+            action_taken: action,
+            action_error,
+        });
+    }
+
+    violations
+}
+
+fn apply_violation_action(
+    host: &DockerHost,
+    container_id: &str,
     repo: Option<&str>,
     action: ViolationAction,
     ban_store: &mut BanStore,
 ) -> Option<String> {
     match action {
         ViolationAction::LogOnly => None,
-        ViolationAction::Kill => docker::remove_container_on(host, container_name)
+        ViolationAction::Kill => docker::remove_container_on(host, container_id)
             .err()
-            .map(|error| format!("container kill failed: {error}")),
+            .map(|error| format!("container kill failed for pinned ID {container_id}: {error}")),
         ViolationAction::KillAndBan => {
             // Persist the repo ban first: if container removal subsequently
             // fails, the scheduler still refuses to create a replacement runner.
@@ -388,9 +441,9 @@ fn apply_violation_action(
                     "repository label was unavailable; repository ban was not applied".to_owned(),
                 ),
             };
-            let kill_error = docker::remove_container_on(host, container_name)
+            let kill_error = docker::remove_container_on(host, container_id)
                 .err()
-                .map(|error| format!("container kill failed: {error}"));
+                .map(|error| format!("container kill failed for pinned ID {container_id}: {error}"));
 
             match (ban_error, kill_error) {
                 (Some(ban), Some(kill)) => Some(format!("{ban}; {kill}")),
@@ -649,6 +702,61 @@ mod tests {
             None
         );
         assert!(!store.is_banned("owner/repo"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gsr_poll_pins_process_label_and_enforcement_operations_to_one_container_id() {
+        use std::cell::RefCell;
+
+        let dir = temp_state_dir("pinned-container-id");
+        let mut ban_store = BanStore::load(&dir).unwrap();
+        let name = "gitrun-runner-reused";
+        let original_id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let replacement_id = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+        let targets = RefCell::new(Vec::new());
+
+        let violations = poll_container_with_identity(
+            &DockerHost::Local,
+            name,
+            original_id,
+            &policy_with_baseline(),
+            ViolationAction::Kill,
+            &mut ban_store,
+            |target| {
+                assert_eq!(target, original_id);
+                assert_ne!(target, replacement_id);
+                targets.borrow_mut().push(("processes", target.to_owned()));
+                Ok::<_, &'static str>(vec!["sudo rm -rf /".to_owned()])
+            },
+            |target| {
+                assert_eq!(target, original_id);
+                assert_ne!(target, replacement_id);
+                targets.borrow_mut().push(("repo-label", target.to_owned()));
+                Ok::<_, &'static str>(Some("owner/repo".to_owned()))
+            },
+            |target, repo, action, _store| {
+                assert_eq!(target, original_id);
+                assert_ne!(target, replacement_id);
+                assert_eq!(repo, Some("owner/repo"));
+                assert_eq!(action, ViolationAction::Kill);
+                targets.borrow_mut().push(("enforce", target.to_owned()));
+                None
+            },
+        );
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].container_name, name);
+        assert_eq!(violations[0].repo.as_deref(), Some("owner/repo"));
+        assert!(violations[0].action_error.is_none());
+        assert_eq!(
+            targets.into_inner(),
+            vec![
+                ("processes", original_id.to_owned()),
+                ("repo-label", original_id.to_owned()),
+                ("enforce", original_id.to_owned()),
+            ]
+        );
         fs::remove_dir_all(&dir).ok();
     }
 

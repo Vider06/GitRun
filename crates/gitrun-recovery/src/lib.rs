@@ -538,9 +538,11 @@ fn command_succeeds(program: &str, args: &[&str]) -> bool {
 
 fn is_root() -> bool {
     Command::new("/usr/bin/id")
-        .args(["-u", "0"])
+        .arg("-u")
         .output()
-        .map(|output| output.status.success())
+        .map(|output| {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "0"
+        })
         .unwrap_or(false)
 }
 

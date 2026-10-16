@@ -718,9 +718,108 @@ pub fn apply_update(
     Ok(record)
 }
 
+fn require_backup_path(
+    path: &Path,
+    label: &str,
+    required: bool,
+    directory: Option<bool>,
+) -> Result<(), UpdateError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !required => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(UpdateError::InvalidManifest(format!(
+                "rollback {label} is missing: {}",
+                path.display()
+            )));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(UpdateError::InvalidManifest(format!(
+            "rollback {label} must not be a symlink: {}",
+            path.display()
+        )));
+    }
+    if let Some(expect_directory) = directory {
+        let correct_type = if expect_directory {
+            metadata.is_dir()
+        } else {
+            metadata.is_file()
+        };
+        if !correct_type {
+            return Err(UpdateError::InvalidManifest(format!(
+                "rollback {label} has an unexpected filesystem type: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_backup_record_paths(
+    paths: &UpdatePaths,
+    backup: &BackupRecord,
+) -> Result<PathBuf, UpdateError> {
+    if !is_version(&backup.version) {
+        return Err(UpdateError::InvalidManifest(
+            "rollback record has an invalid version".into(),
+        ));
+    }
+    let transaction_dir = paths
+        .backup_root
+        .join(format!("{}-{}", backup.version, backup.created_at));
+    if backup.install_backup != transaction_dir.join("install") {
+        return Err(UpdateError::InvalidManifest(
+            "rollback install backup is outside its trusted transaction directory".into(),
+        ));
+    }
+    if let Some(state) = backup.state_backup.as_deref() {
+        if state != transaction_dir.join("state") {
+            return Err(UpdateError::InvalidManifest(
+                "rollback state backup is outside its trusted transaction directory".into(),
+            ));
+        }
+    }
+    let expected_config = paths.config_dir.as_ref().map(|_| transaction_dir.join("config"));
+    if backup.config_backup != expected_config {
+        return Err(UpdateError::InvalidManifest(
+            "rollback config backup does not match the configured transaction path".into(),
+        ));
+    }
+    let expected_service = paths
+        .service_config
+        .as_ref()
+        .map(|_| transaction_dir.join("service-config"));
+    if backup.service_config_backup != expected_service {
+        return Err(UpdateError::InvalidManifest(
+            "rollback service backup does not match the configured transaction path".into(),
+        ));
+    }
+
+    require_backup_path(&paths.backup_root, "backup root", true, Some(true))?;
+    require_backup_path(&transaction_dir, "transaction directory", true, Some(true))?;
+    // The original installation may not have existed when the update ran.
+    require_backup_path(&backup.install_backup, "install backup", false, Some(true))?;
+    if let Some(state) = backup.state_backup.as_deref() {
+        require_backup_path(state, "state backup", true, Some(true))?;
+    }
+    if let Some(config) = backup.config_backup.as_deref() {
+        require_backup_path(config, "config backup", false, Some(true))?;
+    }
+    if let Some(service) = backup.service_config_backup.as_deref() {
+        require_backup_path(service, "service backup", false, None)?;
+    }
+    Ok(transaction_dir)
+}
+
 pub fn rollback(paths: &UpdatePaths, backup: &BackupRecord) -> Result<(), UpdateError> {
     validate_update_paths(paths)?;
+    validate_backup_record_paths(paths, backup)?;
     let _lock = UpdateLock::acquire(&paths.backup_root)?;
+    // Revalidate after acquiring the transaction lock and before any destructive
+    // operation; serialized record paths are never accepted as destinations.
+    validate_backup_record_paths(paths, backup)?;
     rollback_install(
         paths,
         &backup.install_backup,
@@ -859,7 +958,7 @@ pub fn apply_installed_update(
     })();
 
     if let Err(error) = result {
-        if let Err(rollback_error) = rollback_installed_update(&record) {
+        if let Err(rollback_error) = rollback_installed_update_unchecked(&record) {
             return Err(UpdateError::RolledBack(format!(
                 "{error}; rollback also failed: {rollback_error}"
             )));
@@ -875,7 +974,7 @@ pub fn apply_installed_update(
     })();
 
     if let Err(error) = backup_json {
-        let rollback_result = rollback_installed_update(&record);
+        let rollback_result = rollback_installed_update_unchecked(&record);
         if let Err(rollback_error) = rollback_result {
             return Err(UpdateError::RolledBack(format!(
                 "backup record write failed: {error}; rollback also failed: {rollback_error}"
@@ -889,7 +988,152 @@ pub fn apply_installed_update(
     Ok(record)
 }
 
-pub fn rollback_installed_update(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
+pub fn rollback_installed_update(
+    record: &InstalledBackupRecord,
+    expected_artifacts: &[InstalledArtifact],
+    expected_version_file: &Path,
+    backup_root: &Path,
+) -> Result<(), UpdateError> {
+    validate_installed_rollback_record(
+        record,
+        expected_artifacts,
+        expected_version_file,
+        backup_root,
+    )?;
+    let _lock = UpdateLock::acquire(backup_root)?;
+    // Check again after serialization, before removing or replacing any file.
+    validate_installed_rollback_record(
+        record,
+        expected_artifacts,
+        expected_version_file,
+        backup_root,
+    )?;
+    rollback_installed_update_unchecked(record)
+}
+
+fn validate_installed_rollback_record(
+    record: &InstalledBackupRecord,
+    expected_artifacts: &[InstalledArtifact],
+    expected_version_file: &Path,
+    backup_root: &Path,
+) -> Result<PathBuf, UpdateError> {
+    if !is_version(&record.version) {
+        return Err(UpdateError::InvalidManifest(
+            "installed rollback record has an invalid version".into(),
+        ));
+    }
+    if expected_artifacts.is_empty() || record.artifacts.len() != expected_artifacts.len() {
+        return Err(UpdateError::InvalidManifest(
+            "installed rollback record does not contain the exact expected artifact set".into(),
+        ));
+    }
+    if &record.version_file != expected_version_file {
+        return Err(UpdateError::InvalidManifest(
+            "installed rollback version-file path does not match the trusted installation".into(),
+        ));
+    }
+
+    let transaction_dir =
+        backup_root.join(format!("system-{}-{}", record.version, record.created_at));
+    require_backup_path(backup_root, "backup root", true, Some(true))?;
+    require_backup_path(
+        &transaction_dir,
+        "installed transaction directory",
+        true,
+        Some(true),
+    )?;
+
+    for expected in expected_artifacts {
+        let matches: Vec<_> = record
+            .artifacts
+            .iter()
+            .filter(|item| {
+                item.archive_name == expected.archive_name
+                    && item.destination == expected.destination
+            })
+            .collect();
+        if matches.len() != 1 {
+            return Err(UpdateError::InvalidManifest(format!(
+                "installed rollback artifact {:?} does not match the trusted destination",
+                expected.archive_name
+            )));
+        }
+        let item = matches[0];
+        let file_name = expected
+            .destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                UpdateError::InvalidManifest(
+                    "trusted installed artifact has no safe file name".into(),
+                )
+            })?;
+        let expected_backup = transaction_dir.join(format!("artifact-{file_name}"));
+        if let Some(backup) = item.backup.as_deref() {
+            if backup != expected_backup {
+                return Err(UpdateError::InvalidManifest(
+                    "installed artifact backup is outside its trusted transaction directory"
+                        .into(),
+                ));
+            }
+            require_backup_path(backup, "installed artifact backup", true, Some(false))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if fs::metadata(backup)?.nlink() != 1 {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "installed artifact backup must not be hard-linked: {}",
+                        backup.display()
+                    )));
+                }
+            }
+        }
+        require_backup_path(
+            &expected.destination,
+            "installed artifact destination",
+            false,
+            None,
+        )?;
+        if let Ok(metadata) = fs::symlink_metadata(&expected.destination) {
+            if !metadata.is_file() {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "installed artifact destination is not a regular file: {}",
+                    expected.destination.display()
+                )));
+            }
+        }
+    }
+
+    let expected_version_backup = transaction_dir.join("version.txt");
+    if let Some(backup) = record.version_file_backup.as_deref() {
+        if backup != expected_version_backup {
+            return Err(UpdateError::InvalidManifest(
+                "installed version backup is outside its trusted transaction directory".into(),
+            ));
+        }
+        require_backup_path(backup, "installed version backup", true, Some(false))?;
+    }
+    require_backup_path(
+        expected_version_file,
+        "installed version-file destination",
+        false,
+        None,
+    )?;
+    if let Ok(metadata) = fs::symlink_metadata(expected_version_file) {
+        if !metadata.is_file() {
+            return Err(UpdateError::InvalidManifest(format!(
+                "installed version-file destination is not a regular file: {}",
+                expected_version_file.display()
+            )));
+        }
+    }
+    Ok(transaction_dir)
+}
+
+fn rollback_installed_update_unchecked(
+    record: &InstalledBackupRecord,
+) -> Result<(), UpdateError> {
     for artifact in &record.artifacts {
         if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
             if meta.file_type().is_symlink() || meta.is_dir() {
@@ -927,6 +1171,7 @@ pub fn rollback_installed_update(record: &InstalledBackupRecord) -> Result<(), U
         atomic_write_installed_file(&record.version_file, &fs::read(backup)?, 0o644)?;
     }
     Ok(())
+}
 }
 
 pub fn health_check_installed_binary(
@@ -2327,4 +2572,90 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
     }
+    #[test]
+    fn generic_rollback_rejects_backup_paths_outside_trusted_transaction() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-rollback-paths-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let install = root.join("install");
+        let state = root.join("state");
+        let backup_root = root.join("backups");
+        let transaction = backup_root.join("1.2.3-42");
+        let attacker_install_backup = root.join("attacker-install");
+        fs::create_dir_all(&install).unwrap();
+        fs::write(install.join("sentinel"), b"keep").unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&transaction).unwrap();
+        fs::create_dir_all(&attacker_install_backup).unwrap();
+        fs::write(attacker_install_backup.join("replacement"), b"untrusted").unwrap();
+
+        let paths = UpdatePaths {
+            install_dir: install.clone(),
+            state_dir: state.clone(),
+            config_dir: None,
+            service_config: None,
+            backup_root: backup_root.clone(),
+        };
+        let record = BackupRecord {
+            created_at: 42,
+            version: "1.2.3".into(),
+            install_backup: attacker_install_backup,
+            state_backup: None,
+            config_backup: None,
+            service_config_backup: None,
+        };
+
+        assert!(rollback(&paths, &record).is_err());
+        assert_eq!(fs::read(install.join("sentinel")).unwrap(), b"keep");
+        assert!(root.join("attacker-install/replacement").is_file());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn installed_rollback_rejects_untrusted_destination_before_side_effects() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-installed-rollback-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let backup_root = root.join("backups");
+        let version = "1.2.3";
+        let timestamp = 77;
+        let transaction = backup_root.join(format!("system-{version}-{timestamp}"));
+        let binary = root.join("trusted-install/gitrun");
+        let version_file = root.join("trusted-share/version.txt");
+        let attacker_target = root.join("attacker-target");
+        fs::create_dir_all(&transaction).unwrap();
+        fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        fs::create_dir_all(version_file.parent().unwrap()).unwrap();
+        fs::write(&binary, b"current binary").unwrap();
+        fs::write(&version_file, b"1.2.3\n").unwrap();
+        fs::write(&attacker_target, b"do not touch").unwrap();
+
+        let expected = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: binary.clone(),
+            required: true,
+        }];
+        let record = InstalledBackupRecord {
+            created_at: timestamp,
+            version: version.into(),
+            artifacts: vec![InstalledArtifactBackup {
+                archive_name: "gitrun".into(),
+                destination: attacker_target.clone(),
+                backup: None,
+            }],
+            version_file: version_file.clone(),
+            version_file_backup: None,
+        };
+
+        assert!(rollback_installed_update(&record, &expected, &version_file, &backup_root).is_err());
+        assert_eq!(fs::read(&binary).unwrap(), b"current binary");
+        assert_eq!(fs::read(&attacker_target).unwrap(), b"do not touch");
+        assert_eq!(fs::read(&version_file).unwrap(), b"1.2.3\n");
+        let _ = fs::remove_dir_all(&root);
+    }
+
 }

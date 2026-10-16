@@ -710,8 +710,8 @@ mod tests {
         let dir = temp_state_dir("pinned-container-id");
         let mut ban_store = BanStore::load(&dir).unwrap();
         let name = "gitrun-runner-reused";
-        let original_id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let replacement_id = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+        let original_id = "test-container-id-runner-a";
+        let replacement_id = "test-container-id-replacement-b";
         let targets = RefCell::new(Vec::new());
 
         let violations = poll_container_with_identity(

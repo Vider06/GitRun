@@ -1218,6 +1218,16 @@ mod tests {
     }
 
     #[test]
+    fn vm_configs_without_docker_tls_credentials_are_rejected() {
+        let mut config = sample_vm("missing-tls", "/vms/base.qcow2");
+        config.docker_tls_cert_dir.clear();
+        assert!(matches!(
+            validate_vm_configs(&[config]),
+            Err(VmError::InvalidConfig(message)) if message.contains("requires docker_tls_cert_dir")
+        ));
+    }
+
+    #[test]
     fn invalid_vm_configs_are_rejected() {
         let mut config = sample_vm("valid", "/vms/base.qcow2");
         config.cpus = 0;

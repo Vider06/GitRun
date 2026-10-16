@@ -1520,20 +1520,18 @@ impl ApiExecutionBackend {
                 ))
             })?;
 
-        let dynamic = !docker::container_is_permanent(&runner_name)
-            .map_err(|error| failed(error.to_string()))?;
+        // Lifecycle metadata must be read through the same immutable identity
+        // captured above. Looking it up again by name permits a replacement
+        // container to influence this binding's dynamic/permanent classification.
+        let dynamic = resolve_dock_connect_dynamic(
+            &runner_name,
+            &container_id,
+            |id| docker::container_is_permanent(id).map_err(|error| error.to_string()),
+            |id| docker::container_status(id).map_err(|error| error.to_string()),
+        )
+        .map_err(failed)?;
 
         let completed = workflow_job_is_completed(&job_info.status, job_info.conclusion.as_deref());
-
-        if dynamic
-            && docker::container_status(&runner_name)
-                .map_err(|error| failed(error.to_string()))?
-                .is_none()
-        {
-            return Err(failed(format!(
-                "runner container {runner_name} disappeared during connect"
-            )));
-        }
 
         // Load and prepare the registry before changing container lifecycle;
         // a registry read/decode failure must not leave a runner disabled with
@@ -4539,6 +4537,68 @@ fn request_run_id(request: &AuthorizedOperation) -> u64 {
 
 fn dock_melt_source_status_allowed(status: &str, dock_only_marker_present: bool) -> bool {
     status == "exited" || (status == "running" && dock_only_marker_present)
+}
+
+fn resolve_dock_connect_dynamic(
+    runner_name: &str,
+    container_id: &str,
+    is_permanent: impl FnOnce(&str) -> Result<bool, String>,
+    status: impl FnOnce(&str) -> Result<Option<String>, String>,
+) -> Result<bool, String> {
+    let dynamic = !is_permanent(container_id)?;
+    if dynamic && status(container_id)?.is_none() {
+        return Err(format!(
+            "runner container {runner_name} disappeared during connect"
+        ));
+    }
+    Ok(dynamic)
+}
+
+#[cfg(test)]
+mod dock_connect_identity_tests {
+    use super::resolve_dock_connect_dynamic;
+    use std::cell::RefCell;
+
+    #[test]
+    fn connect_lifecycle_metadata_uses_pinned_container_id() {
+        let inspected_ids = RefCell::new(Vec::new());
+        let pinned_id = "test-container-id-pinned";
+
+        let dynamic = resolve_dock_connect_dynamic(
+            "runner-name",
+            pinned_id,
+            |id| {
+                inspected_ids.borrow_mut().push(id.to_owned());
+                Ok(false)
+            },
+            |id| {
+                inspected_ids.borrow_mut().push(id.to_owned());
+                Ok(Some("running".to_owned()))
+            },
+        )
+        .unwrap();
+
+        assert!(dynamic);
+        assert_eq!(
+            inspected_ids.borrow().as_slice(),
+            &[pinned_id.to_owned(), pinned_id.to_owned()]
+        );
+    }
+
+    #[test]
+    fn connect_fails_closed_when_pinned_dynamic_container_disappears() {
+        let result = resolve_dock_connect_dynamic(
+            "runner-name",
+            "test-container-id-pinned",
+            |_| Ok(false),
+            |_| Ok(None),
+        );
+
+        assert_eq!(
+            result,
+            Err("runner container runner-name disappeared during connect".to_owned())
+        );
+    }
 }
 
 #[cfg(test)]

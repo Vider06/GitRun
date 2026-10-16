@@ -1604,6 +1604,7 @@ impl ApiExecutionBackend {
             .binding(&request.repository, run_id, job)
             .cloned()
             .ok_or_else(|| failed(format!("no GitDockRun binding exists for job {job}")))?;
+        validate_dock_binding_owner(&binding, &self.caller.runner).map_err(failed)?;
         let current_container_id = docker::container_id(&binding.container)
             .map_err(|error| failed(error.to_string()))?
             .ok_or_else(|| failed("GitDockRun bound container no longer exists"))?;
@@ -4521,12 +4522,51 @@ fn arg<'a>(request: &'a AuthorizedOperation, name: &str) -> Result<&'a str, Exec
         .ok_or_else(|| failed(format!("missing argument: {name}")))
 }
 
+fn validate_dock_binding_owner(
+    binding: &DockBinding,
+    requester_runner: &str,
+) -> Result<(), &'static str> {
+    if binding.requester_runner == requester_runner {
+        Ok(())
+    } else {
+        Err("GitDockRun binding belongs to a different requester runner")
+    }
+}
+
 fn request_run_id(request: &AuthorizedOperation) -> u64 {
     request.run_id.unwrap_or(0)
 }
 
 fn dock_melt_source_status_allowed(status: &str, dock_only_marker_present: bool) -> bool {
     status == "exited" || (status == "running" && dock_only_marker_present)
+}
+
+#[cfg(test)]
+mod dock_disconnect_owner_tests {
+    use super::{validate_dock_binding_owner, DockBinding};
+
+    fn binding(requester_runner: &str) -> DockBinding {
+        DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 42,
+            job: "build".into(),
+            container: "runner-a".into(),
+            container_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            dynamic: true,
+            dock_only: false,
+            requester_runner: requester_runner.into(),
+            connected_at: 1,
+        }
+    }
+
+    #[test]
+    fn disconnect_owner_must_match_binding_requester() {
+        assert!(validate_dock_binding_owner(&binding("runner-a"), "runner-a").is_ok());
+        assert_eq!(
+            validate_dock_binding_owner(&binding("runner-a"), "runner-b"),
+            Err("GitDockRun binding belongs to a different requester runner")
+        );
+    }
 }
 
 #[cfg(test)]

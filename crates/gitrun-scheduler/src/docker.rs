@@ -383,7 +383,7 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             // The container disappeared between "docker ps" and "inspect".
             continue;
         };
-        let Some(status) = container_status_string_on(host, name)? else {
+        let Some(status) = container_status_string(host, name)? else {
             // The container disappeared between "docker ps" and "inspect" —
             // a normal reconciliation race. It must not turn into an empty
             // status that downstream code could interpret as a dead container.

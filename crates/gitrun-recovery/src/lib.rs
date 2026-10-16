@@ -610,6 +610,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gtuu_refuses_unprivileged_invocation_before_startup_side_effects() {
+        if is_root() {
+            // Do not run lifecycle/update operations from a unit test when the
+            // test harness itself happens to be root.
+            return;
+        }
+        assert_eq!(
+            run_gtuu().expect_err("unprivileged GTUU must fail closed"),
+            "GTUU requires root privileges"
+        );
+    }
+
+    #[test]
     fn privileged_repair_candidates_ignore_environment_and_adjacent_executables() {
         let candidates = installed_gitrun_candidates();
         assert_eq!(

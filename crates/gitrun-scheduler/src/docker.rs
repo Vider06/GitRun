@@ -883,12 +883,16 @@ fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
     Ok(())
 }
 
+fn remote_linux_runner_api_unsupported(host: &DockerHost, is_windows: bool) -> bool {
+    !is_windows && !matches!(host, DockerHost::Local)
+}
+
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     // A Docker bind mount is resolved by the daemon, not by this scheduler.
     // Linux runner containers require the host GitRun API socket; until the
     // socket is securely forwarded into remote guests, refuse to create a
     // runner that would silently lack the mandatory API channel.
-    if !spec.is_windows && !matches!(host, DockerHost::Local) {
+    if remote_linux_runner_api_unsupported(host, spec.is_windows) {
         return Err(DockerError::Command(
             "Linux runners on remote Docker hosts are unsupported until the GitRun API socket is securely forwarded".into(),
         ));
@@ -1826,6 +1830,30 @@ fn ensure_label(labels: &str, extra: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_linux_runners_fail_closed_without_api_socket_forwarding() {
+        assert!(!remote_linux_runner_api_unsupported(&DockerHost::Local, false));
+        assert!(remote_linux_runner_api_unsupported(
+            &DockerHost::Remote("tcp://192.168.56.10:2376".into()),
+            false
+        ));
+        assert!(remote_linux_runner_api_unsupported(
+            &DockerHost::RemoteTls {
+                endpoint: "tcp://192.168.56.10:2376".into(),
+                cert_dir: "/etc/gitrun/vm-certs".into(),
+            },
+            false
+        ));
+        // Windows runners do not consume the Linux Unix-socket mount.
+        assert!(!remote_linux_runner_api_unsupported(
+            &DockerHost::RemoteTls {
+                endpoint: "tcp://192.168.56.10:2376".into(),
+                cert_dir: "/etc/gitrun/vm-certs".into(),
+            },
+            true
+        ));
+    }
 
     #[test]
     fn runner_name_prefix_is_collision_free_and_within_docker_name_limit() {

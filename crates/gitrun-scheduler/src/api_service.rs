@@ -623,9 +623,15 @@ fn read_api_request_with_timeout(
         if remaining < Duration::from_millis(1) {
             return Err("API request read deadline exceeded".into());
         }
-        stream
-            .set_read_timeout(Some(remaining))
-            .map_err(|error| format!("set API request read deadline: {error}"))?;
+        if let Err(error) = stream.set_read_timeout(Some(remaining)) {
+            // The absolute deadline can expire between calculating the remaining
+            // duration and applying the socket timeout. Report the deadline in that
+            // case rather than leaking a platform-specific configuration error.
+            if Instant::now() >= deadline {
+                return Err("API request read deadline exceeded".into());
+            }
+            return Err(format!("set API request read deadline: {error}"));
+        }
 
         let read_result = reader.read(&mut chunk);
         // A read can complete successfully after the OS timeout when the

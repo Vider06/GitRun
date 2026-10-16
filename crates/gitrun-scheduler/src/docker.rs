@@ -884,6 +884,16 @@ fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
 }
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
+    // A Docker bind mount is resolved by the daemon, not by this scheduler.
+    // Linux runner containers require the host GitRun API socket; until the
+    // socket is securely forwarded into remote guests, refuse to create a
+    // runner that would silently lack the mandatory API channel.
+    if !spec.is_windows && !matches!(host, DockerHost::Local) {
+        return Err(DockerError::Command(
+            "Linux runners on remote Docker hosts are unsupported until the GitRun API socket is securely forwarded".into(),
+        ));
+    }
+
     validate_secret_env(spec.secret_env)?;
     ensure_runner_network(host, spec.network)?;
     if spec.is_windows && spec.docker_socket_enabled {

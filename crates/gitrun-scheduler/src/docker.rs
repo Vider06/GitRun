@@ -255,6 +255,10 @@ pub fn runner_name_prefix(repo: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct ManagedContainer {
     pub name: String,
+    /// Full immutable Docker identity captured with the inventory snapshot.
+    /// Destructive reconciliation actions must use this ID, never re-resolve
+    /// a mutable name after the plan has been computed.
+    pub id: String,
     pub status: String,
     pub permanent: bool,
     pub dock_target: bool,
@@ -375,7 +379,11 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
 
     let mut containers = Vec::new();
     for name in output.lines().map(str::trim).filter(|n| !n.is_empty()) {
-        let Some(status) = container_status_string(host, name)? else {
+        let Some(id) = container_id_on(host, name)? else {
+            // The container disappeared between "docker ps" and "inspect".
+            continue;
+        };
+        let Some(status) = container_status_string_on(host, name)? else {
             // The container disappeared between "docker ps" and "inspect" —
             // a normal reconciliation race. It must not turn into an empty
             // status that downstream code could interpret as a dead container.
@@ -392,8 +400,17 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
         let workflow_job = container_label_on(host, name, "gitrun.workflow_job")?;
         let workflow_run_id = container_label_on(host, name, "gitrun.workflow_run")?
             .and_then(|value| value.parse::<u64>().ok());
+        // Labels/status above are looked up by name. Refuse to publish a
+        // mixed snapshot if that name was rebound to a different container
+        // while inventory metadata was being read.
+        if container_id_on(host, name)?.as_deref() != Some(id.as_str()) {
+            return Err(DockerError::Command(format!(
+                "managed container {name} changed identity during inventory; retry reconciliation"
+            )));
+        }
         containers.push(ManagedContainer {
             name: name.to_owned(),
+            id,
             status,
             permanent,
             dock_target,
@@ -1141,7 +1158,11 @@ pub fn stop_container(name: &str) -> Result<()> {
 }
 
 pub fn container_id(name: &str) -> Result<Option<String>> {
-    let output = run_on(&DockerHost::Local, &["inspect", "-f", "{{.Id}}", name])?;
+    container_id_on(&DockerHost::Local, name)
+}
+
+pub fn container_id_on(host: &DockerHost, name: &str) -> Result<Option<String>> {
+    let output = run_on(host, &["inspect", "-f", "{{.Id}}", name])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if is_missing_container_error(&stderr) {

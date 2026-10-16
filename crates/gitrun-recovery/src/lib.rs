@@ -612,6 +612,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn root_detector_matches_effective_uid() {
+        let status = fs::read_to_string("/proc/self/status")
+            .expect("Linux test process status must be readable");
+        let effective_uid = status
+            .lines()
+            .find(|line| line.starts_with("Uid:"))
+            .and_then(|line| line.split_whitespace().nth(2))
+            .and_then(|value| value.parse::<u32>().ok())
+            .expect("effective UID must be present in /proc/self/status");
+        assert_eq!(is_root(), effective_uid == 0);
+    }
+
+    #[test]
     fn gtuu_refuses_unprivileged_invocation_before_startup_side_effects() {
         if is_root() {
             // Do not run lifecycle/update operations from a unit test when the

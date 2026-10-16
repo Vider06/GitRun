@@ -1282,7 +1282,7 @@ impl ApiExecutionBackend {
                         let cleanup =
                             docker_exec_checked(runner, &["rm", "-f", "--", destination.as_str()]);
                         return Err(match cleanup {
-                            Ok(()) => failed(format!(
+                            Ok(_) => failed(format!(
                                 "GitSaveRun could not verify copied file size: {error}"
                             )),
                             Err(cleanup_error) => failed(format!(

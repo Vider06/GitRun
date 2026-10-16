@@ -4551,7 +4551,7 @@ mod dock_disconnect_owner_tests {
             run_id: 42,
             job: "build".into(),
             container: "runner-a".into(),
-            container_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            container_id: "test-container-id-runner-a".into(),
             dynamic: true,
             dock_only: false,
             requester_runner: requester_runner.into(),

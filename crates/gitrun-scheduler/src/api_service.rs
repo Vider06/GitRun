@@ -1271,10 +1271,7 @@ impl ApiExecutionBackend {
 
                 docker_exec_checked(runner, &["mkdir", "-p", "/var/lib/gitrun/shared/files"])?;
                 let destination = format!("/var/lib/gitrun/shared/files/{name}");
-                docker_exec_checked(
-                    runner,
-                    &["cp", "--", source, destination.as_str()],
-                )?;
+                docker_exec_checked(runner, &["cp", "--", source, destination.as_str()])?;
 
                 // The source is mutable by the workflow between the initial stat
                 // and cp. Check the copied artifact too, and remove it rather than
@@ -1282,10 +1279,8 @@ impl ApiExecutionBackend {
                 let copied_size = match docker_file_size(runner, &destination) {
                     Ok(size) => size,
                     Err(error) => {
-                        let cleanup = docker_exec_checked(
-                            runner,
-                            &["rm", "-f", "--", destination.as_str()],
-                        );
+                        let cleanup =
+                            docker_exec_checked(runner, &["rm", "-f", "--", destination.as_str()]);
                         return Err(match cleanup {
                             Ok(()) => failed(format!(
                                 "GitSaveRun could not verify copied file size: {error}"

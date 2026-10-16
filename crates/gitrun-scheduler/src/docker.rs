@@ -1833,7 +1833,10 @@ mod tests {
 
     #[test]
     fn remote_linux_runners_fail_closed_without_api_socket_forwarding() {
-        assert!(!remote_linux_runner_api_unsupported(&DockerHost::Local, false));
+        assert!(!remote_linux_runner_api_unsupported(
+            &DockerHost::Local,
+            false
+        ));
         assert!(remote_linux_runner_api_unsupported(
             &DockerHost::Remote("tcp://192.168.56.10:2376".into()),
             false

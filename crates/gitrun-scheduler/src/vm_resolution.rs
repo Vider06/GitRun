@@ -460,7 +460,10 @@ mod tests {
     #[test]
     fn guest_docker_endpoints_accept_only_private_ipv4_addresses() {
         for address in ["10.0.0.5", "172.16.0.1", "172.31.255.254", "192.168.1.2"] {
-            assert!(is_private_guest_ipv4(address), "{address} should be accepted");
+            assert!(
+                is_private_guest_ipv4(address),
+                "{address} should be accepted"
+            );
         }
         for address in [
             "8.8.8.8",
@@ -471,7 +474,10 @@ mod tests {
             "::1",
             "not-an-ip",
         ] {
-            assert!(!is_private_guest_ipv4(address), "{address} must be rejected");
+            assert!(
+                !is_private_guest_ipv4(address),
+                "{address} must be rejected"
+            );
         }
     }
 

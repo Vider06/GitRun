@@ -335,6 +335,11 @@ pub fn startup(target: StartupTarget) -> Result<RecoveryReport, String> {
 }
 
 pub fn run_gtuu() -> Result<gitrun_scheduler::GtuuStartupReport, String> {
+    // GTUU may reconcile host Docker containers and install privileged system
+    // updates. Hidden CLI command names are not an authorization boundary.
+    if !is_root() {
+        return Err("GTUU requires root privileges".into());
+    }
     gitrun_scheduler::gtuu_startup::run_gtuu_startup_once().map_err(|error| error.to_string())
 }
 

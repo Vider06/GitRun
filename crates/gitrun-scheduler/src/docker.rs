@@ -383,22 +383,22 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             // The container disappeared between "docker ps" and "inspect".
             continue;
         };
-        let Some(status) = container_status_string(host, name)? else {
+        let Some(status) = container_status_string(host, &id)? else {
             // The container disappeared between "docker ps" and "inspect" —
             // a normal reconciliation race. It must not turn into an empty
             // status that downstream code could interpret as a dead container.
             continue;
         };
-        let permanent = container_is_permanent_on(host, name).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
+        let permanent = container_is_permanent_on(host, &id).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
                                                                                // These labels affect security-sensitive scheduling and preservation.
                                                                                // Do not turn Docker inspect failures into "label absent": that could
                                                                                // make a GitDockRun target eligible for ordinary cleanup or lose its
                                                                                // job binding. A missing container is represented as None by the
                                                                                // helper; other Docker errors abort the snapshot and trigger a retry.
-        let dock_target = container_label_on(host, name, "gitrun.dock_target")?
+        let dock_target = container_label_on(host, &id, "gitrun.dock_target")?
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-        let workflow_job = container_label_on(host, name, "gitrun.workflow_job")?;
-        let workflow_run_id = container_label_on(host, name, "gitrun.workflow_run")?
+        let workflow_job = container_label_on(host, &id, "gitrun.workflow_job")?;
+        let workflow_run_id = container_label_on(host, &id, "gitrun.workflow_run")?
             .and_then(|value| value.parse::<u64>().ok());
         // Labels/status above are looked up by name. Refuse to publish a
         // mixed snapshot if that name was rebound to a different container

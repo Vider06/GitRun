@@ -1270,18 +1270,49 @@ impl ApiExecutionBackend {
                 }
 
                 docker_exec_checked(runner, &["mkdir", "-p", "/var/lib/gitrun/shared/files"])?;
+                let destination = format!("/var/lib/gitrun/shared/files/{name}");
                 docker_exec_checked(
                     runner,
-                    &[
-                        "cp",
-                        "--",
-                        source,
-                        &format!("/var/lib/gitrun/shared/files/{name}"),
-                    ],
+                    &["cp", "--", source, destination.as_str()],
                 )?;
 
+                // The source is mutable by the workflow between the initial stat
+                // and cp. Check the copied artifact too, and remove it rather than
+                // publishing a file that exceeds the repository's configured cap.
+                let copied_size = match docker_file_size(runner, &destination) {
+                    Ok(size) => size,
+                    Err(error) => {
+                        let cleanup = docker_exec_checked(
+                            runner,
+                            &["rm", "-f", "--", destination.as_str()],
+                        );
+                        return Err(match cleanup {
+                            Ok(()) => failed(format!(
+                                "GitSaveRun could not verify copied file size: {error}"
+                            )),
+                            Err(cleanup_error) => failed(format!(
+                                "GitSaveRun could not verify copied file size ({error}) or remove the unverified artifact ({cleanup_error})"
+                            )),
+                        });
+                    }
+                };
+                if copied_size > policy.max_file_size_bytes {
+                    docker_exec_checked(
+                        runner,
+                        &["rm", "-f", "--", destination.as_str()],
+                    )
+                    .map_err(|error| {
+                        failed(format!(
+                            "GitSaveRun copied file exceeds repository storage limit and cleanup failed: {error}"
+                        ))
+                    })?;
+                    return Err(failed(
+                        "GitSaveRun copied file exceeds repository storage limit; artifact removed",
+                    ));
+                }
+
                 Ok(success(format!(
-                    "GitSaveRun file: saved /var/lib/gitrun/shared/files/{name}\n"
+                    "GitSaveRun file: saved /var/lib/gitrun/shared/files/{name}\\n"
                 )))
             }
             GitRunOperation::Logs => {

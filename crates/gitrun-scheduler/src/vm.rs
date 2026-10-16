@@ -228,9 +228,9 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
             )));
         }
 
-        if config.is_windows && config.docker_tls_cert_dir.trim().is_empty() {
+        if config.docker_tls_cert_dir.trim().is_empty() {
             return Err(VmError::InvalidConfig(format!(
-                "Windows VM '{}' requires docker_tls_cert_dir for mutually authenticated Docker TLS",
+                "VM '{}' requires docker_tls_cert_dir for authenticated Docker TLS",
                 config.name
             )));
         }
@@ -1114,6 +1114,26 @@ mod tests {
     }
 
     fn sample_vm(name: &str, disk: &str) -> VmConfig {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_CERT_DIR: AtomicU64 = AtomicU64::new(0);
+        let cert_dir = std::env::temp_dir().join(format!(
+            "gitrun-vm-test-certs-{}-{}",
+            std::process::id(),
+            NEXT_CERT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&cert_dir).unwrap();
+        for file in ["ca.pem", "cert.pem", "key.pem"] {
+            std::fs::write(cert_dir.join(file), "test certificate fixture").unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                cert_dir.join("key.pem"),
+                std::fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+        }
         VmConfig {
             name: name.to_owned(),
             hypervisor: HypervisorKind::Kvm,
@@ -1123,7 +1143,7 @@ mod tests {
             docker_port: 2376,
             activation: ActivationMode::Standard,
             is_windows: false,
-            docker_tls_cert_dir: String::new(),
+            docker_tls_cert_dir: cert_dir.to_string_lossy().into_owned(),
         }
     }
 

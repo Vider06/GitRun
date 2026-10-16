@@ -950,19 +950,29 @@ fn expected_container_id<'a>(
         })
 }
 
+fn check_container_identity(
+    name: &str,
+    expected_id: &str,
+    current_id: Option<&str>,
+) -> Result<(), String> {
+    match current_id {
+        Some(current_id) if current_id == expected_id => Ok(()),
+        Some(current_id) => Err(format!(
+            "refusing destructive scheduler action for {name}: Docker identity changed from {expected_id} to {current_id}"
+        )),
+        None => Err(format!(
+            "refusing destructive scheduler action for {name}: inventoried container {expected_id} no longer exists"
+        )),
+    }
+}
+
 fn ensure_current_container_identity(
     name: &str,
     expected_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match docker::container_id(name)? {
-        Some(current_id) if current_id == expected_id => Ok(()),
-        Some(current_id) => Err(std::io::Error::other(format!(
-            "refusing destructive scheduler action for {name}: Docker identity changed from {expected_id} to {current_id}"
-        )).into()),
-        None => Err(std::io::Error::other(format!(
-            "refusing destructive scheduler action for {name}: inventoried container {expected_id} no longer exists"
-        )).into()),
-    }
+    let current_id = docker::container_id(name)?;
+    check_container_identity(name, expected_id, current_id.as_deref())
+        .map_err(std::io::Error::other)
 }
 
 fn deregister_and_remove(
@@ -978,6 +988,7 @@ fn deregister_and_remove(
     // a transient API failure can leave an orphaned runner registration behind.
     let runners = client.list_runners(repo)?;
     if let Some(runner) = runners.iter().find(|r| r.name == name) {
+        ensure_current_container_identity(name, expected_id)?;
         client.delete_runner(repo, runner.id)?;
     }
     docker::remove_container(expected_id)?;
@@ -2241,5 +2252,50 @@ mod resource_pressure_reconciliation_tests {
             actions_for_resource_pressure(actions.clone(), true),
             actions
         );
+    }
+}
+
+
+#[cfg(test)]
+mod reconcile_identity_pin_tests {
+    use super::*;
+
+    #[test]
+    fn destructive_action_requires_id_from_original_inventory() {
+        let inventory = vec![docker::ManagedContainer {
+            name: "gitrun-owner-repo-1".into(),
+            id: "immutable-container-id".into(),
+            status: "running".into(),
+            permanent: false,
+            dock_target: false,
+            workflow_job: None,
+            workflow_run_id: None,
+        }];
+        assert_eq!(
+            expected_container_id(&inventory, "gitrun-owner-repo-1").unwrap(),
+            "immutable-container-id"
+        );
+        assert!(expected_container_id(&inventory, "replacement-name").is_err());
+    }
+
+    #[test]
+    fn destructive_action_rejects_missing_or_replaced_container_identity() {
+        assert!(check_container_identity("runner", "expected-id", None).is_err());
+        assert!(check_container_identity("runner", "expected-id", Some("replacement-id")).is_err());
+        assert!(check_container_identity("runner", "expected-id", Some("expected-id")).is_ok());
+    }
+
+    #[test]
+    fn destructive_action_rejects_empty_inventory_id() {
+        let inventory = vec![docker::ManagedContainer {
+            name: "runner".into(),
+            id: String::new(),
+            status: "running".into(),
+            permanent: false,
+            dock_target: false,
+            workflow_job: None,
+            workflow_run_id: None,
+        }];
+        assert!(expected_container_id(&inventory, "runner").is_err());
     }
 }

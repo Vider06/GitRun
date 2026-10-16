@@ -333,9 +333,7 @@ pub fn poll_once(
             ban_store,
             |target| docker::container_command_lines_on(host, target),
             |target| docker::container_repo_label_on(host, target),
-            |target, repo, action, store| {
-                apply_violation_action(host, target, repo, action, store)
-            },
+            |target, repo, action, store| apply_violation_action(host, target, repo, action, store),
         ));
     }
     Ok(violations)
@@ -398,9 +396,7 @@ where
         };
         let action_error = enforce(container_id, repo.as_deref(), action, ban_store);
         let action_error = match (repo_error, action_error) {
-            (Some(repo_error), Some(action_error)) => {
-                Some(format!("{repo_error}; {action_error}"))
-            }
+            (Some(repo_error), Some(action_error)) => Some(format!("{repo_error}; {action_error}")),
             (Some(error), None) | (None, Some(error)) => Some(error),
             (None, None) => None,
         };
@@ -443,7 +439,9 @@ fn apply_violation_action(
             };
             let kill_error = docker::remove_container_on(host, container_id)
                 .err()
-                .map(|error| format!("container kill failed for pinned ID {container_id}: {error}"));
+                .map(|error| {
+                    format!("container kill failed for pinned ID {container_id}: {error}")
+                });
 
             match (ban_error, kill_error) {
                 (Some(ban), Some(kill)) => Some(format!("{ban}; {kill}")),

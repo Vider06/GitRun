@@ -782,6 +782,7 @@ fn reconcile_repo(
             state_dir,
             vm_registry,
             repo,
+            &containers,
             &action,
             &mut state,
         ) {
@@ -815,12 +816,15 @@ fn execute(
     state_dir: &std::path::Path,
     vm_registry: &VmResolutionRegistry,
     repo: &str,
+    inventory: &[docker::ManagedContainer],
     action: &Action,
     state: &mut SchedulerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         Action::RemoveExited { name } => {
             ensure_not_dock_bound(state_dir, repo, name, "remove exited container")?;
+            let expected_id = expected_container_id(inventory, name)?;
+            ensure_current_container_identity(name, expected_id)?;
             // An exited runner crosses a trust boundary: never restart/reuse
             // its filesystem or credentials. Quarantine the identity first,
             // then remove the container and create a fresh runner if capacity
@@ -835,7 +839,7 @@ fn execute(
             if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
                 eprintln!("gitrun-autoscaler: failed to emit runner quarantine event: {error}");
             }
-            deregister_and_remove(client, repo, name)?;
+            deregister_and_remove(client, repo, name, expected_id)?;
         }
         Action::CreateRunner {
             permanent,
@@ -859,7 +863,9 @@ fn execute(
         }
         Action::RecreateOrphaned { name, permanent } => {
             ensure_not_dock_bound(state_dir, repo, name, "recreate orphaned runner")?;
-            deregister_and_remove(client, repo, name)?;
+            let expected_id = expected_container_id(inventory, name)?;
+            ensure_current_container_identity(name, expected_id)?;
+            deregister_and_remove(client, repo, name, expected_id)?;
             // Recreation isn't tied to a specific queued job (it's replacing
             // a container GitHub lost track of, not opening new capacity),
             // so it keeps the pre-existing behavior of an empty label set.
@@ -880,15 +886,19 @@ fn execute(
         }
         Action::RestartUnresponsive { name } => {
             ensure_not_dock_bound(state_dir, repo, name, "restart unresponsive runner")?;
+            let expected_id = expected_container_id(inventory, name)?;
+            ensure_current_container_identity(name, expected_id)?;
             // Track when this container first needed a restart, so the
             // cooldown in ReconcileInput.recovery_age is meaningful on the
             // *next* cycle. This call also seeds the timer on first sight.
             state.recovery_age(name);
-            docker::restart_container(name)?;
+            docker::restart_container(expected_id)?;
         }
         Action::RemoveIdle { name } => {
             ensure_not_dock_bound(state_dir, repo, name, "remove idle runner")?;
-            let _ = remove_if_still_idle(client, repo, name)?;
+            let expected_id = expected_container_id(inventory, name)?;
+            ensure_current_container_identity(name, expected_id)?;
+            let _ = remove_if_still_idle(client, repo, name, expected_id)?;
             state.clear_idle(name);
         }
     }
@@ -923,18 +933,51 @@ fn ensure_not_dock_bound(
     Err(std::io::Error::other(message).into())
 }
 
+fn expected_container_id<'a>(
+    inventory: &'a [docker::ManagedContainer],
+    name: &str,
+) -> Result<&'a str, Box<dyn std::error::Error>> {
+    inventory
+        .iter()
+        .find(|container| container.name == name)
+        .map(|container| container.id.as_str())
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| std::io::Error::other(format!(
+            "refusing destructive scheduler action: no immutable Docker ID in inventory for {name}"
+        )).into())
+}
+
+fn ensure_current_container_identity(
+    name: &str,
+    expected_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match docker::container_id(name)? {
+        Some(current_id) if current_id == expected_id => Ok(()),
+        Some(current_id) => Err(std::io::Error::other(format!(
+            "refusing destructive scheduler action for {name}: Docker identity changed from {expected_id} to {current_id}"
+        )).into()),
+        None => Err(std::io::Error::other(format!(
+            "refusing destructive scheduler action for {name}: inventoried container {expected_id} no longer exists"
+        )).into()),
+    }
+}
+
 fn deregister_and_remove(
     client: &GitHubClient,
     repo: &str,
     name: &str,
+    expected_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Recheck the mutable name before touching GitHub registration. Docker
+    // removal itself is always pinned to the immutable ID captured at snapshot.
+    ensure_current_container_identity(name, expected_id)?;
     // Do not remove the container if GitHub cannot be queried: otherwise
     // a transient API failure can leave an orphaned runner registration behind.
     let runners = client.list_runners(repo)?;
     if let Some(runner) = runners.iter().find(|r| r.name == name) {
         client.delete_runner(repo, runner.id)?;
     }
-    docker::remove_container(name)?;
+    docker::remove_container(expected_id)?;
     Ok(())
 }
 
@@ -942,7 +985,9 @@ fn remove_if_still_idle(
     client: &GitHubClient,
     repo: &str,
     name: &str,
+    expected_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    ensure_current_container_identity(name, expected_id)?;
     let runner = client
         .list_runners(repo)?
         .into_iter()
@@ -951,7 +996,7 @@ fn remove_if_still_idle(
     let Some(runner) = runner else {
         // The registration disappeared on its own; there is no GitHub runner
         // left to protect, so removing the container is still safe.
-        docker::remove_container(name)?;
+        docker::remove_container(expected_id)?;
         return Ok(true);
     };
 
@@ -964,8 +1009,9 @@ fn remove_if_still_idle(
         return Ok(false);
     }
 
+    ensure_current_container_identity(name, expected_id)?;
     client.delete_runner(repo, runner.id)?;
-    docker::remove_container(name)?;
+    docker::remove_container(expected_id)?;
     Ok(true)
 }
 

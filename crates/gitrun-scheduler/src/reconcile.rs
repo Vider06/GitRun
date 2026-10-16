@@ -569,6 +569,8 @@ mod tests {
             permanent: false,
         }];
         input.runners = Vec::new();
+        // Orphan recreation is gated by the configured recovery cooldown.
+        input.recovery_age = vec![("orphan-dynamic".into(), Duration::from_secs(60))];
 
         let actions = plan(&input);
         assert!(actions.contains(&Action::RecreateOrphaned {

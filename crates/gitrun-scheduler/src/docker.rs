@@ -390,11 +390,11 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             continue;
         };
         let permanent = container_is_permanent_on(host, &id).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
-                                                                               // These labels affect security-sensitive scheduling and preservation.
-                                                                               // Do not turn Docker inspect failures into "label absent": that could
-                                                                               // make a GitDockRun target eligible for ordinary cleanup or lose its
-                                                                               // job binding. A missing container is represented as None by the
-                                                                               // helper; other Docker errors abort the snapshot and trigger a retry.
+                                                                              // These labels affect security-sensitive scheduling and preservation.
+                                                                              // Do not turn Docker inspect failures into "label absent": that could
+                                                                              // make a GitDockRun target eligible for ordinary cleanup or lose its
+                                                                              // job binding. A missing container is represented as None by the
+                                                                              // helper; other Docker errors abort the snapshot and trigger a retry.
         let dock_target = container_label_on(host, &id, "gitrun.dock_target")?
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let workflow_job = container_label_on(host, &id, "gitrun.workflow_job")?;

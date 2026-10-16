@@ -2255,7 +2255,6 @@ mod resource_pressure_reconciliation_tests {
     }
 }
 
-
 #[cfg(test)]
 mod reconcile_identity_pin_tests {
     use super::*;

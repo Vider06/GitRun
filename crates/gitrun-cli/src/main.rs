@@ -422,7 +422,7 @@ fn update_command(
 
         if let Some(image) = &plan.runner_image {
             if let Err(error) = update_runner_image(image) {
-                let rollback_error = rollback_installed_update(&backup).err();
+                let rollback_error = rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
                 return Err(match rollback_error {
                     Some(rollback_error) => format!(
                         "runner update failed: {error}; GitRun rollback also failed: {rollback_error}"
@@ -449,7 +449,7 @@ fn update_command(
 
         presenter.transition(presenter::ValidationState::Running);
         if let Err(error) = restart_scheduler_service() {
-            let rollback_result = rollback_installed_update(&backup);
+            let rollback_result = rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
             let restore_result = restart_scheduler_service();
             return match (rollback_result, restore_result) {
                 (Ok(()), Ok(())) => Err(format!(

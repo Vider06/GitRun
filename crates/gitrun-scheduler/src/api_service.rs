@@ -1242,7 +1242,9 @@ impl ApiExecutionBackend {
     }
 
     fn save(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        let runner = &self.caller.runner;
+        // Pin all Docker effects to the immutable ID authenticated from the peer's
+        // cgroup. A mutable container name may be rebound after request auth.
+        let runner = &self.caller_container_id;
 
         match request.operation {
             GitRunOperation::File => {
@@ -1369,7 +1371,7 @@ impl ApiExecutionBackend {
         };
 
         docker::exec_container_stream(
-            &self.caller.runner,
+            &self.caller_container_id,
             &[
                 "sh",
                 "-c",
@@ -1408,14 +1410,14 @@ impl ApiExecutionBackend {
             "gitrun-install",
             spec.as_str(),
         ];
-        run_docker_command(&self.caller.runner, &args)
+        run_docker_command(&self.caller_container_id, &args)
     }
 
     fn read(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container(&self.caller.runner, &["cat", "--", path])
+        let output = docker::exec_container(&self.caller_container_id, &["cat", "--", path])
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
@@ -1426,7 +1428,7 @@ impl ApiExecutionBackend {
         ensure_safe_runner_path(path)?;
 
         let output = docker::exec_container_with_stdin(
-            &self.caller.runner,
+            &self.caller_container_id,
             &["sh", "-c", "cat > \"$1\"", "gitrun-write", path],
             value.as_bytes(),
         )
@@ -1438,7 +1440,7 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container(&self.caller.runner, &["sha256sum", "--", path])
+        let output = docker::exec_container(&self.caller_container_id, &["sha256sum", "--", path])
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }

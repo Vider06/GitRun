@@ -942,9 +942,12 @@ fn expected_container_id<'a>(
         .find(|container| container.name == name)
         .map(|container| container.id.as_str())
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| std::io::Error::other(format!(
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
             "refusing destructive scheduler action: no immutable Docker ID in inventory for {name}"
-        )).into())
+        ))
+            .into()
+        })
 }
 
 fn ensure_current_container_identity(

@@ -504,6 +504,19 @@ mod tests {
     }
 
     #[test]
+    fn missing_docker_tls_credentials_fail_before_vm_lifecycle() {
+        let mut config = sample_vm("missing-tls");
+        config.docker_tls_cert_dir.clear();
+
+        let error = provision_and_wait(HypervisorKind::Kvm, &config)
+            .expect_err("remote Docker must fail closed without TLS credentials");
+        assert!(
+            error.to_string().contains("requires docker_tls_cert_dir"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn invalid_vm_config_fails_before_spawning() {
         let registry = new_registry();
         let dir = std::env::temp_dir().join(format!(

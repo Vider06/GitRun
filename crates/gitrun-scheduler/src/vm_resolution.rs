@@ -392,6 +392,17 @@ fn refresh_resolved(
 fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<DockerHost> {
     let mut config = vm_config.clone();
     config.hypervisor = kind;
+
+    // Every remote Docker daemon is a host-level privilege boundary. Do not
+    // probe an unauthenticated TCP endpoint or permit a guest to steer the
+    // scheduler toward a non-private address.
+    if config.docker_tls_cert_dir.trim().is_empty() {
+        return Err(vm::VmError::InvalidConfig(format!(
+            "VM '{}' requires docker_tls_cert_dir for authenticated Docker TLS",
+            config.name
+        )));
+    }
+    vm::validate_vm_config(&config)?;
     vm::ensure_vm(&config)?;
 
     // Ephemeral modes are rejected by validate_vm_config until reset/recreate
@@ -401,26 +412,16 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
         vm::start(kind, &config.name)?;
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
-    if config.is_windows && !is_private_guest_ipv4(&ip) {
+    if !is_private_guest_ipv4(&ip) {
         return Err(vm::VmError::InvalidConfig(format!(
-            "Windows KVM VM '{}' reported non-private guest address {}; refusing remote Docker endpoint",
+            "VM '{}' reported non-private or invalid guest address {}; refusing remote Docker endpoint",
             config.name, ip
         )));
     }
     let endpoint = vm::docker_host_address(kind, &ip, config.docker_port);
-    let host = if config.is_windows {
-        if config.docker_tls_cert_dir.trim().is_empty() {
-            return Err(vm::VmError::InvalidConfig(format!(
-                "Windows VM '{}' has no Docker TLS credential directory configured",
-                config.name
-            )));
-        }
-        DockerHost::RemoteTls {
-            endpoint,
-            cert_dir: config.docker_tls_cert_dir.clone(),
-        }
-    } else {
-        DockerHost::Remote(endpoint)
+    let host = DockerHost::RemoteTls {
+        endpoint,
+        cert_dir: config.docker_tls_cert_dir.clone(),
     };
     docker::verify_docker_endpoint_health(&host).map_err(|error| {
         vm::VmError::Command(format!(

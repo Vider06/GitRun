@@ -611,6 +611,7 @@ fn set_file_mode(_path: &Path, _mode: u32) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn root_detector_matches_effective_uid() {
         let status = fs::read_to_string("/proc/self/status")

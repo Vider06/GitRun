@@ -1135,10 +1135,31 @@ fn rollback_command(
     presenter.transition(presenter::ValidationState::Recovering);
     let raw = std::fs::read_to_string(path)?;
     if let Ok(backup) = serde_json::from_str::<InstalledBackupRecord>(&raw) {
-        rollback_installed_update(&backup)?;
+        let (gitrun_binary, version_file) = system_install_paths().ok_or(
+            "installed-system rollback records can only be applied by the installed GitRun binary",
+        )?;
+        let backup_root = PathBuf::from("/var/lib/gitrun/backups");
+        let expected_artifacts = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: gitrun_binary,
+            required: true,
+        }];
+        rollback_installed_update(
+            &backup,
+            &expected_artifacts,
+            &version_file,
+            &backup_root,
+        )?;
         presenter.transition(presenter::ValidationState::Success);
         println!("GitRun rollback: PASS");
         return Ok(());
+    }
+
+    // System installs exclusively use InstalledBackupRecord with fixed trusted
+    // artifact destinations. Never reinterpret a malformed/system record as a
+    // developer backup whose JSON could select arbitrary restore paths.
+    if system_install_paths().is_some() {
+        return Err("invalid or unsupported system rollback record; refusing untrusted restore paths".into());
     }
 
     let backup: BackupRecord = serde_json::from_str(&raw)?;
@@ -1147,12 +1168,9 @@ fn rollback_command(
     let state_dir =
         PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
     let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
-    let backup_root = backup
-        .install_backup
-        .parent()
-        .and_then(Path::parent)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("./backups"));
+    let backup_root = PathBuf::from(
+        std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()),
+    );
     let service_config = std::env::var("GITRUN_SERVICE_CONFIG")
         .ok()
         .map(PathBuf::from);

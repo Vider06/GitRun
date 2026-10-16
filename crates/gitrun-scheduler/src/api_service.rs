@@ -1312,7 +1312,7 @@ impl ApiExecutionBackend {
                 }
 
                 Ok(success(format!(
-                    "GitSaveRun file: saved /var/lib/gitrun/shared/files/{name}\\n"
+                    "GitSaveRun file: saved /var/lib/gitrun/shared/files/{name}\n"
                 )))
             }
             GitRunOperation::Logs => {

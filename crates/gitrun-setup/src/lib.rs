@@ -94,6 +94,11 @@ pub fn prepare_directories(
         GitRunSettings::default()
             .save(&settings_path)
             .map_err(|error| SetupError::Io(std::io::Error::other(error.to_string())))?;
+        let desktop_uid = std::env::var("PKEXEC_UID")
+            .or_else(|_| std::env::var("SUDO_UID"))
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok());
+        secure_system_settings_file(&settings_path, desktop_uid)?;
     }
 
     Ok(SetupReport {
@@ -826,7 +831,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
         chown_path(&state_dir, 0)?;
         ensure_directory(&state_dir, 0o755)?;
         chown_path(&log_dir, uid)?;
-        chown_path(&settings_path, uid)?;
+        secure_system_settings_file(&settings_path, Some(uid))?;
         chown_path(&vault_dir, uid)?;
         add_user_to_docker_group(uid)?;
     }
@@ -1270,6 +1275,64 @@ fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
             SetupError::Command(format!("unable to resolve primary gid for uid {uid}"))
         })?;
     Ok(gid)
+}
+
+/// Security policy is consumed by the root scheduler to authorize privileged
+/// workflow operations. Never make this file desktop-user-owned or writable:
+/// grant only read access through the desktop user's primary group.
+pub fn secure_system_settings_file(
+    path: &Path,
+    desktop_uid: Option<u32>,
+) -> Result<(), SetupError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let parent = path.parent().ok_or_else(|| {
+        SetupError::Command("GitRun settings path has no parent directory".into())
+    })?;
+    let parent_metadata = fs::symlink_metadata(parent)?;
+    if !parent_metadata.is_dir()
+        || parent_metadata.uid() != 0
+        || parent_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err(SetupError::Command(
+            "GitRun settings parent must be a root-owned, non-writable directory".into(),
+        ));
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(SetupError::Command(
+            "GitRun security settings must be a regular, non-symlink file".into(),
+        ));
+    }
+
+    let mode = if let Some(uid) = desktop_uid {
+        let gid = primary_gid_for_uid(uid)?;
+        run_command(
+            Command::new("/usr/bin/chown")
+                .arg(format!("0:{gid}"))
+                .arg(path),
+        )?;
+        0o640
+    } else {
+        run_command(Command::new("/usr/bin/chown").arg("0:0").arg(path))?;
+        0o600
+    };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+
+    let final_metadata = fs::symlink_metadata(path)?;
+    let expected_gid = desktop_uid.map(primary_gid_for_uid).transpose()?;
+    if final_metadata.file_type().is_symlink()
+        || !final_metadata.is_file()
+        || final_metadata.uid() != 0
+        || expected_gid.is_some_and(|gid| final_metadata.gid() != gid)
+        || final_metadata.permissions().mode() & 0o777 != mode
+    {
+        return Err(SetupError::Command(
+            "GitRun security settings ownership/permissions failed postcondition verification"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Secure the installed system config for use by the privileged scheduler and

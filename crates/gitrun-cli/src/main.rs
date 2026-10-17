@@ -2788,14 +2788,10 @@ fn save_gitrun_settings_root_command(input_path: &str) -> Result<(), Box<dyn std
     }
 
     settings.save(&destination)?;
-    std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o600))?;
-    let status = std::process::Command::new("/usr/bin/chown")
-        .arg(requester_uid.to_string())
-        .arg(&destination)
-        .status()?;
-    if !status.success() {
-        return Err("could not restore desktop-user ownership of GitRun settings".into());
-    }
+    // The root scheduler treats this file as authorization policy. Keep it
+    // root-owned and read-only to the desktop user's primary group; the user
+    // must use this authenticated helper rather than editing the policy JSON.
+    gitrun_setup::secure_system_settings_file(&destination, Some(requester_uid))?;
     std::fs::File::open(&state_dir)?.sync_all()?;
     println!("GitRun security settings saved successfully.");
     Ok(())

@@ -1309,6 +1309,10 @@ pub fn validate_melt_target_mounts_on(host: &DockerHost, target_id: &str) -> Res
     }
     let raw = String::from_utf8_lossy(&output.stdout);
     let mounts: Value = serde_json::from_str(raw.trim())?;
+    validate_melt_target_mount_inventory(target_id, &mounts)
+}
+
+fn validate_melt_target_mount_inventory(target_id: &str, mounts: &Value) -> Result<()> {
     let mounts = mounts.as_array().ok_or_else(|| {
         DockerError::Command(format!(
             "Docker returned a non-array mount inventory for MELT target {target_id}"
@@ -2094,6 +2098,28 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn melt_rejects_unprotected_writable_docker_mounts() {
+        let safe = serde_json::json!([
+            {"Destination": "/tmp", "RW": true},
+            {"Destination": "/var/lib/gitrun/shared/cache", "RW": true},
+            {"Destination": "/etc/hosts", "RW": false},
+        ]);
+        assert!(validate_melt_target_mount_inventory("target-id", &safe).is_ok());
+
+        let unsafe_mount = serde_json::json!([
+            {"Destination": "/tmp", "RW": true},
+            {"Destination": "/workspace/host-data", "RW": true},
+        ]);
+        let error = validate_melt_target_mount_inventory("target-id", &unsafe_mount)
+            .expect_err("unprotected writable mounts must block MELT");
+        assert!(error.to_string().contains("/workspace/host-data"));
+
+        let incomplete = serde_json::json!([{"Destination": "/workspace", "Type": "bind"}]);
+        assert!(validate_melt_target_mount_inventory("target-id", &incomplete).is_err());
+        assert!(validate_melt_target_mount_inventory("target-id", &serde_json::json!({})).is_err());
     }
 
     #[test]

@@ -1219,10 +1219,6 @@ mod tests {
         let key = storage_key("DEPLOY_TOKEN", &original_scope);
         vault.data.secrets.get_mut(&key).unwrap().scope = Scope::Global;
         assert!(matches!(
-            vault.get_effective_for_repo("another/repo", &[]),
-            Err(VaultError::NotFound(_))
-        ) == false, "the tampered global metadata should make the record visible for selection");
-        assert!(matches!(
             vault.get_effective_for_repo("DEPLOY_TOKEN", "another/repo", &[]),
             Err(VaultError::DecryptionFailed(name)) if name == "DEPLOY_TOKEN"
         ));

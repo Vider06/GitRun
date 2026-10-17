@@ -204,28 +204,57 @@ pub(crate) fn validate_state_directory_parent(state_dir: &Path) -> Result<(), Do
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let parent = state_dir
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let metadata = fs::symlink_metadata(parent)?;
-        if !metadata.is_dir() {
-            return Err(DockRegistryError::Invalid(
-                "registry state parent must be a real directory".into(),
-            ));
-        }
-        let mode = metadata.permissions().mode();
-        // A root service must not place its authoritative state under a
-        // directory owned by an unprivileged user. Sticky shared directories
-        // (e.g. /tmp in unit tests) are safe for unique child entries because
-        // the child itself is separately owner-checked and private.
-        if metadata.uid() != effective_uid() && mode & 0o1000 == 0
-            || mode & 0o002 != 0 && mode & 0o1000 == 0
-            || mode & 0o020 != 0 && mode & 0o1000 == 0
+
+        if !state_dir.is_absolute()
+            || state_dir
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
         {
             return Err(DockRegistryError::Invalid(
-                "registry state parent is writable by an untrusted identity".into(),
+                "registry state path must be absolute and must not contain parent traversal".into(),
             ));
+        }
+
+        // Check every existing ancestor, not only the immediate parent. A
+        // root-owned parent nested below a user-writable directory can still
+        // be renamed/replaced through that ancestor, redirecting trusted state.
+        // Root-owned sticky shared directories such as /tmp are permitted;
+        // their child entries cannot be removed by unrelated users.
+        let parent = state_dir.parent().ok_or_else(|| {
+            DockRegistryError::Invalid("registry state path cannot be the filesystem root".into())
+        })?;
+        let mut prefix = PathBuf::from("/");
+        for component in parent.components() {
+            match component {
+                std::path::Component::RootDir => continue,
+                std::path::Component::Normal(name) => prefix.push(name),
+                _ => {
+                    return Err(DockRegistryError::Invalid(
+                        "registry state parent path contains unsupported components".into(),
+                    ))
+                }
+            }
+            let metadata = fs::symlink_metadata(&prefix)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(DockRegistryError::Invalid(format!(
+                    "registry state ancestor {} must be a real directory",
+                    prefix.display()
+                )));
+            }
+            let mode = metadata.permissions().mode();
+            let owner_is_trusted = metadata.uid() == 0 || metadata.uid() == effective_uid();
+            let writable_by_others = mode & 0o022 != 0;
+            let safe_sticky_shared_dir = metadata.uid() == 0
+                && mode & 0o1000 != 0
+                && writable_by_others;
+            if !owner_is_trusted
+                || (writable_by_others && !safe_sticky_shared_dir)
+            {
+                return Err(DockRegistryError::Invalid(format!(
+                    "registry state ancestor {} is owned by or writable by an untrusted identity",
+                    prefix.display()
+                )));
+            }
         }
     }
     Ok(())

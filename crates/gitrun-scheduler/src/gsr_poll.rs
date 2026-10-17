@@ -332,8 +332,8 @@ pub fn poll_once(
             action,
             ban_store,
             PollOperations {
-                read_processes: |target| docker::container_command_lines_on(host, target),
-                read_repo: |target| docker::container_repo_label_on(host, target),
+                read_processes: |target: &str| docker::container_command_lines_on(host, target),
+                read_repo: |target: &str| docker::container_repo_label_on(host, target),
                 enforce: |target: &str,
                           repo: Option<&str>,
                           action: ViolationAction,

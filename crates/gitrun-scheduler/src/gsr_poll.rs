@@ -334,7 +334,10 @@ pub fn poll_once(
             PollOperations {
                 read_processes: |target| docker::container_command_lines_on(host, target),
                 read_repo: |target| docker::container_repo_label_on(host, target),
-                enforce: |target: &str, repo: Option<&str>, action: ViolationAction, store: &mut BanStore| {
+                enforce: |target: &str,
+                          repo: Option<&str>,
+                          action: ViolationAction,
+                          store: &mut BanStore| {
                     apply_violation_action(host, target, repo, action, store)
                 },
             },
@@ -749,7 +752,10 @@ mod tests {
                     targets.borrow_mut().push(("repo-label", target.to_owned()));
                     Ok::<_, &'static str>(Some("owner/repo".to_owned()))
                 },
-                enforce: |target: &str, repo: Option<&str>, action: ViolationAction, _store: &mut BanStore| {
+                enforce: |target: &str,
+                          repo: Option<&str>,
+                          action: ViolationAction,
+                          _store: &mut BanStore| {
                     assert_eq!(target, original_id);
                     assert_ne!(target, replacement_id);
                     assert_eq!(repo, Some("owner/repo"));

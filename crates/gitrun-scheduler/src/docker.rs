@@ -58,6 +58,18 @@ const MELT_TAR_EXCLUDE_ARGS: &[&str] = &[
     "--exclude=./var/run/*",
     "--exclude=var/run",
     "--exclude=var/run/*",
+    "--exclude=./tmp",
+    "--exclude=./tmp/*",
+    "--exclude=tmp",
+    "--exclude=tmp/*",
+    "--exclude=./var/tmp",
+    "--exclude=./var/tmp/*",
+    "--exclude=var/tmp",
+    "--exclude=var/tmp/*",
+    "--exclude=./var/lib/gitrun/shared",
+    "--exclude=./var/lib/gitrun/shared/*",
+    "--exclude=var/lib/gitrun/shared",
+    "--exclude=var/lib/gitrun/shared/*",
     "--exclude=./home/runner/actions-runner",
     "--exclude=./home/runner/actions-runner/*",
     "--exclude=home/runner/actions-runner",
@@ -1895,6 +1907,9 @@ mod tests {
             "dev",
             "run",
             "var/run",
+            "tmp",
+            "var/tmp",
+            "var/lib/gitrun/shared",
             "home/runner/actions-runner",
             "workspace",
         ] {
@@ -1906,6 +1921,9 @@ mod tests {
             ("dev/console", "dev"),
             ("run/daemon.pid", "run"),
             ("var/run/daemon.pid", "var-run"),
+            ("tmp/transient", "tmp"),
+            ("var/tmp/transient", "var-tmp"),
+            ("var/lib/gitrun/shared/cache-key", "shared-cache"),
             ("home/runner/actions-runner/run.sh", "runner"),
             ("workspace/artifact.txt", "must-transfer"),
         ] {
@@ -1919,7 +1937,9 @@ mod tests {
             if dot_prefix {
                 create.arg(".");
             } else {
-                create.args(["proc", "sys", "dev", "run", "var", "home", "workspace"]);
+                create.args([
+                    "proc", "sys", "dev", "run", "tmp", "var", "home", "workspace",
+                ]);
             }
             let created = create
                 .output()
@@ -1957,6 +1977,9 @@ mod tests {
                 "dev/console",
                 "run/daemon.pid",
                 "var/run/daemon.pid",
+                "tmp/transient",
+                "var/tmp/transient",
+                "var/lib/gitrun/shared/cache-key",
                 "home/runner/actions-runner/run.sh",
             ] {
                 assert!(

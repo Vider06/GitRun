@@ -2255,7 +2255,9 @@ impl ApiExecutionBackend {
 
         let run_id = request_run_id(request);
         if run_id == 0 {
-            return Err(failed("GitDockRun --melt requires an authoritative workflow run"));
+            return Err(failed(
+                "GitDockRun --melt requires an authoritative workflow run",
+            ));
         }
         let source_name = request
             .resource
@@ -2273,13 +2275,13 @@ impl ApiExecutionBackend {
         )
         .cloned()
         .ok_or_else(|| {
-            failed(
-                "GitDockRun --melt source must be bound to a different job in this workflow run",
-            )
+            failed("GitDockRun --melt source must be bound to a different job in this workflow run")
         })?;
         let source = source_binding.container_id.clone();
         if source.is_empty() {
-            return Err(failed("GitDockRun --melt source binding has no immutable container ID"));
+            return Err(failed(
+                "GitDockRun --melt source binding has no immutable container ID",
+            ));
         }
         let current_source_id = docker::container_id(&source_binding.container)
             .map_err(|error| failed(error.to_string()))?
@@ -2291,7 +2293,11 @@ impl ApiExecutionBackend {
         }
         let source_job = self
             .github
-            .find_workflow_job(&request.repository, source_binding.run_id, &source_binding.job)
+            .find_workflow_job(
+                &request.repository,
+                source_binding.run_id,
+                &source_binding.job,
+            )
             .map_err(|error| failed(error.to_string()))?
             .ok_or_else(|| failed("GitDockRun --melt source workflow job could not be verified"))?;
         if !workflow_job_is_completed(&source_job.status, source_job.conclusion.as_deref()) {
@@ -4849,15 +4855,27 @@ mod dock_melt_binding_tests {
         };
 
         assert!(find_dock_melt_source_binding(
-            &registry, "owner/repo", 42, "build", "build-runner"
+            &registry,
+            "owner/repo",
+            42,
+            "build",
+            "build-runner"
         )
         .is_none());
         assert!(find_dock_melt_source_binding(
-            &registry, "owner/repo", 99, "publish", "build-runner"
+            &registry,
+            "owner/repo",
+            99,
+            "publish",
+            "build-runner"
         )
         .is_none());
         assert!(find_dock_melt_source_binding(
-            &registry, "other/repo", 42, "publish", "build-runner"
+            &registry,
+            "other/repo",
+            42,
+            "publish",
+            "build-runner"
         )
         .is_none());
     }

@@ -154,6 +154,81 @@ fn persist_config_as_root(_config: &Config) -> Result<(), String> {
     Err("administrator-authorized system settings persistence is Linux-only".into())
 }
 
+#[cfg(target_os = "linux")]
+fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let pkexec = pkexec_path().ok_or(
+        "Saving system security settings requires administrator authorization, but trusted pkexec was not found.",
+    )?;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; security settings cannot be saved safely.",
+    )?;
+    let payload = serde_json::to_vec(settings).map_err(|error| error.to_string())?;
+    if payload.len() > 1024 * 1024 {
+        return Err("GitRun security settings exceed the 1 MiB safety limit".into());
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-save-security-settings-{}-{unique}.json",
+        std::process::id()
+    ));
+
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+
+        let status = std::process::Command::new(&pkexec)
+            .arg(&cli)
+            .arg("--no-cat")
+            .arg("--save-gitrun-settings-root")
+            .arg(&path)
+            .status()
+            .map_err(|error| format!("unable to request administrator authorization: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "administrator-authorized security-settings save failed with status {status}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[cfg(not(target_os = "linux"))]
+fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), String> {
+    Err("administrator-authorized security-settings persistence is Linux-only".into())
+}
+
+/// Persist security policy through the privileged helper for system installs.
+/// The state directory is root-owned so user-level atomic rename is intentionally
+/// unavailable; developer installations retain their configurable local path.
+fn persist_gitrun_settings(
+    settings: &GitRunSettings,
+    path: &Path,
+) -> Result<(), String> {
+    if trusted_system_cli_path().is_some()
+        && Path::new("/etc/gitrun/gitrun.env").is_file()
+    {
+        persist_gitrun_settings_as_root(settings)
+    } else {
+        settings.save(path).map_err(|error| error.to_string())
+    }
+}
+
 /// Persists only known settings. On a system installation, the configuration is
 /// root-owned; a desktop-launched dashboard must request authorization rather
 /// than relying on the service's GITRUN_CONFIG_FILE environment.
@@ -2169,9 +2244,7 @@ fn save_gitrun_settings(
                 .into(),
         );
     }
-    settings
-        .save(gitrun_settings_path(&config))
-        .map_err(|e| e.to_string())
+    persist_gitrun_settings(&settings, &gitrun_settings_path(&config))
 }
 
 #[tauri::command]
@@ -2833,14 +2906,14 @@ fn save_dashboard_settings(
     let settings_path = gitrun_settings_path(&updated);
     let current_settings = GitRunSettings::load_or_default(gitrun_settings_path(&current_config))
         .map_err(|error| error.to_string())?;
-    let settings_file_existed = match std::fs::symlink_metadata(&settings_path) {
+    match std::fs::symlink_metadata(&settings_path) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err("GitRun settings path must be a regular, non-symlink file".into());
         }
-        Ok(_) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("unable to inspect GitRun settings file: {error}")),
-    };
+    }
     if current_config != expected_config {
         return Err("GitRun configuration changed since this screen was loaded. Refresh the view and retry.".into());
     }
@@ -2880,19 +2953,12 @@ fn save_dashboard_settings(
         });
     }
 
-    if let Err(save_error) = settings.save(&settings_path) {
+    if let Err(save_error) = persist_gitrun_settings(&settings, &settings_path) {
         let config_rollback = persist_dashboard_config_unlocked(&current_config);
-        let settings_rollback = if settings_file_existed {
-            current_settings
-                .save(&settings_path)
-                .map_err(|error| error.to_string())
-        } else {
-            match std::fs::remove_file(&settings_path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error.to_string()),
-            }
-        };
+        // Writing the previously effective defaults as an explicit settings
+        // file is semantically equivalent to restoring an absent file, and it
+        // also works when the system state directory is root-owned.
+        let settings_rollback = persist_gitrun_settings(&current_settings, &settings_path);
         let rollback_detail = match (config_rollback, settings_rollback) {
             (Ok(()), Ok(())) => "Previous configuration and settings were restored.".to_owned(),
             (config_result, settings_result) => format!(

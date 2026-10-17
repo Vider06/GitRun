@@ -1691,6 +1691,13 @@ fn is_full_container_id(value: &str) -> bool {
 
 /// Executes a command in a managed container after the caller has already
 /// passed the relevant GSR authorization gate.
+fn exec_user_arguments(user: Option<&str>) -> Vec<&str> {
+    match user {
+        Some(user) => vec!["--user", user],
+        None => Vec::new(),
+    }
+}
+
 pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
     exec_container_as(container, None, args)
 }
@@ -1711,9 +1718,7 @@ fn exec_container_as(
     // Reuse the bounded-output/timeout runner instead of Command::output(),
     // which would buffer arbitrary workflow-controlled output in scheduler RAM.
     let mut command_args = vec!["exec"];
-    if let Some(user) = user {
-        command_args.extend(["--user", user]);
-    }
+    command_args.extend(exec_user_arguments(user));
     command_args.push(container);
     command_args.extend_from_slice(args);
     run_on(&DockerHost::Local, &command_args)
@@ -1881,11 +1886,8 @@ where
         .env_remove("DOCKER_TLS_VERIFY")
         .env_remove("DOCKER_CERT_PATH")
         .env("DOCKER_HOST", "unix:///var/run/docker.sock")
-        .arg("exec");
-    if let Some(user) = user {
-        command.arg("--user").arg(user);
-    }
-    command
+        .arg("exec")
+        .args(exec_user_arguments(user))
         .arg(container)
         .args(args)
         .stdout(Stdio::piped())
@@ -2170,6 +2172,12 @@ mod tests {
         let incomplete = serde_json::json!([{"Destination": "/workspace", "Type": "bind"}]);
         assert!(validate_melt_target_mount_inventory("target-id", &incomplete).is_err());
         assert!(validate_melt_target_mount_inventory("target-id", &serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn workflow_exec_user_is_explicitly_unprivileged() {
+        assert_eq!(exec_user_arguments(Some("runner")), ["--user", "runner"]);
+        assert!(exec_user_arguments(None).is_empty());
     }
 
     #[test]

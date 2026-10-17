@@ -2760,25 +2760,9 @@ fn save_gitrun_settings_root_command(input_path: &str) -> Result<(), Box<dyn std
     }
 
     let state_dir = PathBuf::from(&config.state_dir);
-    let state_metadata = std::fs::symlink_metadata(&state_dir)?;
-    if !state_metadata.is_dir()
-        || state_metadata.uid() != 0
-        || state_metadata.permissions().mode() & 0o022 != 0
-    {
-        return Err("trusted GitRun state directory is not root-owned and protected".into());
-    }
-    let parent = state_dir
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let parent_metadata = std::fs::symlink_metadata(parent)?;
-    let parent_mode = parent_metadata.permissions().mode();
-    if !parent_metadata.is_dir()
-        || parent_metadata.uid() != 0
-        || (parent_mode & 0o022 != 0 && parent_mode & 0o1000 == 0)
-    {
-        return Err("trusted GitRun state directory has an unsafe parent".into());
-    }
+    // Validate every ancestor before writing privileged policy state; an
+    // untrusted ancestor could otherwise rename a trusted-looking child dir.
+    gitrun_setup::validate_system_state_directory(&state_dir)?;
 
     let destination = GitRunSettings::path_for_state_dir(&state_dir);
     if let Ok(metadata) = std::fs::symlink_metadata(&destination) {

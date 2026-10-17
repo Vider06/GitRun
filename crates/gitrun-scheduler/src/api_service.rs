@@ -2370,9 +2370,7 @@ impl ApiExecutionBackend {
             )
             .cloned()
             .ok_or_else(|| {
-                failed(
-                    "GitDockRun --melt target is not bound to this repository and workflow run",
-                )
+                failed("GitDockRun --melt target is not bound to this repository and workflow run")
             })?;
             let target_job = self
                 .github
@@ -2382,7 +2380,9 @@ impl ApiExecutionBackend {
                     &target_binding.job,
                 )
                 .map_err(|error| failed(error.to_string()))?
-                .ok_or_else(|| failed("GitDockRun --melt target workflow job could not be verified"))?;
+                .ok_or_else(|| {
+                    failed("GitDockRun --melt target workflow job could not be verified")
+                })?;
             if !workflow_job_is_active_on_runner(
                 target_job.runner_name.as_deref(),
                 &target_job.status,
@@ -4792,10 +4792,7 @@ fn find_dock_melt_target_binding<'a>(
     target_container: &str,
     source_container_id: &str,
 ) -> Option<&'a DockBinding> {
-    if run_id == 0
-        || target_container.trim().is_empty()
-        || source_container_id.trim().is_empty()
-    {
+    if run_id == 0 || target_container.trim().is_empty() || source_container_id.trim().is_empty() {
         return None;
     }
     registry.bindings.iter().find(|binding| {
@@ -4926,15 +4923,27 @@ mod dock_melt_binding_tests {
         };
 
         assert!(find_dock_melt_target_binding(
-            &registry, "owner/repo", 99, "publish-runner", "test-id-build-runner"
+            &registry,
+            "owner/repo",
+            99,
+            "publish-runner",
+            "test-id-build-runner"
         )
         .is_none());
         assert!(find_dock_melt_target_binding(
-            &registry, "other/repo", 42, "publish-runner", "test-id-build-runner"
+            &registry,
+            "other/repo",
+            42,
+            "publish-runner",
+            "test-id-build-runner"
         )
         .is_none());
         assert!(find_dock_melt_target_binding(
-            &registry, "owner/repo", 42, "build-runner", "test-id-build-runner"
+            &registry,
+            "owner/repo",
+            42,
+            "build-runner",
+            "test-id-build-runner"
         )
         .is_none());
     }

@@ -36,14 +36,21 @@ macro_rules! eprintln {
 
 const TRUSTED_SYSTEM_CONFIG_FILE: &str = "/etc/gitrun/gitrun.env";
 
-fn update_config_path(system_install: bool) -> Option<PathBuf> {
+fn select_update_config_path(
+    system_install: bool,
+    configured_path: Option<PathBuf>,
+) -> Option<PathBuf> {
     if system_install {
         // Installed system updates must never write to an environment-selected
         // path. systemd's canonical EnvironmentFile is /etc/gitrun/gitrun.env.
         Some(PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE))
     } else {
-        persistent_config_path()
+        configured_path
     }
+}
+
+fn update_config_path(system_install: bool) -> Option<PathBuf> {
+    select_update_config_path(system_install, persistent_config_path())
 }
 
 fn initialize_system_update_config_path(system_install: bool) {
@@ -2672,9 +2679,9 @@ fn run_rollback(backup_path: &str, presenter: &mut presenter::CatPresenter) -> i
 #[cfg(test)]
 mod internal_lifecycle_command_tests {
     use super::{
-        update_config_path, update_signing_environment, update_signing_environment_changes, Cli,
-        Command, DEFAULT_UPDATE_PUBLIC_KEY_HEX, DEFAULT_UPDATE_PUBLIC_KEY_ID,
-        TRUSTED_SYSTEM_CONFIG_FILE,
+        select_update_config_path, update_config_path, update_signing_environment,
+        update_signing_environment_changes, Cli, Command, DEFAULT_UPDATE_PUBLIC_KEY_HEX,
+        DEFAULT_UPDATE_PUBLIC_KEY_ID, TRUSTED_SYSTEM_CONFIG_FILE,
     };
     use clap::Parser;
 
@@ -2710,18 +2717,23 @@ mod internal_lifecycle_command_tests {
 
     #[test]
     fn system_update_config_path_ignores_environment_selected_paths() {
+        let result = select_update_config_path(
+            true,
+            Some(std::path::PathBuf::from("/tmp/attacker-selected.env")),
+        );
         assert_eq!(
-            update_config_path(true),
+            result,
             Some(std::path::PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE))
         );
     }
 
     #[test]
-    fn developer_update_config_path_keeps_configurable_path_resolution() {
-        // A developer install continues to honor the normal persistent config
-        // selection, including explicit environment overrides where supplied.
-        let expected = super::persistent_config_path();
-        assert_eq!(update_config_path(false), expected);
+    fn developer_update_config_path_keeps_explicit_custom_path() {
+        let custom = std::path::PathBuf::from("/tmp/developer-selected.env");
+        assert_eq!(
+            select_update_config_path(false, Some(custom.clone())),
+            Some(custom)
+        );
     }
 
     fn parse_internal_command(arguments: &[&str]) -> Command {

@@ -2519,6 +2519,13 @@ impl ApiExecutionBackend {
         #[cfg(target_os = "linux")]
         validate_melt_target_has_no_mount_leases(&mount_registry, &target_id).map_err(failed)?;
 
+        // The lease registry cannot see ordinary Docker bind mounts, named
+        // volumes or tmpfs mounts attached outside the GitDockRun MOUNT API.
+        // Refuse MELT if any writable Docker mount can be reached by a tar
+        // member that is not covered by the shared protected-path exclusions.
+        docker::validate_melt_target_mounts_on(&docker::DockerHost::Local, &target_id)
+            .map_err(|error| failed(error.to_string()))?;
+
         // The source can be a completed dock-only runner that still has mount
         // leases in its namespace. Remove only leases owned by this exact old
         // binding before the source container is destroyed.

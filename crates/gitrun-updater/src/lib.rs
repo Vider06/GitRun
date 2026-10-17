@@ -1172,7 +1172,6 @@ fn rollback_installed_update_unchecked(
     }
     Ok(())
 }
-}
 
 pub fn health_check_installed_binary(
     binary: &Path,

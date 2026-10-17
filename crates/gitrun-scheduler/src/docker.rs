@@ -1919,17 +1919,11 @@ mod tests {
             if dot_prefix {
                 create.arg(".");
             } else {
-                create.args([
-                    "proc",
-                    "sys",
-                    "dev",
-                    "run",
-                    "var",
-                    "home",
-                    "workspace",
-                ]);
+                create.args(["proc", "sys", "dev", "run", "var", "home", "workspace"]);
             }
-            let created = create.output().expect("tar must be installed for this test");
+            let created = create
+                .output()
+                .expect("tar must be installed for this test");
             assert!(
                 created.status.success(),
                 "creating test archive failed: {}",
@@ -1974,7 +1968,6 @@ mod tests {
 
         std::fs::remove_dir_all(&root).unwrap();
     }
-
 
     #[test]
     fn remote_linux_runners_fail_closed_without_api_socket_forwarding() {

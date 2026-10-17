@@ -94,11 +94,6 @@ pub fn prepare_directories(
         GitRunSettings::default()
             .save(&settings_path)
             .map_err(|error| SetupError::Io(std::io::Error::other(error.to_string())))?;
-        let desktop_uid = std::env::var("PKEXEC_UID")
-            .or_else(|_| std::env::var("SUDO_UID"))
-            .ok()
-            .and_then(|value| value.parse::<u32>().ok());
-        secure_system_settings_file(&settings_path, desktop_uid)?;
     }
 
     Ok(SetupReport {

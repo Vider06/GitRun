@@ -83,7 +83,10 @@ pub fn prepare_directories(
     let state_dir = PathBuf::from(&config.state_dir);
     let log_dir = PathBuf::from(&config.log_dir);
     ensure_directory(&config_dir, 0o700)?;
-    ensure_directory(&state_dir, 0o750)?;
+    // This directory contains privileged registry and lease entries. Keep
+    // it searchable for the desktop user's explicitly-owned settings/vault
+    // children, but never writable by that user.
+    ensure_directory(&state_dir, 0o755)?;
     ensure_directory(&log_dir, 0o750)?;
 
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);

@@ -244,12 +244,9 @@ pub(crate) fn validate_state_directory_parent(state_dir: &Path) -> Result<(), Do
             let mode = metadata.permissions().mode();
             let owner_is_trusted = metadata.uid() == 0 || metadata.uid() == effective_uid();
             let writable_by_others = mode & 0o022 != 0;
-            let safe_sticky_shared_dir = metadata.uid() == 0
-                && mode & 0o1000 != 0
-                && writable_by_others;
-            if !owner_is_trusted
-                || (writable_by_others && !safe_sticky_shared_dir)
-            {
+            let safe_sticky_shared_dir =
+                metadata.uid() == 0 && mode & 0o1000 != 0 && writable_by_others;
+            if !owner_is_trusted || (writable_by_others && !safe_sticky_shared_dir) {
                 return Err(DockRegistryError::Invalid(format!(
                     "registry state ancestor {} is owned by or writable by an untrusted identity",
                     prefix.display()

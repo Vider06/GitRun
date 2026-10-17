@@ -268,11 +268,17 @@ impl MountRegistry {
         let registry: Self = serde_json::from_str(&raw)
             .map_err(|error| format!("decode GitDockRun mount registry: {error}"))?;
 
+        registry.validate()?;
+        Ok(registry)
+    }
+
+    fn validate(&self) -> Result<(), String> {
         // Mount IDs are capabilities used by UNMOUNT and cleanup. A duplicate
         // ID makes ownership ambiguous and removing by ID could erase unrelated
-        // leases after cleaning only one record. Reject the whole registry.
+        // leases after cleaning only one record. Enforce this invariant on both
+        // load and save, not only when the registry is read back later.
         let mut ids = std::collections::BTreeSet::new();
-        for mount in &registry.mounts {
+        for mount in &self.mounts {
             if mount.id.trim().is_empty() {
                 return Err("GitDockRun mount registry contains an empty mount ID".into());
             }
@@ -294,11 +300,11 @@ impl MountRegistry {
                 );
             }
         }
-
-        Ok(registry)
+        Ok(())
     }
 
     fn save(&self, state_dir: &Path) -> Result<(), String> {
+        self.validate()?;
         fs::create_dir_all(state_dir)
             .map_err(|error| format!("create mount registry directory: {error}"))?;
         validate_mount_registry_directory(state_dir)?;
@@ -4019,10 +4025,62 @@ mod mount_runtime_tests {
             ("empty", vec![record("  ", "runner-a")], "empty mount ID"),
         ] {
             let registry = MountRegistry { mounts };
-            registry.save(&dir).unwrap();
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                MountRegistry::path(&dir),
+                serde_json::to_vec(&registry).unwrap(),
+            )
+            .unwrap();
             let error =
                 MountRegistry::load(&dir).expect_err("ambiguous mount registry must fail closed");
             assert!(error.contains(expected), "{name}: {error}");
+            fs::remove_file(MountRegistry::path(&dir)).unwrap();
+        }
+    }
+
+    #[test]
+    fn mount_registry_save_rejects_duplicate_or_empty_mount_ids() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-mount-registry-save-invalid-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _dir_guard = TemporaryDirectory(dir.clone());
+        let record = |id: &str, runner: &str| MountRecord {
+            id: id.into(),
+            repository: "owner/repo".into(),
+            run_id: 42,
+            job: "build".into(),
+            requester_runner: runner.into(),
+            container: "runner-container".into(),
+            container_id: "test-container-id".into(),
+            source: "/tmp/source".into(),
+            target: "/workspace/mount".into(),
+            read_only: true,
+            source_device: Some(1),
+            source_inode: Some(2),
+            kernel_mount_id: Some(10),
+            state: "mounted".into(),
+            created_at: now(),
+        };
+
+        for (name, mounts, expected) in [
+            (
+                "duplicate",
+                vec![record("same-id", "runner-a"), record("same-id", "runner-b")],
+                "duplicate mount ID",
+            ),
+            ("empty", vec![record("  ", "runner-a")], "empty mount ID"),
+        ] {
+            let registry = MountRegistry { mounts };
+            let error = registry
+                .save(&dir)
+                .expect_err("invalid mount registry must not be persisted");
+            assert!(error.contains(expected), "{name}: {error}");
+            assert!(
+                !MountRegistry::path(&dir).exists(),
+                "{name}: invalid registry file must not be created"
+            );
         }
     }
 

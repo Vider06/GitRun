@@ -814,12 +814,12 @@ pub fn bootstrap_linux_with_auth_and_profile(
     let config_path = config_dir.join("gitrun.env");
     let rendered = render_bootstrap_config(&auth, &repositories.join(","));
     write_resource(&config_path, &rendered, 0o600)?;
+    // The dashboard only needs read access to system configuration. Keep the
+    // file root-owned and grant read access to the installer's primary group;
+    // all configuration writes go through the administrator-authorized helper.
+    secure_system_config_file(&config_path, owner_uid)?;
 
     if let Some(uid) = owner_uid {
-        // Keep the system config root-owned: the scheduler/updater trust
-        // boundary requires a root-controlled file. The dashboard persists
-        // edits through its administrator-authorized helper.
-        chown_path(&config_path, 0)?;
         // Keep the shared state directory root-owned. Specific user-managed
         // files/directories (settings, vault, logs) are granted ownership below;
         // the runner must not be able to replace privileged registry files.
@@ -1244,6 +1244,83 @@ fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
         .and_then(|line| line.split(':').next().map(str::to_owned))
         .ok_or_else(|| SetupError::Command(format!("unable to resolve username for uid {uid}")))?;
     run_command(Command::new("/usr/sbin/usermod").args(["-aG", "docker", &user]))
+}
+
+fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
+    let output = Command::new("/usr/bin/getent")
+        .args(["passwd", &uid.to_string()])
+        .output()
+        .map_err(|error| SetupError::Command(format!("resolve primary group for uid {uid}: {error}")))?;
+    if !output.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to resolve passwd entry for uid {uid}"
+        )));
+    }
+    let line = String::from_utf8(output.stdout)
+        .map_err(|error| SetupError::Command(format!("decode passwd entry for uid {uid}: {error}")))?;
+    let gid = line
+        .trim_end()
+        .split(':')
+        .nth(3)
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or_else(|| SetupError::Command(format!("unable to resolve primary gid for uid {uid}")))?;
+    Ok(gid)
+}
+
+/// Secure the installed system config for use by the privileged scheduler and
+/// read-only desktop UI. The file and its parent must be regular trusted paths;
+/// writes stay root-owned, while a known desktop user's primary group receives
+/// read-only access. With no desktop user, keep the file root-only.
+pub fn secure_system_config_file(path: &Path, desktop_uid: Option<u32>) -> Result<(), SetupError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let parent = path.parent().ok_or_else(|| {
+        SetupError::Command("system config path has no parent directory".into())
+    })?;
+    let parent_metadata = fs::symlink_metadata(parent)?;
+    if !parent_metadata.is_dir()
+        || parent_metadata.uid() != 0
+        || parent_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err(SetupError::Command(
+            "system config parent must be a root-owned, non-writable directory".into(),
+        ));
+    }
+
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(SetupError::Command(
+            "system config must be a regular, non-symlink file".into(),
+        ));
+    }
+
+    let mode = if let Some(uid) = desktop_uid {
+        let gid = primary_gid_for_uid(uid)?;
+        run_command(
+            Command::new("/usr/bin/chown")
+                .arg(format!("0:{gid}"))
+                .arg(path),
+        )?;
+        0o640
+    } else {
+        run_command(Command::new("/usr/bin/chown").arg("0:0").arg(path))?;
+        0o600
+    };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+
+    let final_metadata = fs::symlink_metadata(path)?;
+    let expected_gid = desktop_uid.map(primary_gid_for_uid).transpose()?;
+    if final_metadata.file_type().is_symlink()
+        || !final_metadata.is_file()
+        || final_metadata.uid() != 0
+        || expected_gid.is_some_and(|gid| final_metadata.gid() != gid)
+        || final_metadata.permissions().mode() & 0o777 != mode
+    {
+        return Err(SetupError::Command(
+            "system config ownership/permissions failed postcondition verification".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {

@@ -605,6 +605,63 @@ mod tests {
 mod security_tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn registry_rejects_group_writable_parent_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-unsafe-parent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o770)).unwrap();
+        let state_dir = root.join("state");
+
+        assert!(DockRegistry::load(&state_dir).is_err());
+        assert!(DockRegistry::default().save(&state_dir).is_err());
+
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn registry_rejects_directory_owned_by_another_identity_when_root() {
+        if effective_uid() != 0 {
+            return;
+        }
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-wrong-owner-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let c_path = std::ffi::CString::new(root.as_os_str().as_bytes()).unwrap();
+        // SAFETY: c_path is a valid NUL-terminated path; this test runs only as root.
+        let changed = unsafe { libc::chown(c_path.as_ptr(), 65534, 65534) };
+        if changed != 0 {
+            let _ = fs::remove_dir_all(&root);
+            panic!("could not prepare wrong-owner registry fixture");
+        }
+        assert!(DockRegistry::load(&root).is_err());
+        let _ = std::process::Command::new("/usr/bin/chown")
+            .args(["0:0", root.to_str().unwrap()])
+            .status();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     fn binding(run_id: u64, runner: &str) -> DockBinding {
         DockBinding {
             repository: "Vider06/GitRun".into(),

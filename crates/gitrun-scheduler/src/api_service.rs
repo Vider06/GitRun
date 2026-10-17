@@ -9,7 +9,9 @@ use crate::dock_registry::{validate_state_directory_parent, DockBinding, DockReg
 use crate::docker;
 use crate::GitHubClient;
 use gitrun_core::{
-    api_policy::parse_boolean_argument, Config, GitRunApi, GitRunOperation, GitRunSettings,
+    api_policy::parse_boolean_argument,
+    command_policy::validate_simple_shell_command,
+    Config, GitRunApi, GitRunOperation, GitRunSettings,
 };
 use gitrun_exe::{
     ipc::{WireRequest, WireResponse, DEFAULT_SOCKET_PATH},
@@ -1823,6 +1825,7 @@ impl ApiExecutionBackend {
     ) -> Result<i32, ExecutionError> {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
+        validate_simple_shell_command(command).map_err(failed)?;
 
         docker::exec_container_stream_as_runner(
             container.as_str(),
@@ -1845,6 +1848,7 @@ impl ApiExecutionBackend {
     ) -> Result<ExecutionResult, ExecutionError> {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
+        validate_simple_shell_command(command).map_err(failed)?;
         let output = docker::exec_container_as_runner(container.as_str(), &["sh", "-c", command])
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)

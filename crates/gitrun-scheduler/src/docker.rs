@@ -31,6 +31,38 @@ const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
 const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_DOCKER_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const DOCKER_OUTPUT_TRUNCATION_MARKER: &[u8] = b"\n[Docker output truncated at 8 MiB]";
+
+// Docker export archive members are normally root-relative (for example
+// `proc/mounts`), but tar implementations and archive producers can also
+// emit a leading `./`. Keep both spellings excluded: using only `./proc`
+// silently fails to match root-relative members and can merge runtime/runner
+// state into the destination container.
+const MELT_TAR_EXCLUDE_ARGS: &[&str] = &[
+    "--exclude=./proc",
+    "--exclude=./proc/*",
+    "--exclude=proc",
+    "--exclude=proc/*",
+    "--exclude=./sys",
+    "--exclude=./sys/*",
+    "--exclude=sys",
+    "--exclude=sys/*",
+    "--exclude=./dev",
+    "--exclude=./dev/*",
+    "--exclude=dev",
+    "--exclude=dev/*",
+    "--exclude=./run",
+    "--exclude=./run/*",
+    "--exclude=run",
+    "--exclude=run/*",
+    "--exclude=./var/run",
+    "--exclude=./var/run/*",
+    "--exclude=var/run",
+    "--exclude=var/run/*",
+    "--exclude=./home/runner/actions-runner",
+    "--exclude=./home/runner/actions-runner/*",
+    "--exclude=home/runner/actions-runner",
+    "--exclude=home/runner/actions-runner/*",
+];
 const GITRUN_API_SOCKET_GID: &str = "10000";
 
 /// Where a Docker command actually runs. `Local` is the existing behavior
@@ -1235,19 +1267,8 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
             "-C",
             "/",
             "--no-same-owner",
-            "--exclude=./proc",
-            "--exclude=./proc/*",
-            "--exclude=./sys",
-            "--exclude=./sys/*",
-            "--exclude=./dev",
-            "--exclude=./dev/*",
-            "--exclude=./run",
-            "--exclude=./run/*",
-            "--exclude=./var/run",
-            "--exclude=./var/run/*",
-            "--exclude=./home/runner/actions-runner",
-            "--exclude=./home/runner/actions-runner/*",
         ])
+        .args(MELT_TAR_EXCLUDE_ARGS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1851,6 +1872,109 @@ fn ensure_label(labels: &str, extra: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn melt_exclusions_cover_root_relative_and_dot_prefixed_tar_members() {
+        use std::process::Command;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock must be after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-melt-exclusion-test-{}-{nonce}",
+            std::process::id()
+        ));
+        let source = root.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+
+        for directory in [
+            "proc",
+            "sys",
+            "dev",
+            "run",
+            "var/run",
+            "home/runner/actions-runner",
+            "workspace",
+        ] {
+            std::fs::create_dir_all(source.join(directory)).unwrap();
+        }
+        for (relative, contents) in [
+            ("proc/process-info", "proc"),
+            ("sys/kernel-info", "sys"),
+            ("dev/console", "dev"),
+            ("run/daemon.pid", "run"),
+            ("var/run/daemon.pid", "var-run"),
+            ("home/runner/actions-runner/run.sh", "runner"),
+            ("workspace/artifact.txt", "must-transfer"),
+        ] {
+            std::fs::write(source.join(relative), contents).unwrap();
+        }
+
+        for (index, dot_prefix) in [false, true].into_iter().enumerate() {
+            let archive = root.join(format!("source-{index}.tar"));
+            let mut create = Command::new("tar");
+            create.current_dir(&source).arg("-cf").arg(&archive);
+            if dot_prefix {
+                create.arg(".");
+            } else {
+                create.args([
+                    "proc",
+                    "sys",
+                    "dev",
+                    "run",
+                    "var",
+                    "home",
+                    "workspace",
+                ]);
+            }
+            let created = create.output().expect("tar must be installed for this test");
+            assert!(
+                created.status.success(),
+                "creating test archive failed: {}",
+                String::from_utf8_lossy(&created.stderr)
+            );
+
+            let destination = root.join(format!("destination-{index}"));
+            std::fs::create_dir_all(&destination).unwrap();
+            let extracted = Command::new("tar")
+                .arg("-xpf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&destination)
+                .arg("--no-same-owner")
+                .args(MELT_TAR_EXCLUDE_ARGS)
+                .output()
+                .expect("tar must be installed for this test");
+            assert!(
+                extracted.status.success(),
+                "extracting test archive failed: {}",
+                String::from_utf8_lossy(&extracted.stderr)
+            );
+
+            assert_eq!(
+                std::fs::read_to_string(destination.join("workspace/artifact.txt")).unwrap(),
+                "must-transfer"
+            );
+            for excluded in [
+                "proc/process-info",
+                "sys/kernel-info",
+                "dev/console",
+                "run/daemon.pid",
+                "var/run/daemon.pid",
+                "home/runner/actions-runner/run.sh",
+            ] {
+                assert!(
+                    !destination.join(excluded).exists(),
+                    "protected path {excluded} was extracted (dot_prefix={dot_prefix})"
+                );
+            }
+        }
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
 
     #[test]
     fn remote_linux_runners_fail_closed_without_api_socket_forwarding() {

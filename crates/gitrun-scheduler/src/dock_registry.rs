@@ -219,8 +219,7 @@ pub(crate) fn validate_state_directory_parent(state_dir: &Path) -> Result<(), Do
         // directory owned by an unprivileged user. Sticky shared directories
         // (e.g. /tmp in unit tests) are safe for unique child entries because
         // the child itself is separately owner-checked and private.
-        if metadata.uid() != effective_uid()
-            && mode & 0o1000 == 0
+        if metadata.uid() != effective_uid() && mode & 0o1000 == 0
             || mode & 0o002 != 0 && mode & 0o1000 == 0
             || mode & 0o020 != 0 && mode & 0o1000 == 0
         {

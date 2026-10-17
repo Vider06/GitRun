@@ -879,11 +879,15 @@ mod linux {
         if registers.orig_rax == libc::SYS_execve as u64 {
             Ok((registers.rdi, registers.rsi, -1i64, 0u64))
         } else if registers.orig_rax == libc::SYS_execveat as u64 {
+            // x86_64 execveat(dirfd, pathname, argv, envp, flags) maps
+            // dirfd/pathname/argv/envp/flags to rdi/rsi/rdx/r10/r8. Reading
+            // r10 as flags confuses the envp pointer with AT_EMPTY_PATH and
+            // can misclassify valid descriptor-based execution.
             Ok((
                 registers.rsi,
                 registers.rdx,
                 registers.rdi as i64,
-                registers.r10,
+                registers.r8,
             ))
         } else {
             Err(SupervisorError::InspectFailed(pid))
@@ -1282,7 +1286,8 @@ mod linux {
             registers.rdi = (-100i64) as u64;
             registers.rsi = 0x1111;
             registers.rdx = 0x2222;
-            registers.r10 = EXECVEAT_AT_EMPTY_PATH;
+            registers.r10 = 0x3333; // envp pointer, not flags
+            registers.r8 = EXECVEAT_AT_EMPTY_PATH;
             let (path, argv, dirfd, flags) =
                 exec_register_arguments(&registers, test_pid()).unwrap();
             assert_eq!(

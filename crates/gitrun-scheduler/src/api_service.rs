@@ -1561,8 +1561,7 @@ impl ApiExecutionBackend {
         // melts, and scheduler reconciliation. Atomic rename alone prevents
         // torn reads, not lost updates between concurrent writers.
         #[cfg(target_os = "linux")]
-        let _lifecycle_guard =
-            acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
+        let _lifecycle_guard = acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
 
         // Load and prepare the registry before changing container lifecycle;
         // a registry read/decode failure must not leave a runner disabled with
@@ -1621,8 +1620,7 @@ impl ApiExecutionBackend {
         // service processes. Keep these locks through binding removal so a
         // concurrent MOUNT cannot create a fresh lease after cleanup.
         #[cfg(target_os = "linux")]
-        let lifecycle_guard =
-            acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
+        let lifecycle_guard = acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
 
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
@@ -1800,8 +1798,7 @@ impl ApiExecutionBackend {
 
     #[cfg(target_os = "linux")]
     fn dock_mount(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        let _lifecycle_guard =
-            acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
+        let _lifecycle_guard = acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
         let binding = self.require_dock_binding_record(request)?;
         let source = arg(request, "source")?;
         let target = arg(request, "target")?;
@@ -2238,8 +2235,7 @@ impl ApiExecutionBackend {
         // Serialize it with concurrent connect/disconnect and mount lifecycle
         // operations so no stale snapshot can overwrite a newer registry.
         #[cfg(target_os = "linux")]
-        let _lifecycle_guard =
-            acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
+        let _lifecycle_guard = acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
 
         let source = self.require_dock_binding(request)?;
         let target_name = match request.arguments.get("target").map(String::as_str) {

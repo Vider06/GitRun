@@ -43,7 +43,7 @@
 //! backdoor); back it up if the vault holds anything that isn't otherwise
 //! recoverable.
 
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use rand::{rngs::SysRng, TryRng};
 use serde::{Deserialize, Serialize};
@@ -155,7 +155,8 @@ const MASTER_KEY_FILE: &str = "master.key";
 const SECRETS_FILE: &str = "secrets.json";
 const NONCE_LEN: usize = 12;
 const DATA_KEY_CONTEXT: &[u8] = b"GitRun/GitVault/data-key/v1";
-const DATA_KEY_VERSION: u8 = 1;
+const DERIVED_KEY_VERSION_WITHOUT_AAD: u8 = 1;
+const DATA_KEY_VERSION: u8 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSecret {
@@ -175,8 +176,9 @@ struct StoredSecret {
     /// behaving exactly as before (available to every repo).
     #[serde(default = "Scope::default_for_migration")]
     scope: Scope,
-    /// 0 is the legacy master-key encryption format. New records use a
-    /// domain-separated data key derived from the master/root key.
+    /// 0 is the legacy master-key format; 1 uses the derived data key but
+    /// does not authenticate metadata; 2 binds both secret name and scope as
+    /// AES-GCM associated data. New writes always use version 2.
     #[serde(default)]
     key_version: u8,
 }
@@ -282,9 +284,16 @@ impl Vault {
         let nonce = Nonce::try_from(nonce_bytes.as_slice())
             .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
 
+        let aad = secret_associated_data(name, &scope);
         let ciphertext = self
             .cipher
-            .encrypt(&nonce, value.as_bytes())
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: value.as_bytes(),
+                    aad: &aad,
+                },
+            )
             // aes-gcm encryption failures are not caused by operator-provided
             // secret content; still report them with the correct operation.
             .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
@@ -354,7 +363,23 @@ impl Vault {
             VaultError::DecryptionFailed(name.to_owned())
         })?;
         let plaintext = match entry.key_version {
-            DATA_KEY_VERSION => self.cipher.decrypt(&nonce, ciphertext.as_slice()),
+            DATA_KEY_VERSION => {
+                let aad = secret_associated_data(name, &entry.scope);
+                self.cipher.decrypt(
+                    &nonce,
+                    Payload {
+                        msg: ciphertext.as_slice(),
+                        aad: &aad,
+                    },
+                )
+            }
+            DERIVED_KEY_VERSION_WITHOUT_AAD => {
+                // Compatibility for records written before scope/name metadata
+                // was authenticated. A successful read does not retroactively
+                // prove their metadata was never modified; rewriting the secret
+                // stores it in the authenticated v2 format.
+                self.cipher.decrypt(&nonce, ciphertext.as_slice())
+            }
             0 => self.legacy_cipher.decrypt(&nonce, ciphertext.as_slice()),
             _ => Err(aes_gcm::Error),
         }
@@ -556,6 +581,28 @@ impl Vault {
         sync_parent_dir(&self.dir)
             .map_err(|error| VaultError::DurabilityUncertain(error.to_string()))
     }
+}
+
+/// Bind security-sensitive metadata to the ciphertext authentication tag.
+/// Otherwise an editor of secrets.json could change a record's scope while
+/// leaving the AES-GCM ciphertext untouched, potentially broadening visibility.
+fn secret_associated_data(name: &str, scope: &Scope) -> Vec<u8> {
+    const DOMAIN: &[u8] = b"GitRun/GitVault/secret-aad/v2\0";
+    let (scope_tag, scope_value): (u8, &str) = match scope {
+        Scope::Global => (0, ""),
+        Scope::Group(group) => (1, group.as_str()),
+        Scope::Repo(repository) => (2, repository.as_str()),
+    };
+    let name_bytes = name.as_bytes();
+    let scope_bytes = scope_value.as_bytes();
+    let mut aad = Vec::with_capacity(DOMAIN.len() + 1 + 8 + name_bytes.len() + 8 + scope_bytes.len());
+    aad.extend_from_slice(DOMAIN);
+    aad.push(scope_tag);
+    aad.extend_from_slice(&(name_bytes.len() as u64).to_be_bytes());
+    aad.extend_from_slice(name_bytes);
+    aad.extend_from_slice(&(scope_bytes.len() as u64).to_be_bytes());
+    aad.extend_from_slice(scope_bytes);
+    aad
 }
 
 fn validate_name(name: &str) -> Result<()> {
@@ -1154,6 +1201,33 @@ mod tests {
             reloaded.get("key"),
             Err(VaultError::DecryptionFailed(_))
         ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn changing_scope_metadata_invalidates_authenticated_ciphertext() {
+        let dir = temp_dir("scope-aad-tamper");
+        let mut vault = Vault::open(&dir).unwrap();
+        let original_scope = Scope::Repo("owner/private-repo".into());
+        vault
+            .set_scoped("DEPLOY_TOKEN", "private-value", original_scope.clone())
+            .unwrap();
+
+        // Simulate an editor that can alter vault metadata but doesn't know the
+        // master key: keep ciphertext and nonce exactly as written, but promote
+        // the repository-scoped record to global. AAD authentication must fail.
+        let key = storage_key("DEPLOY_TOKEN", &original_scope);
+        vault.data.secrets.get_mut(&key).unwrap().scope = Scope::Global;
+        assert!(matches!(
+            vault.get_effective_for_repo("another/repo", &[]),
+            Err(VaultError::NotFound(_))
+        ) == false, "the tampered global metadata should make the record visible for selection");
+        assert!(matches!(
+            vault.get_effective_for_repo("DEPLOY_TOKEN", "another/repo", &[]),
+            Err(VaultError::DecryptionFailed(name)) if name == "DEPLOY_TOKEN"
+        ));
+
+        drop(vault);
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -607,10 +607,7 @@ mod tests {
             GitRunApi::GitDockRun,
             GitRunOperation::Execute,
             Some("cache"),
-            BTreeMap::from([(
-                "command".into(),
-                "cargo test; echo injected".into(),
-            )]),
+            BTreeMap::from([("command".into(), "cargo test; echo injected".into())]),
             Some(&policy),
         );
         assert!(matches!(

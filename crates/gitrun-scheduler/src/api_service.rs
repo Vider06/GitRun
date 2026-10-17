@@ -9,9 +9,8 @@ use crate::dock_registry::{validate_state_directory_parent, DockBinding, DockReg
 use crate::docker;
 use crate::GitHubClient;
 use gitrun_core::{
-    api_policy::parse_boolean_argument,
-    command_policy::validate_simple_shell_command,
-    Config, GitRunApi, GitRunOperation, GitRunSettings,
+    api_policy::parse_boolean_argument, command_policy::validate_simple_shell_command, Config,
+    GitRunApi, GitRunOperation, GitRunSettings,
 };
 use gitrun_exe::{
     ipc::{WireRequest, WireResponse, DEFAULT_SOCKET_PATH},

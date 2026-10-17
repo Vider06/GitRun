@@ -1584,6 +1584,81 @@ impl ApiExecutionBackend {
         // no durable binding describing why.
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
+
+        // A persistent runner can be assigned a later workflow job while the
+        // DockRegistry still contains its previous job binding. If that old job
+        // left host mounts attached in this same container namespace, replacing
+        // the binding without cleaning those leases would expose them to the new
+        // job. Reconcile the prior job before upserting the new binding.
+        if let Some(previous) = registry.binding_for_container(&runner_name).cloned() {
+            if previous.container_id == container_id {
+                if previous.repository != request.repository {
+                    return Err(failed(
+                        "GitDockRun refuses to reuse a container bound to a different repository",
+                    ));
+                }
+                if connect_reuses_container_from_prior_binding(
+                    &previous,
+                    &request.repository,
+                    run_id,
+                    job,
+                    &self.caller.runner,
+                    &runner_name,
+                    &container_id,
+                ) {
+                    if previous.dock_only {
+                        return Err(failed(
+                            "GitDockRun cannot reconnect a container still marked as dock-only",
+                        ));
+                    }
+                    let previous_job = self
+                        .github
+                        .find_workflow_job(
+                            &previous.repository,
+                            previous.run_id,
+                            &previous.job,
+                        )
+                        .map_err(|error| failed(error.to_string()))?
+                        .ok_or_else(|| {
+                            failed(
+                                "GitDockRun previous container binding has no verifiable GitHub job",
+                            )
+                        })?;
+                    if !workflow_job_is_completed(
+                        &previous_job.status,
+                        previous_job.conclusion.as_deref(),
+                    ) {
+                        return Err(failed(
+                            "GitDockRun refuses to reuse a runner before its previous bound job is completed",
+                        ));
+                    }
+
+                    #[cfg(target_os = "linux")]
+                    {
+                        let mut mount_registry =
+                            MountRegistry::load(&self.state_dir).map_err(failed)?;
+                        cleanup_owned_mounts_for_disconnect(
+                            &mut mount_registry,
+                            &self.state_dir,
+                            MountCleanupOwner {
+                                repository: &previous.repository,
+                                run_id: previous.run_id,
+                                job: &previous.job,
+                                container_id: &previous.container_id,
+                                requester_runner: &previous.requester_runner,
+                            },
+                            cleanup_mount_record,
+                        )
+                        .map_err(|error| {
+                            failed(format!(
+                                "cannot reuse runner until its previous GitDockRun mounts are cleaned: {error}"
+                            ))
+                        })?;
+                    }
+                }
+            }
+        }
+
         registry.upsert(DockBinding {
             repository: request.repository.clone(),
             run_id,
@@ -4785,6 +4860,23 @@ fn find_dock_melt_source_binding<'a>(
     })
 }
 
+fn connect_reuses_container_from_prior_binding(
+    previous: &DockBinding,
+    repository: &str,
+    run_id: u64,
+    job: &str,
+    requester_runner: &str,
+    container: &str,
+    container_id: &str,
+) -> bool {
+    previous.container == container
+        && previous.container_id == container_id
+        && (previous.repository != repository
+            || previous.run_id != run_id
+            || previous.job != job
+            || previous.requester_runner != requester_runner)
+}
+
 fn find_dock_melt_target_binding<'a>(
     registry: &'a DockRegistry,
     repository: &str,
@@ -4986,7 +5078,10 @@ mod dock_melt_binding_tests {
 
 #[cfg(test)]
 mod dock_connect_identity_tests {
-    use super::{resolve_dock_connect_dynamic, validate_dock_connect_caller_identity};
+    use super::{
+        connect_reuses_container_from_prior_binding, resolve_dock_connect_dynamic,
+        validate_dock_connect_caller_identity, DockBinding,
+    };
     use std::cell::RefCell;
 
     #[test]
@@ -5026,6 +5121,49 @@ mod dock_connect_identity_tests {
             ),
             Ok(())
         );
+    }
+
+    #[test]
+    fn connect_detects_reused_persistent_container_with_previous_job_binding() {
+        let previous = DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 41,
+            job: "build".into(),
+            container: "runner-a".into(),
+            container_id: "container-a".into(),
+            dynamic: false,
+            dock_only: false,
+            requester_runner: "runner-a".into(),
+            connected_at: 1,
+        };
+
+        assert!(connect_reuses_container_from_prior_binding(
+            &previous,
+            "owner/repo",
+            42,
+            "publish",
+            "runner-a",
+            "runner-a",
+            "container-a",
+        ));
+        assert!(!connect_reuses_container_from_prior_binding(
+            &previous,
+            "owner/repo",
+            41,
+            "build",
+            "runner-a",
+            "runner-a",
+            "container-a",
+        ));
+        assert!(!connect_reuses_container_from_prior_binding(
+            &previous,
+            "owner/repo",
+            42,
+            "publish",
+            "runner-a",
+            "runner-a",
+            "container-replacement",
+        ));
     }
 
     #[test]

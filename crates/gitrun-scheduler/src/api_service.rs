@@ -5177,10 +5177,11 @@ mod dock_melt_mount_isolation_tests {
             mounts: vec![mount_record("different-container-id")],
         };
         assert!(validate_melt_target_has_no_mount_leases(&registry, "target-container-id").is_ok());
-        assert!(
-            validate_melt_target_has_no_mount_leases(&MountRegistry::default(), "target-container-id")
-                .is_ok()
-        );
+        assert!(validate_melt_target_has_no_mount_leases(
+            &MountRegistry::default(),
+            "target-container-id"
+        )
+        .is_ok());
     }
 }
 

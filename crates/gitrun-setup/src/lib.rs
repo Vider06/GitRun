@@ -1261,14 +1261,70 @@ fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
     let line = String::from_utf8(output.stdout).map_err(|error| {
         SetupError::Command(format!("decode passwd entry for uid {uid}: {error}"))
     })?;
-    let gid = line
-        .trim_end()
-        .split(':')
-        .nth(3)
+    let fields: Vec<_> = line.trim_end().split(':').collect();
+    let username = fields
+        .first()
+        .copied()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| SetupError::Command(format!("unable to resolve username for uid {uid}")))?;
+    let gid = fields
+        .get(3)
         .and_then(|value| value.parse::<u32>().ok())
         .ok_or_else(|| {
             SetupError::Command(format!("unable to resolve primary gid for uid {uid}"))
         })?;
+
+    // A group-readable config can contain GitHub credentials. Never grant that
+    // access to a shared primary group: prove that only the intended account
+    // uses this GID as its primary group and that no other account is listed as
+    // a supplementary member. Typical desktop installs use a private user group.
+    let all_users = Command::new("/usr/bin/getent")
+        .arg("passwd")
+        .output()
+        .map_err(|error| SetupError::Command(format!("inspect passwd database: {error}")))?;
+    if !all_users.status.success() {
+        return Err(SetupError::Command(
+            "unable to inspect passwd database to validate a private config group".into(),
+        ));
+    }
+    let all_users = String::from_utf8(all_users.stdout)
+        .map_err(|error| SetupError::Command(format!("decode passwd database: {error}")))?;
+    for account in all_users.lines() {
+        let fields: Vec<_> = account.split(':').collect();
+        if fields.first().copied() == Some(username) {
+            continue;
+        }
+        let other_uid = fields.get(2).and_then(|value| value.parse::<u32>().ok());
+        let other_gid = fields.get(3).and_then(|value| value.parse::<u32>().ok());
+        if other_uid.is_some_and(|other| other != uid) && other_gid == Some(gid) {
+            return Err(SetupError::Command(format!(
+                "primary group {gid} is shared with another account; refusing group-readable system config"
+            )));
+        }
+    }
+
+    let group = Command::new("/usr/bin/getent")
+        .args(["group", &gid.to_string()])
+        .output()
+        .map_err(|error| SetupError::Command(format!("inspect config group {gid}: {error}")))?;
+    if !group.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to resolve config group {gid}"
+        )));
+    }
+    let group = String::from_utf8(group.stdout)
+        .map_err(|error| SetupError::Command(format!("decode config group {gid}: {error}")))?;
+    let group_members = group.trim_end().split(':').nth(3).unwrap_or("");
+    if group_members
+        .split(',')
+        .filter(|member| !member.is_empty())
+        .any(|member| member != username)
+    {
+        return Err(SetupError::Command(format!(
+            "primary group {gid} has other supplementary members; refusing group-readable system config"
+        )));
+    }
+
     Ok(gid)
 }
 

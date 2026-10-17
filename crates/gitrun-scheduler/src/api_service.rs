@@ -2253,7 +2253,53 @@ impl ApiExecutionBackend {
         #[cfg(target_os = "linux")]
         let _lifecycle_guard = acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
 
-        let source = self.require_dock_binding(request)?;
+        let run_id = request_run_id(request);
+        if run_id == 0 {
+            return Err(failed("GitDockRun --melt requires an authoritative workflow run"));
+        }
+        let source_name = request
+            .resource
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| failed("GitDockRun --melt has no source container resource"))?;
+        let mut registry =
+            DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
+        let source_binding = find_dock_melt_source_binding(
+            &registry,
+            &request.repository,
+            run_id,
+            &request.job,
+            source_name,
+        )
+        .cloned()
+        .ok_or_else(|| {
+            failed(
+                "GitDockRun --melt source must be bound to a different job in this workflow run",
+            )
+        })?;
+        let source = source_binding.container_id.clone();
+        if source.is_empty() {
+            return Err(failed("GitDockRun --melt source binding has no immutable container ID"));
+        }
+        let current_source_id = docker::container_id(&source_binding.container)
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed("GitDockRun --melt source container no longer exists"))?;
+        if current_source_id != source {
+            return Err(failed(
+                "GitDockRun --melt source binding is stale: container identity changed",
+            ));
+        }
+        let source_job = self
+            .github
+            .find_workflow_job(&request.repository, source_binding.run_id, &source_binding.job)
+            .map_err(|error| failed(error.to_string()))?
+            .ok_or_else(|| failed("GitDockRun --melt source workflow job could not be verified"))?;
+        if !workflow_job_is_completed(&source_job.status, source_job.conclusion.as_deref()) {
+            return Err(failed(
+                "GitDockRun --melt source workflow job must be completed before transfer",
+            ));
+        }
+
         let target_name = match request.arguments.get("target").map(String::as_str) {
             None | Some("runner") => self.caller.runner.as_str(),
             Some(value) => value,
@@ -2295,8 +2341,8 @@ impl ApiExecutionBackend {
             ));
         }
 
-        let mut registry =
-            DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
+        // The source and target checks below use the same registry snapshot
+        // while the lifecycle transaction lock is held.
 
         // The default target must still be the exact Docker container that
         // authenticated this API request. An explicit target is allowed only
@@ -2335,6 +2381,56 @@ impl ApiExecutionBackend {
             ));
         }
 
+        // The source can be a completed dock-only runner that still has mount
+        // leases in its namespace. Remove only leases owned by this exact old
+        // binding before the source container is destroyed.
+        #[cfg(target_os = "linux")]
+        {
+            let mut mount_registry = MountRegistry::load(&self.state_dir).map_err(failed)?;
+            cleanup_owned_mounts_for_disconnect(
+                &mut mount_registry,
+                &self.state_dir,
+                MountCleanupOwner {
+                    repository: &source_binding.repository,
+                    run_id: source_binding.run_id,
+                    job: &source_binding.job,
+                    container_id: &source_binding.container_id,
+                    requester_runner: &source_binding.requester_runner,
+                },
+                cleanup_mount_record,
+            )
+            .map_err(failed)?;
+        }
+
+        // Recheck eligibility after lease cleanup. If the dock-only source is
+        // still running, stop the pinned object before export so its filesystem
+        // cannot change between the marker check and the transfer.
+        let final_source_status = docker::container_status(&source)
+            .map_err(|error| failed(error.to_string()))?
+            .unwrap_or_default();
+        if final_source_status == "running" {
+            let marker = docker::exec_container(&source, &["test", "-f", DOCK_ONLY_MARKER])
+                .map_err(|error| failed(error.to_string()))?;
+            if !marker.status.success() {
+                return Err(failed(
+                    "GitDockRun --melt source lost its dock-only marker before transfer",
+                ));
+            }
+            docker::stop_container(&source).map_err(|error| failed(error.to_string()))?;
+            let stopped_status = docker::container_status(&source)
+                .map_err(|error| failed(error.to_string()))?
+                .unwrap_or_default();
+            if stopped_status != "exited" {
+                return Err(failed(
+                    "GitDockRun --melt source could not be stopped safely before transfer",
+                ));
+            }
+        } else if final_source_status != "exited" {
+            return Err(failed(
+                "GitDockRun --melt source changed to an ineligible lifecycle state",
+            ));
+        }
+
         docker::melt_filesystem(&source, &target_id).map_err(|error| failed(error.to_string()))?;
         docker::remove_container(&source).map_err(|error| {
             failed(format!(
@@ -2342,12 +2438,19 @@ impl ApiExecutionBackend {
             ))
         })?;
 
-        registry
-            .bindings
-            .retain(|binding| binding.container != source && binding.container_id != source);
-        registry
-            .save(&self.state_dir)
-            .map_err(|error| failed(error.to_string()))?;
+        registry.bindings.retain(|binding| {
+            !(binding.repository == source_binding.repository
+                && binding.run_id == source_binding.run_id
+                && binding.job == source_binding.job
+                && binding.requester_runner == source_binding.requester_runner
+                && binding.container == source_binding.container
+                && binding.container_id == source_binding.container_id)
+        });
+        registry.save(&self.state_dir).map_err(|error| {
+            failed(format!(
+                "filesystem transfer and source removal completed, but the GitDockRun binding cleanup could not be persisted: {error}"
+            ))
+        })?;
 
         Ok(success(format!(
             "GitDockRun MELT: PASS\nsource={source}\ntarget={target_name}\nid={target_id}\n"
@@ -4633,6 +4736,25 @@ fn arg<'a>(request: &'a AuthorizedOperation, name: &str) -> Result<&'a str, Exec
         .ok_or_else(|| failed(format!("missing argument: {name}")))
 }
 
+fn find_dock_melt_source_binding<'a>(
+    registry: &'a DockRegistry,
+    repository: &str,
+    run_id: u64,
+    current_job: &str,
+    source_container: &str,
+) -> Option<&'a DockBinding> {
+    if run_id == 0 || source_container.trim().is_empty() {
+        return None;
+    }
+    registry.bindings.iter().find(|binding| {
+        binding.repository == repository
+            && binding.run_id == run_id
+            && binding.job != current_job
+            && binding.container == source_container
+            && !binding.container_id.is_empty()
+    })
+}
+
 fn validate_dock_binding_owner(
     binding: &DockBinding,
     requester_runner: &str,
@@ -4680,6 +4802,65 @@ fn resolve_dock_connect_dynamic(
         ));
     }
     Ok(dynamic)
+}
+
+#[cfg(test)]
+mod dock_melt_binding_tests {
+    use super::{find_dock_melt_source_binding, DockBinding, DockRegistry};
+
+    fn binding(job: &str, container: &str, runner: &str) -> DockBinding {
+        DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 42,
+            job: job.into(),
+            container: container.into(),
+            container_id: format!("test-id-{container}"),
+            dynamic: true,
+            dock_only: job == "build",
+            requester_runner: runner.into(),
+            connected_at: 1,
+        }
+    }
+
+    #[test]
+    fn melt_can_select_a_completed_job_source_in_the_same_workflow_run() {
+        let registry = DockRegistry {
+            bindings: vec![
+                binding("build", "build-runner", "runner-build"),
+                binding("publish", "publish-runner", "runner-publish"),
+            ],
+        };
+
+        let source =
+            find_dock_melt_source_binding(&registry, "owner/repo", 42, "publish", "build-runner")
+                .expect("prior completed job source must be selectable");
+
+        assert_eq!(source.job, "build");
+        assert_eq!(source.container_id, "test-id-build-runner");
+    }
+
+    #[test]
+    fn melt_source_lookup_rejects_current_job_other_runs_and_other_repositories() {
+        let registry = DockRegistry {
+            bindings: vec![
+                binding("build", "build-runner", "runner-build"),
+                binding("publish", "publish-runner", "runner-publish"),
+            ],
+        };
+
+        assert!(find_dock_melt_source_binding(
+            &registry, "owner/repo", 42, "build", "build-runner"
+        )
+        .is_none());
+        assert!(find_dock_melt_source_binding(
+            &registry, "owner/repo", 99, "publish", "build-runner"
+        )
+        .is_none());
+        assert!(find_dock_melt_source_binding(
+            &registry, "other/repo", 42, "publish", "build-runner"
+        )
+        .is_none());
+    }
 }
 
 #[cfg(test)]

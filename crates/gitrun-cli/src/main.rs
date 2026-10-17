@@ -49,8 +49,35 @@ fn select_update_config_path(
     }
 }
 
+fn trusted_system_config_path() -> Option<PathBuf> {
+    let path = PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE);
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // System config can contain credentials. Refuse unsafe ownership or
+        // group/world write access instead of silently reading/updating it.
+        if metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+            return None;
+        }
+    }
+    Some(path)
+}
+
 fn update_config_path(system_install: bool) -> Option<PathBuf> {
-    select_update_config_path(system_install, persistent_config_path())
+    let configured_path = if system_install {
+        trusted_system_config_path()
+    } else {
+        persistent_config_path()
+    };
+    let selected = select_update_config_path(system_install, configured_path)?;
+    if system_install && !selected.is_file() {
+        return None;
+    }
+    Some(selected)
 }
 
 fn initialize_system_update_config_path(system_install: bool) {
@@ -424,13 +451,20 @@ fn update_command(
         );
     }
 
+    let system_install = system_install_paths();
+    let config_path = update_config_path(system_install.is_some());
+    if system_install.is_some() && plan.runner_image.is_some() && config_path.is_none() {
+        return Err(
+            "trusted system config /etc/gitrun/gitrun.env is missing or unsafe; refusing update that changes the runner image"
+                .into(),
+        );
+    }
+
     let updated_dependencies = update_incompatible_dependencies(&plan)?;
     if !updated_dependencies.is_empty() {
         println!("dependencies updated: {}", updated_dependencies.join(", "));
     }
 
-    let system_install = system_install_paths();
-    let config_path = update_config_path(system_install.is_some());
     let work_root = match system_install {
         Some(_) => PathBuf::from("/var/lib/gitrun/update"),
         None => PathBuf::from(
@@ -2158,6 +2192,12 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     let system_install = system_install_paths().is_some();
     initialize_update_signing_environment(system_install);
     initialize_system_update_config_path(system_install);
+    if system_install && update_config_path(true).is_none() {
+        return Err(
+            "trusted system config /etc/gitrun/gitrun.env is missing or unsafe; refusing runner update"
+                .into(),
+        );
+    }
 
     let config = load_config()?;
     let _gtuu_lock = gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;

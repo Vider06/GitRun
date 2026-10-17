@@ -781,7 +781,10 @@ fn validate_backup_record_paths(
             ));
         }
     }
-    let expected_config = paths.config_dir.as_ref().map(|_| transaction_dir.join("config"));
+    let expected_config = paths
+        .config_dir
+        .as_ref()
+        .map(|_| transaction_dir.join("config"));
     if backup.config_backup != expected_config {
         return Err(UpdateError::InvalidManifest(
             "rollback config backup does not match the configured transaction path".into(),
@@ -1073,8 +1076,7 @@ fn validate_installed_rollback_record(
         if let Some(backup) = item.backup.as_deref() {
             if backup != expected_backup {
                 return Err(UpdateError::InvalidManifest(
-                    "installed artifact backup is outside its trusted transaction directory"
-                        .into(),
+                    "installed artifact backup is outside its trusted transaction directory".into(),
                 ));
             }
             require_backup_path(backup, "installed artifact backup", true, Some(false))?;
@@ -1131,9 +1133,7 @@ fn validate_installed_rollback_record(
     Ok(transaction_dir)
 }
 
-fn rollback_installed_update_unchecked(
-    record: &InstalledBackupRecord,
-) -> Result<(), UpdateError> {
+fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
     for artifact in &record.artifacts {
         if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
             if meta.file_type().is_symlink() || meta.is_dir() {
@@ -2650,11 +2650,12 @@ mod tests {
             version_file_backup: None,
         };
 
-        assert!(rollback_installed_update(&record, &expected, &version_file, &backup_root).is_err());
+        assert!(
+            rollback_installed_update(&record, &expected, &version_file, &backup_root).is_err()
+        );
         assert_eq!(fs::read(&binary).unwrap(), b"current binary");
         assert_eq!(fs::read(&attacker_target).unwrap(), b"do not touch");
         assert_eq!(fs::read(&version_file).unwrap(), b"1.2.3\n");
         let _ = fs::remove_dir_all(&root);
     }
-
 }

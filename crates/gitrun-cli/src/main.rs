@@ -422,7 +422,9 @@ fn update_command(
 
         if let Some(image) = &plan.runner_image {
             if let Err(error) = update_runner_image(image) {
-                let rollback_error = rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
+                let rollback_error =
+                    rollback_installed_update(&backup, &artifacts, &version_file, &backup_root)
+                        .err();
                 return Err(match rollback_error {
                     Some(rollback_error) => format!(
                         "runner update failed: {error}; GitRun rollback also failed: {rollback_error}"
@@ -433,7 +435,9 @@ fn update_command(
             }
             if let Some(config_file) = config_path.as_deref() {
                 if let Err(error) = pin_runner_image(config_file, image) {
-                    let rollback_error = rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
+                    let rollback_error =
+                        rollback_installed_update(&backup, &artifacts, &version_file, &backup_root)
+                            .err();
                     return Err(match rollback_error {
                         Some(rollback_error) => format!(
                             "runner configuration update failed: {error}; GitRun rollback also failed: {rollback_error}"
@@ -449,7 +453,8 @@ fn update_command(
 
         presenter.transition(presenter::ValidationState::Running);
         if let Err(error) = restart_scheduler_service() {
-            let rollback_result = rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
+            let rollback_result =
+                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
             let restore_result = restart_scheduler_service();
             return match (rollback_result, restore_result) {
                 (Ok(()), Ok(())) => Err(format!(
@@ -1144,12 +1149,7 @@ fn rollback_command(
             destination: gitrun_binary,
             required: true,
         }];
-        rollback_installed_update(
-            &backup,
-            &expected_artifacts,
-            &version_file,
-            &backup_root,
-        )?;
+        rollback_installed_update(&backup, &expected_artifacts, &version_file, &backup_root)?;
         presenter.transition(presenter::ValidationState::Success);
         println!("GitRun rollback: PASS");
         return Ok(());
@@ -1159,7 +1159,10 @@ fn rollback_command(
     // artifact destinations. Never reinterpret a malformed/system record as a
     // developer backup whose JSON could select arbitrary restore paths.
     if system_install_paths().is_some() {
-        return Err("invalid or unsupported system rollback record; refusing untrusted restore paths".into());
+        return Err(
+            "invalid or unsupported system rollback record; refusing untrusted restore paths"
+                .into(),
+        );
     }
 
     let backup: BackupRecord = serde_json::from_str(&raw)?;
@@ -1168,9 +1171,8 @@ fn rollback_command(
     let state_dir =
         PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
     let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
-    let backup_root = PathBuf::from(
-        std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()),
-    );
+    let backup_root =
+        PathBuf::from(std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()));
     let service_config = std::env::var("GITRUN_SERVICE_CONFIG")
         .ok()
         .map(PathBuf::from);

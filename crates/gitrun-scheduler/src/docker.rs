@@ -1938,7 +1938,14 @@ mod tests {
                 create.arg(".");
             } else {
                 create.args([
-                    "proc", "sys", "dev", "run", "tmp", "var", "home", "workspace",
+                    "proc",
+                    "sys",
+                    "dev",
+                    "run",
+                    "tmp",
+                    "var",
+                    "home",
+                    "workspace",
                 ]);
             }
             let created = create

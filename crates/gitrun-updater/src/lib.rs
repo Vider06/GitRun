@@ -1030,7 +1030,7 @@ fn validate_installed_rollback_record(
             "installed rollback record does not contain the exact expected artifact set".into(),
         ));
     }
-    if &record.version_file != expected_version_file {
+    if record.version_file != expected_version_file {
         return Err(UpdateError::InvalidManifest(
             "installed rollback version-file path does not match the trusted installation".into(),
         ));

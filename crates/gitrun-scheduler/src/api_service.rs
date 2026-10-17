@@ -1534,6 +1534,15 @@ impl ApiExecutionBackend {
             .runner_name
             .ok_or_else(|| failed(format!("workflow job {job} has no runner identity")))?;
 
+        // The API handler validated that this workflow job belonged to the
+        // authenticated caller. GitHub can change assignment between that
+        // check and this second lookup, so never bind a different runner.
+        if runner_name != self.caller.runner {
+            return Err(failed(
+                "GitDockRun --connect workflow runner no longer matches the authenticated caller",
+            ));
+        }
+
         // Capture the immutable container ID used for the actual execution.
         // The binding is invalid if this name later resolves to another ID.
         let container_id = docker::container_id(&runner_name)
@@ -1543,6 +1552,13 @@ impl ApiExecutionBackend {
                     "runner container {runner_name} disappeared during connect"
                 ))
             })?;
+        validate_dock_connect_caller_identity(
+            &self.caller.runner,
+            &self.caller_container_id,
+            &runner_name,
+            &container_id,
+        )
+        .map_err(failed)?;
 
         // Lifecycle metadata must be read through the same immutable identity
         // captured above. Looking it up again by name permits a replacement
@@ -4636,6 +4652,21 @@ fn dock_melt_source_status_allowed(status: &str, dock_only_marker_present: bool)
     status == "exited" || (status == "running" && dock_only_marker_present)
 }
 
+fn validate_dock_connect_caller_identity(
+    caller_runner: &str,
+    caller_container_id: &str,
+    job_runner: &str,
+    job_container_id: &str,
+) -> Result<(), &'static str> {
+    if job_runner != caller_runner {
+        return Err("GitDockRun --connect runner does not match the authenticated caller");
+    }
+    if job_container_id != caller_container_id {
+        return Err("GitDockRun --connect container does not match the authenticated caller");
+    }
+    Ok(())
+}
+
 fn resolve_dock_connect_dynamic(
     runner_name: &str,
     container_id: &str,
@@ -4653,8 +4684,47 @@ fn resolve_dock_connect_dynamic(
 
 #[cfg(test)]
 mod dock_connect_identity_tests {
-    use super::resolve_dock_connect_dynamic;
+    use super::{resolve_dock_connect_dynamic, validate_dock_connect_caller_identity};
     use std::cell::RefCell;
+
+    #[test]
+    fn connect_rejects_runner_assignment_changed_after_caller_verification() {
+        assert_eq!(
+            validate_dock_connect_caller_identity(
+                "runner-a",
+                "container-a",
+                "runner-b",
+                "container-b",
+            ),
+            Err("GitDockRun --connect runner does not match the authenticated caller")
+        );
+    }
+
+    #[test]
+    fn connect_rejects_container_name_reuse_after_caller_verification() {
+        assert_eq!(
+            validate_dock_connect_caller_identity(
+                "runner-a",
+                "container-original",
+                "runner-a",
+                "container-replacement",
+            ),
+            Err("GitDockRun --connect container does not match the authenticated caller")
+        );
+    }
+
+    #[test]
+    fn connect_accepts_exact_authenticated_runner_identity() {
+        assert_eq!(
+            validate_dock_connect_caller_identity(
+                "runner-a",
+                "container-a",
+                "runner-a",
+                "container-a",
+            ),
+            Ok(())
+        );
+    }
 
     #[test]
     fn connect_lifecycle_metadata_uses_pinned_container_id() {

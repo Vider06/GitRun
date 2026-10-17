@@ -5,7 +5,7 @@
 //! authorize the exact operation, and only then invokes GitExecuteRun's
 //! backend implementation.
 
-use crate::dock_registry::{DockBinding, DockRegistry};
+use crate::dock_registry::{validate_state_directory_parent, DockBinding, DockRegistry};
 use crate::docker;
 use crate::GitHubClient;
 use gitrun_core::{
@@ -206,12 +206,23 @@ struct MountRegistry {
 
 #[cfg(target_os = "linux")]
 fn validate_mount_registry_directory(state_dir: &Path) -> Result<(), String> {
+    validate_state_directory_parent(state_dir).map_err(|error| error.to_string())?;
     match fs::symlink_metadata(state_dir) {
         Ok(metadata) => {
             if !metadata.is_dir() {
                 return Err("GitDockRun registry state path must be a real directory".into());
             }
-            use std::os::unix::fs::PermissionsExt;
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            // This directory contains leases trusted by a root-privileged mount
+            // worker. Reject service state that is owned by another identity.
+            // Checking mode bits alone is not enough: an untrusted directory
+            // owner can unlink a mode-0600 file and replace the directory entry.
+            if metadata.uid() != unsafe { libc::geteuid() } {
+                return Err(
+                    "GitDockRun registry state directory must be owned by the service identity"
+                        .into(),
+                );
+            }
             if metadata.permissions().mode() & 0o022 != 0 {
                 return Err(
                     "GitDockRun registry state directory must not be group- or world-writable"
@@ -244,6 +255,9 @@ fn read_secure_mount_registry(path: &Path) -> Result<Option<String>, String> {
         .map_err(|error| format!("inspect GitDockRun mount registry: {error}"))?;
     if !metadata.is_file() || metadata.nlink() != 1 {
         return Err("GitDockRun mount registry must be a regular file without hard links".into());
+    }
+    if metadata.uid() != unsafe { libc::geteuid() } {
+        return Err("GitDockRun mount registry must be owned by the service identity".into());
     }
     if metadata.permissions().mode() & 0o022 != 0 {
         return Err("GitDockRun mount registry must not be group- or world-writable".into());
@@ -305,6 +319,7 @@ impl MountRegistry {
 
     fn save(&self, state_dir: &Path) -> Result<(), String> {
         self.validate()?;
+        validate_state_directory_parent(state_dir).map_err(|error| error.to_string())?;
         fs::create_dir_all(state_dir)
             .map_err(|error| format!("create mount registry directory: {error}"))?;
         validate_mount_registry_directory(state_dir)?;

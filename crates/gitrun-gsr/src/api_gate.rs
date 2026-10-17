@@ -7,7 +7,7 @@
 
 use gitrun_core::{
     api_policy::{parse_boolean_argument, validate_arguments, GitRunApi, GitRunOperation},
-    command_policy::{CommandPolicy, Decision},
+    command_policy::{validate_simple_shell_command, CommandPolicy, Decision},
     settings::EffectiveRepositorySettings,
     GitRunSettings,
 };
@@ -441,6 +441,11 @@ fn authorize_dock(
                     arguments,
                     "command",
                 )?;
+                validate_simple_shell_command(command).map_err(|detail| {
+                    ApiGateError::PolicyDenied {
+                        reason: detail.into(),
+                    }
+                })?;
                 let policy = command_policy.ok_or(ApiGateError::PolicyDenied {
                     reason: "GSR command policy is required for docked execute".into(),
                 })?;

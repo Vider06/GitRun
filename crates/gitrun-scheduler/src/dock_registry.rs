@@ -94,6 +94,7 @@ impl DockRegistry {
     fn validate_unique_bindings(&self) -> Result<(), DockRegistryError> {
         let mut keys = std::collections::HashSet::with_capacity(self.bindings.len());
         let mut containers = std::collections::HashSet::with_capacity(self.bindings.len());
+        let mut container_ids = std::collections::HashSet::with_capacity(self.bindings.len());
         for binding in &self.bindings {
             if binding.repository.trim().is_empty()
                 || binding.run_id == 0
@@ -113,6 +114,17 @@ impl DockRegistry {
             if !containers.insert(binding.container.as_str()) {
                 return Err(DockRegistryError::Invalid(
                     "a Docker container is bound to more than one workflow job".into(),
+                ));
+            }
+            // Names can change while the underlying Docker object stays the
+            // same. Never let one immutable container identity authorize more
+            // than one workflow-job binding. Empty IDs remain readable for
+            // legacy records, but execution paths already fail closed on them.
+            if !binding.container_id.is_empty()
+                && !container_ids.insert(binding.container_id.as_str())
+            {
+                return Err(DockRegistryError::Invalid(
+                    "a Docker container ID is bound to more than one workflow job".into(),
                 ));
             }
         }
@@ -157,6 +169,8 @@ impl DockRegistry {
                 && existing.run_id == binding.run_id
                 && existing.job == binding.job)
                 && existing.container != binding.container
+                && (binding.container_id.is_empty()
+                    || existing.container_id != binding.container_id)
         });
         self.bindings.push(binding);
         self.bindings.sort_by(|a, b| {
@@ -387,6 +401,81 @@ mod tests {
         assert_eq!(registry.bindings.len(), 1);
         assert_eq!(registry.bindings[0].run_id, 2);
         assert_eq!(registry.bindings[0].container_id, "new-id");
+    }
+
+    #[test]
+    fn load_rejects_duplicate_immutable_container_ids() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-duplicate-id-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = path_for(&dir);
+        let duplicate = DockRegistry {
+            bindings: vec![
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build-a".into(),
+                    container: "runner-a".into(),
+                    container_id: "same-immutable-id".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 1,
+                },
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build-b".into(),
+                    container: "runner-b".into(),
+                    container_id: "same-immutable-id".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 2,
+                },
+            ],
+        };
+        fs::write(&path, serde_json::to_vec(&duplicate).unwrap()).unwrap();
+
+        assert!(matches!(
+            DockRegistry::load(&dir),
+            Err(DockRegistryError::Invalid(message))
+                if message.contains("container ID")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upsert_replaces_stale_binding_for_reused_immutable_container_id() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 1,
+            job: "old-job".into(),
+            container: "old-runner-name".into(),
+            container_id: "same-immutable-id".into(),
+            dynamic: true,
+            dock_only: false,
+            requester_runner: "runner-main".into(),
+            connected_at: 1,
+        });
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 2,
+            job: "new-job".into(),
+            container: "new-runner-name".into(),
+            container_id: "same-immutable-id".into(),
+            dynamic: false,
+            dock_only: false,
+            requester_runner: "runner-main".into(),
+            connected_at: 2,
+        });
+        assert_eq!(registry.bindings.len(), 1);
+        assert_eq!(registry.bindings[0].container, "new-runner-name");
+        assert_eq!(registry.bindings[0].run_id, 2);
     }
 
     #[test]

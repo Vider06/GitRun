@@ -324,17 +324,21 @@ pub fn poll_once(
             }
         };
 
-        violations.extend(poll_container_with_identity(host,
+        violations.extend(poll_container_with_identity(
+            host,
             &container_name,
             &container_id,
             policy,
             action,
             ban_store,
             PollOperations {
-            read_processes: |target| docker::container_command_lines_on(host, target),
-            read_repo: |target| docker::container_repo_label_on(host, target),
-            enforce: |target, repo, action, store| apply_violation_action(host, target, repo, action, store),
-        }));
+                read_processes: |target| docker::container_command_lines_on(host, target),
+                read_repo: |target| docker::container_repo_label_on(host, target),
+                enforce: |target, repo, action, store| {
+                    apply_violation_action(host, target, repo, action, store)
+                },
+            },
+        ));
     }
     Ok(violations)
 }
@@ -725,34 +729,36 @@ mod tests {
         let replacement_id = "test-container-id-replacement-b";
         let targets = RefCell::new(Vec::new());
 
-        let violations = poll_container_with_identity(&DockerHost::Local,
+        let violations = poll_container_with_identity(
+            &DockerHost::Local,
             name,
             original_id,
             &policy_with_baseline(),
             ViolationAction::Kill,
             &mut ban_store,
             PollOperations {
-            read_processes: |target| {
-                assert_eq!(target, original_id);
-                assert_ne!(target, replacement_id);
-                targets.borrow_mut().push(("processes", target.to_owned()));
-                Ok::<_, &'static str>(vec!["sudo rm -rf /".to_owned()])
+                read_processes: |target| {
+                    assert_eq!(target, original_id);
+                    assert_ne!(target, replacement_id);
+                    targets.borrow_mut().push(("processes", target.to_owned()));
+                    Ok::<_, &'static str>(vec!["sudo rm -rf /".to_owned()])
+                },
+                read_repo: |target| {
+                    assert_eq!(target, original_id);
+                    assert_ne!(target, replacement_id);
+                    targets.borrow_mut().push(("repo-label", target.to_owned()));
+                    Ok::<_, &'static str>(Some("owner/repo".to_owned()))
+                },
+                enforce: |target, repo, action, _store| {
+                    assert_eq!(target, original_id);
+                    assert_ne!(target, replacement_id);
+                    assert_eq!(repo, Some("owner/repo"));
+                    assert_eq!(action, ViolationAction::Kill);
+                    targets.borrow_mut().push(("enforce", target.to_owned()));
+                    None
+                },
             },
-            read_repo: |target| {
-                assert_eq!(target, original_id);
-                assert_ne!(target, replacement_id);
-                targets.borrow_mut().push(("repo-label", target.to_owned()));
-                Ok::<_, &'static str>(Some("owner/repo".to_owned()))
-            },
-            enforce: |target, repo, action, _store| {
-                assert_eq!(target, original_id);
-                assert_ne!(target, replacement_id);
-                assert_eq!(repo, Some("owner/repo"));
-                assert_eq!(action, ViolationAction::Kill);
-                targets.borrow_mut().push(("enforce", target.to_owned()));
-                None
-            },
-        });
+        );
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].container_name, name);

@@ -37,6 +37,21 @@ const DOCKER_OUTPUT_TRUNCATION_MARKER: &[u8] = b"\n[Docker output truncated at 8
 // emit a leading `./`. Keep both spellings excluded: using only `./proc`
 // silently fails to match root-relative members and can merge runtime/runner
 // state into the destination container.
+// Writable Docker mount destinations must be covered by these archived-path
+// exclusions before MELT is allowed to extract a source image into the target.
+// Otherwise tar could write through a mount into a host bind or persistent volume.
+const MELT_TAR_EXCLUDE_ROOTS: &[&str] = &[
+    "proc",
+    "sys",
+    "dev",
+    "run",
+    "var/run",
+    "tmp",
+    "var/tmp",
+    "var/lib/gitrun/shared",
+    "home/runner/actions-runner",
+];
+
 const MELT_TAR_EXCLUDE_ARGS: &[&str] = &[
     "--exclude=./proc",
     "--exclude=./proc/*",
@@ -1249,6 +1264,71 @@ pub fn container_logs(name: &str) -> Result<String> {
     run_checked(&["logs", "--timestamps", name])
 }
 
+fn melt_excludes_mount_destination(destination: &str) -> bool {
+    let path = std::path::Path::new(destination);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    let Ok(relative) = path.strip_prefix("/") else {
+        return false;
+    };
+    MELT_TAR_EXCLUDE_ROOTS.iter().any(|root| {
+        let root = std::path::Path::new(root);
+        relative == root || relative.starts_with(root)
+    })
+}
+
+/// Refuse MELT if Docker reports a writable target mount that the archive
+/// exclusion list does not cover. GitDockRun lease checks alone cannot detect
+/// ordinary Docker volumes/binds created outside the GitDockRun mount API.
+pub fn validate_melt_target_mounts_on(host: &DockerHost, target_id: &str) -> Result<()> {
+    let output = run_on(
+        host,
+        &["inspect", "--format", "{{json .Mounts}}", target_id],
+    )?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(DockerError::Command(if detail.is_empty() {
+            format!("cannot inspect target mounts for MELT target {target_id}")
+        } else {
+            format!("cannot inspect target mounts for MELT target {target_id}: {detail}")
+        }));
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let mounts: Value = serde_json::from_str(raw.trim())?;
+    let mounts = mounts.as_array().ok_or_else(|| {
+        DockerError::Command(format!(
+            "Docker returned a non-array mount inventory for MELT target {target_id}"
+        ))
+    })?;
+    for mount in mounts {
+        let destination = mount
+            .get("Destination")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                DockerError::Command(format!(
+                    "Docker returned a mount without a destination for MELT target {target_id}"
+                ))
+            })?;
+        let read_write = mount.get("RW").and_then(Value::as_bool).ok_or_else(|| {
+            DockerError::Command(format!(
+                "Docker returned a mount without an RW flag for MELT target {target_id}"
+            ))
+        })?;
+        if read_write && !melt_excludes_mount_destination(destination) {
+            return Err(DockerError::Command(format!(
+                "GitDockRun MELT refuses target {target_id}: writable Docker mount {destination:?} is not protected by the archive exclusions"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
     // Docker does not provide a literal "merge two container namespaces"
     // primitive. GitDockRun melt merges an exported source filesystem into
@@ -1997,6 +2077,49 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn melt_writable_mount_gate_only_allows_excluded_roots() {
+        for destination in [
+            "/proc",
+            "/proc/1",
+            "/sys",
+            "/dev",
+            "/run",
+            "/run/gitrun/api.sock",
+            "/var/run/docker.sock",
+            "/tmp",
+            "/tmp/work",
+            "/var/tmp",
+            "/var/tmp/staging",
+            "/var/lib/gitrun/shared",
+            "/var/lib/gitrun/shared/cache",
+            "/home/runner/actions-runner",
+            "/home/runner/actions-runner/_work",
+        ] {
+            assert!(
+                melt_excludes_mount_destination(destination),
+                "{destination} should be excluded from MELT archives"
+            );
+        }
+        for destination in [
+            "/",
+            "/workspace",
+            "/workspace/data",
+            "/etc",
+            "/var/lib/gitrun",
+            "/var/lib/gitrun/shared-escape",
+            "/tmpish",
+            "/home/runner",
+            "relative/path",
+            "/workspace/../etc",
+        ] {
+            assert!(
+                !melt_excludes_mount_destination(destination),
+                "{destination} must not be treated as an excluded mount root"
+            );
+        }
     }
 
     #[test]

@@ -392,11 +392,15 @@ mod tests {
     fn simple_command_parser_returns_direct_argv_without_a_shell() {
         assert_eq!(
             parse_simple_command("cargo  build --release").unwrap(),
-            ["cargo", "build", "--release"]
+            vec!["cargo".to_owned(), "build".to_owned(), "--release".to_owned()]
         );
         assert_eq!(
             parse_simple_command("/usr/bin/git status --short").unwrap(),
-            ["/usr/bin/git", "status", "--short"]
+            vec![
+                "/usr/bin/git".to_owned(),
+                "status".to_owned(),
+                "--short".to_owned()
+            ]
         );
         assert!(parse_simple_command("cargo test; echo injected").is_err());
     }

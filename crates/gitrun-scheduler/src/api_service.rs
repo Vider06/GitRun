@@ -153,6 +153,27 @@ impl Drop for MountRegistryLock {
 }
 
 #[cfg(target_os = "linux")]
+struct GitDockLifecycleGuard {
+    _local: std::sync::MutexGuard<'static, ()>,
+    _cross_process: MountRegistryLock,
+}
+
+#[cfg(target_os = "linux")]
+fn acquire_gitdock_lifecycle_guard(state_dir: &Path) -> Result<GitDockLifecycleGuard, String> {
+    // Use the same lock order for every GitDockRun lifecycle writer: first the
+    // process-local mutex, then the cross-process flock. Atomic file replacement
+    // protects readers from partial JSON, but does not prevent lost updates.
+    let local = GITDOCK_MOUNT_LOCK
+        .lock()
+        .map_err(|_| "GitDockRun lifecycle lock is poisoned".to_owned())?;
+    let cross_process = MountRegistryLock::acquire(state_dir)?;
+    Ok(GitDockLifecycleGuard {
+        _local: local,
+        _cross_process: cross_process,
+    })
+}
+
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct MountRecord {
     id: String,
@@ -449,6 +470,9 @@ pub(crate) fn reconcile_dock_bindings(
     // do not continue lifecycle reconciliation as if cleanup were trustworthy.
     reconcile_completed_mounts(client, state_dir, repository)
         .map_err(|error| format!("reconcile GitDockRun mounts before binding cleanup: {error}"))?;
+    #[cfg(target_os = "linux")]
+    let _lifecycle_guard = acquire_gitdock_lifecycle_guard(state_dir)?;
+
     let mut registry = DockRegistry::load(state_dir)
         .map_err(|error| format!("load GitDockRun registry: {error}"))?;
     let mut changed = false;
@@ -1533,6 +1557,13 @@ impl ApiExecutionBackend {
 
         let completed = workflow_job_is_completed(&job_info.status, job_info.conclusion.as_deref());
 
+        // Serialize load/modify/save against other connects, disconnects,
+        // melts, and scheduler reconciliation. Atomic rename alone prevents
+        // torn reads, not lost updates between concurrent writers.
+        #[cfg(target_os = "linux")]
+        let _lifecycle_guard =
+            acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
+
         // Load and prepare the registry before changing container lifecycle;
         // a registry read/decode failure must not leave a runner disabled with
         // no durable binding describing why.
@@ -1590,11 +1621,8 @@ impl ApiExecutionBackend {
         // service processes. Keep these locks through binding removal so a
         // concurrent MOUNT cannot create a fresh lease after cleanup.
         #[cfg(target_os = "linux")]
-        let mount_guard = GITDOCK_MOUNT_LOCK
-            .lock()
-            .map_err(|_| failed("GitDockRun mount registry lock is poisoned"))?;
-        #[cfg(target_os = "linux")]
-        let mount_registry_lock = MountRegistryLock::acquire(&self.state_dir).map_err(failed)?;
+        let lifecycle_guard =
+            acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
 
         let mut registry =
             DockRegistry::load(&self.state_dir).map_err(|error| failed(error.to_string()))?;
@@ -1641,10 +1669,7 @@ impl ApiExecutionBackend {
             .map_err(|error| failed(error.to_string()))?;
 
         #[cfg(target_os = "linux")]
-        {
-            drop(mount_registry_lock);
-            drop(mount_guard);
-        }
+        drop(lifecycle_guard);
 
         if !binding.dynamic && docker_container_has_marker(&binding.container_id)? {
             restore_runner(&binding.container_id)?;
@@ -1775,10 +1800,8 @@ impl ApiExecutionBackend {
 
     #[cfg(target_os = "linux")]
     fn dock_mount(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        let _guard = GITDOCK_MOUNT_LOCK
-            .lock()
-            .map_err(|_| failed("GitDockRun mount registry lock is poisoned"))?;
-        let _registry_lock = MountRegistryLock::acquire(&self.state_dir).map_err(failed)?;
+        let _lifecycle_guard =
+            acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
         let binding = self.require_dock_binding_record(request)?;
         let source = arg(request, "source")?;
         let target = arg(request, "target")?;
@@ -2211,6 +2234,13 @@ impl ApiExecutionBackend {
     }
 
     fn dock_melt(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        // MELT removes a bound container and rewrites the binding registry.
+        // Serialize it with concurrent connect/disconnect and mount lifecycle
+        // operations so no stale snapshot can overwrite a newer registry.
+        #[cfg(target_os = "linux")]
+        let _lifecycle_guard =
+            acquire_gitdock_lifecycle_guard(&self.state_dir).map_err(failed)?;
+
         let source = self.require_dock_binding(request)?;
         let target_name = match request.arguments.get("target").map(String::as_str) {
             None | Some("runner") => self.caller.runner.as_str(),
@@ -3436,10 +3466,7 @@ fn reconcile_completed_mounts(
     state_dir: &Path,
     repository: &str,
 ) -> Result<(), String> {
-    let _guard = GITDOCK_MOUNT_LOCK
-        .lock()
-        .map_err(|_| "GitDockRun mount registry lock is poisoned".to_owned())?;
-    let _registry_lock = MountRegistryLock::acquire(state_dir)?;
+    let _lifecycle_guard = acquire_gitdock_lifecycle_guard(state_dir)?;
     let mut registry = MountRegistry::load(state_dir)?;
     let snapshot = registry.mounts.clone();
     let mut remove_ids = Vec::new();
@@ -3944,6 +3971,80 @@ mod mount_runtime_tests {
             .expect("second opener acquires the lock after release");
         worker.join().expect("lock requester thread must complete");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_guard_prevents_lost_updates_between_concurrent_registry_writers() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-writer-race-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let _temporary = TemporaryDirectory(dir.clone());
+
+        let first_guard = acquire_gitdock_lifecycle_guard(&dir).unwrap();
+        let worker_dir = dir.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let _guard = acquire_gitdock_lifecycle_guard(&worker_dir).unwrap();
+            acquired_tx.send(()).unwrap();
+
+            let mut registry = DockRegistry::load(&worker_dir).unwrap();
+            registry.upsert(DockBinding {
+                repository: "owner/repo".into(),
+                run_id: 42,
+                job: "job-b".into(),
+                container: "runner-b".into(),
+                container_id: "test-container-b".into(),
+                dynamic: true,
+                dock_only: false,
+                requester_runner: "runner-b".into(),
+                connected_at: now(),
+            });
+            registry.save(&worker_dir).unwrap();
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("second writer started");
+        assert!(
+            matches!(
+                acquired_rx.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "second registry writer must wait for the lifecycle transaction lock"
+        );
+
+        let mut registry = DockRegistry::load(&dir).unwrap();
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 42,
+            job: "job-a".into(),
+            container: "runner-a".into(),
+            container_id: "test-container-a".into(),
+            dynamic: true,
+            dock_only: false,
+            requester_runner: "runner-a".into(),
+            connected_at: now(),
+        });
+        registry.save(&dir).unwrap();
+
+        drop(first_guard);
+        acquired_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("second writer acquires lock after first transaction");
+        worker.join().unwrap();
+
+        let registry = DockRegistry::load(&dir).unwrap();
+        assert_eq!(registry.bindings.len(), 2);
+        assert!(registry.binding("owner/repo", 42, "job-a").is_some());
+        assert!(registry.binding("owner/repo", 42, "job-b").is_some());
     }
 
     #[test]

@@ -813,7 +813,10 @@ pub fn bootstrap_linux_with_auth_and_profile(
     write_resource(&config_path, &rendered, 0o600)?;
 
     if let Some(uid) = owner_uid {
-        chown_path(&config_path, uid)?;
+        // Keep the system config root-owned: the scheduler/updater trust
+        // boundary requires a root-controlled file. The dashboard persists
+        // edits through its administrator-authorized helper.
+        chown_path(&config_path, 0)?;
         // Keep the shared state directory root-owned. Specific user-managed
         // files/directories (settings, vault, logs) are granted ownership below;
         // the runner must not be able to replace privileged registry files.

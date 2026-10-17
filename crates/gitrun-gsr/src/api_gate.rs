@@ -591,6 +591,47 @@ mod tests {
     }
 
     #[test]
+    fn dock_execute_rejects_shell_operators_even_when_whitelist_matches() {
+        let settings = settings_for_dock();
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let policy = CommandPolicy {
+            baseline_blacklist: Default::default(),
+            user_blacklist: Default::default(),
+            // The old preflight accepted any command starting with cargo,
+            // including a shell compound command that would then execute echo.
+            user_whitelist: gitrun_core::PatternList::new(true, vec!["cargo".into()]),
+        };
+        let result = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Execute,
+            Some("cache"),
+            BTreeMap::from([(
+                "command".into(),
+                "cargo test; echo injected".into(),
+            )]),
+            Some(&policy),
+        );
+        assert!(matches!(
+            result,
+            Err(ApiGateError::PolicyDenied { reason })
+                if reason.contains("shell operators")
+        ));
+
+        let ordinary = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Execute,
+            Some("cache"),
+            BTreeMap::from([("command".into(), "cargo test".into())]),
+            Some(&policy),
+        );
+        assert!(ordinary.is_ok());
+    }
+
+    #[test]
     fn dangerous_docked_execute_is_blocked() {
         let settings = settings_for_dock();
         let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");

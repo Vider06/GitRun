@@ -1,5 +1,5 @@
 use clap::Parser;
-use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, Runner};
+use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, GitRunSettings, Runner};
 use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
@@ -1452,6 +1452,15 @@ fn main() {
                 1
             }
         },
+        Command::SaveGitRunSettingsRoot { input_path } => {
+            match save_gitrun_settings_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun security settings save: FAIL — {error}");
+                    1
+                }
+            }
+        },
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -1494,7 +1503,8 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::ReinstallRoot { .. }
         | Command::ReinstallLatestRoot
         | Command::ReinstallExistingRoot
-        | Command::SaveConfigRoot { .. } => ValidationState::Recovering,
+        | Command::SaveConfigRoot { .. }
+        | Command::SaveGitRunSettingsRoot { .. } => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1615,6 +1625,12 @@ enum Command {
     #[command(name = "--save-config-root", hide = true)]
     SaveConfigRoot {
         /// Private JSON file containing a Config object.
+        input_path: String,
+    },
+    /// Internal privileged command to atomically persist the security policy.
+    #[command(name = "--save-gitrun-settings-root", hide = true)]
+    SaveGitRunSettingsRoot {
+        /// Private JSON file containing a GitRunSettings object.
         input_path: String,
     },
 
@@ -2667,6 +2683,110 @@ fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::
 #[cfg(not(target_os = "linux"))]
 fn save_config_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Err("system configuration persistence through the privileged helper is Linux-only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn save_gitrun_settings_root_command(
+    input_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("saving GitRun security settings requires administrator privileges".into());
+    }
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("security-settings helper requires a verified requesting user UID")?;
+    let input = Path::new(input_path);
+    let metadata = std::fs::symlink_metadata(input)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("security-settings payload must be a regular, non-symlink file".into());
+    }
+    if metadata.uid() != requester_uid {
+        return Err("security-settings payload is not owned by the user who requested elevation".into());
+    }
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err("security-settings payload permissions must be 0600 or stricter".into());
+    }
+    if metadata.len() > 1024 * 1024 {
+        return Err("security-settings payload exceeds the 1 MiB safety limit".into());
+    }
+
+    let bytes = std::fs::read(input)?;
+    let settings: GitRunSettings = serde_json::from_slice(&bytes)?;
+    if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported GitRun settings schema version {}",
+            settings.schema_version
+        ).into());
+    }
+
+    let config_path = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
+    let config_metadata = std::fs::symlink_metadata(config_path)?;
+    if config_metadata.file_type().is_symlink()
+        || !config_metadata.is_file()
+        || config_metadata.uid() != 0
+        || config_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("trusted system configuration is missing or unsafe".into());
+    }
+    let config = Config::from_env_file(config_path)?;
+    config.validate()?;
+    if settings.repositories.keys().any(|repo| {
+        !config.repositories.iter().any(|configured| configured == repo)
+    }) {
+        return Err("security settings include a repository that is not configured in GitRun".into());
+    }
+
+    let state_dir = PathBuf::from(&config.state_dir);
+    let state_metadata = std::fs::symlink_metadata(&state_dir)?;
+    if !state_metadata.is_dir()
+        || state_metadata.uid() != 0
+        || state_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("trusted GitRun state directory is not root-owned and protected".into());
+    }
+    let parent = state_dir
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent_metadata = std::fs::symlink_metadata(parent)?;
+    let parent_mode = parent_metadata.permissions().mode();
+    if !parent_metadata.is_dir()
+        || parent_metadata.uid() != 0
+        || (parent_mode & 0o022 != 0 && parent_mode & 0o1000 == 0)
+    {
+        return Err("trusted GitRun state directory has an unsafe parent".into());
+    }
+
+    let destination = GitRunSettings::path_for_state_dir(&state_dir);
+    if let Ok(metadata) = std::fs::symlink_metadata(&destination) {
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err("GitRun settings destination must be a regular non-symlink file".into());
+        }
+    }
+
+    settings.save(&destination)?;
+    std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o600))?;
+    let status = std::process::Command::new("/usr/bin/chown")
+        .arg(requester_uid.to_string())
+        .arg(&destination)
+        .status()?;
+    if !status.success() {
+        return Err("could not restore desktop-user ownership of GitRun settings".into());
+    }
+    std::fs::File::open(&state_dir)?.sync_all()?;
+    println!("GitRun security settings saved successfully.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn save_gitrun_settings_root_command(
+    _input_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system security-settings persistence through the privileged helper is Linux-only".into())
 }
 
 fn run_reinstall_root(token_path: &str) -> i32 {

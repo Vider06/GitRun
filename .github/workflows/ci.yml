@@ -4,7 +4,7 @@ name: GitRun CI
 #  Pipeline map (needs):
 #    variables-verification ─┬─► environment
 #                            └─► detect ─► cargo-lock ─┬─ rust-lint · rust-test · rust-build · audit-rust
-#                                                       ├─ security-hardening · runtime-contracts
+#                                                       ├─ security-hardening · gsr-watchdog · runtime-contracts · systemd-verify
 #                                                       ├─ ci-selftest · repository · workflows · shell · powershell
 #                                                       ├─ frontend ─► audit-node
 #                                                       └─ docker
@@ -71,7 +71,7 @@ jobs:
   # ─────────────────────────────────────────────── variables verification ──
   variables-verification:
     name: Repository CI variables
-    runs-on: ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -151,7 +151,7 @@ jobs:
   environment:
     name: Runner environment
     needs: variables-verification
-    runs-on: &runner ${{ fromJSON((vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted' && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: &runner ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -1812,6 +1812,42 @@ jobs:
       - *report
       - *logs
 
+  # ───────────────────────────────────────────── GSR watchdog lifecycle ──
+  gsr-watchdog:
+    name: GSR watchdog lifecycle and failure detection
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      RUST_COMPONENTS: ""
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - *rust_keys
+      - *c_tc
+      - *c_reg
+      - *c_tgt
+      - *rust_install
+      - *rust_tnote
+      - name: Test watchdog and real process-exit recovery
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          rc=0
+          ci_run "GSR watchdog and security event tests" cargo test --locked -p gitrun-gsr || rc=1
+          ci_run "Build the packaged CLI entrypoint" cargo build --locked -p gitrun-cli --bin gitrun || rc=1
+          ci_run "Inject a real child-process exit into the GSR watchdog" bash scripts/test-runtime-contracts.sh target/debug/gitrun || rc=1
+          exit "$rc"
+      - *rust_prune
+      - *s_tc
+      - *s_reg
+      - *s_tgt
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────── runtime contract gate ──
   runtime-contracts:
     name: Runtime contracts and configuration integration
@@ -1843,27 +1879,121 @@ jobs:
           ci_run "Setup installs the shared CLI and GSR watchdog" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
           ci_run "Partial dashboard repository settings use safe defaults" cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults || rc=1
           ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt || rc=1
-          ci_run "GSR watchdog and security event tests" cargo test --locked -p gitrun-gsr || rc=1
-          ci_run "Build the packaged CLI entrypoint" cargo build --locked -p gitrun-cli --bin gitrun || rc=1
-          ci_run "Inject a real child-process exit into the GSR watchdog" bash scripts/test-runtime-contracts.sh target/debug/gitrun || rc=1
 
           validate_systemd_units() {
+            command -v systemd-analyze >/dev/null 2>&1 || {
+              echo "systemd-analyze is required to validate the service units" >&2
+              return 1
+            }
+            # Build the executable explicitly: the preceding package tests do not
+            # guarantee that Cargo has produced target/debug/gitrun.
+            cargo build --locked -p gitrun-cli --bin gitrun || return 1
             sudo install -Dm0755 target/debug/gitrun /usr/local/bin/gitrun || return 1
             sudo install -Dm0600 config/config.example.env /etc/gitrun/gitrun.env || return 1
             sudo install -Dm0644 systemd/gitrun.service /etc/systemd/system/gitrun.service || return 1
             sudo install -Dm0644 systemd/gitrun-gsr.service /etc/systemd/system/gitrun-gsr.service || return 1
             sudo systemd-analyze verify gitrun.service gitrun-gsr.service || return 1
+
+            # Catch regressions in reboot enablement and restart-on-crash policy.
+            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || return 1
+            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || return 1
+            grep -Fq 'Restart=on-failure' systemd/gitrun.service || return 1
+            grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || return 1
+            grep -Fq 'systemctl").args(["enable", "gitrun.service"])' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'systemctl").args(["enable", "gitrun-gsr.service"])' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs || return 1
           }
           ci_run "Validate systemd unit syntax and service command alignment" validate_systemd_units || rc=1
           exit "$rc"
+      - name: Verify live GitDockRun mount namespace behavior
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/ci-lib.sh"
+          if ! command -v docker >/dev/null 2>&1 || [ ! -S /var/run/docker.sock ] || ! docker info >/dev/null 2>&1; then
+            ci_warn "GitDockRun privileged mount integration test skipped: this runner has no usable local Docker daemon."
+            exit 0
+          fi
+          if ! sudo -n true >/dev/null 2>&1; then
+            ci_warn "GitDockRun privileged mount integration test skipped: this runner cannot run the test as root."
+            exit 0
+          fi
+          ci_run "Build scheduler mount integration test" cargo test --locked -p gitrun-scheduler --lib --no-run
+          test_bin="$(find "${CARGO_TARGET_DIR:-target}/debug/deps" -maxdepth 1 -type f -executable -name 'gitrun_scheduler-*' -print -quit)"
+          if [ -z "$test_bin" ]; then
+            ci_err "Could not locate the gitrun-scheduler unit test binary"
+            exit 1
+          fi
+          ci_run "Bind, read-only enforcement, and unmount in a live container namespace" \
+            sudo env GITRUN_ENABLE_PRIVILEGED_MOUNT_TESTS=1 "$test_bin" \
+              --exact api_service::mount_runtime_tests::privileged_mount_namespace_bind_unmount_smoke_test --nocapture
       - *rust_prune
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *report
+      - *logs
+
+  # ───────────────────────────────────────── standalone systemd unit gate ──
+  systemd-verify:
+    name: systemd-analyze unit verification
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Verify scheduler and watchdog units with systemd-analyze
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/ci-lib.sh"
+          if ! command -v systemd-analyze >/dev/null 2>&1; then
+            ci_err "systemd-analyze is required; refusing to skip systemd unit validation"
+            exit 1
+          fi
+
+          unit_dir="$RUNNER_TEMP/gitrun-ci/systemd-units"
+          runtime_dir="$RUNNER_TEMP/gitrun-ci/systemd-runtime"
+          mkdir -p "$unit_dir" "$runtime_dir"
+
+          # Verify copies of the real units in isolation. A harmless executable
+          # shim and a CI-only docker.service satisfy external references without
+          # touching /usr/local/bin or replacing a service on a persistent runner.
+          stub="$runtime_dir/gitrun"
+          printf '#!/bin/sh\nexit 0\n' > "$stub"
+          chmod 0755 "$stub"
+          sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun.service > "$unit_dir/gitrun.service"
+          sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun-gsr.service > "$unit_dir/gitrun-gsr.service"
+          cat > "$unit_dir/docker.service" <<'SYSTEMD_STUB'
+          [Unit]
+          Description=GitRun CI-only Docker dependency stub
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/true
+          RemainAfterExit=yes
+          SYSTEMD_STUB
+
+          rc=0
+          ci_run "systemd-analyze verifies scheduler, watchdog and dependencies" \
+            env TERM=dumb SYSTEMD_COLORS=0 SYSTEMD_PAGER=cat \
+            SYSTEMD_UNIT_PATH="$unit_dir:/etc/systemd/system:/usr/lib/systemd/system:/lib/systemd/system" \
+            systemd-analyze --man=no --recursive-errors=yes verify \
+              "$unit_dir/gitrun.service" "$unit_dir/gitrun-gsr.service" "$unit_dir/docker.service" || rc=1
+
+          # Verify boot/restart contracts as well as parser acceptance.
+          grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || { ci_err "scheduler unit is not enabled for multi-user boot"; rc=1; }
+          grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || { ci_err "GSR unit is not enabled for multi-user boot"; rc=1; }
+          grep -Fq 'Restart=on-failure' systemd/gitrun.service || { ci_err "scheduler restart policy missing"; rc=1; }
+          grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || { ci_err "GSR restart policy missing"; rc=1; }
+          grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || { ci_err "scheduler ExecStart contract changed"; rc=1; }
+          grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || { ci_err "GSR ExecStart contract changed"; rc=1; }
+          exit "$rc"
       - *report
       - *logs
 
@@ -2379,7 +2509,9 @@ jobs:
       - rust-build
       - audit-rust
       - security-hardening
+      - gsr-watchdog
       - runtime-contracts
+      - systemd-verify
       - tauri
       - tauri-recovery
       - docker
@@ -2425,7 +2557,9 @@ jobs:
           rust-build|Rust release build|rust|
           audit-rust|Cargo audit and deny|rust|
           security-hardening|Security hardening regression gate|rust|
+          gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|
           runtime-contracts|Runtime contracts and configuration integration|rust|
+          systemd-verify|systemd-analyze unit verification|rust|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|

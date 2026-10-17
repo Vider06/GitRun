@@ -150,7 +150,9 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
         ),
         runner_rootfs_read_only: config.runner_rootfs_read_only,
         runner_windows_hyperv_isolation: config.runner_windows_hyperv_isolation,
-        secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
+        secret_env_for_repo: &|repo: &str| {
+            vault_env_for_repo(&config, repo).map_err(|error| error.to_string())
+        },
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
         gsr_policy_env: &gsr_policy_env,

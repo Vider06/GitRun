@@ -10,7 +10,7 @@
 
 use serde_json::Value;
 use std::io::Read;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -29,6 +29,76 @@ pub type Result<T> = std::result::Result<T, DockerError>;
 
 const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
 const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_DOCKER_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+const DOCKER_OUTPUT_TRUNCATION_MARKER: &[u8] = b"\n[Docker output truncated at 8 MiB]";
+
+// Docker export archive members are normally root-relative (for example
+// `proc/mounts`), but tar implementations and archive producers can also
+// emit a leading `./`. Keep both spellings excluded: using only `./proc`
+// silently fails to match root-relative members and can merge runtime/runner
+// state into the destination container.
+// Writable Docker mount destinations must be covered by these archived-path
+// exclusions before MELT is allowed to extract a source image into the target.
+// Otherwise tar could write through a mount into a host bind or persistent volume.
+const MELT_TAR_EXCLUDE_ROOTS: &[&str] = &[
+    "proc",
+    "sys",
+    "dev",
+    "run",
+    "var/run",
+    "etc/hosts",
+    "etc/hostname",
+    "etc/resolv.conf",
+    "tmp",
+    "var/tmp",
+    "var/lib/gitrun/shared",
+    "home/runner/actions-runner",
+];
+
+const MELT_TAR_EXCLUDE_ARGS: &[&str] = &[
+    "--exclude=./proc",
+    "--exclude=./proc/*",
+    "--exclude=proc",
+    "--exclude=proc/*",
+    "--exclude=./sys",
+    "--exclude=./sys/*",
+    "--exclude=sys",
+    "--exclude=sys/*",
+    "--exclude=./dev",
+    "--exclude=./dev/*",
+    "--exclude=dev",
+    "--exclude=dev/*",
+    "--exclude=./run",
+    "--exclude=./run/*",
+    "--exclude=run",
+    "--exclude=run/*",
+    "--exclude=./var/run",
+    "--exclude=./var/run/*",
+    "--exclude=var/run",
+    "--exclude=var/run/*",
+    "--exclude=./etc/hosts",
+    "--exclude=./etc/hostname",
+    "--exclude=./etc/resolv.conf",
+    "--exclude=etc/hosts",
+    "--exclude=etc/hostname",
+    "--exclude=etc/resolv.conf",
+    "--exclude=./tmp",
+    "--exclude=./tmp/*",
+    "--exclude=tmp",
+    "--exclude=tmp/*",
+    "--exclude=./var/tmp",
+    "--exclude=./var/tmp/*",
+    "--exclude=var/tmp",
+    "--exclude=var/tmp/*",
+    "--exclude=./var/lib/gitrun/shared",
+    "--exclude=./var/lib/gitrun/shared/*",
+    "--exclude=var/lib/gitrun/shared",
+    "--exclude=var/lib/gitrun/shared/*",
+    "--exclude=./home/runner/actions-runner",
+    "--exclude=./home/runner/actions-runner/*",
+    "--exclude=home/runner/actions-runner",
+    "--exclude=home/runner/actions-runner/*",
+];
 const GITRUN_API_SOCKET_GID: &str = "10000";
 
 /// Where a Docker command actually runs. `Local` is the existing behavior
@@ -51,8 +121,55 @@ pub enum DockerHost {
     RemoteTls { endpoint: String, cert_dir: String },
 }
 
+fn read_bounded_output(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut retained = Vec::with_capacity(MAX_DOCKER_OUTPUT_BYTES.min(64 * 1024));
+    let mut chunk = [0u8; 16 * 1024];
+    let mut truncated = false;
+    loop {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = MAX_DOCKER_OUTPUT_BYTES.saturating_sub(retained.len());
+        let keep = remaining.min(count);
+        retained.extend_from_slice(&chunk[..keep]);
+        truncated |= keep < count;
+        // Continue draining after the cap so the child cannot deadlock on a
+        // full pipe, while retained memory stays bounded.
+    }
+    if truncated {
+        retained.extend_from_slice(DOCKER_OUTPUT_TRUNCATION_MARKER);
+    }
+    Ok(retained)
+}
+
+fn output_was_truncated(output: &[u8]) -> bool {
+    output.ends_with(DOCKER_OUTPUT_TRUNCATION_MARKER)
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn kill(pid: i32, signal: i32) -> i32;
+}
+
+#[cfg(unix)]
+fn kill_command_group(pid: u32) {
+    // run_on places each CLI in its own process group, so kill descendants
+    // that inherited stdout/stderr as well as the direct child.
+    let _ = unsafe { kill(-(pid as i32), 9) };
+}
+
+#[cfg(not(unix))]
+fn kill_command_group(_pid: u32) {}
+
+fn terminate_child(child: &mut Child) {
+    kill_command_group(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
-    let mut command = Command::new("docker");
+    let mut command = Command::new("/usr/bin/docker");
 
     // A Docker context inherited from the scheduler environment must never
     // override the host selected explicitly by GitRun.
@@ -68,7 +185,13 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
                 .env("DOCKER_HOST", "unix:///var/run/docker.sock");
         }
         DockerHost::Remote(addr) => {
-            command.env("DOCKER_HOST", addr);
+            // A plain remote endpoint must not inherit TLS settings from the
+            // scheduler's environment. TLS is enabled only by RemoteTls,
+            // whose endpoint and certificate directory are explicit.
+            command
+                .env_remove("DOCKER_TLS_VERIFY")
+                .env_remove("DOCKER_CERT_PATH")
+                .env("DOCKER_HOST", addr);
         }
         DockerHost::RemoteTls { endpoint, cert_dir } => {
             command
@@ -79,55 +202,75 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
     }
 
     let command_name = args.first().copied().unwrap_or("command");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .args(args)
         .spawn()?;
-    let mut stdout = child.stdout.take().ok_or_else(|| {
-        DockerError::Command(format!("docker {command_name} did not provide stdout"))
-    })?;
-    let mut stderr = child.stderr.take().ok_or_else(|| {
-        DockerError::Command(format!("docker {command_name} did not provide stderr"))
-    })?;
+    let Some(stdout) = child.stdout.take() else {
+        terminate_child(&mut child);
+        return Err(DockerError::Command(format!(
+            "docker {command_name} did not provide stdout"
+        )));
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_child(&mut child);
+        return Err(DockerError::Command(format!(
+            "docker {command_name} did not provide stderr"
+        )));
+    };
 
-    // Drain both pipes concurrently so a chatty Docker CLI can never block
-    // waiting for the parent process to read a full pipe buffer.
-    let stdout_thread = thread::spawn(move || {
-        let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).map(|_| buf)
-    });
-    let stderr_thread = thread::spawn(move || {
-        let mut buf = Vec::new();
-        stderr.read_to_end(&mut buf).map(|_| buf)
-    });
+    // Drain both pipes concurrently with bounded retained output. A child
+    // process must never be able to exhaust scheduler memory by flooding logs.
+    let stdout_thread = thread::spawn(move || read_bounded_output(stdout));
+    let stderr_thread = thread::spawn(move || read_bounded_output(stderr));
 
     let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
     loop {
-        if let Some(status) = child.try_wait()? {
-            let stdout = stdout_thread
-                .join()
-                .map_err(|_| DockerError::Command("docker stdout reader panicked".into()))??;
-            let stderr = stderr_thread
-                .join()
-                .map_err(|_| DockerError::Command("docker stderr reader panicked".into()))??;
-            return Ok(Output {
-                status,
-                stdout,
-                stderr,
-            });
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // A CLI that exits while leaving a descendant holding a pipe
+                // open would otherwise make the reader joins hang forever.
+                kill_command_group(child.id());
+                let stdout = stdout_thread
+                    .join()
+                    .map_err(|_| DockerError::Command("docker stdout reader panicked".into()))??;
+                let stderr = stderr_thread
+                    .join()
+                    .map_err(|_| DockerError::Command("docker stderr reader panicked".into()))??;
+                if output_was_truncated(&stdout) || output_was_truncated(&stderr) {
+                    return Err(DockerError::Command(format!(
+                        "docker {command_name} output exceeded the 8 MiB safety limit"
+                    )));
+                }
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                terminate_child(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Command(format!(
+                    "docker {command_name} timed out after {}s",
+                    DOCKER_COMMAND_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_child(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Spawn(error));
+            }
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-            return Err(DockerError::Command(format!(
-                "docker {command_name} timed out after {}s",
-                DOCKER_COMMAND_TIMEOUT.as_secs()
-            )));
-        }
-        thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -167,9 +310,23 @@ pub fn sanitize(value: &str, replacement: char) -> String {
         .collect()
 }
 
+/// Collision-resistant, URL-safe repository prefix for runner container names.
+/// The short readable prefix is cosmetic; the full unpadded Base64URL encoding
+/// makes distinct repository identifiers map to distinct prefixes.
+pub fn runner_name_prefix(repo: &str) -> String {
+    use base64::Engine as _;
+    let readable: String = sanitize(repo, '-').chars().take(16).collect();
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(repo.as_bytes());
+    format!("gitrun-{readable}-{encoded}-")
+}
+
 #[derive(Debug, Clone)]
 pub struct ManagedContainer {
     pub name: String,
+    /// Full immutable Docker identity captured with the inventory snapshot.
+    /// Destructive reconciliation actions must use this ID, never re-resolve
+    /// a mutable name after the plan has been computed.
+    pub id: String,
     pub status: String,
     pub permanent: bool,
     pub dock_target: bool,
@@ -290,26 +447,38 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
 
     let mut containers = Vec::new();
     for name in output.lines().map(str::trim).filter(|n| !n.is_empty()) {
-        let Some(status) = container_status_string(host, name)? else {
+        let Some(id) = container_id_on(host, name)? else {
+            // The container disappeared between "docker ps" and "inspect".
+            continue;
+        };
+        let Some(status) = container_status_string(host, &id)? else {
             // The container disappeared between "docker ps" and "inspect" —
             // a normal reconciliation race. It must not turn into an empty
             // status that downstream code could interpret as a dead container.
             continue;
         };
-        let permanent = container_is_permanent_on(host, name).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
-        let dock_target = container_label_on(host, name, "gitrun.dock_target")
-            .ok()
-            .flatten()
+        let permanent = container_is_permanent_on(host, &id).unwrap_or(true); // fail-safe: assume permanent, matching gitrun_updater_utility.py's upgrade-safety default
+                                                                              // These labels affect security-sensitive scheduling and preservation.
+                                                                              // Do not turn Docker inspect failures into "label absent": that could
+                                                                              // make a GitDockRun target eligible for ordinary cleanup or lose its
+                                                                              // job binding. A missing container is represented as None by the
+                                                                              // helper; other Docker errors abort the snapshot and trigger a retry.
+        let dock_target = container_label_on(host, &id, "gitrun.dock_target")?
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-        let workflow_job = container_label_on(host, name, "gitrun.workflow_job")
-            .ok()
-            .flatten();
-        let workflow_run_id = container_label_on(host, name, "gitrun.workflow_run")
-            .ok()
-            .flatten()
+        let workflow_job = container_label_on(host, &id, "gitrun.workflow_job")?;
+        let workflow_run_id = container_label_on(host, &id, "gitrun.workflow_run")?
             .and_then(|value| value.parse::<u64>().ok());
+        // Labels/status above are looked up by name. Refuse to publish a
+        // mixed snapshot if that name was rebound to a different container
+        // while inventory metadata was being read.
+        if container_id_on(host, name)?.as_deref() != Some(id.as_str()) {
+            return Err(DockerError::Command(format!(
+                "managed container {name} changed identity during inventory; retry reconciliation"
+            )));
+        }
         containers.push(ManagedContainer {
             name: name.to_owned(),
+            id,
             status,
             permanent,
             dock_target,
@@ -353,8 +522,13 @@ pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Resul
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
+fn container_label_format(label: &str) -> String {
+    // format! requires doubled braces to emit Docker's double-brace Go template.
+    format!("{{{{index .Config.Labels \"{label}\"}}}}")
+}
+
 fn container_label_on(host: &DockerHost, name: &str, label: &str) -> Result<Option<String>> {
-    let format = format!("{{index .Config.Labels \\\"{label}\\\"}}");
+    let format = container_label_format(label);
     let output = run_on(host, &["inspect", "-f", &format, name])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -504,16 +678,49 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
     // Resolve the deterministic home-volume name before removing the container.
     // Callers may intentionally pass an immutable container ID, so deriving
     // the volume name from that ID would leak the per-runner volume.
-    let home_volume = match run_on(host, &["inspect", "-f", "{{.Name}}", name_or_id]) {
-        Ok(output) if output.status.success() => {
-            let resolved = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .trim_start_matches('/')
-                .to_owned();
-            (!resolved.is_empty()).then(|| home_volume_name(&resolved))
-        }
-        _ => None,
-    };
+    let (home_volume, home_volume_resolution_error) =
+        match run_on(host, &["inspect", "-f", "{{.Name}}", name_or_id]) {
+            Ok(output) if output.status.success() => {
+                let resolved = String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .trim_start_matches('/')
+                    .to_owned();
+                if resolved.is_empty() {
+                    (
+                        None,
+                        Some(format!(
+                            "docker inspect returned an empty name for {name_or_id}"
+                        )),
+                    )
+                } else {
+                    (Some(home_volume_name(&resolved)), None)
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                if is_missing_container_error(&stderr) {
+                    // Another cleanup worker may already have removed it.
+                    (None, None)
+                } else {
+                    (
+                        None,
+                        Some(if stderr.is_empty() {
+                            format!("unable to resolve runner home volume for {name_or_id}")
+                        } else {
+                            format!(
+                                "unable to resolve runner home volume for {name_or_id}: {stderr}"
+                            )
+                        }),
+                    )
+                }
+            }
+            Err(error) => (
+                None,
+                Some(format!(
+                    "unable to resolve runner home volume for {name_or_id}: {error}"
+                )),
+            ),
+        };
 
     let output = run_on(host, &["rm", "-f", "-v", name_or_id])?;
     if !output.status.success() {
@@ -529,7 +736,26 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
 
     // Best-effort for disk-backed runner-home volumes. Harmless for tmpfs homes.
     if let Some(volume) = home_volume {
-        let _ = run_on(host, &["volume", "rm", "-f", &volume]);
+        let output = run_on(host, &["volume", "rm", "-f", &volume])?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let normalized = stderr.to_ascii_lowercase();
+            // Cleanup is idempotent: a volume already removed by another
+            // reconciliation worker is not a failure, but any other error
+            // must be surfaced because the volume may retain runner credentials.
+            if !(normalized.contains("no such volume") || normalized.contains("volume not found")) {
+                return Err(DockerError::Command(if stderr.is_empty() {
+                    format!("container removed but runner home volume cleanup failed for {volume}")
+                } else {
+                    format!("container removed but runner home volume cleanup failed for {volume}: {stderr}")
+                }));
+            }
+        }
+    }
+    if let Some(error) = home_volume_resolution_error {
+        return Err(DockerError::Command(format!(
+            "container removal completed but runner home volume cleanup could not be verified: {error}"
+        )));
     }
     Ok(())
 }
@@ -645,9 +871,70 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
     create_runner_on(&DockerHost::Local, spec)
 }
 
+fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
+    const RESERVED_EXACT: &[&str] = &[
+        "GITRUN_API_SOCKET",
+        "GITRUN_SHARED_CACHE_DIR",
+        "HOME",
+        "PATH",
+        "DOCKER_CONFIG",
+        "XDG_CONFIG_HOME",
+        "NPM_CONFIG_CACHE",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "BASH_ENV",
+        "ENV",
+        "IFS",
+    ];
+    for (name, value) in secret_env {
+        let mut chars = name.chars();
+        let valid_name = matches!(chars.next(), Some(c) if c.is_ascii_uppercase() || c == '_')
+            && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        if !valid_name {
+            return Err(DockerError::Command(format!(
+                "refusing GitVault secret with invalid environment variable name: {name:?}"
+            )));
+        }
+        if name.starts_with("RUNNER_")
+            || name.starts_with("GITRUN_GSR_")
+            || RESERVED_EXACT.contains(&name.as_str())
+        {
+            return Err(DockerError::Command(format!(
+                "refusing GitVault secret that overrides a protected runner variable: {name}"
+            )));
+        }
+        if value.contains('\0') {
+            return Err(DockerError::Command(format!(
+                "refusing GitVault secret {name}: environment values cannot contain NUL"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
-    let output = run_on(host, &["network", "inspect", network])?;
+    let output = run_on(
+        host,
+        &[
+            "network",
+            "inspect",
+            "--format",
+            "{{.Driver}}|{{index .Labels \"gitrun.managed\"}}",
+            network,
+        ],
+    )?;
     if output.status.success() {
+        let metadata = String::from_utf8_lossy(&output.stdout);
+        let (driver, managed) = metadata.trim().split_once('|').ok_or_else(|| {
+            DockerError::Command(format!(
+                "Docker network {network} returned malformed ownership metadata"
+            ))
+        })?;
+        if driver != "bridge" || managed != "true" {
+            return Err(DockerError::Command(format!(
+                "refusing runner network {network}: expected a GitRun-managed bridge (driver={driver}, gitrun.managed={managed})"
+            )));
+        }
         return Ok(());
     }
 
@@ -681,7 +968,22 @@ fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
     Ok(())
 }
 
+fn remote_linux_runner_api_unsupported(host: &DockerHost, is_windows: bool) -> bool {
+    !is_windows && !matches!(host, DockerHost::Local)
+}
+
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
+    // A Docker bind mount is resolved by the daemon, not by this scheduler.
+    // Linux runner containers require the host GitRun API socket; until the
+    // socket is securely forwarded into remote guests, refuse to create a
+    // runner that would silently lack the mandatory API channel.
+    if remote_linux_runner_api_unsupported(host, spec.is_windows) {
+        return Err(DockerError::Command(
+            "Linux runners on remote Docker hosts are unsupported until the GitRun API socket is securely forwarded".into(),
+        ));
+    }
+
+    validate_secret_env(spec.secret_env)?;
     ensure_runner_network(host, spec.network)?;
     if spec.is_windows && spec.docker_socket_enabled {
         return Err(DockerError::Command(
@@ -924,7 +1226,11 @@ pub fn stop_container(name: &str) -> Result<()> {
 }
 
 pub fn container_id(name: &str) -> Result<Option<String>> {
-    let output = run_on(&DockerHost::Local, &["inspect", "-f", "{{.Id}}", name])?;
+    container_id_on(&DockerHost::Local, name)
+}
+
+pub fn container_id_on(host: &DockerHost, name: &str) -> Result<Option<String>> {
+    let output = run_on(host, &["inspect", "-f", "{{.Id}}", name])?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if is_missing_container_error(&stderr) {
@@ -967,13 +1273,80 @@ pub fn container_logs(name: &str) -> Result<String> {
     run_checked(&["logs", "--timestamps", name])
 }
 
+fn melt_excludes_mount_destination(destination: &str) -> bool {
+    let path = std::path::Path::new(destination);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    let Ok(relative) = path.strip_prefix("/") else {
+        return false;
+    };
+    MELT_TAR_EXCLUDE_ROOTS.iter().any(|root| {
+        let root = std::path::Path::new(root);
+        relative == root || relative.starts_with(root)
+    })
+}
+
+/// Refuse MELT if Docker reports a writable target mount that the archive
+/// exclusion list does not cover. GitDockRun lease checks alone cannot detect
+/// ordinary Docker volumes/binds created outside the GitDockRun mount API.
+pub fn validate_melt_target_mounts_on(host: &DockerHost, target_id: &str) -> Result<()> {
+    let output = run_on(
+        host,
+        &["inspect", "--format", "{{json .Mounts}}", target_id],
+    )?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(DockerError::Command(if detail.is_empty() {
+            format!("cannot inspect target mounts for MELT target {target_id}")
+        } else {
+            format!("cannot inspect target mounts for MELT target {target_id}: {detail}")
+        }));
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let mounts: Value = serde_json::from_str(raw.trim())?;
+    validate_melt_target_mount_inventory(target_id, &mounts)
+}
+
+fn validate_melt_target_mount_inventory(target_id: &str, mounts: &Value) -> Result<()> {
+    let mounts = mounts.as_array().ok_or_else(|| {
+        DockerError::Command(format!(
+            "Docker returned a non-array mount inventory for MELT target {target_id}"
+        ))
+    })?;
+    for mount in mounts {
+        let destination = mount
+            .get("Destination")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                DockerError::Command(format!(
+                    "Docker returned a mount without a destination for MELT target {target_id}"
+                ))
+            })?;
+        let read_write = mount.get("RW").and_then(Value::as_bool).ok_or_else(|| {
+            DockerError::Command(format!(
+                "Docker returned a mount without an RW flag for MELT target {target_id}"
+            ))
+        })?;
+        if read_write && !melt_excludes_mount_destination(destination) {
+            return Err(DockerError::Command(format!(
+                "GitDockRun MELT refuses target {target_id}: writable Docker mount {destination:?} is not protected by the archive exclusions"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
     // Docker does not provide a literal "merge two container namespaces"
-    // primitive. GitDockRun melt therefore merges the source container's
-    // exported filesystem into the target container's writable filesystem.
-    // Runtime/pseudo filesystems and the Actions runner installation are
-    // deliberately excluded: the target remains the runner container.
-    let mut export = Command::new("docker");
+    // primitive. GitDockRun melt merges an exported source filesystem into
+    // the target writable filesystem, excluding runtime/runner state.
+    let mut export = Command::new("/usr/bin/docker");
     export
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
@@ -983,7 +1356,7 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut extract = Command::new("docker");
+    let mut extract = Command::new("/usr/bin/docker");
     extract
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
@@ -999,65 +1372,195 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
             "-C",
             "/",
             "--no-same-owner",
-            "--exclude=./proc",
-            "--exclude=./proc/*",
-            "--exclude=./sys",
-            "--exclude=./sys/*",
-            "--exclude=./dev",
-            "--exclude=./dev/*",
-            "--exclude=./run",
-            "--exclude=./run/*",
-            "--exclude=./var/run",
-            "--exclude=./var/run/*",
-            "--exclude=./home/runner/actions-runner",
-            "--exclude=./home/runner/actions-runner/*",
         ])
+        .args(MELT_TAR_EXCLUDE_ARGS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        export.process_group(0);
+        extract.process_group(0);
+    }
+
     let mut export_child = export.spawn()?;
-    let mut extract_child = extract.spawn()?;
-    let mut export_stdout = export_child
-        .stdout
-        .take()
-        .ok_or_else(|| DockerError::Command("docker export did not expose stdout".into()))?;
-    let mut extract_stdin = extract_child
-        .stdin
-        .take()
-        .ok_or_else(|| DockerError::Command("docker exec did not expose stdin".into()))?;
+    let mut extract_child = match extract.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            terminate_child(&mut export_child);
+            return Err(DockerError::Spawn(error));
+        }
+    };
 
-    let pipe = std::thread::spawn(move || std::io::copy(&mut export_stdout, &mut extract_stdin));
+    let export_stdout = match export_child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command(
+                "docker export did not expose stdout".into(),
+            ));
+        }
+    };
+    let extract_stdin = match extract_child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command(
+                "docker exec did not expose stdin".into(),
+            ));
+        }
+    };
+    let export_stderr = match export_child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command(
+                "docker export did not expose stderr".into(),
+            ));
+        }
+    };
+    let extract_stdout = match extract_child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command(
+                "docker exec did not expose stdout".into(),
+            ));
+        }
+    };
+    let extract_stderr = match extract_child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            return Err(DockerError::Command(
+                "docker exec did not expose stderr".into(),
+            ));
+        }
+    };
 
-    let extract_output = extract_child.wait_with_output()?;
-    let export_status = export_child.wait()?;
-    let copied = pipe
+    // Drain both stderr pipes and extract stdout while streaming the tar bytes.
+    // Otherwise a full stderr pipe can deadlock the export->extract pipeline.
+    let export_stderr_thread = thread::spawn(move || read_bounded_output(export_stderr));
+    let extract_stdout_thread = thread::spawn(move || read_bounded_output(extract_stdout));
+    let extract_stderr_thread = thread::spawn(move || read_bounded_output(extract_stderr));
+    let pipe_thread = thread::spawn(move || {
+        let mut export_stdout = export_stdout;
+        let mut extract_stdin = extract_stdin;
+        std::io::copy(&mut export_stdout, &mut extract_stdin)
+    });
+
+    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
+    let mut export_status = None;
+    let mut extract_status = None;
+    while export_status.is_none() || extract_status.is_none() {
+        if export_status.is_none() {
+            match export_child.try_wait() {
+                Ok(status) => {
+                    if status.is_some() {
+                        kill_command_group(export_child.id());
+                    }
+                    export_status = status;
+                }
+                Err(error) => {
+                    terminate_child(&mut export_child);
+                    terminate_child(&mut extract_child);
+                    let _ = pipe_thread.join();
+                    let _ = export_stderr_thread.join();
+                    let _ = extract_stdout_thread.join();
+                    let _ = extract_stderr_thread.join();
+                    return Err(DockerError::Spawn(error));
+                }
+            }
+        }
+        if extract_status.is_none() {
+            match extract_child.try_wait() {
+                Ok(status) => {
+                    if status.is_some() {
+                        kill_command_group(extract_child.id());
+                    }
+                    extract_status = status;
+                }
+                Err(error) => {
+                    terminate_child(&mut export_child);
+                    terminate_child(&mut extract_child);
+                    let _ = pipe_thread.join();
+                    let _ = export_stderr_thread.join();
+                    let _ = extract_stdout_thread.join();
+                    let _ = extract_stderr_thread.join();
+                    return Err(DockerError::Spawn(error));
+                }
+            }
+        }
+        if export_status.is_some() && extract_status.is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            terminate_child(&mut export_child);
+            terminate_child(&mut extract_child);
+            let _ = pipe_thread.join();
+            let _ = export_stderr_thread.join();
+            let _ = extract_stdout_thread.join();
+            let _ = extract_stderr_thread.join();
+            return Err(DockerError::Command(format!(
+                "filesystem melt timed out after {}s",
+                DOCKER_COMMAND_TIMEOUT.as_secs()
+            )));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let copied = pipe_thread
         .join()
         .map_err(|_| DockerError::Command("melt pipe thread panicked".into()))?
         .map_err(DockerError::Spawn)?;
-
-    if !export_status.success() {
-        return Err(DockerError::Command(format!(
-            "docker export {source} failed"
-        )));
+    let export_stderr = export_stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("docker export stderr reader panicked".into()))??;
+    let extract_stdout = extract_stdout_thread
+        .join()
+        .map_err(|_| DockerError::Command("docker exec stdout reader panicked".into()))??;
+    let extract_stderr = extract_stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("docker exec stderr reader panicked".into()))??;
+    if output_was_truncated(&export_stderr)
+        || output_was_truncated(&extract_stdout)
+        || output_was_truncated(&extract_stderr)
+    {
+        return Err(DockerError::Command(
+            "filesystem melt diagnostics exceeded the 8 MiB safety limit".into(),
+        ));
     }
-    if !extract_output.status.success() {
-        let stderr = String::from_utf8_lossy(&extract_output.stderr)
-            .trim()
-            .to_owned();
-        return Err(DockerError::Command(if stderr.is_empty() {
-            format!("filesystem melt into {target} failed")
+
+    let export_status = export_status.expect("loop exits only when export status is available");
+    let extract_status = extract_status.expect("loop exits only when extract status is available");
+    if !export_status.success() {
+        let detail = String::from_utf8_lossy(&export_stderr).trim().to_owned();
+        return Err(DockerError::Command(if detail.is_empty() {
+            format!("docker export {source} failed")
         } else {
-            stderr
+            format!("docker export {source} failed: {detail}")
         }));
     }
-
+    if !extract_status.success() {
+        let detail = String::from_utf8_lossy(&extract_stderr).trim().to_owned();
+        return Err(DockerError::Command(if detail.is_empty() {
+            format!("filesystem melt into {target} failed")
+        } else {
+            format!("filesystem melt into {target} failed: {detail}")
+        }));
+    }
     if copied == 0 {
         return Err(DockerError::Command(
             "filesystem melt copied no data from source container".into(),
         ));
     }
-
     Ok(())
 }
 
@@ -1117,6 +1620,17 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
         return Ok(None);
     }
 
+    // A peer may exit and its PID may be reused while Docker is being
+    // queried. Re-check the cgroup after the lookup before trusting its labels.
+    let cgroup_final = match std::fs::read_to_string(format!("/proc/{pid}/cgroup")) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if container_id_from_cgroup(&cgroup_final).as_deref() != Some(container_id.as_str()) {
+        return Ok(None);
+    }
+
     let raw = String::from_utf8_lossy(&output.stdout);
     let mut parts = raw.trim().splitn(6, '|');
     let resolved_id = parts.next().unwrap_or_default();
@@ -1126,7 +1640,10 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     let workflow_job = parts.next().unwrap_or_default();
     let workflow_run_id = parts.next().and_then(|value| value.parse::<u64>().ok());
 
-    if runner_label != "true" || resolved_id.is_empty() || name.is_empty() || repository.is_empty()
+    if runner_label != "true"
+        || resolved_id != container_id
+        || name.is_empty()
+        || repository.is_empty()
     {
         return Ok(None);
     }
@@ -1148,25 +1665,59 @@ pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
 /// Extracts a Docker-style 64-hex container id from a Linux cgroup path.
 #[cfg(target_os = "linux")]
 fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
-    cgroup
-        .split(|ch: char| !ch.is_ascii_hexdigit())
-        .find(|part| part.len() == 64)
-        .map(str::to_owned)
+    for component in cgroup.split('/') {
+        if is_full_container_id(component) {
+            return Some(component.to_owned());
+        }
+        let scoped_id = component
+            .strip_prefix("docker-")
+            .and_then(|value| value.strip_suffix(".scope"))
+            .or_else(|| {
+                component
+                    .strip_prefix("cri-containerd-")
+                    .and_then(|value| value.strip_suffix(".scope"))
+            });
+        if let Some(id) = scoped_id.filter(|value| is_full_container_id(value)) {
+            return Some(id.to_owned());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn is_full_container_id(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Executes a command in a managed container after the caller has already
 /// passed the relevant GSR authorization gate.
+fn exec_user_arguments(user: Option<&str>) -> Vec<&str> {
+    match user {
+        Some(user) => vec!["--user", user],
+        None => Vec::new(),
+    }
+}
+
 pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
-    let mut command = Command::new("docker");
-    command
-        .env_remove("DOCKER_CONTEXT")
-        .env_remove("DOCKER_TLS_VERIFY")
-        .env_remove("DOCKER_CERT_PATH")
-        .env("DOCKER_HOST", "unix:///var/run/docker.sock")
-        .arg("exec")
-        .arg(container)
-        .args(args);
-    command.output().map_err(DockerError::Spawn)
+    exec_container_as(container, None, args)
+}
+
+/// Executes workflow-controlled commands as the non-root Actions runner account.
+/// Do not rely on the image's configured USER: GitRun's entrypoint intentionally
+/// starts as root to initialize protected runtime files before dropping the
+/// long-lived runner process to its unprivileged account.
+pub fn exec_container_as_runner(container: &str, args: &[&str]) -> Result<Output> {
+    exec_container_as(container, Some("runner"), args)
+}
+
+fn exec_container_as(container: &str, user: Option<&str>, args: &[&str]) -> Result<Output> {
+    // Reuse the bounded-output/timeout runner instead of Command::output(),
+    // which would buffer arbitrary workflow-controlled output in scheduler RAM.
+    let mut command_args = vec!["exec"];
+    command_args.extend(exec_user_arguments(user));
+    command_args.push(container);
+    command_args.extend_from_slice(args);
+    run_on(&DockerHost::Local, &command_args)
 }
 
 /// Executes a command in a managed container and writes a bounded payload to
@@ -1178,7 +1729,7 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
         ));
     }
 
-    let mut command = Command::new("docker");
+    let mut command = Command::new("/usr/bin/docker");
     command
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
@@ -1192,81 +1743,227 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = command.spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write as _;
-        stdin.write_all(input)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
     }
-    child.wait_with_output().map_err(DockerError::Spawn)
+
+    let mut child = command.spawn()?;
+    let stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command(
+                "docker exec did not expose stdin".into(),
+            ));
+        }
+    };
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command(
+                "docker exec did not expose stdout".into(),
+            ));
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command(
+                "docker exec did not expose stderr".into(),
+            ));
+        }
+    };
+
+    // Writing input and draining both output streams must happen concurrently;
+    // otherwise a child that fills stdout/stderr before consuming stdin can deadlock.
+    let input = input.to_vec();
+    let stdin_thread = thread::spawn(move || {
+        use std::io::Write as _;
+        let mut stdin = stdin;
+        stdin.write_all(&input)
+    });
+    let stdout_thread = thread::spawn(move || read_bounded_output(stdout));
+    let stderr_thread = thread::spawn(move || read_bounded_output(stderr));
+    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                kill_command_group(child.id());
+                break status;
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                terminate_child(&mut child);
+                let _ = stdin_thread.join();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Command(format!(
+                    "docker exec timed out after {}s",
+                    DOCKER_COMMAND_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_child(&mut child);
+                let _ = stdin_thread.join();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Spawn(error));
+            }
+        }
+    };
+
+    let stdin_result = stdin_thread
+        .join()
+        .map_err(|_| DockerError::Command("docker stdin writer thread panicked".into()))?;
+    let stdout = stdout_thread
+        .join()
+        .map_err(|_| DockerError::Command("stdout reader thread panicked".into()))??;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))??;
+    if output_was_truncated(&stdout) || output_was_truncated(&stderr) {
+        return Err(DockerError::Command(
+            "docker exec output exceeded the 8 MiB safety limit".into(),
+        ));
+    }
+    if let Err(error) = stdin_result {
+        // A command that exited before consuming its bounded input is a failed
+        // operation; do not silently report success after a partial write.
+        return Err(DockerError::Spawn(error));
+    }
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
-/// Executes a command in one managed container while forwarding stdout and
-/// stderr chunks to the caller as they arrive.
-pub fn exec_container_stream<F>(container: &str, args: &[&str], mut on_output: F) -> Result<i32>
+/// Executes a command in one managed container and forwards bounded stdout/stderr
+/// output to the caller. Each stream retains at most `MAX_DOCKER_OUTPUT_BYTES`;
+/// output beyond that cap is drained but not retained. The Docker CLI is killed
+/// after the shared command timeout, including descendants holding its pipes.
+pub fn exec_container_stream<F>(container: &str, args: &[&str], on_output: F) -> Result<i32>
 where
     F: FnMut(bool, &[u8]),
 {
-    let mut command = Command::new("docker");
+    exec_container_stream_as(container, None, args, on_output)
+}
+
+/// Streams a workflow-controlled command as the unprivileged Actions runner
+/// account. This is separate from the long-lived ptrace-supervised runner tree:
+/// Docker exec starts a daemon-created process, so explicitly drop its UID.
+pub fn exec_container_stream_as_runner<F>(
+    container: &str,
+    args: &[&str],
+    on_output: F,
+) -> Result<i32>
+where
+    F: FnMut(bool, &[u8]),
+{
+    exec_container_stream_as(container, Some("runner"), args, on_output)
+}
+
+fn exec_container_stream_as<F>(
+    container: &str,
+    user: Option<&str>,
+    args: &[&str],
+    mut on_output: F,
+) -> Result<i32>
+where
+    F: FnMut(bool, &[u8]),
+{
+    let mut command = Command::new("/usr/bin/docker");
     command
         .env_remove("DOCKER_CONTEXT")
         .env_remove("DOCKER_TLS_VERIFY")
         .env_remove("DOCKER_CERT_PATH")
         .env("DOCKER_HOST", "unix:///var/run/docker.sock")
         .arg("exec")
+        .args(exec_user_arguments(user))
         .arg(container)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
     let mut child = command.spawn()?;
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| DockerError::Command("docker exec did not expose stdout".into()))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| DockerError::Command("docker exec did not expose stderr".into()))?;
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command(
+                "docker exec did not expose stdout".into(),
+            ));
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_child(&mut child);
+            return Err(DockerError::Command(
+                "docker exec did not expose stderr".into(),
+            ));
+        }
+    };
 
-    let stdout_thread = thread::spawn(move || {
-        let mut buffer = [0u8; 8192];
-        let mut chunks = Vec::new();
-        loop {
-            match stdout.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(count) => chunks.push(buffer[..count].to_vec()),
-                Err(_) => break,
+    // Drain both pipes concurrently, but never accumulate one Vec per chunk:
+    // retained memory stays bounded even if a workflow emits unbounded output.
+    let stdout_thread = thread::spawn(move || read_bounded_output(stdout));
+    let stderr_thread = thread::spawn(move || read_bounded_output(stderr));
+    let deadline = Instant::now() + DOCKER_COMMAND_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                kill_command_group(child.id());
+                break status;
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                terminate_child(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Command(format!(
+                    "docker exec timed out after {}s",
+                    DOCKER_COMMAND_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                terminate_child(&mut child);
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(DockerError::Spawn(error));
             }
         }
-        chunks
-    });
-    let stderr_thread = thread::spawn(move || {
-        let mut buffer = [0u8; 8192];
-        let mut chunks = Vec::new();
-        loop {
-            match stderr.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(count) => chunks.push(buffer[..count].to_vec()),
-                Err(_) => break,
-            }
-        }
-        chunks
-    });
+    };
 
-    for chunk in stdout_thread
+    let stdout = stdout_thread
         .join()
-        .map_err(|_| DockerError::Command("stdout reader thread panicked".into()))?
-    {
-        on_output(false, &chunk);
+        .map_err(|_| DockerError::Command("stdout reader thread panicked".into()))??;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))??;
+    if output_was_truncated(&stdout) || output_was_truncated(&stderr) {
+        return Err(DockerError::Command(
+            "docker exec output exceeded the 8 MiB safety limit".into(),
+        ));
     }
-    for chunk in stderr_thread
-        .join()
-        .map_err(|_| DockerError::Command("stderr reader thread panicked".into()))?
-    {
-        on_output(true, &chunk);
+    for chunk in stdout.chunks(8192) {
+        on_output(false, chunk);
+    }
+    for chunk in stderr.chunks(8192) {
+        on_output(true, chunk);
     }
 
-    Ok(child.wait()?.code().unwrap_or(1))
+    Ok(status.code().unwrap_or(1))
 }
 
 /// Extra `docker run` flags applied to a Linux runner container when
@@ -1329,6 +2026,271 @@ fn ensure_label(labels: &str, extra: &str) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn melt_exclusions_cover_root_relative_and_dot_prefixed_tar_members() {
+        use std::process::Command;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock must be after Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-melt-exclusion-test-{}-{nonce}",
+            std::process::id()
+        ));
+        let source = root.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+
+        for directory in [
+            "proc",
+            "sys",
+            "dev",
+            "run",
+            "etc",
+            "var/run",
+            "tmp",
+            "var/tmp",
+            "var/lib/gitrun/shared",
+            "home/runner/actions-runner",
+            "workspace",
+        ] {
+            std::fs::create_dir_all(source.join(directory)).unwrap();
+        }
+        for (relative, contents) in [
+            ("proc/process-info", "proc"),
+            ("sys/kernel-info", "sys"),
+            ("dev/console", "dev"),
+            ("run/daemon.pid", "run"),
+            ("etc/hosts", "host-config"),
+            ("etc/hostname", "host-name"),
+            ("etc/resolv.conf", "resolver-config"),
+            ("var/run/daemon.pid", "var-run"),
+            ("tmp/transient", "tmp"),
+            ("var/tmp/transient", "var-tmp"),
+            ("var/lib/gitrun/shared/cache-key", "shared-cache"),
+            ("home/runner/actions-runner/run.sh", "runner"),
+            ("workspace/artifact.txt", "must-transfer"),
+        ] {
+            std::fs::write(source.join(relative), contents).unwrap();
+        }
+
+        for (index, dot_prefix) in [false, true].into_iter().enumerate() {
+            let archive = root.join(format!("source-{index}.tar"));
+            let mut create = Command::new("tar");
+            create.current_dir(&source).arg("-cf").arg(&archive);
+            if dot_prefix {
+                create.arg(".");
+            } else {
+                create.args([
+                    "proc",
+                    "sys",
+                    "dev",
+                    "run",
+                    "etc",
+                    "tmp",
+                    "var",
+                    "home",
+                    "workspace",
+                ]);
+            }
+            let created = create
+                .output()
+                .expect("tar must be installed for this test");
+            assert!(
+                created.status.success(),
+                "creating test archive failed: {}",
+                String::from_utf8_lossy(&created.stderr)
+            );
+
+            let destination = root.join(format!("destination-{index}"));
+            std::fs::create_dir_all(&destination).unwrap();
+            let extracted = Command::new("tar")
+                .arg("-xpf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&destination)
+                .arg("--no-same-owner")
+                .args(MELT_TAR_EXCLUDE_ARGS)
+                .output()
+                .expect("tar must be installed for this test");
+            assert!(
+                extracted.status.success(),
+                "extracting test archive failed: {}",
+                String::from_utf8_lossy(&extracted.stderr)
+            );
+
+            assert_eq!(
+                std::fs::read_to_string(destination.join("workspace/artifact.txt")).unwrap(),
+                "must-transfer"
+            );
+            for excluded in [
+                "proc/process-info",
+                "sys/kernel-info",
+                "dev/console",
+                "run/daemon.pid",
+                "etc/hosts",
+                "etc/hostname",
+                "etc/resolv.conf",
+                "var/run/daemon.pid",
+                "tmp/transient",
+                "var/tmp/transient",
+                "var/lib/gitrun/shared/cache-key",
+                "home/runner/actions-runner/run.sh",
+            ] {
+                assert!(
+                    !destination.join(excluded).exists(),
+                    "protected path {excluded} was extracted (dot_prefix={dot_prefix})"
+                );
+            }
+        }
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn melt_rejects_unprotected_writable_docker_mounts() {
+        let safe = serde_json::json!([
+            {"Destination": "/tmp", "RW": true},
+            {"Destination": "/var/lib/gitrun/shared/cache", "RW": true},
+            {"Destination": "/etc/hosts", "RW": false},
+        ]);
+        assert!(validate_melt_target_mount_inventory("target-id", &safe).is_ok());
+
+        let unsafe_mount = serde_json::json!([
+            {"Destination": "/tmp", "RW": true},
+            {"Destination": "/workspace/host-data", "RW": true},
+        ]);
+        let error = validate_melt_target_mount_inventory("target-id", &unsafe_mount)
+            .expect_err("unprotected writable mounts must block MELT");
+        assert!(error.to_string().contains("/workspace/host-data"));
+
+        let incomplete = serde_json::json!([{"Destination": "/workspace", "Type": "bind"}]);
+        assert!(validate_melt_target_mount_inventory("target-id", &incomplete).is_err());
+        assert!(validate_melt_target_mount_inventory("target-id", &serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn workflow_exec_user_is_explicitly_unprivileged() {
+        assert_eq!(exec_user_arguments(Some("runner")), ["--user", "runner"]);
+        assert!(exec_user_arguments(None).is_empty());
+    }
+
+    #[test]
+    fn melt_writable_mount_gate_only_allows_excluded_roots() {
+        for destination in [
+            "/proc",
+            "/proc/1",
+            "/sys",
+            "/dev",
+            "/run",
+            "/run/gitrun/api.sock",
+            "/var/run/docker.sock",
+            "/etc/hosts",
+            "/etc/hostname",
+            "/etc/resolv.conf",
+            "/tmp",
+            "/tmp/work",
+            "/var/tmp",
+            "/var/tmp/staging",
+            "/var/lib/gitrun/shared",
+            "/var/lib/gitrun/shared/cache",
+            "/home/runner/actions-runner",
+            "/home/runner/actions-runner/_work",
+        ] {
+            assert!(
+                melt_excludes_mount_destination(destination),
+                "{destination} should be excluded from MELT archives"
+            );
+        }
+        for destination in [
+            "/",
+            "/workspace",
+            "/workspace/data",
+            "/etc",
+            "/var/lib/gitrun",
+            "/var/lib/gitrun/shared-escape",
+            "/tmpish",
+            "/home/runner",
+            "relative/path",
+            "/workspace/../etc",
+        ] {
+            assert!(
+                !melt_excludes_mount_destination(destination),
+                "{destination} must not be treated as an excluded mount root"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_linux_runners_fail_closed_without_api_socket_forwarding() {
+        assert!(!remote_linux_runner_api_unsupported(
+            &DockerHost::Local,
+            false
+        ));
+        assert!(remote_linux_runner_api_unsupported(
+            &DockerHost::Remote("tcp://192.168.56.10:2376".into()),
+            false
+        ));
+        assert!(remote_linux_runner_api_unsupported(
+            &DockerHost::RemoteTls {
+                endpoint: "tcp://192.168.56.10:2376".into(),
+                cert_dir: "/etc/gitrun/vm-certs".into(),
+            },
+            false
+        ));
+        // Windows runners do not consume the Linux Unix-socket mount.
+        assert!(!remote_linux_runner_api_unsupported(
+            &DockerHost::RemoteTls {
+                endpoint: "tcp://192.168.56.10:2376".into(),
+                cert_dir: "/etc/gitrun/vm-certs".into(),
+            },
+            true
+        ));
+    }
+
+    #[test]
+    fn runner_name_prefix_is_collision_free_and_within_docker_name_limit() {
+        let first = "foo-bar/baz";
+        let second = "foo/bar-baz";
+        assert_eq!(sanitize(first, '-'), sanitize(second, '-'));
+        assert_ne!(runner_name_prefix(first), runner_name_prefix(second));
+
+        let maximum_repo = format!("{}/{}", "a".repeat(39), "b".repeat(100));
+        // uuid_like_suffix is at most 36 ASCII characters; the encoded
+        // prefix must leave room under Docker's 255-character name limit.
+        assert!(runner_name_prefix(&maximum_repo).len() + 36 <= 255);
+    }
+
+    #[test]
+    fn secret_environment_rejects_protected_runner_variables() {
+        for name in [
+            "RUNNER_TOKEN",
+            "RUNNER_URL",
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED",
+            "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
+            "GITRUN_API_SOCKET",
+            "LD_PRELOAD",
+        ] {
+            assert!(
+                validate_secret_env(&[(name.into(), "value".into())]).is_err(),
+                "{name} must not be overridden by a vault secret"
+            );
+        }
+        assert!(validate_secret_env(&[("DEPLOY_KEY".into(), "secret".into())]).is_ok());
+        assert!(validate_secret_env(&[("DEPLOY_KEY".into(), "bad\0value".into())]).is_err());
+    }
+
+    #[test]
+    fn docker_output_capture_is_bounded_and_continues_draining() {
+        let input = vec![b'x'; MAX_DOCKER_OUTPUT_BYTES + 1024];
+        let output = read_bounded_output(std::io::Cursor::new(input)).unwrap();
+        assert!(output.len() <= MAX_DOCKER_OUTPUT_BYTES + 64);
+        assert!(output.ends_with(b"[Docker output truncated at 8 MiB]"));
+        assert!(output_was_truncated(&output));
+        assert!(!output_was_truncated(b"complete output"));
+    }
+
     #[test]
     fn sanitize_keeps_safe_characters() {
         assert_eq!(
@@ -1387,6 +2349,14 @@ mod tests {
     }
 
     #[test]
+    fn container_label_format_emits_valid_docker_go_template() {
+        assert_eq!(
+            container_label_format("gitrun.dock_target"),
+            r#"{{index .Config.Labels "gitrun.dock_target"}}"#
+        );
+    }
+
+    #[test]
     fn parse_top_output_skips_header_and_blank_lines() {
         let raw = "COMMAND\ncargo build --release\nsh -c echo hi\n\n";
         assert_eq!(
@@ -1420,6 +2390,20 @@ mod tests {
         assert_eq!(
             container_id_from_cgroup("0::/user.slice/user-1000.slice/session-42.scope"),
             None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cgroup_parser_rejects_unrelated_hex_text_and_accepts_docker_scope() {
+        let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            container_id_from_cgroup(&format!("0::/user.slice/session-{id}-scope")),
+            None
+        );
+        assert_eq!(
+            container_id_from_cgroup(&format!("0::/system.slice/docker-{id}.scope")).as_deref(),
+            Some(id)
         );
     }
 

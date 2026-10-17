@@ -80,6 +80,7 @@ fn run() -> Result<(), String> {
             .map_err(|error| format!("cannot flush API request: {error}"))?;
 
         let reader = BufReader::new(stream);
+        let mut finished = false;
         for line in reader.lines() {
             let line = line.map_err(|error| format!("cannot read API response: {error}"))?;
             let response: WireResponse = serde_json::from_str(&line)
@@ -99,6 +100,7 @@ fn run() -> Result<(), String> {
                 WireResponse::Event(ExecutionEvent::Stdout(value)) => print!("{value}"),
                 WireResponse::Event(ExecutionEvent::Stderr(value)) => eprint!("{value}"),
                 WireResponse::Event(ExecutionEvent::Finished { exit_code }) => {
+                    finished = true;
                     if secret_read {
                         eprintln!("GITEXECRUN RESULT: {exit_code}");
                     } else {
@@ -115,6 +117,9 @@ fn run() -> Result<(), String> {
                     break;
                 }
             }
+        }
+        if !finished {
+            return Err("GitRun API connection closed before the Finished event".into());
         }
         Ok(())
     }
@@ -150,6 +155,29 @@ fn api_from_invocation(invocation: &str) -> Result<GitRunApi, String> {
     }
 }
 
+fn insert_argument(
+    values: &mut BTreeMap<String, String>,
+    key: &str,
+    value: String,
+) -> Result<(), String> {
+    if values.contains_key(key) {
+        return Err(format!("argument {key} may only be specified once"));
+    }
+    values.insert(key.to_owned(), value);
+    Ok(())
+}
+
+fn select_operation(
+    selected: &mut Option<GitRunOperation>,
+    next: GitRunOperation,
+) -> Result<(), String> {
+    if selected.is_some() {
+        return Err("only one GitRun API operation may be specified".into());
+    }
+    *selected = Some(next);
+    Ok(())
+}
+
 type ParsedApiRequest = (GitRunOperation, Option<String>, BTreeMap<String, String>);
 
 fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String> {
@@ -159,9 +187,18 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
     let mut i = 0usize;
 
     if api == GitRunApi::GitInstallRun && !args.is_empty() && !args[0].starts_with('-') {
-        values.insert("package".into(), args[0].clone());
+        if args.len() > 2 {
+            return Err("GitInstallRun accepts only <package> [version]".into());
+        }
+        if args[0].trim().is_empty() {
+            return Err("GitInstallRun package cannot be empty".into());
+        }
+        insert_argument(&mut values, "package", args[0].clone())?;
         if let Some(version) = args.get(1) {
-            values.insert("version".into(), version.clone());
+            if version.trim().is_empty() {
+                return Err("GitInstallRun version cannot be empty".into());
+            }
+            insert_argument(&mut values, "version", version.clone())?;
         }
         return Ok((GitRunOperation::Install, None, values));
     }
@@ -169,7 +206,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
     while i < args.len() {
         match args[i].as_str() {
             "--read" | "--get" => {
-                operation = Some(GitRunOperation::Read);
+                select_operation(&mut operation, GitRunOperation::Read)?;
                 i += 1;
                 if i < args.len() {
                     let key = if api == GitRunApi::GitVaultRun {
@@ -177,12 +214,12 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                     } else {
                         "path"
                     };
-                    values.insert(key.into(), args[i].clone());
+                    insert_argument(&mut values, key, args[i].clone())?;
                     i += 1;
                 }
             }
             "--write" => {
-                operation = Some(GitRunOperation::Write);
+                select_operation(&mut operation, GitRunOperation::Write)?;
                 i += 1;
                 if i < args.len() {
                     let key = if api == GitRunApi::GitVaultRun {
@@ -190,108 +227,145 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                     } else {
                         "path"
                     };
-                    values.insert(key.into(), args[i].clone());
+                    insert_argument(&mut values, key, args[i].clone())?;
                     i += 1;
                 }
                 if i < args.len() {
-                    values.insert("value".into(), args[i].clone());
+                    insert_argument(&mut values, "value", args[i].clone())?;
                     i += 1;
                 }
             }
             "--exists" => {
-                operation = Some(GitRunOperation::Exists);
+                select_operation(&mut operation, GitRunOperation::Exists)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("name".into(), args[i].clone());
+                    insert_argument(&mut values, "name", args[i].clone())?;
                     i += 1;
                 }
             }
             "--delete" => {
-                operation = Some(GitRunOperation::Delete);
+                select_operation(&mut operation, GitRunOperation::Delete)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("name".into(), args[i].clone());
+                    insert_argument(&mut values, "name", args[i].clone())?;
                     i += 1;
                 }
             }
             "--list" => {
-                operation = Some(GitRunOperation::List);
+                select_operation(&mut operation, GitRunOperation::List)?;
                 i += 1;
             }
             "--connect" => {
-                operation = Some(GitRunOperation::Connect);
+                select_operation(&mut operation, GitRunOperation::Connect)?;
                 i += 1;
             }
             "--disconnect" => {
-                operation = Some(GitRunOperation::Disconnect);
+                select_operation(&mut operation, GitRunOperation::Disconnect)?;
                 i += 1;
             }
             "--execute" => {
-                operation = Some(GitRunOperation::Execute);
+                select_operation(&mut operation, GitRunOperation::Execute)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("command".into(), args[i..].join(" "));
+                    insert_argument(&mut values, "command", args[i..].join(" "))?;
                 }
                 i = args.len();
             }
             "--melt" => {
-                operation = Some(GitRunOperation::Melt);
+                select_operation(&mut operation, GitRunOperation::Melt)?;
                 i += 1;
                 if i < args.len() && !args[i].starts_with('-') {
-                    values.insert("target".into(), args[i].clone());
+                    insert_argument(&mut values, "target", args[i].clone())?;
+                    i += 1;
+                }
+            }
+            "--mount" => {
+                select_operation(&mut operation, GitRunOperation::Mount)?;
+                i += 1;
+                if i < args.len() {
+                    insert_argument(&mut values, "source", args[i].clone())?;
+                    i += 1;
+                }
+            }
+            "--target" => {
+                i += 1;
+                if i < args.len() {
+                    insert_argument(&mut values, "target", args[i].clone())?;
+                    i += 1;
+                }
+            }
+            "--read-only" => {
+                if values.contains_key("read_only") {
+                    return Err("--read-only/--read-write may be specified only once".into());
+                }
+                values.insert("read_only".into(), "true".into());
+                i += 1;
+            }
+            "--read-write" => {
+                if values.contains_key("read_only") {
+                    return Err("--read-only/--read-write may be specified only once".into());
+                }
+                values.insert("read_only".into(), "false".into());
+                i += 1;
+            }
+            "--unmount" => {
+                select_operation(&mut operation, GitRunOperation::Unmount)?;
+                i += 1;
+                if i < args.len() {
+                    insert_argument(&mut values, "mount_id", args[i].clone())?;
                     i += 1;
                 }
             }
             "--file" => {
-                operation = Some(GitRunOperation::File);
+                select_operation(&mut operation, GitRunOperation::File)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("path".into(), args[i].clone());
+                    insert_argument(&mut values, "path", args[i].clone())?;
                     i += 1;
                 }
             }
             "--logs" => {
-                operation = Some(GitRunOperation::Logs);
+                select_operation(&mut operation, GitRunOperation::Logs)?;
                 i += 1;
             }
             "--namefile" => {
                 i += 1;
                 if i < args.len() {
-                    values.insert("namefile".into(), args[i].clone());
+                    insert_argument(&mut values, "namefile", args[i].clone())?;
                     i += 1;
                 }
             }
             "--name" => {
                 i += 1;
                 if i < args.len() {
-                    values.insert("name".into(), args[i].clone());
+                    insert_argument(&mut values, "name", args[i].clone())?;
                     i += 1;
                 }
             }
             "--entry" => {
                 i += 1;
                 if i < args.len() {
-                    values.insert("entry".into(), args[i].clone());
+                    insert_argument(&mut values, "entry", args[i].clone())?;
                     i += 1;
                 }
             }
             "--permanent" => {
-                values.insert("permanent".into(), "true".into());
+                insert_argument(&mut values, "permanent", "true".into())?;
                 i += 1;
             }
             "--remove" => {
-                operation = Some(GitRunOperation::Remove);
+                select_operation(&mut operation, GitRunOperation::Remove)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("package".into(), args[i].clone());
+                    insert_argument(&mut values, "package", args[i].clone())?;
                     i += 1;
                 }
             }
             "--update" => {
-                operation = Some(GitRunOperation::Update);
+                select_operation(&mut operation, GitRunOperation::Update)?;
                 i += 1;
                 if i < args.len() {
-                    values.insert("package".into(), args[i].clone());
+                    insert_argument(&mut values, "package", args[i].clone())?;
                     i += 1;
                 }
             }
@@ -299,6 +373,9 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 i += 1;
                 if i >= args.len() {
                     return Err("--docked requires a container id".into());
+                }
+                if resource.is_some() {
+                    return Err("--docked may be specified only once".into());
                 }
                 resource = Some(args[i].clone());
                 i += 1;
@@ -308,7 +385,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 if i >= args.len() {
                     return Err("--job requires a job name".into());
                 }
-                values.insert("job".into(), args[i].clone());
+                insert_argument(&mut values, "job", args[i].clone())?;
                 i += 1;
             }
             value => return Err(format!("unknown argument {value}")),
@@ -319,7 +396,7 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
         if !values.contains_key("name") || !values.contains_key("entry") {
             return Err("GitRegisterRun requires --name <name> --entry <path>".into());
         }
-        operation = Some(GitRunOperation::Register);
+        select_operation(&mut operation, GitRunOperation::Register)?;
         values
             .entry("permanent".into())
             .or_insert_with(|| "false".into());
@@ -334,6 +411,15 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
 
     let operation = operation.ok_or_else(|| "no GitRun API operation was specified".to_owned())?;
 
+    if api == GitRunApi::GitDockRun && operation == GitRunOperation::Mount {
+        values
+            .entry("read_only".into())
+            .or_insert_with(|| "true".into());
+        if !values.contains_key("target") {
+            return Err("--mount requires --target <container-path>".into());
+        }
+    }
+
     if api == GitRunApi::GitDockRun
         && matches!(
             operation,
@@ -341,6 +427,8 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
                 | GitRunOperation::Write
                 | GitRunOperation::Execute
                 | GitRunOperation::Melt
+                | GitRunOperation::Mount
+                | GitRunOperation::Unmount
         )
         && resource.is_none()
     {
@@ -358,4 +446,64 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
     }
 
     Ok((operation, resource, values))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parser_rejects_multiple_operations() {
+        assert!(parse_api(
+            GitRunApi::GitVaultRun,
+            &[
+                "--read".into(),
+                "first".into(),
+                "--delete".into(),
+                "second".into()
+            ]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parser_rejects_conflicting_mount_modes_and_duplicate_resources() {
+        assert!(parse_api(
+            GitRunApi::GitDockRun,
+            &[
+                "--mount".into(),
+                "/source".into(),
+                "--target".into(),
+                "/target".into(),
+                "--docked".into(),
+                "runner-1".into(),
+                "--read-only".into(),
+                "--read-write".into(),
+            ]
+        )
+        .is_err());
+        assert!(parse_api(
+            GitRunApi::GitDockRun,
+            &[
+                "--mount".into(),
+                "/source".into(),
+                "--target".into(),
+                "/target".into(),
+                "--docked".into(),
+                "runner-1".into(),
+                "--docked".into(),
+                "runner-2".into(),
+            ]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn install_shortcut_rejects_ignored_extra_arguments() {
+        assert!(parse_api(
+            GitRunApi::GitInstallRun,
+            &["package".into(), "1.0".into(), "unexpected".into()]
+        )
+        .is_err());
+    }
 }

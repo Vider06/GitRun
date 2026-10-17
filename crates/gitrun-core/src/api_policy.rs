@@ -8,6 +8,18 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Parse a public boolean modifier using the canonical API spelling.
+/// This deliberately rejects mixed-case and alternate representations so
+/// authorization and the execution backend cannot interpret one value
+/// differently.
+pub fn parse_boolean_argument(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
 /// Closed set of workflow-facing GitRun APIs.
 ///
 /// Adding a new API is an explicit source-level change so the security
@@ -73,6 +85,8 @@ impl GitRunApi {
                     | GitRunOperation::Write
                     | GitRunOperation::Execute
                     | GitRunOperation::Melt
+                    | GitRunOperation::Mount
+                    | GitRunOperation::Unmount
             ),
             Self::GitSaveRun => matches!(operation, GitRunOperation::File | GitRunOperation::Logs),
             Self::GitRegisterRun => matches!(operation, GitRunOperation::Register),
@@ -93,39 +107,70 @@ impl GitRunApi {
 /// The internal request representation uses a string map, but the public
 /// surface is still closed: unknown keys and missing required values are
 /// rejected here before a request can be authorized or executed.
+/// Returns the required and allowed keys for one supported API operation.
+///
+/// Keeping both sets in one contract prevents validation from silently accepting
+/// an argument shape that the execution backend cannot consume.
+fn argument_contract(
+    api: GitRunApi,
+    operation: GitRunOperation,
+) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    if !api.supports_operation(operation) {
+        return None;
+    }
+
+    Some(match (api, operation) {
+        (GitRunApi::GitVaultRun, GitRunOperation::Read)
+        | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
+        | (GitRunApi::GitVaultRun, GitRunOperation::Delete) => (&["name"], &["name"]),
+        (GitRunApi::GitVaultRun, GitRunOperation::Write) => {
+            (&["name", "value"], &["name", "value"])
+        }
+        (GitRunApi::GitVaultRun, GitRunOperation::List) => (&[], &[]),
+        (GitRunApi::GitDockRun, GitRunOperation::Connect)
+        | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => (&["job"], &["job"]),
+        (GitRunApi::GitDockRun, GitRunOperation::Read) => (&["path"], &["path"]),
+        (GitRunApi::GitDockRun, GitRunOperation::Write) => (&["path", "value"], &["path", "value"]),
+        (GitRunApi::GitDockRun, GitRunOperation::Execute) => (&["command"], &["command"]),
+        (GitRunApi::GitDockRun, GitRunOperation::Melt) => (&[], &["target"]),
+        (GitRunApi::GitDockRun, GitRunOperation::Mount) => (
+            &["source", "target", "read_only"],
+            &["source", "target", "read_only"],
+        ),
+        (GitRunApi::GitDockRun, GitRunOperation::Unmount) => (&["mount_id"], &["mount_id"]),
+        (GitRunApi::GitSaveRun, GitRunOperation::File) => (&["path"], &["path"]),
+        (GitRunApi::GitSaveRun, GitRunOperation::Logs) => (&["namefile"], &["namefile"]),
+        (GitRunApi::GitRegisterRun, GitRunOperation::Register) => (
+            &["name", "entry", "permanent"],
+            &["name", "entry", "permanent"],
+        ),
+        (GitRunApi::GitInstallRun, GitRunOperation::Install) => {
+            (&["package"], &["package", "version"])
+        }
+        (GitRunApi::GitInstallRun, GitRunOperation::Remove)
+        | (GitRunApi::GitInstallRun, GitRunOperation::Update) => (&["package"], &["package"]),
+        (GitRunApi::GitReadRun, GitRunOperation::Read)
+        | (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => (&["path"], &["path"]),
+        (GitRunApi::GitWriteRun, GitRunOperation::Write) => {
+            (&["path", "value"], &["path", "value"])
+        }
+        (GitRunApi::GitStatusRun, GitRunOperation::Status) => (&[], &[]),
+        _ => return None,
+    })
+}
+
+/// Validates the argument shape of one public Git*Run operation.
+///
+/// The internal request representation uses a string map, but the public
+/// surface is still closed: unknown keys and missing required values are
+/// rejected here before a request can be authorized or executed.
 pub fn validate_arguments(
     api: GitRunApi,
     operation: GitRunOperation,
     arguments: &BTreeMap<String, String>,
 ) -> Result<(), String> {
-    if !api.supports_operation(operation) {
-        return Err("operation is not part of this API".into());
-    }
-
-    let required: &[&str] = match (api, operation) {
-        (GitRunApi::GitVaultRun, GitRunOperation::Read)
-        | (GitRunApi::GitVaultRun, GitRunOperation::Write)
-        | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
-        | (GitRunApi::GitVaultRun, GitRunOperation::Delete) => &["name"],
-        (GitRunApi::GitVaultRun, GitRunOperation::List) => &[],
-        (GitRunApi::GitDockRun, GitRunOperation::Connect)
-        | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => &["job"],
-        (GitRunApi::GitDockRun, GitRunOperation::Read)
-        | (GitRunApi::GitDockRun, GitRunOperation::Write)
-        | (GitRunApi::GitDockRun, GitRunOperation::Execute)
-        | (GitRunApi::GitDockRun, GitRunOperation::Melt) => &[],
-        (GitRunApi::GitSaveRun, GitRunOperation::File) => &["path"],
-        (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &["namefile"],
-        (GitRunApi::GitRegisterRun, GitRunOperation::Register) => &["name", "entry", "permanent"],
-        (GitRunApi::GitInstallRun, GitRunOperation::Install)
-        | (GitRunApi::GitInstallRun, GitRunOperation::Remove) => &["package"],
-        (GitRunApi::GitInstallRun, GitRunOperation::Update) => &[],
-        (GitRunApi::GitReadRun, GitRunOperation::Read) => &["path"],
-        (GitRunApi::GitWriteRun, GitRunOperation::Write) => &["path", "value"],
-        (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => &["path"],
-        (GitRunApi::GitStatusRun, GitRunOperation::Status) => &[],
-        _ => &[],
-    };
+    let (required, allowed) = argument_contract(api, operation)
+        .ok_or_else(|| "operation is not part of this API".to_owned())?;
 
     for key in required {
         if !arguments
@@ -136,30 +181,19 @@ pub fn validate_arguments(
         }
     }
 
-    let allowed: &[&str] = match (api, operation) {
-        (GitRunApi::GitVaultRun, GitRunOperation::Read)
-        | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
-        | (GitRunApi::GitVaultRun, GitRunOperation::Delete) => &["name"],
-        (GitRunApi::GitVaultRun, GitRunOperation::Write) => &["name", "value"],
-        (GitRunApi::GitVaultRun, GitRunOperation::List) => &[],
-        (GitRunApi::GitDockRun, GitRunOperation::Connect)
-        | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => &["job"],
-        (GitRunApi::GitDockRun, GitRunOperation::Read) => &["path"],
-        (GitRunApi::GitDockRun, GitRunOperation::Write) => &["path", "value"],
-        (GitRunApi::GitDockRun, GitRunOperation::Execute) => &["command"],
-        (GitRunApi::GitDockRun, GitRunOperation::Melt) => &["target"],
-        (GitRunApi::GitSaveRun, GitRunOperation::File) => &["path"],
-        (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &["namefile"],
-        (GitRunApi::GitRegisterRun, GitRunOperation::Register) => &["name", "entry", "permanent"],
-        (GitRunApi::GitInstallRun, GitRunOperation::Install) => &["package", "version"],
-        (GitRunApi::GitInstallRun, GitRunOperation::Remove) => &["package"],
-        (GitRunApi::GitInstallRun, GitRunOperation::Update) => &["package"],
-        (GitRunApi::GitReadRun, GitRunOperation::Read)
-        | (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => &["path"],
-        (GitRunApi::GitWriteRun, GitRunOperation::Write) => &["path", "value"],
-        (GitRunApi::GitStatusRun, GitRunOperation::Status) => &[],
-        _ => &[],
-    };
+    if (api, operation) == (GitRunApi::GitDockRun, GitRunOperation::Mount) {
+        let mode = arguments.get("read_only").map(String::as_str).unwrap_or("");
+        if mode != "true" && mode != "false" {
+            return Err("read_only must be true or false".into());
+        }
+    }
+
+    if (api, operation) == (GitRunApi::GitRegisterRun, GitRunOperation::Register) {
+        let permanent = arguments.get("permanent").map(String::as_str).unwrap_or("");
+        if parse_boolean_argument(permanent).is_none() {
+            return Err("permanent must be true or false".into());
+        }
+    }
 
     if let Some(unknown) = arguments
         .keys()
@@ -182,6 +216,8 @@ pub enum GitRunOperation {
     Disconnect,
     Execute,
     Melt,
+    Mount,
+    Unmount,
     File,
     Logs,
     Register,
@@ -204,6 +240,8 @@ impl GitRunOperation {
             Self::Disconnect => "disconnect",
             Self::Execute => "execute",
             Self::Melt => "melt",
+            Self::Mount => "mount",
+            Self::Unmount => "unmount",
             Self::File => "file",
             Self::Logs => "logs",
             Self::Register => "register",
@@ -285,6 +323,22 @@ impl PolicyMatrix {
     /// not an authorization bypass: runtime authorization still fails closed.
     pub fn lint(&self) -> Vec<PolicyLintIssue> {
         let mut issues = Vec::new();
+
+        // An entirely empty matrix is the intentional secure default: every
+        // API is denied. Once an operator configures any API explicitly,
+        // surface omissions for the remaining APIs instead of silently
+        // making a partial policy matrix look complete.
+        if !self.apis.is_empty() {
+            for api in GitRunApi::ALL {
+                if !self.apis.contains_key(&api) {
+                    issues.push(PolicyLintIssue {
+                        path: api.as_str().into(),
+                        message: "API has no explicit policy entry; runtime denies it".into(),
+                    });
+                }
+            }
+        }
+
         for (api, policy) in &self.apis {
             if policy.enabled && policy.allowed_operations.is_empty() {
                 issues.push(PolicyLintIssue {
@@ -333,6 +387,164 @@ impl PolicyMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ALL_OPERATIONS: [GitRunOperation; 19] = [
+        GitRunOperation::Read,
+        GitRunOperation::Write,
+        GitRunOperation::Exists,
+        GitRunOperation::Delete,
+        GitRunOperation::List,
+        GitRunOperation::Connect,
+        GitRunOperation::Disconnect,
+        GitRunOperation::Execute,
+        GitRunOperation::Melt,
+        GitRunOperation::Mount,
+        GitRunOperation::Unmount,
+        GitRunOperation::File,
+        GitRunOperation::Logs,
+        GitRunOperation::Register,
+        GitRunOperation::Install,
+        GitRunOperation::Remove,
+        GitRunOperation::Update,
+        GitRunOperation::Verify,
+        GitRunOperation::Status,
+    ];
+
+    fn expected_operations(api: GitRunApi) -> &'static [GitRunOperation] {
+        match api {
+            GitRunApi::GitVaultRun => &[
+                GitRunOperation::Read,
+                GitRunOperation::Write,
+                GitRunOperation::Exists,
+                GitRunOperation::Delete,
+                GitRunOperation::List,
+            ],
+            GitRunApi::GitDockRun => &[
+                GitRunOperation::Connect,
+                GitRunOperation::Disconnect,
+                GitRunOperation::Read,
+                GitRunOperation::Write,
+                GitRunOperation::Execute,
+                GitRunOperation::Melt,
+                GitRunOperation::Mount,
+                GitRunOperation::Unmount,
+            ],
+            GitRunApi::GitSaveRun => &[GitRunOperation::File, GitRunOperation::Logs],
+            GitRunApi::GitRegisterRun => &[GitRunOperation::Register],
+            GitRunApi::GitInstallRun => &[
+                GitRunOperation::Install,
+                GitRunOperation::Remove,
+                GitRunOperation::Update,
+            ],
+            GitRunApi::GitReadRun => &[GitRunOperation::Read],
+            GitRunApi::GitWriteRun => &[GitRunOperation::Write],
+            GitRunApi::GitVerifyRun => &[GitRunOperation::Verify],
+            GitRunApi::GitStatusRun => &[GitRunOperation::Status],
+        }
+    }
+
+    fn minimal_valid_arguments(
+        api: GitRunApi,
+        operation: GitRunOperation,
+    ) -> BTreeMap<String, String> {
+        let pairs: &[(&str, &str)] = match (api, operation) {
+            (GitRunApi::GitVaultRun, GitRunOperation::Read)
+            | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
+            | (GitRunApi::GitVaultRun, GitRunOperation::Delete) => &[("name", "secret")],
+            (GitRunApi::GitVaultRun, GitRunOperation::Write) => {
+                &[("name", "secret"), ("value", "value")]
+            }
+            (GitRunApi::GitDockRun, GitRunOperation::Connect)
+            | (GitRunApi::GitDockRun, GitRunOperation::Disconnect) => &[("job", "build")],
+            (GitRunApi::GitDockRun, GitRunOperation::Read) => &[("path", "/workspace/file")],
+            (GitRunApi::GitDockRun, GitRunOperation::Write) => {
+                &[("path", "/workspace/file"), ("value", "value")]
+            }
+            (GitRunApi::GitDockRun, GitRunOperation::Execute) => &[("command", "printf safe")],
+            (GitRunApi::GitDockRun, GitRunOperation::Melt) => &[("target", "runner")],
+            (GitRunApi::GitDockRun, GitRunOperation::Mount) => &[
+                ("source", "/tmp/source"),
+                ("target", "/workspace/source"),
+                ("read_only", "true"),
+            ],
+            (GitRunApi::GitDockRun, GitRunOperation::Unmount) => {
+                &[("mount_id", "gm-0123456789abcdef")]
+            }
+            (GitRunApi::GitSaveRun, GitRunOperation::File)
+            | (GitRunApi::GitReadRun, GitRunOperation::Read)
+            | (GitRunApi::GitVerifyRun, GitRunOperation::Verify) => &[("path", "/workspace/file")],
+            (GitRunApi::GitSaveRun, GitRunOperation::Logs) => &[("namefile", "build.log")],
+            (GitRunApi::GitRegisterRun, GitRunOperation::Register) => &[
+                ("name", "tool"),
+                ("entry", "/home/runner/tool"),
+                ("permanent", "false"),
+            ],
+            (GitRunApi::GitInstallRun, GitRunOperation::Install)
+            | (GitRunApi::GitInstallRun, GitRunOperation::Remove)
+            | (GitRunApi::GitInstallRun, GitRunOperation::Update) => &[("package", "curl")],
+            (GitRunApi::GitWriteRun, GitRunOperation::Write) => {
+                &[("path", "/workspace/file"), ("value", "value")]
+            }
+            _ => &[],
+        };
+
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn every_api_operation_pair_matches_the_closed_contract_matrix() {
+        for api in GitRunApi::ALL {
+            for operation in ALL_OPERATIONS {
+                let expected = expected_operations(api).contains(&operation);
+                assert_eq!(
+                    api.supports_operation(operation),
+                    expected,
+                    "unexpected contract support for {api:?}/{operation:?}"
+                );
+
+                let arguments = minimal_valid_arguments(api, operation);
+                let result = validate_arguments(api, operation, &arguments);
+                if expected {
+                    assert!(
+                        result.is_ok(),
+                        "valid contract pair {api:?}/{operation:?} failed validation: {result:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(result, Err(ref reason) if reason.contains("not part of this API")),
+                        "unsupported contract pair {api:?}/{operation:?} was not rejected explicitly: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lint_reports_missing_entries_in_a_partially_configured_matrix() {
+        let mut matrix = PolicyMatrix::default();
+        matrix.set(
+            GitRunApi::GitDockRun,
+            ApiPolicy::enabled_with([GitRunOperation::Connect]),
+        );
+
+        let issues = matrix.lint();
+        assert!(issues.iter().any(|issue| {
+            issue.path == GitRunApi::GitVaultRun.as_str()
+                && issue.message.contains("no explicit policy entry")
+        }));
+        assert!(!issues.iter().any(|issue| {
+            issue.path == GitRunApi::GitDockRun.as_str()
+                && issue.message.contains("no explicit policy entry")
+        }));
+    }
+
+    #[test]
+    fn lint_keeps_the_empty_secure_default_quiet() {
+        assert!(PolicyMatrix::default().lint().is_empty());
+    }
 
     #[test]
     fn unknown_api_entries_cannot_be_enabled_by_default() {
@@ -400,6 +612,70 @@ mod tests {
     }
 
     #[test]
+    fn argument_contract_requires_runtime_arguments_before_dispatch() {
+        let cases = [
+            (
+                GitRunApi::GitVaultRun,
+                GitRunOperation::Write,
+                BTreeMap::from([("name".into(), "secret".into())]),
+                "missing argument: value",
+            ),
+            (
+                GitRunApi::GitDockRun,
+                GitRunOperation::Read,
+                BTreeMap::new(),
+                "missing argument: path",
+            ),
+            (
+                GitRunApi::GitDockRun,
+                GitRunOperation::Write,
+                BTreeMap::from([("path".into(), "/workspace/file".into())]),
+                "missing argument: value",
+            ),
+            (
+                GitRunApi::GitDockRun,
+                GitRunOperation::Execute,
+                BTreeMap::new(),
+                "missing argument: command",
+            ),
+            (
+                GitRunApi::GitInstallRun,
+                GitRunOperation::Update,
+                BTreeMap::new(),
+                "missing argument: package",
+            ),
+        ];
+
+        for (api, operation, arguments, expected_error) in cases {
+            assert_eq!(
+                validate_arguments(api, operation, &arguments),
+                Err(expected_error.into()),
+                "contract accepted a missing runtime argument for {api:?}/{operation:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn required_arguments_are_always_allowed_by_the_same_contract() {
+        for api in GitRunApi::ALL {
+            for operation in ALL_OPERATIONS {
+                if !api.supports_operation(operation) {
+                    continue;
+                }
+
+                let (required, allowed) = argument_contract(api, operation)
+                    .expect("supported operations must have an argument contract");
+                for key in required {
+                    assert!(
+                        allowed.contains(key),
+                        "required key {key:?} is not allowed for {api:?}/{operation:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn argument_contract_allows_optional_install_version() {
         let args = BTreeMap::from([
             ("package".into(), "ImageMagick".into()),
@@ -422,6 +698,67 @@ mod tests {
         assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Melt, &args,).is_ok());
     }
     #[test]
+    fn mount_and_unmount_are_explicit_gitdockrun_operations() {
+        assert!(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Mount));
+        assert!(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Unmount));
+        assert!(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Mount));
+        assert!(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Unmount));
+    }
+
+    #[test]
+    fn mount_requires_source_target_and_boolean_mode() {
+        let good = BTreeMap::from([
+            ("source".into(), "/srv/shared".into()),
+            ("target".into(), "/workspace/shared".into()),
+            ("read_only".into(), "true".into()),
+        ]);
+        assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Mount, &good).is_ok());
+
+        for args in [
+            BTreeMap::from([
+                ("source".into(), "/srv/shared".into()),
+                ("read_only".into(), "true".into()),
+            ]),
+            BTreeMap::from([
+                ("source".into(), "/srv/shared".into()),
+                ("target".into(), "/workspace/shared".into()),
+                ("read_only".into(), "maybe".into()),
+            ]),
+            BTreeMap::from([
+                ("source".into(), "/srv/shared".into()),
+                ("target".into(), "/workspace/shared".into()),
+                ("read_only".into(), "true".into()),
+                ("extra".into(), "not-allowed".into()),
+            ]),
+        ] {
+            assert!(
+                validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Mount, &args).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn unmount_requires_only_a_mount_id() {
+        let good = BTreeMap::from([("mount_id".into(), "gm-0123456789abcdef".into())]);
+        assert!(validate_arguments(GitRunApi::GitDockRun, GitRunOperation::Unmount, &good).is_ok());
+        assert!(validate_arguments(
+            GitRunApi::GitDockRun,
+            GitRunOperation::Unmount,
+            &BTreeMap::new(),
+        )
+        .is_err());
+        assert!(validate_arguments(
+            GitRunApi::GitDockRun,
+            GitRunOperation::Unmount,
+            &BTreeMap::from([
+                ("mount_id".into(), "gm-123".into()),
+                ("target".into(), "/workspace/x".into()),
+            ]),
+        )
+        .is_err());
+    }
+
+    #[test]
     fn api_names_are_stable() {
         assert_eq!(GitRunApi::GitDockRun.as_str(), "GitDockRun");
         assert_eq!(GitRunApi::GitVaultRun.as_str(), "GitVaultRun");
@@ -438,6 +775,53 @@ mod tests {
             ]),
         )
         .is_ok());
+    }
+
+    #[test]
+    fn register_permanent_modifier_requires_canonical_boolean_spelling() {
+        for value in ["true", "false"] {
+            assert_eq!(parse_boolean_argument(value), Some(value == "true"));
+            assert!(validate_arguments(
+                GitRunApi::GitRegisterRun,
+                GitRunOperation::Register,
+                &BTreeMap::from([
+                    ("name".into(), "tool".into()),
+                    ("entry".into(), "/opt/tool".into()),
+                    ("permanent".into(), value.into()),
+                ]),
+            )
+            .is_ok());
+        }
+
+        for value in ["TRUE", "False", "yes", "1"] {
+            assert_eq!(parse_boolean_argument(value), None);
+            assert!(matches!(
+                validate_arguments(
+                    GitRunApi::GitRegisterRun,
+                    GitRunOperation::Register,
+                    &BTreeMap::from([
+                        ("name".into(), "tool".into()),
+                        ("entry".into(), "/opt/tool".into()),
+                        ("permanent".into(), value.into()),
+                    ]),
+                ),
+                Err(error) if error.contains("permanent must be true or false")
+            ));
+        }
+
+        assert_eq!(parse_boolean_argument(""), None);
+        assert!(matches!(
+            validate_arguments(
+                GitRunApi::GitRegisterRun,
+                GitRunOperation::Register,
+                &BTreeMap::from([
+                    ("name".into(), "tool".into()),
+                    ("entry".into(), "/opt/tool".into()),
+                    ("permanent".into(), String::new()),
+                ]),
+            ),
+            Err(error) if error.contains("missing argument: permanent")
+        ));
     }
 
     #[test]

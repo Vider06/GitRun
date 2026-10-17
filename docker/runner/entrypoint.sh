@@ -15,6 +15,7 @@ RUNNER_DISABLE_UPDATE="${RUNNER_DISABLE_UPDATE:-false}"
 SHARED_CACHE_DIR="${GITRUN_SHARED_CACHE_DIR:-/var/lib/gitrun/shared}"
 
 GITRUN_GSR_COMMAND_POLICY_ENABLED="${GITRUN_GSR_COMMAND_POLICY_ENABLED:-true}"
+GITRUN_GSR_ALLOW_UNSAFE_RUNNER="${GITRUN_GSR_ALLOW_UNSAFE_RUNNER:-false}"
 GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED="${GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED:-true}"
 GITRUN_GSR_COMMAND_BLACKLIST_ENABLED="${GITRUN_GSR_COMMAND_BLACKLIST_ENABLED:-false}"
 GITRUN_GSR_COMMAND_BLACKLIST="${GITRUN_GSR_COMMAND_BLACKLIST:-}"
@@ -35,6 +36,7 @@ validate_policy_value() {
 }
 
 validate_policy_value GITRUN_GSR_COMMAND_POLICY_ENABLED "$GITRUN_GSR_COMMAND_POLICY_ENABLED"
+validate_policy_value GITRUN_GSR_ALLOW_UNSAFE_RUNNER "$GITRUN_GSR_ALLOW_UNSAFE_RUNNER"
 validate_policy_value GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED "$GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED"
 validate_policy_value GITRUN_GSR_COMMAND_BLACKLIST_ENABLED "$GITRUN_GSR_COMMAND_BLACKLIST_ENABLED"
 validate_policy_value GITRUN_GSR_COMMAND_BLACKLIST "$GITRUN_GSR_COMMAND_BLACKLIST"
@@ -47,6 +49,7 @@ tmp_policy="$(mktemp "${GSR_POLICY_DIR}/gsr-policy.env.XXXXXX")"
 trap 'rm -f "$tmp_policy"' EXIT
 {
   printf 'GITRUN_GSR_COMMAND_POLICY_ENABLED=%s\n' "$GITRUN_GSR_COMMAND_POLICY_ENABLED"
+  printf 'GITRUN_GSR_ALLOW_UNSAFE_RUNNER=%s\n' "$GITRUN_GSR_ALLOW_UNSAFE_RUNNER"
   printf 'GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED=%s\n' "$GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED"
   printf 'GITRUN_GSR_COMMAND_BLACKLIST_ENABLED=%s\n' "$GITRUN_GSR_COMMAND_BLACKLIST_ENABLED"
   printf 'GITRUN_GSR_COMMAND_BLACKLIST=%s\n' "$GITRUN_GSR_COMMAND_BLACKLIST"
@@ -70,7 +73,7 @@ chown runner:runner "$SHARED_CACHE_DIR"
 # GitDockRun can temporarily convert a completed runner container into a
 # dock-only resource. The marker lives in the per-runner home volume, so the
 # state survives stop/start without starting another GitHub Actions runner.
-DOCK_ONLY_MARKER=/home/runner/actions-runner/.gitrun-dock-only
+DOCK_ONLY_MARKER=/var/lib/gitrun/dock-only
 if [[ ! -f "$DOCK_ONLY_MARKER" ]]; then
   : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
 fi
@@ -79,6 +82,7 @@ if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   unset RUNNER_TOKEN
   unset GITRUN_API_TOKEN
   unset GITRUN_GSR_COMMAND_POLICY_ENABLED
+  unset GITRUN_GSR_ALLOW_UNSAFE_RUNNER
   unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED
   unset GITRUN_GSR_COMMAND_BLACKLIST_ENABLED
   unset GITRUN_GSR_COMMAND_BLACKLIST
@@ -88,8 +92,24 @@ if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   exec sudo -P -u runner -E /bin/bash -c 'exec sleep infinity'
 fi
 
-mkdir -p "$HOME" "$XDG_CONFIG_HOME"
-chown runner:runner "$HOME" "$XDG_CONFIG_HOME"
+ensure_runner_owned_dir() {
+  local path="$1"
+  if [[ -L "$path" ]]; then
+    echo "gitrun-runner: refusing symlinked runner state directory: $path" >&2
+    exit 1
+  fi
+  mkdir -p -- "$path"
+  if [[ -L "$path" || ! -d "$path" ]]; then
+    echo "gitrun-runner: runner state path is not a real directory: $path" >&2
+    exit 1
+  fi
+  # -h avoids following a symlink if an untrusted runner process races the
+  # checks above and replaces the final path component before chown executes.
+  chown --no-dereference runner:runner -- "$path"
+}
+
+ensure_runner_owned_dir "$HOME"
+ensure_runner_owned_dir "$XDG_CONFIG_HOME"
 
 sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/cargo" \
@@ -97,8 +117,22 @@ sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/pip" \
   "$SHARED_CACHE_DIR/npm"
 
+for runner_state in .runner .credentials .credentials_rsaparams; do
+  if [[ -L "$runner_state" ]]; then
+    echo "gitrun-runner: refusing symlinked runner credential/state file: $runner_state" >&2
+    exit 1
+  fi
+done
 if [[ -f .runner ]]; then
-  chown runner:runner .runner .credentials .credentials_rsaparams 2>/dev/null || true
+  for runner_state in .runner .credentials .credentials_rsaparams; do
+    if [[ -e "$runner_state" ]]; then
+      if [[ ! -f "$runner_state" ]]; then
+        echo "gitrun-runner: runner credential/state path is not a regular file: $runner_state" >&2
+        exit 1
+      fi
+      chown --no-dereference runner:runner -- "$runner_state"
+    fi
+  done
 fi
 
 if [[ ! -f .runner ]]; then
@@ -109,6 +143,7 @@ if [[ ! -f .runner ]]; then
 fi
 
 unset RUNNER_TOKEN
+unset GITRUN_GSR_ALLOW_UNSAFE_RUNNER
 unset GITRUN_GSR_COMMAND_POLICY_ENABLED
 unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED
 unset GITRUN_GSR_COMMAND_BLACKLIST_ENABLED

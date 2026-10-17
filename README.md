@@ -4,7 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/Vider06/GitRun)](https://github.com/Vider06/GitRun/releases)
 [![License](https://img.shields.io/github/license/Vider06/GitRun)](LICENSE)
 
-**GitRun 1.4.6** is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, signed updates and the Tauri operator dashboard.
+**GitRun 1.5.0** is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, signed updates and the Tauri operator dashboard.
 
 GitRun is designed for administrators running repositories they trust on dedicated infrastructure. It does not require Kubernetes.
 
@@ -149,7 +149,7 @@ The API commands are intentionally explicit:
 | API | Purpose |
 |---|---|
 | `GitVaultRun` | Scoped secret read/write/list/exists/delete |
-| `GitDockRun` | Connect to a job's runner, inspect/write/execute/detach/melt a docked container |
+| `GitDockRun` | Connect to a job runner; read/write/execute/melt docked containers; mount/unmount approved host paths on local Linux Docker |
 | `GitSaveRun` | Save a workflow file or retrieve named logs |
 | `GitRegisterRun` | Register a workflow path for the current run |
 | `GitInstallRun` | Install/remove/update an allowed package |
@@ -200,7 +200,7 @@ At the top level:
 
 ## Development
 
-GitRun 1.4.6 is the current project version. Start with:
+GitRun 1.5.0 is the current project version. Start with:
 
 ```bash
 cargo fmt --all --check

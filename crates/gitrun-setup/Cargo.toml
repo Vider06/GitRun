@@ -9,3 +9,4 @@ description = "Host dependency and setup checks for GitRun"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-updater = { path = "../gitrun-updater" }
 thiserror = "2"
+libc = "0.2"

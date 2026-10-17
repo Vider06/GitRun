@@ -12,6 +12,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,6 +30,8 @@ pub enum StateError {
     Decode(#[from] serde_json::Error),
     #[error("invalid persisted scheduler state: {0}")]
     Invalid(String),
+    #[error("unsafe scheduler state path: {0}")]
+    UnsafePath(String),
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct StateFile {
@@ -45,6 +50,64 @@ struct StateFile {
 pub struct SchedulerState {
     path: PathBuf,
     data: StateFile,
+}
+
+fn validate_state_directory(path: &Path) -> Result<(), StateError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(StateError::UnsafePath(format!(
+            "{} must be a real directory",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let mode = metadata.mode();
+        if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+            return Err(StateError::UnsafePath(format!(
+                "{} is group/world-writable without the sticky bit",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_state_file_metadata(metadata: &fs::Metadata, path: &Path) -> Result<(), StateError> {
+    if !metadata.is_file() {
+        return Err(StateError::UnsafePath(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 || metadata.mode() & 0o022 != 0 {
+            return Err(StateError::UnsafePath(format!(
+                "{} must have one link and no group/world write permission",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    validate_state_file_metadata(&file.metadata()?, path)?;
+    let mut raw = String::new();
+    file.read_to_string(&mut raw)?;
+    Ok(Some(serde_json::from_str(&raw)?))
 }
 
 fn validate_state(data: &StateFile) -> Result<(), StateError> {
@@ -75,11 +138,17 @@ fn validate_state(data: &StateFile) -> Result<(), StateError> {
 impl SchedulerState {
     pub fn load(state_dir: &Path) -> Result<Self, StateError> {
         let path = state_dir.join("scheduler-state.json");
-        let data = match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StateFile::default(),
+        match fs::symlink_metadata(state_dir) {
+            Ok(_) => validate_state_directory(state_dir)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    path,
+                    data: StateFile::default(),
+                });
+            }
             Err(error) => return Err(error.into()),
-        };
+        }
+        let data = read_state_file(&path)?.unwrap_or_default();
         validate_state(&data)?;
         Ok(Self { path, data })
     }
@@ -92,6 +161,7 @@ impl SchedulerState {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
+        validate_state_directory(parent)?;
 
         let sequence = STATE_TMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let file_name = self
@@ -101,21 +171,38 @@ impl SchedulerState {
             .ok_or_else(|| {
                 StateError::Invalid("scheduler state path has no valid file name".into())
             })?;
+        // Include wall-clock entropy as well as PID and a process-local
+        // sequence. A crash can leave a temp file behind; after PID reuse,
+        // a PID+sequence-only name could collide and make every future save
+        // fail at create_new.
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
         let tmp = parent.join(format!(
-            ".{file_name}.tmp-{}-{sequence}",
+            ".{file_name}.tmp-{}-{timestamp}-{sequence}",
             std::process::id()
         ));
 
         let serialized = serde_json::to_string_pretty(&self.data)?;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        let mut file = options.open(&tmp)?;
         use std::io::Write;
-        file.write_all(serialized.as_bytes())?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
+        let write_result = (|| -> std::io::Result<()> {
+            file.write_all(serialized.as_bytes())?;
+            file.write_all(b"\n")?;
+            file.sync_all()
+        })();
         drop(file);
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
 
         if let Err(error) = fs::rename(&tmp, &self.path) {
             let _ = fs::remove_file(&tmp);
@@ -154,28 +241,32 @@ impl SchedulerState {
     /// Removes tracking only for containers belonging to `repo` that no longer exist.
     /// Entries belonging to other repositories remain untouched in the shared state file.
     pub fn prune(&mut self, repo: &str, live_names: &[String]) {
-        let safe_repo: String = repo
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
-                    c
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        let repo_prefix = format!("gitrun-{safe_repo}-");
+        let repo_prefix = crate::docker::runner_name_prefix(repo);
+        // Older releases used a lossy sanitized-repository prefix. Only prune
+        // those legacy entries when neither segment contains the delimiter
+        // that made collisions possible; ambiguous legacy entries are retained
+        // rather than accidentally deleting another repository's state.
+        let legacy_prefix = repo.split_once('/').and_then(|(owner, name)| {
+            (!owner.contains('-') && !name.contains('-'))
+                .then(|| format!("gitrun-{}-", crate::docker::sanitize(repo, '-')))
+        });
         let live_names: std::collections::HashSet<&str> =
             live_names.iter().map(String::as_str).collect();
-        self.data.idle_since.retain(|name, _| {
-            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
-        });
-        self.data.recovery_since.retain(|name, _| {
-            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
-        });
-        self.data.quarantined_since.retain(|name, _| {
-            !name.starts_with(&repo_prefix) || live_names.contains(name.as_str())
-        });
+        let belongs_to_repo = |name: &str| {
+            name.starts_with(&repo_prefix)
+                || legacy_prefix
+                    .as_deref()
+                    .is_some_and(|prefix| name.starts_with(prefix))
+        };
+        self.data
+            .idle_since
+            .retain(|name, _| !belongs_to_repo(name) || live_names.contains(name.as_str()));
+        self.data
+            .recovery_since
+            .retain(|name, _| !belongs_to_repo(name) || live_names.contains(name.as_str()));
+        self.data
+            .quarantined_since
+            .retain(|name, _| !belongs_to_repo(name) || live_names.contains(name.as_str()));
     }
     /// Returns how long a container has been marked as needing recovery,
     /// starting the clock now if this is the first time we've seen it.
@@ -256,6 +347,72 @@ impl SchedulerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlinked_state_file() {
+        use std::os::unix::fs::symlink;
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-sched-state-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("external.json");
+        fs::write(
+            &target,
+            r#"{"idle_since":{},"recovery_since":{},"quarantined_since":{}}"#,
+        )
+        .unwrap();
+        symlink(&target, dir.join("scheduler-state.json")).unwrap();
+        assert!(matches!(
+            SchedulerState::load(&dir),
+            Err(StateError::Io(_)) | Err(StateError::UnsafePath(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_hard_linked_state_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-sched-state-hardlink-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("external.json");
+        fs::write(
+            &target,
+            r#"{"idle_since":{},"recovery_since":{},"quarantined_since":{}}"#,
+        )
+        .unwrap();
+        fs::hard_link(&target, dir.join("scheduler-state.json")).unwrap();
+        assert!(matches!(
+            SchedulerState::load(&dir),
+            Err(StateError::UnsafePath(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlinked_state_directory() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-sched-state-dir-link-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let target = base.join("real");
+        let link = base.join("link");
+        fs::create_dir_all(&target).unwrap();
+        symlink(&target, &link).unwrap();
+        assert!(matches!(
+            SchedulerState::load(&link),
+            Err(StateError::UnsafePath(_))
+        ));
+        let _ = fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn mark_idle_is_stable_across_calls() {
@@ -347,6 +504,38 @@ mod tests {
 
         assert!(dir.join("scheduler-state.json").is_file());
         assert!(!dir.join("scheduler-state.json.tmp").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_does_not_cross_delete_repositories_with_colliding_legacy_slugs() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-sched-state-collision-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let mut state = SchedulerState::load(&dir).unwrap();
+        let first_repo = "foo-bar/baz";
+        let second_repo = "foo/bar-baz";
+        assert_eq!(
+            crate::docker::sanitize(first_repo, '-'),
+            crate::docker::sanitize(second_repo, '-')
+        );
+
+        let stale_first = format!("{}gone", crate::docker::runner_name_prefix(first_repo));
+        let quarantined_second = format!(
+            "{}quarantined",
+            crate::docker::runner_name_prefix(second_repo)
+        );
+        state.mark_idle(&stale_first);
+        state.quarantine(&quarantined_second);
+        state.prune(first_repo, &[]);
+
+        assert!(state
+            .idle_entries()
+            .iter()
+            .all(|(name, _)| name != &stale_first));
+        assert!(state.is_quarantined(&quarantined_second));
         let _ = fs::remove_dir_all(&dir);
     }
 

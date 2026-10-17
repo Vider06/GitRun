@@ -18,6 +18,7 @@
 
 use gitrun_core::AppAuth;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -31,12 +32,16 @@ pub enum GitHubError {
     MissingToken,
     #[error("invalid repository name: {0} (expected owner/repo)")]
     InvalidRepository(String),
+    #[error("workflow run ID must be greater than zero")]
+    InvalidWorkflowRunId,
     #[error("network error contacting GitHub: {0}")]
     Network(#[from] reqwest::Error),
     #[error("GitHub API rate limit exceeded, retry after {retry_after:?}")]
     RateLimited { retry_after: Option<Duration> },
     #[error("GitHub API error {status}: {detail}")]
     Api { status: u16, detail: String },
+    #[error("GitHub pagination repeated a previously visited URL: {0}")]
+    PaginationLoop(String),
     #[error("unable to decode workflow content for {file}: {detail}")]
     WorkflowContentDecode { file: String, detail: String },
     #[error("unexpected response shape from GitHub: {0}")]
@@ -44,6 +49,15 @@ pub enum GitHubError {
 }
 
 pub type Result<T> = std::result::Result<T, GitHubError>;
+
+/// Prevent malformed/repeated Link headers from trapping the scheduler in an
+/// infinite pagination loop. URLs have already been restricted to api.github.com.
+fn record_page_url(seen: &mut HashSet<String>, url: &str) -> Result<()> {
+    if !seen.insert(url.to_owned()) {
+        return Err(GitHubError::PaginationLoop(url.to_owned()));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Runner {
@@ -178,12 +192,16 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
     let mut parts = repo.splitn(2, '/');
     match (parts.next(), parts.next()) {
         (Some(owner), Some(name))
-            if is_valid_repo_segment(owner) && is_valid_repo_segment(name) =>
+            if is_valid_owner_segment(owner) && is_valid_repo_segment(name) =>
         {
             Ok((owner, name))
         }
         _ => Err(GitHubError::InvalidRepository(repo.to_owned())),
     }
+}
+
+fn is_valid_owner_segment(segment: &str) -> bool {
+    segment.len() <= 39 && is_valid_repo_segment(segment)
 }
 
 fn is_valid_repo_segment(segment: &str) -> bool {
@@ -242,13 +260,17 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 const DEFAULT_API_ATTEMPTS: usize = 3;
+const MAX_API_ATTEMPTS: usize = 10;
 
-fn api_attempts() -> usize {
-    std::env::var("GITRUN_API_RETRIES")
-        .ok()
+fn parse_api_attempts(value: Option<&str>) -> usize {
+    value
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(DEFAULT_API_ATTEMPTS)
-        .max(1)
+        .clamp(1, MAX_API_ATTEMPTS)
+}
+
+fn api_attempts() -> usize {
+    parse_api_attempts(std::env::var("GITRUN_API_RETRIES").ok().as_deref())
 }
 
 fn retryable_status(status: reqwest::StatusCode) -> bool {
@@ -268,6 +290,12 @@ fn retry_delay(attempt: usize) -> Duration {
             .saturating_pow(attempt.saturating_sub(1) as u32)
             .min(8),
     )
+}
+
+fn rate_limit_reset_delay(reset_epoch: i64, now_epoch: i64) -> Duration {
+    // Header values are untrusted response data. Saturation avoids a debug
+    // panic (or release-mode wrap) if reset_epoch is i64::MIN.
+    Duration::from_secs(reset_epoch.saturating_sub(now_epoch).max(1) as u64)
 }
 
 impl GitHubClient {
@@ -373,7 +401,7 @@ impl GitHubClient {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_secs() as i64)
                                 .unwrap_or(0);
-                            Duration::from_secs((reset_epoch - now).max(1) as u64)
+                            rate_limit_reset_delay(reset_epoch, now)
                         })
                 });
                 return Err(GitHubError::RateLimited { retry_after });
@@ -403,7 +431,9 @@ impl GitHubClient {
     fn get_all_runner_pages(&self, path: &str, per_page: u32) -> Result<Vec<Runner>> {
         let mut url = format!("{API_BASE}{path}?per_page={per_page}");
         let mut runners = Vec::new();
+        let mut seen_pages = HashSet::new();
         loop {
+            record_page_url(&mut seen_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: RunnersResponse = response.json()?;
@@ -465,6 +495,58 @@ impl GitHubClient {
             }
         }
         Ok(summary)
+    }
+
+    /// Lists every currently in-progress workflow run, following GitHub pagination.
+    /// This is intentionally separate from the recent-run summary: an old but
+    /// still-running workflow must remain eligible for explicit force-cancellation.
+    pub fn list_active_workflow_runs(&self, repo: &str) -> Result<Vec<WorkflowRunInfo>> {
+        let (owner, name) = split_repo(repo)?;
+        let mut url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs?status=in_progress&per_page=100",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        let mut seen = HashSet::new();
+        let mut runs = Vec::new();
+        loop {
+            record_page_url(&mut seen, &url)?;
+            let response = self.request(reqwest::Method::GET, &url)?;
+            let next_url = parse_next_link(response.headers());
+            let parsed: WorkflowRunsResponse = response.json()?;
+            runs.extend(
+                parsed
+                    .workflow_runs
+                    .into_iter()
+                    .filter(|run| run.status.eq_ignore_ascii_case("in_progress"))
+                    .map(|run| WorkflowRunInfo {
+                        id: run.id,
+                        name: run.name,
+                    }),
+            );
+            match next_url {
+                Some(next) => url = next,
+                None => break,
+            }
+        }
+        Ok(runs)
+    }
+
+    /// Force-cancels an entire workflow run through GitHub's supported API.
+    /// GitHub exposes force-cancel at run scope, not individual-job scope, so
+    /// callers must identify the run explicitly and warn that all its jobs are affected.
+    pub fn force_cancel_workflow_run(&self, repo: &str, run_id: u64) -> Result<()> {
+        if run_id == 0 {
+            return Err(GitHubError::InvalidWorkflowRunId);
+        }
+        let (owner, name) = split_repo(repo)?;
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs/{run_id}/force-cancel",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        self.request(reqwest::Method::POST, &url)?;
+        Ok(())
     }
 
     /// Fetches repository metadata and pull-request totals for dashboard use.
@@ -606,8 +688,10 @@ impl GitHubClient {
             encode_path_segment(name)
         );
         let mut matches = Vec::new();
+        let mut seen_run_pages = HashSet::new();
 
         loop {
+            record_page_url(&mut seen_run_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: WorkflowRunsResponse = response.json()?;
@@ -619,7 +703,9 @@ impl GitHubClient {
                     encode_path_segment(name),
                     run.id
                 );
+                let mut seen_job_pages = HashSet::new();
                 loop {
+                    record_page_url(&mut seen_job_pages, &jobs_url)?;
                     let response = self.request(reqwest::Method::GET, &jobs_url)?;
                     let jobs_next = parse_next_link(response.headers());
                     let jobs: JobsResponse = response.json()?;
@@ -675,25 +761,34 @@ impl GitHubClient {
             encode_path_segment(name)
         );
 
+        let mut matches = Vec::new();
+        let mut seen_pages = HashSet::new();
         loop {
+            record_page_url(&mut seen_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: JobsResponse = response.json()?;
-
-            if let Some(job) = parsed.jobs.into_iter().find(|job| job.name == job_name) {
-                return Ok(Some(WorkflowJobInfo {
-                    id: job.id,
-                    name: job.name,
-                    status: job.status,
-                    conclusion: job.conclusion,
-                    runner_name: job.runner_name,
-                }));
-            }
+            matches.extend(parsed.jobs.into_iter().filter(|job| job.name == job_name));
 
             match next_url {
                 Some(next) => url = next,
-                None => return Ok(None),
+                None => break,
             }
+        }
+
+        match matches.as_slice() {
+            [] => Ok(None),
+            [job] => Ok(Some(WorkflowJobInfo {
+                id: job.id,
+                name: job.name.clone(),
+                status: job.status.clone(),
+                conclusion: job.conclusion.clone(),
+                runner_name: job.runner_name.clone(),
+            })),
+            _ => Err(GitHubError::Api {
+                status: 409,
+                detail: format!("workflow run {run_id} contains multiple jobs named {job_name:?}"),
+            }),
         }
     }
 
@@ -726,8 +821,10 @@ impl GitHubClient {
             encode_path_segment(name)
         );
         let mut url = format!("{API_BASE}{runs_path}?status=queued&per_page=100");
+        let mut seen_pages = HashSet::new();
 
         loop {
+            record_page_url(&mut seen_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: WorkflowRunsResponse = response.json()?;
@@ -757,8 +854,10 @@ impl GitHubClient {
             encode_path_segment(owner),
             encode_path_segment(name)
         );
+        let mut seen_pages = HashSet::new();
 
         loop {
+            record_page_url(&mut seen_pages, &url)?;
             let response = self.request(reqwest::Method::GET, &url)?;
             let next_url = parse_next_link(response.headers());
             let parsed: JobsResponse = response.json()?;
@@ -806,6 +905,17 @@ impl GitHubClient {
     /// `workflow_validation::validate_workflows_dir`.
     pub fn workflow_files(&self, repo: &str) -> Result<Vec<(String, String)>> {
         let (owner, name) = split_repo(repo)?;
+        let repository_url = format!(
+            "{API_BASE}/repos/{}/{}",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        // Confirm the repository is accessible before treating a 404 for the
+        // workflow directory as "there are no workflows". GitHub also returns
+        // 404 for private repositories hidden from this token or missing repos;
+        // treating that as an empty directory would silently bypass validation.
+        self.request(reqwest::Method::GET, &repository_url)?;
+
         let list_url = format!(
             "{API_BASE}/repos/{}/{}/contents/.github/workflows",
             encode_path_segment(owner),
@@ -894,7 +1004,19 @@ fn parse_next_link(headers: &reqwest::header::HeaderMap) -> Option<String> {
         if !is_next {
             return None;
         }
-        Some(url_part[1..url_part.len() - 1].to_owned())
+        let url = &url_part[1..url_part.len() - 1];
+        // Link headers are response data. Never let a response redirect the
+        // authenticated client to another origin with its bearer token.
+        let parsed = reqwest::Url::parse(url).ok()?;
+        if parsed.scheme() != "https"
+            || parsed.host_str() != Some("api.github.com")
+            || parsed.port().is_some()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return None;
+        }
+        Some(parsed.to_string())
     })
 }
 
@@ -944,6 +1066,11 @@ mod tests {
     }
 
     #[test]
+    fn rejects_owner_segments_longer_than_github_limit() {
+        assert!(split_repo(&format!("{}/repo", "a".repeat(40))).is_err());
+    }
+
+    #[test]
     fn rejects_extra_slash() {
         assert!(split_repo("octocat/hello/world").is_err());
     }
@@ -967,6 +1094,15 @@ mod tests {
             GitHubClient::new("   "),
             Err(GitHubError::MissingToken)
         ));
+    }
+
+    #[test]
+    fn repeated_pagination_url_is_rejected() {
+        let mut seen = HashSet::new();
+        assert!(record_page_url(&mut seen, "https://api.github.com/resource?page=1").is_ok());
+        let error =
+            record_page_url(&mut seen, "https://api.github.com/resource?page=1").unwrap_err();
+        assert!(matches!(error, GitHubError::PaginationLoop(url) if url.ends_with("page=1")));
     }
 
     #[test]
@@ -1006,6 +1142,40 @@ mod tests {
     }
 
     #[test]
+    fn pagination_rejects_non_github_origins() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::LINK,
+            "<https://attacker.example/steal?page=2>; rel=next"
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(parse_next_link(&headers), None);
+    }
+
+    #[test]
+    fn pagination_rejects_insecure_or_nonstandard_github_urls() {
+        for link in [
+            "<http://api.github.com/resource?page=2>; rel=next", // DevSkim: ignore DS137138 because this HTTP URL is intentionally rejected by this negative test.
+            "<https://api.github.com:8443/resource?page=2>; rel=next",
+            "<https://user@api.github.com/resource?page=2>; rel=next",
+        ] {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(reqwest::header::LINK, link.parse().unwrap());
+            assert_eq!(parse_next_link(&headers), None, "link: {link}");
+        }
+    }
+
+    #[test]
+    fn force_cancel_rejects_zero_run_id_without_network_access() {
+        let client = GitHubClient::new("test-token").unwrap();
+        assert!(matches!(
+            client.force_cancel_workflow_run("owner/repo", 0),
+            Err(GitHubError::InvalidWorkflowRunId)
+        ));
+    }
+
+    #[test]
     fn runner_is_online_only_when_status_matches() {
         let runner = Runner {
             id: 1,
@@ -1038,6 +1208,30 @@ mod tests {
         assert!(retryable_status(reqwest::StatusCode::GATEWAY_TIMEOUT));
         assert!(!retryable_status(reqwest::StatusCode::FORBIDDEN));
         assert!(!retryable_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
+    }
+
+    #[test]
+    fn malformed_rate_limit_reset_epoch_cannot_overflow() {
+        assert_eq!(
+            rate_limit_reset_delay(i64::MIN, 1_700_000_000),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            rate_limit_reset_delay(1_700_000_030, 1_700_000_000),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn api_attempts_have_safe_defaults_and_a_hard_upper_bound() {
+        assert_eq!(parse_api_attempts(None), DEFAULT_API_ATTEMPTS);
+        assert_eq!(
+            parse_api_attempts(Some("not-a-number")),
+            DEFAULT_API_ATTEMPTS
+        );
+        assert_eq!(parse_api_attempts(Some("0")), 1);
+        assert_eq!(parse_api_attempts(Some(" 4 ")), 4);
+        assert_eq!(parse_api_attempts(Some("999999")), MAX_API_ATTEMPTS);
     }
 
     #[test]

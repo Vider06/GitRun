@@ -73,6 +73,17 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60
 KillMode=control-group
+# Keep the embedded fallback aligned with systemd/gitrun.service.
+# The scheduler still runs as root for Docker/mount orchestration.
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
 EnvironmentFile=/etc/gitrun/gitrun.env
 
 [Install]
@@ -340,7 +351,7 @@ mod tests {
             include_str!("../../../docker/runner/entrypoint.sh")
         );
         assert!(RUNNER_ENTRYPOINT.contains("sudo -P -u runner"));
-        assert!(RUNNER_ENTRYPOINT.contains("actions-runner/.gitrun-dock-only"));
+        assert!(RUNNER_ENTRYPOINT.contains("/var/lib/gitrun/dock-only"));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
         assert_eq!(
             SYSTEMD_SERVICE,
@@ -348,5 +359,22 @@ mod tests {
         );
         assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
         assert!(!SYSTEMD_SERVICE.contains("docker compose"));
+        for directive in [
+            "NoNewPrivileges=yes",
+            "ProtectSystem=full",
+            "PrivateTmp=yes",
+            "ProtectKernelTunables=yes",
+            "ProtectKernelModules=yes",
+            "RestrictSUIDSGID=yes",
+            "LockPersonality=yes",
+            "SystemCallArchitectures=native",
+            "UMask=0077",
+        ] {
+            assert!(SYSTEMD_SERVICE.contains(directive), "missing {directive}");
+            assert!(
+                SYSTEMD_SERVICE_DIRECT.contains(directive),
+                "fallback missing {directive}"
+            );
+        }
     }
 }

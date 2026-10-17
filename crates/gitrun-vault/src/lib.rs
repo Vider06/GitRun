@@ -43,7 +43,7 @@
 //! backdoor); back it up if the vault holds anything that isn't otherwise
 //! recoverable.
 
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use rand::{rngs::SysRng, TryRng};
 use serde::{Deserialize, Serialize};
@@ -81,6 +81,12 @@ pub enum VaultError {
     Io(#[from] std::io::Error),
     #[error("vault storage file is corrupt or tampered with: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("vault index is inconsistent: {0}")]
+    CorruptIndex(String),
+    #[error("unsafe vault filesystem path: {0}")]
+    UnsafePath(String),
+    #[error("vault data was replaced but directory durability could not be confirmed: {0}")]
+    DurabilityUncertain(String),
     #[error("secret '{0}' not found")]
     NotFound(String),
     #[error("encryption failed for secret '{0}'")]
@@ -93,6 +99,8 @@ pub enum VaultError {
     InvalidMasterKey(usize),
     #[error("secret name must not be empty")]
     EmptyName,
+    #[error("secret value contains NUL and cannot be injected into a process environment")]
+    InvalidValue,
     #[error("secret identifier contains a reserved control character")]
     InvalidIdentifier,
     #[error("cryptographic randomness unavailable: {0}")]
@@ -147,7 +155,8 @@ const MASTER_KEY_FILE: &str = "master.key";
 const SECRETS_FILE: &str = "secrets.json";
 const NONCE_LEN: usize = 12;
 const DATA_KEY_CONTEXT: &[u8] = b"GitRun/GitVault/data-key/v1";
-const DATA_KEY_VERSION: u8 = 1;
+const DERIVED_KEY_VERSION_WITHOUT_AAD: u8 = 1;
+const DATA_KEY_VERSION: u8 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSecret {
@@ -167,8 +176,9 @@ struct StoredSecret {
     /// behaving exactly as before (available to every repo).
     #[serde(default = "Scope::default_for_migration")]
     scope: Scope,
-    /// 0 is the legacy master-key encryption format. New records use a
-    /// domain-separated data key derived from the master/root key.
+    /// 0 is the legacy master-key format; 1 uses the derived data key but
+    /// does not authenticate metadata; 2 binds both secret name and scope as
+    /// AES-GCM associated data. New writes always use version 2.
     #[serde(default)]
     key_version: u8,
 }
@@ -210,6 +220,7 @@ impl Vault {
     ) -> Result<Self> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
+        secure_vault_directory(&dir)?;
         let key_bytes = load_or_create_master_key(&dir, events.as_ref())?;
         let legacy_cipher = Aes256Gcm::new_from_slice(&key_bytes)
             .map_err(|_| VaultError::InvalidMasterKey(key_bytes.len()))?;
@@ -218,10 +229,14 @@ impl Vault {
             .map_err(|_| VaultError::InvalidMasterKey(data_key.len()))?;
 
         let secrets_path = dir.join(SECRETS_FILE);
-        let data = match fs::metadata(&secrets_path) {
+        let data = match fs::symlink_metadata(&secrets_path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(VaultError::UnsafePath(
+                    "secrets.json must be a regular, non-symlink file".to_owned(),
+                ));
+            }
             Ok(_) => {
-                set_secret_file_permissions(&secrets_path)?;
-                let raw = fs::read_to_string(&secrets_path)?;
+                let raw = read_private_vault_file(&secrets_path, "secrets.json")?;
                 serde_json::from_str(&raw)?
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => VaultFile::default(),
@@ -256,6 +271,9 @@ impl Vault {
     pub fn set_scoped(&mut self, name: &str, value: &str, scope: Scope) -> Result<()> {
         validate_name(name)?;
         validate_scope(&scope)?;
+        if value.contains('\0') {
+            return Err(VaultError::InvalidValue);
+        }
         let mut nonce_bytes = [0u8; NONCE_LEN];
         let mut rng = SysRng;
         if let Err(error) = rng.try_fill_bytes(&mut nonce_bytes) {
@@ -266,24 +284,44 @@ impl Vault {
         let nonce = Nonce::try_from(nonce_bytes.as_slice())
             .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
 
+        let aad = secret_associated_data(name, &scope);
         let ciphertext = self
             .cipher
-            .encrypt(&nonce, value.as_bytes())
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: value.as_bytes(),
+                    aad: &aad,
+                },
+            )
             // aes-gcm encryption failures are not caused by operator-provided
             // secret content; still report them with the correct operation.
             .map_err(|_| VaultError::EncryptionFailed(name.to_owned()))?;
 
-        self.data.secrets.insert(
-            storage_key(name, &scope),
-            StoredSecret {
-                nonce: base64_encode(&nonce_bytes),
-                ciphertext: base64_encode(&ciphertext),
-                updated_at: now(),
-                scope: scope.clone(),
-                key_version: DATA_KEY_VERSION,
-            },
-        );
-        self.persist()?;
+        let key = storage_key(name, &scope);
+        let replacement = StoredSecret {
+            nonce: base64_encode(&nonce_bytes),
+            ciphertext: base64_encode(&ciphertext),
+            updated_at: now(),
+            scope: scope.clone(),
+            key_version: DATA_KEY_VERSION,
+        };
+        let previous = self.data.secrets.insert(key.clone(), replacement);
+        if let Err(error) = self.persist() {
+            // A post-rename directory-sync failure means the new file is
+            // already visible. Keep memory aligned with that committed state.
+            if !matches!(&error, VaultError::DurabilityUncertain(_)) {
+                match previous {
+                    Some(previous) => {
+                        self.data.secrets.insert(key, previous);
+                    }
+                    None => {
+                        self.data.secrets.remove(&key);
+                    }
+                }
+            }
+            return Err(error);
+        }
         self.events.on_secret_write(name, &scope);
         Ok(())
     }
@@ -325,7 +363,23 @@ impl Vault {
             VaultError::DecryptionFailed(name.to_owned())
         })?;
         let plaintext = match entry.key_version {
-            DATA_KEY_VERSION => self.cipher.decrypt(&nonce, ciphertext.as_slice()),
+            DATA_KEY_VERSION => {
+                let aad = secret_associated_data(name, &entry.scope);
+                self.cipher.decrypt(
+                    &nonce,
+                    Payload {
+                        msg: ciphertext.as_slice(),
+                        aad: &aad,
+                    },
+                )
+            }
+            DERIVED_KEY_VERSION_WITHOUT_AAD => {
+                // Compatibility for records written before scope/name metadata
+                // was authenticated. A successful read does not retroactively
+                // prove their metadata was never modified; rewriting the secret
+                // stores it in the authenticated v2 format.
+                self.cipher.decrypt(&nonce, ciphertext.as_slice())
+            }
             0 => self.legacy_cipher.decrypt(&nonce, ciphertext.as_slice()),
             _ => Err(aes_gcm::Error),
         }
@@ -338,6 +392,11 @@ impl Vault {
             self.events.on_decryption_failure(name);
             VaultError::DecryptionFailed(name.to_owned())
         })?;
+        // Unix process environments cannot represent NUL bytes. Reject legacy
+        // or externally modified records before callers pass them to Command::env.
+        if value.contains('\0') {
+            return Err(VaultError::InvalidValue);
+        }
         self.events.on_secret_read(name, &entry.scope);
         Ok(value)
     }
@@ -348,10 +407,19 @@ impl Vault {
 
     pub fn delete_scoped(&mut self, name: &str, scope: &Scope) -> Result<()> {
         let key = storage_key(name, scope);
-        if self.data.secrets.remove(&key).is_none() {
-            return Err(VaultError::NotFound(name.to_owned()));
+        let removed = self
+            .data
+            .secrets
+            .remove(&key)
+            .ok_or_else(|| VaultError::NotFound(name.to_owned()))?;
+        if let Err(error) = self.persist() {
+            // See set_scoped: after atomic rename, retain the new in-memory
+            // state even if the directory fsync reports uncertain durability.
+            if !matches!(&error, VaultError::DurabilityUncertain(_)) {
+                self.data.secrets.insert(key, removed);
+            }
+            return Err(error);
         }
-        self.persist()?;
         self.events.on_secret_delete(name, scope);
         Ok(())
     }
@@ -430,8 +498,17 @@ impl Vault {
 
     /// Reports whether a secret name is available to a repository without
     /// decrypting unrelated secrets.
-    pub fn effective_contains_for_repo(&self, name: &str, repo: &str, groups: &[String]) -> bool {
-        self.get_effective_for_repo(name, repo, groups).is_ok()
+    pub fn effective_contains_for_repo(
+        &self,
+        name: &str,
+        repo: &str,
+        groups: &[String],
+    ) -> Result<bool> {
+        match self.get_effective_for_repo(name, repo, groups) {
+            Ok(_) => Ok(true),
+            Err(VaultError::NotFound(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
     /// Resolves every secret a given repo's runners should receive,
     /// decrypted and ready to inject as environment variables — the
@@ -445,7 +522,7 @@ impl Vault {
     /// global (see `Scope::specificity`). This means an operator can set a
     /// global default and override it for one specific repo without
     /// deleting or renaming anything.
-    pub fn resolve_for_repo(&self, repo: &str, groups: &[String]) -> Vec<(String, String)> {
+    pub fn resolve_for_repo(&self, repo: &str, groups: &[String]) -> Result<Vec<(String, String)>> {
         // Iterate (key, secret) pairs — not just secret values — because the
         // original secret name is encoded in the storage key, not
         // recoverable from `Scope` alone (multiple scopes can share a name).
@@ -469,37 +546,71 @@ impl Vault {
             }
         }
 
-        let mut resolved: Vec<_> = best
-            .into_iter()
-            .filter_map(|(name, (scope, key))| {
-                let entry = self.data.secrets.get(key)?;
-                match self.decrypt_entry(&name, entry) {
-                    Ok(value) => Some((name, value)),
-                    Err(_) => {
-                        let _ = scope;
-                        None
-                    }
-                }
-            })
-            .collect();
+        let mut resolved = Vec::with_capacity(best.len());
+        for (name, (_scope, key)) in best {
+            let entry = self
+                .data
+                .secrets
+                .get(key)
+                .ok_or_else(|| VaultError::CorruptIndex(name.clone()))?;
+            // A selected secret that cannot be decrypted must fail the entire
+            // resolution. Returning a partial environment could start CI with
+            // silently missing credentials and hide vault tampering.
+            let value = self.decrypt_entry(&name, entry)?;
+            resolved.push((name, value));
+        }
         resolved.sort_by(|a, b| a.0.cmp(&b.0));
-        resolved
+        Ok(resolved)
     }
 
     fn persist(&self) -> Result<()> {
         let path = self.dir.join(SECRETS_FILE);
-        let tmp = path.with_extension("json.tmp");
-        write_secret_file(&tmp, &self.data)?;
-        fs::rename(&tmp, &path)?;
-        Ok(())
+        let tmp = self.dir.join(format!(
+            ".{SECRETS_FILE}.tmp.{}.{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        if let Err(error) = write_secret_file(&tmp, &self.data) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error);
+        }
+        if let Err(error) = fs::rename(&tmp, &path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
+        sync_parent_dir(&self.dir)
+            .map_err(|error| VaultError::DurabilityUncertain(error.to_string()))
     }
+}
+
+/// Bind security-sensitive metadata to the ciphertext authentication tag.
+/// Otherwise an editor of secrets.json could change a record's scope while
+/// leaving the AES-GCM ciphertext untouched, potentially broadening visibility.
+fn secret_associated_data(name: &str, scope: &Scope) -> Vec<u8> {
+    const DOMAIN: &[u8] = b"GitRun/GitVault/secret-aad/v2\0";
+    let (scope_tag, scope_value): (u8, &str) = match scope {
+        Scope::Global => (0, ""),
+        Scope::Group(group) => (1, group.as_str()),
+        Scope::Repo(repository) => (2, repository.as_str()),
+    };
+    let name_bytes = name.as_bytes();
+    let scope_bytes = scope_value.as_bytes();
+    let mut aad =
+        Vec::with_capacity(DOMAIN.len() + 1 + 8 + name_bytes.len() + 8 + scope_bytes.len());
+    aad.extend_from_slice(DOMAIN);
+    aad.push(scope_tag);
+    aad.extend_from_slice(&(name_bytes.len() as u64).to_be_bytes());
+    aad.extend_from_slice(name_bytes);
+    aad.extend_from_slice(&(scope_bytes.len() as u64).to_be_bytes());
+    aad.extend_from_slice(scope_bytes);
+    aad
 }
 
 fn validate_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
         return Err(VaultError::EmptyName);
     }
-    if name.chars().any(|c| c == '\u{1}') {
+    if name.chars().any(|c| c == '\u{1}' || c == '=' || c == '\0') {
         return Err(VaultError::InvalidIdentifier);
     }
     Ok(())
@@ -524,7 +635,6 @@ fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
 
     let serialized = serde_json::to_string_pretty(data)?;
-    let _ = fs::remove_file(path);
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -541,45 +651,133 @@ fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn set_secret_file_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)?;
+fn secure_vault_directory(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(VaultError::UnsafePath(
+            "vault directory must be a real directory, not a symlink".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let directory = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)?;
+        if !directory.metadata()?.is_dir() {
+            return Err(VaultError::UnsafePath(
+                "vault directory changed during validation".into(),
+            ));
+        }
+        directory.set_permissions(fs::Permissions::from_mode(0o700))?;
+    }
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn set_secret_file_permissions(_path: &Path) -> Result<()> {
-    Ok(())
+fn read_private_vault_file(path: &Path, label: &str) -> Result<String> {
+    use std::io::Read;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(VaultError::UnsafePath(format!(
+                "{label} must be a regular file without hard links"
+            )));
+        }
+        // lgtm[rust/hard-coded-cryptographic-value] -- 0o600 is a Unix permission mode, not cryptographic key material.
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        Ok(raw)
+    }
+    #[cfg(not(unix))]
+    {
+        let mut file = options.open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(VaultError::UnsafePath(format!(
+                "{label} must be a regular file"
+            )));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        Ok(raw)
+    }
 }
 
 fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<[u8; 32]> {
     let path = dir.join(MASTER_KEY_FILE);
-    match fs::read(&path) {
-        Ok(bytes) => {
-            if bytes.len() != 32 {
-                return Err(VaultError::InvalidMasterKey(bytes.len()));
-            }
-            bytes
-                .try_into()
-                .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(VaultError::InvalidMasterKey(0));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut key = MaybeUninit::<[u8; 32]>::uninit();
-            let key_bytes =
-                unsafe { std::slice::from_raw_parts_mut(key.as_mut_ptr().cast::<u8>(), 32) };
-            let mut rng = SysRng;
-            if let Err(error) = rng.try_fill_bytes(key_bytes) {
-                events.on_randomness_failure("generating the vault master key");
-                return Err(VaultError::from(error));
-            }
-            let key = unsafe { key.assume_init() };
-            write_master_key(&path, &key)?;
-            Ok(key)
-        }
+        Ok(_) => return read_master_key(&path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let mut key = MaybeUninit::<[u8; 32]>::uninit();
+    let key_bytes = unsafe { std::slice::from_raw_parts_mut(key.as_mut_ptr().cast::<u8>(), 32) };
+    let mut rng = SysRng;
+    if let Err(error) = rng.try_fill_bytes(key_bytes) {
+        events.on_randomness_failure("generating the vault master key");
+        return Err(VaultError::from(error));
+    }
+    let key = unsafe { key.assume_init() };
+    match write_master_key(&path, &key) {
+        Ok(()) => Ok(key),
+        // Another process may have initialized the vault concurrently. The
+        // canonical key is published with an atomic hard link, so it is safe
+        // to read after AlreadyExists without observing a partial key.
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => read_master_key(&path),
         Err(error) => Err(error.into()),
+    }
+}
+
+fn read_master_key(path: &Path) -> Result<[u8; 32]> {
+    use std::io::Read;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(VaultError::InvalidMasterKey(0));
+        }
+        // lgtm[rust/hard-coded-cryptographic-value] -- 0o600 is a Unix permission mode, not cryptographic key material.
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        let mut bytes = Vec::with_capacity(32);
+        file.read_to_end(&mut bytes)?;
+        if bytes.len() != 32 {
+            return Err(VaultError::InvalidMasterKey(bytes.len()));
+        }
+        bytes
+            .try_into()
+            .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
+    }
+    #[cfg(not(unix))]
+    {
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(VaultError::InvalidMasterKey(0));
+        }
+        let mut file = options.open(path)?;
+        let mut bytes = Vec::with_capacity(32);
+        file.read_to_end(&mut bytes)?;
+        if bytes.len() != 32 {
+            return Err(VaultError::InvalidMasterKey(bytes.len()));
+        }
+        bytes
+            .try_into()
+            .map_err(|bytes: Vec<u8>| VaultError::InvalidMasterKey(bytes.len()))
     }
 }
 
@@ -587,23 +785,67 @@ fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<
 /// same fix already applied in `gitrun-setup` for `gitrun.env` (avoid the
 /// create-then-chmod window where sensitive material sits world-readable).
 #[cfg(unix)]
-fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
+fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(key)?;
-    file.sync_all()?;
-    Ok(())
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("master key path has no parent directory"))?;
+    let temp = parent.join(format!(
+        ".{MASTER_KEY_FILE}.tmp.{}.{}",
+        std::process::id(),
+        TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)?;
+        file.write_all(key)?;
+        file.sync_all()?;
+        // Hard-link publication is atomic and refuses to overwrite a key
+        // another process already created. The final path never exposes a
+        // partially written key.
+        fs::hard_link(&temp, path)?;
+        fs::remove_file(&temp)?;
+        sync_parent_dir(parent)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 #[cfg(not(unix))]
-fn write_master_key(path: &Path, key: &[u8; 32]) -> Result<()> {
-    fs::write(path, key)?;
-    Ok(())
+fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("master key path has no parent directory"))?;
+    let temp = parent.join(format!(
+        ".{MASTER_KEY_FILE}.tmp.{}.{}",
+        std::process::id(),
+        TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        use std::io::Write;
+        file.write_all(key)?;
+        file.sync_all()?;
+        fs::hard_link(&temp, path)?;
+        fs::remove_file(&temp)?;
+        sync_parent_dir(parent)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Builds the internal storage key combining scope and name, so the same
@@ -633,6 +875,18 @@ fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
     hasher.update(master_key);
     hasher.update(DATA_KEY_CONTEXT);
     hasher.finalize().into()
+}
+
+static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> std::io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 fn now() -> u64 {
@@ -702,8 +956,13 @@ mod tests {
         let secrets_path = dir.join(SECRETS_FILE);
         let raw = fs::read_to_string(&secrets_path).unwrap();
         let mut file: VaultFile = serde_json::from_str(&raw).unwrap();
-        let secret = file.secrets.get_mut("global\u{1}key").unwrap();
-        secret.nonce = base64_encode(&[1, 2, 3]);
+        // Start from the genuine random nonce generated by set(), then shorten
+        // it to exercise length validation without embedding crypto bytes.
+        let storage_key = storage_key("key", &Scope::Global);
+        let original_nonce = base64_decode(&file.secrets.get(&storage_key).unwrap().nonce).unwrap();
+        assert_eq!(original_nonce.len(), NONCE_LEN);
+        let secret = file.secrets.get_mut(&storage_key).unwrap();
+        secret.nonce = base64_encode(&original_nonce[..NONCE_LEN - 1]);
         fs::write(&secrets_path, serde_json::to_string_pretty(&file).unwrap()).unwrap();
 
         let reloaded = Vault::open(&dir).unwrap();
@@ -734,6 +993,42 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn vault_directory_is_private_and_symlink_directories_are_rejected() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let base = temp_dir("directory-perms");
+        fs::create_dir_all(&base).unwrap();
+        let vault_dir = base.join("vault");
+        let _vault = Vault::open(&vault_dir).unwrap();
+        assert_eq!(
+            fs::metadata(&vault_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        let linked = base.join("linked-vault");
+        symlink(&vault_dir, &linked).unwrap();
+        assert!(matches!(
+            Vault::open(&linked),
+            Err(VaultError::UnsafePath(_))
+        ));
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secrets_file_symlink_is_rejected_without_reading_target() {
+        use std::os::unix::fs::symlink;
+        let dir = temp_dir("secrets-symlink");
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("outside.json");
+        fs::write(&target, "{\"secrets\":{}}").unwrap();
+        symlink(&target, dir.join(SECRETS_FILE)).unwrap();
+        assert!(matches!(Vault::open(&dir), Err(VaultError::UnsafePath(_))));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "{\"secrets\":{}}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn secret_file_has_owner_only_permissions() {
         #[cfg(unix)]
@@ -753,6 +1048,23 @@ mod tests {
         let dir = temp_dir("missing");
         let vault = Vault::open(&dir).unwrap();
         assert!(matches!(vault.get("nope"), Err(VaultError::NotFound(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn environment_incompatible_secret_names_and_values_are_rejected() {
+        let dir = temp_dir("invalid-environment-values");
+        let mut vault = Vault::open(&dir).unwrap();
+        for name in ["bad=name", "bad\0name"] {
+            assert!(matches!(
+                vault.set(name, "value"),
+                Err(VaultError::InvalidIdentifier)
+            ));
+        }
+        assert!(matches!(
+            vault.set("VALID_NAME", "bad\0value"),
+            Err(VaultError::InvalidValue)
+        ));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -789,6 +1101,33 @@ mod tests {
         let dir = temp_dir("delete-missing");
         let mut vault = Vault::open(&dir).unwrap();
         assert!(matches!(vault.delete("nope"), Err(VaultError::NotFound(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_set_persistence_rolls_back_in_memory_state() {
+        let dir = temp_dir("set-persist-failure");
+        let mut vault = Vault::open(&dir).unwrap();
+        vault.set("existing", "original").unwrap();
+        fs::rename(dir.join(SECRETS_FILE), dir.join("secrets.json.saved")).unwrap();
+        fs::create_dir(dir.join(SECRETS_FILE)).unwrap();
+
+        assert!(vault.set("new", "value").is_err());
+        assert!(matches!(vault.get("new"), Err(VaultError::NotFound(_))));
+        assert_eq!(vault.get("existing").unwrap(), "original");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_delete_persistence_restores_in_memory_secret() {
+        let dir = temp_dir("delete-persist-failure");
+        let mut vault = Vault::open(&dir).unwrap();
+        vault.set("existing", "value").unwrap();
+        fs::rename(dir.join(SECRETS_FILE), dir.join("secrets.json.saved")).unwrap();
+        fs::create_dir(dir.join(SECRETS_FILE)).unwrap();
+
+        assert!(vault.delete("existing").is_err());
+        assert_eq!(vault.get("existing").unwrap(), "value");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -867,6 +1206,50 @@ mod tests {
     }
 
     #[test]
+    fn changing_scope_metadata_invalidates_authenticated_ciphertext() {
+        let dir = temp_dir("scope-aad-tamper");
+        let mut vault = Vault::open(&dir).unwrap();
+        let original_scope = Scope::Repo("owner/private-repo".into());
+        vault
+            .set_scoped("DEPLOY_TOKEN", "private-value", original_scope.clone())
+            .unwrap();
+
+        // Simulate an editor that can alter vault metadata but doesn't know the
+        // master key: keep ciphertext and nonce exactly as written, but promote
+        // the repository-scoped record to global. AAD authentication must fail.
+        let key = storage_key("DEPLOY_TOKEN", &original_scope);
+        vault.data.secrets.get_mut(&key).unwrap().scope = Scope::Global;
+        assert!(matches!(
+            vault.get_effective_for_repo("DEPLOY_TOKEN", "another/repo", &[]),
+            Err(VaultError::DecryptionFailed(name)) if name == "DEPLOY_TOKEN"
+        ));
+
+        drop(vault);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_for_repo_fails_closed_when_selected_secret_cannot_decrypt() {
+        let dir = temp_dir("resolve-corrupt");
+        let mut vault = Vault::open(&dir).unwrap();
+        vault
+            .set_scoped("TOKEN", "valid-value", Scope::Global)
+            .unwrap();
+        let entry = vault.data.secrets.get_mut("global\u{1}TOKEN").unwrap();
+        entry.ciphertext = "not-valid-base64!".to_owned();
+
+        assert!(matches!(
+            vault.resolve_for_repo("owner/repo", &[]),
+            Err(VaultError::DecryptionFailed(_))
+        ));
+        assert!(matches!(
+            vault.effective_contains_for_repo("TOKEN", "owner/repo", &[]),
+            Err(VaultError::DecryptionFailed(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn same_name_in_different_scopes_are_independent_entries() {
         let dir = temp_dir("scope-independence");
         let mut vault = Vault::open(&dir).unwrap();
@@ -896,7 +1279,7 @@ mod tests {
         vault
             .set_scoped("SHARED_TOKEN", "shared-value", Scope::Global)
             .unwrap();
-        let resolved = vault.resolve_for_repo("owner/repo", &[]);
+        let resolved = vault.resolve_for_repo("owner/repo", &[]).unwrap();
         assert_eq!(
             resolved,
             vec![("SHARED_TOKEN".to_owned(), "shared-value".to_owned())]
@@ -917,14 +1300,18 @@ mod tests {
             .unwrap();
 
         // A repo in the "production" group gets it...
-        let in_group = vault.resolve_for_repo("owner/repo-a", &["production".to_owned()]);
+        let in_group = vault
+            .resolve_for_repo("owner/repo-a", &["production".to_owned()])
+            .unwrap();
         assert_eq!(
             in_group,
             vec![("DEPLOY_KEY".to_owned(), "prod-value".to_owned())]
         );
 
         // ...a repo not in that group does not.
-        let not_in_group = vault.resolve_for_repo("owner/repo-b", &["staging".to_owned()]);
+        let not_in_group = vault
+            .resolve_for_repo("owner/repo-b", &["staging".to_owned()])
+            .unwrap();
         assert!(not_in_group.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -936,7 +1323,7 @@ mod tests {
         vault
             .set_scoped("SECRET", "repo-a-value", Scope::Repo("owner/repo-a".into()))
             .unwrap();
-        let resolved = vault.resolve_for_repo("owner/repo-b", &[]);
+        let resolved = vault.resolve_for_repo("owner/repo-b", &[]).unwrap();
         assert!(resolved.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -956,21 +1343,25 @@ mod tests {
             .unwrap();
 
         // Repo scope should win over both group and global for this repo.
-        let resolved = vault.resolve_for_repo("owner/repo", &["prod".to_owned()]);
+        let resolved = vault
+            .resolve_for_repo("owner/repo", &["prod".to_owned()])
+            .unwrap();
         assert_eq!(
             resolved,
             vec![("API_KEY".to_owned(), "repo-value".to_owned())]
         );
 
         // A different repo in the same group falls back to the group value.
-        let other_repo = vault.resolve_for_repo("owner/other-repo", &["prod".to_owned()]);
+        let other_repo = vault
+            .resolve_for_repo("owner/other-repo", &["prod".to_owned()])
+            .unwrap();
         assert_eq!(
             other_repo,
             vec![("API_KEY".to_owned(), "group-value".to_owned())]
         );
 
         // A repo in no matching group falls back to global.
-        let no_group = vault.resolve_for_repo("owner/unrelated", &[]);
+        let no_group = vault.resolve_for_repo("owner/unrelated", &[]).unwrap();
         assert_eq!(
             no_group,
             vec![("API_KEY".to_owned(), "global-value".to_owned())]

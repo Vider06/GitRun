@@ -1,13 +1,5 @@
-import { invoke, content, esc, toast, errorView, setFooter } from "./lib.js";
+import { invoke, content, esc, toast, errorView, setFooter, applyTheme } from "./lib.js";
 import { renderOverview } from "./views/overview.js";
-import { renderRepository } from "./views/repositories.js";
-import { renderVault } from "./views/vault.js";
-import { renderGsr } from "./views/gsr.js";
-import { renderLogs } from "./views/logs.js";
-import { renderSecurity } from "./views/security.js";
-import { renderGeneral } from "./views/settings.js";
-import { renderAppSettings, applyTheme } from "./views/app-settings.js";
-import { renderSetup } from "./setup.js";
 
 const repoList = document.getElementById("repo-list");
 const names = {
@@ -32,11 +24,26 @@ function setConnection(kind, label, detail) {
 }
 function setNavigation(view) {
   currentView = view;
-  document.querySelectorAll("[data-view]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === view || (view.startsWith("repo:") && button.dataset.view === view));
+  document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
+    const active = item.dataset.view === view;
+    item.classList.toggle("active", active);
+    if (active) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
   });
   const label = view.startsWith("repo:") ? view.slice(5) : (names[view] || view);
   document.getElementById("page-crumb").textContent = label;
+}
+
+function setSidebarCollapsed(collapsed) {
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+  const toggle = document.getElementById("toggle-sidebar");
+  if (!toggle) return;
+  const expanded = !collapsed;
+  const label = expanded ? "Collapse sidebar" : "Expand sidebar";
+  toggle.setAttribute("aria-expanded", String(expanded));
+  toggle.setAttribute("aria-label", label);
+  toggle.title = label;
+  toggle.textContent = expanded ? "⇤" : "⇥";
 }
 async function loadRepoNav() {
   try {
@@ -62,6 +69,8 @@ async function navigate(view, options = {}) {
   setNavigation(view);
   if (view.startsWith("repo:")) {
     try {
+      const { renderRepository } = await import("./views/repositories.js");
+      if (generation !== navigationGeneration) return;
       await renderRepository(view.slice(5), navigate);
       if (generation === navigationGeneration) setCatExpression(currentCatState);
     } catch (error) {
@@ -77,12 +86,36 @@ async function navigate(view, options = {}) {
       overviewCache = null;
       await renderOverview(navigate, cachedOverview);
     }
-    else if (view === "security") await renderSecurity();
-    else if (view === "vault") await renderVault();
-    else if (view === "gsr") await renderGsr();
-    else if (view === "logs") await renderLogs();
-    else if (view === "general") await renderGeneral();
-    else if (view === "app-settings") await renderAppSettings();
+    else if (view === "security") {
+      const { renderSecurity } = await import("./views/security.js");
+      if (generation !== navigationGeneration) return;
+      await renderSecurity();
+    }
+    else if (view === "vault") {
+      const { renderVault } = await import("./views/vault.js");
+      if (generation !== navigationGeneration) return;
+      await renderVault();
+    }
+    else if (view === "gsr") {
+      const { renderGsr } = await import("./views/gsr.js");
+      if (generation !== navigationGeneration) return;
+      await renderGsr();
+    }
+    else if (view === "logs") {
+      const { renderLogs } = await import("./views/logs.js");
+      if (generation !== navigationGeneration) return;
+      await renderLogs();
+    }
+    else if (view === "general") {
+      const { renderGeneral } = await import("./views/settings.js");
+      if (generation !== navigationGeneration) return;
+      await renderGeneral();
+    }
+    else if (view === "app-settings") {
+      const { renderAppSettings } = await import("./views/app-settings.js");
+      if (generation !== navigationGeneration) return;
+      await renderAppSettings();
+    }
     else if (view === "recovery") await renderRecovery();
     else await renderOverview(navigate);
     if (generation === navigationGeneration) setCatExpression(currentCatState);
@@ -100,12 +133,12 @@ async function renderRecovery() {
   catch (error) { if (generation !== window.__gitrunNavigationGeneration) return; content.innerHTML = errorView(error); return; }
   if (generation !== window.__gitrunNavigationGeneration) return;
   const checks = report.checks || [];
-  content.innerHTML = '<header class="view-heading"><div><div class="eyebrow">DIAGNOSTICS</div><h1>Recovery</h1><p class="subtitle">A focused view of startup blockers and host health. This screen does not automatically modify the host.</p></div><div class="heading-actions"><button class="btn" data-action="refresh-view">↻ Re-check</button><button class="btn btn-primary" data-action="check-updates">Check updates</button></div></header>' +
+  content.innerHTML = '<header class="view-heading"><div><div class="eyebrow">DIAGNOSTICS</div><h1>Recovery</h1><p class="subtitle">A focused view of startup blockers and host health. This screen does not automatically modify the host.</p></div><div class="heading-actions"><button class="btn" data-action="refresh-view">↻ Re-check</button><button class="btn btn-primary" id="recovery-check-updates">Check updates</button></div></header>' +
     '<div class="notice ' + (checks.some((item) => !item.ok) ? "warn" : "success") + '"><div><strong>' + (checks.some((item) => !item.ok) ? "Attention required" : "No issues detected by these checks") + '</strong>These checks are limited to the signals the local backend can currently observe. Use the standalone Recovery utility for privileged repair actions.</div></div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Health checks</h2><span class="pill info">' + checks.length + ' checks</span></div><div class="card-list">' + checks.map((item) => '<div class="list-row"><div class="list-row-main"><strong>' + esc(item.name) + '</strong><small>' + esc(item.detail) + '</small></div><span class="pill ' + (item.ok ? "good" : "warn") + '">' + (item.ok ? "OK" : "Check") + '</span></div>').join("") + '</div></div>' +
     '<div id="recovery-update-result" class="section"></div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Standalone Recovery utility</h2><span class="pill neutral">Privileged actions</span></div><p class="section-description">The recovery launcher can inspect startup state, run GTUU and repair the systemd service with explicit privilege elevation. This dashboard intentionally does not fake a repair command when the backend has not exposed one.</p><div class="kv-grid"><div class="kv"><small>Config</small><strong>' + esc(report.config_path || "Unavailable") + '</strong></div><div class="kv"><small>Version</small><strong>' + esc(report.version || "Unknown") + '</strong></div></div></div>';
-  content.querySelector('[data-action="check-updates"]').addEventListener("click", async () => {
+  content.querySelector("#recovery-check-updates").addEventListener("click", async () => {
     const target = document.getElementById("recovery-update-result");
     target.innerHTML = '<div class="notice"><div><strong>Checking…</strong></div></div>';
     try { const result = await invoke("check_gitrun_updates"); target.innerHTML = '<div class="notice ' + (result.available ? "warn" : result.checked ? "success" : "danger") + '"><div><strong>' + esc(result.title || "Update check") + '</strong><p>' + esc(result.detail || result.output || result.error || "") + '</p></div></div>'; }
@@ -171,8 +204,9 @@ document.getElementById("refresh-repositories").addEventListener("click", async 
   toast("Repository list refreshed.");
 });
 document.getElementById("toggle-sidebar").addEventListener("click", () => {
-  document.body.classList.toggle("sidebar-collapsed");
-  localStorage.setItem("gitrun-sidebar-collapsed", document.body.classList.contains("sidebar-collapsed") ? "true" : "false");
+  const collapsed = !document.body.classList.contains("sidebar-collapsed");
+  setSidebarCollapsed(collapsed);
+  localStorage.setItem("gitrun-sidebar-collapsed", String(collapsed));
 });
 window.addEventListener("gitrun:navigate", (event) => navigate(event.detail));
 window.addEventListener("gitrun:mascot-state", (event) => setCatExpression(event.detail));
@@ -181,18 +215,25 @@ window.addEventListener("gitrun:config-saved", () => {
   overviewCache = null;
   void loadRepoNav().catch(() => {});
 });
-window.addEventListener("gitrun:setup-required", () => {
+window.addEventListener("gitrun:setup-required", async () => {
   setupInProgress = true;
-  renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
+  try {
+    const { renderSetup } = await import("./setup.js");
+    renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
+  } catch (error) {
+    setupInProgress = false;
+    content.innerHTML = errorView("Could not load setup: " + error);
+  }
 });
 
 applySavedPreferences();
-if (localStorage.getItem("gitrun-sidebar-collapsed") === "true") document.body.classList.add("sidebar-collapsed");
+setSidebarCollapsed(localStorage.getItem("gitrun-sidebar-collapsed") === "true");
 (async () => {
   try {
     const firstRun = await invoke("is_first_run");
     if (firstRun) {
       setupInProgress = true;
+      const { renderSetup } = await import("./setup.js");
       renderSetup(false, async () => { setupInProgress = false; await loadRepoNav().catch(() => {}); firstRunComplete(); });
     } else {
       await loadRepoNav();
@@ -202,11 +243,12 @@ if (localStorage.getItem("gitrun-sidebar-collapsed") === "true") document.body.c
       void invoke("get_dashboard_health").then((health) => {
         const footerVersion = document.getElementById("footer-version");
         if (footerVersion) {
-          footerVersion.textContent = "VERSION " + String(health.version || "UNKNOWN").toUpperCase();
+          const version = health.version == null ? "" : String(health.version).trim();
+          footerVersion.textContent = version ? "Version " + version : "Version unavailable";
         }
       }).catch(() => {
         const footerVersion = document.getElementById("footer-version");
-        if (footerVersion) footerVersion.textContent = "VERSION UNKNOWN";
+        if (footerVersion) footerVersion.textContent = "Version unavailable";
       });
     }
   } catch (error) {

@@ -10,9 +10,13 @@ fn run_gtuu() -> Result<super::RecoveryReport, String> {
     if super::is_root_for_ui() {
         structured = Some(super::run_gtuu()?);
     } else {
-        let gitrun = super::find_gitrun_binary()
-            .ok_or("GitRun executable was not found for privileged GTUU")?;
-        let output = std::process::Command::new("pkexec")
+        // Never use the environment-overridable development resolver for a
+        // privileged handoff. Pin both executables to trusted installed paths.
+        let gitrun = super::find_trusted_installed_gitrun_binary()
+            .ok_or("trusted installed GitRun executable was not found for privileged GTUU")?;
+        let pkexec = super::find_trusted_pkexec()
+            .ok_or("trusted /usr/bin/pkexec executable was not found")?;
+        let output = std::process::Command::new(pkexec)
             .arg(gitrun)
             .arg("recovery-gtuu")
             .output()

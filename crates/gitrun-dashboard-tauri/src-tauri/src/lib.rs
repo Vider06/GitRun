@@ -21,6 +21,19 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Serializes dashboard-side writes to the shared config/settings files.
+/// The snapshot check alone is vulnerable to two Tauri commands checking the
+/// same old state before either one writes it.
+static DASHBOARD_SETTINGS_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+fn dashboard_settings_write_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    DASHBOARD_SETTINGS_WRITE_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .map_err(|_| "dashboard settings write lock is poisoned; refusing to save".to_owned())
+}
+
 fn resolve_config_path(explicit: Option<&std::ffi::OsStr>) -> Result<Option<PathBuf>, String> {
     if let Some(path) = explicit {
         let path = PathBuf::from(path);
@@ -141,10 +154,80 @@ fn persist_config_as_root(_config: &Config) -> Result<(), String> {
     Err("administrator-authorized system settings persistence is Linux-only".into())
 }
 
+#[cfg(target_os = "linux")]
+fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let pkexec = pkexec_path().ok_or(
+        "Saving system security settings requires administrator authorization, but trusted pkexec was not found.",
+    )?;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; security settings cannot be saved safely.",
+    )?;
+    let payload = serde_json::to_vec(settings).map_err(|error| error.to_string())?;
+    if payload.len() > 1024 * 1024 {
+        return Err("GitRun security settings exceed the 1 MiB safety limit".into());
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-save-security-settings-{}-{unique}.json",
+        std::process::id()
+    ));
+
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+
+        let status = std::process::Command::new(&pkexec)
+            .arg(&cli)
+            .arg("--no-cat")
+            .arg("--save-gitrun-settings-root")
+            .arg(&path)
+            .status()
+            .map_err(|error| format!("unable to request administrator authorization: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "administrator-authorized security-settings save failed with status {status}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[cfg(not(target_os = "linux"))]
+fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), String> {
+    Err("administrator-authorized security-settings persistence is Linux-only".into())
+}
+
+/// Persist security policy through the privileged helper for system installs.
+/// The state directory is root-owned so user-level atomic rename is intentionally
+/// unavailable; developer installations retain their configurable local path.
+fn persist_gitrun_settings(settings: &GitRunSettings, path: &Path) -> Result<(), String> {
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        persist_gitrun_settings_as_root(settings)
+    } else {
+        settings.save(path).map_err(|error| error.to_string())
+    }
+}
+
 /// Persists only known settings. On a system installation, the configuration is
 /// root-owned; a desktop-launched dashboard must request authorization rather
 /// than relying on the service's GITRUN_CONFIG_FILE environment.
-fn persist_dashboard_config(config: &Config) -> Result<(), String> {
+fn persist_dashboard_config_unlocked(config: &Config) -> Result<(), String> {
     config.validate().map_err(|error| error.to_string())?;
     let path = config_path_for_write()?;
 
@@ -164,6 +247,11 @@ fn persist_dashboard_config(config: &Config) -> Result<(), String> {
             path.display()
         )),
     }
+}
+
+fn persist_dashboard_config(config: &Config) -> Result<(), String> {
+    let _write_guard = dashboard_settings_write_guard()?;
+    persist_dashboard_config_unlocked(config)
 }
 
 #[tauri::command]
@@ -355,7 +443,16 @@ fn validate_private_key_path(value: &str) -> Result<String, String> {
     let path = validate_setup_value(value, "private key path")?;
     let path_buf = PathBuf::from(&path);
     secure_private_key_file(&path_buf)?;
-    Ok(path)
+    // Resolve relative paths before elevation: pkexec/sudo may start the
+    // privileged helper in a different working directory.
+    let canonical = path_buf.canonicalize().map_err(|error| {
+        format!(
+            "unable to resolve GitHub App private key {}: {error}",
+            path_buf.display()
+        )
+    })?;
+    secure_private_key_file(&canonical)?;
+    Ok(canonical.to_string_lossy().into_owned())
 }
 
 /// Harden a user-supplied GitHub App private key before the privileged setup
@@ -378,6 +475,9 @@ fn secure_private_key_file(path: &std::path::Path) -> Result<(), String> {
             "GitHub App private key path is not a regular file: {}",
             path.display()
         ));
+    }
+    if metadata.len() > 1024 * 1024 {
+        return Err("GitHub App private key exceeds the 1 MiB safety limit".into());
     }
 
     #[cfg(unix)]
@@ -1039,20 +1139,14 @@ fn get_overview() -> Result<OverviewData, String> {
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let cutoff = recent_event_cutoff();
     let mut warnings = Vec::new();
-    let recent_critical_events = match gitrun_gsr::events::read_all(&events_path) {
-        Ok(events) => Some(
-            events
-                .iter()
-                .filter(|event| {
-                    event.severity == gitrun_gsr::Severity::Critical && event.timestamp >= cutoff
-                })
-                .count() as u32,
-        ),
-        Err(error) => {
-            warnings.push(format!("Critical-event queue could not be read: {error}"));
-            None
-        }
-    };
+    let recent_critical_events =
+        match gitrun_gsr::events::count_critical_since(&events_path, cutoff) {
+            Ok(count) => Some(count),
+            Err(error) => {
+                warnings.push(format!("Critical-event queue could not be read: {error}"));
+                None
+            }
+        };
     let gsr_watching = process_name_running("gitrun-gsr");
 
     Ok(OverviewData {
@@ -1096,6 +1190,14 @@ struct DashboardWorkflowRunSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct DashboardActiveWorkflowRun {
+    repository: String,
+    id: u64,
+    name: String,
+    status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct DashboardRunnerSnapshot {
     checked_at: u64,
     stale: bool,
@@ -1104,6 +1206,7 @@ struct DashboardRunnerSnapshot {
     repositories_total: usize,
     workflow_repositories_checked: usize,
     workflow_runs: Vec<DashboardWorkflowRunSummary>,
+    active_workflows: Vec<DashboardActiveWorkflowRun>,
     runners: Vec<DashboardRunnerRecord>,
     warnings: Vec<String>,
 }
@@ -1186,6 +1289,38 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
     }
 }
 
+/// Force-cancel a configured repository's workflow run using GitHub's run-level API.
+/// This intentionally affects every job in that workflow run, not one individual job.
+#[tauri::command]
+fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, String> {
+    if run_id == 0 {
+        return Err("workflow run ID must be greater than zero".into());
+    }
+    let config = load_config()?;
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repository)
+    {
+        return Err(format!(
+            "refusing to cancel run for unconfigured repository {repository:?}"
+        ));
+    }
+    let client = dashboard_github_client(&config)?;
+    client
+        .force_cancel_workflow_run(&repository, run_id)
+        .map_err(|error| {
+            format!("GitHub force-cancel failed for {repository} run {run_id}: {error}")
+        })?;
+    if let Some(cache) = DASHBOARD_RUNNER_CACHE.get() {
+        let mut cache = cache
+            .lock()
+            .map_err(|_| "runner snapshot cache lock poisoned".to_owned())?;
+        *cache = None;
+    }
+    Ok(format!("GitHub accepted force-cancellation for workflow run {run_id} in {repository}; all jobs in the run are affected."))
+}
+
 #[tauri::command]
 fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(60);
@@ -1214,18 +1349,25 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
         let client = dashboard_github_client(&config)?;
         let mut runners = Vec::new();
         let mut workflow_runs = Vec::new();
+        let mut active_workflows = Vec::new();
         let mut warnings = Vec::new();
         let mut repositories_checked = 0usize;
         let mut workflow_repositories_checked = 0usize;
+        let mut active_workflow_repositories_checked = 0usize;
         for repo in &config.repositories {
-            // These two GitHub endpoints are independent. Fetch them together
-            // so a slow workflow history request does not hold up runner state.
-            let (runner_result, workflow_result) = std::thread::scope(|scope| {
+            // These GitHub endpoints are independent. Fetch them concurrently so a
+            // slow workflow-history or active-run query does not serialize runner state.
+            let (runner_result, workflow_result, active_result) = std::thread::scope(|scope| {
                 let runner_query =
                     scope.spawn(|| client.list_runners(repo).map_err(|error| error.to_string()));
                 let workflow_query = scope.spawn(|| {
                     client
                         .recent_workflow_run_summary(repo, 100)
+                        .map_err(|error| error.to_string())
+                });
+                let active_query = scope.spawn(|| {
+                    client
+                        .list_active_workflow_runs(repo)
                         .map_err(|error| error.to_string())
                 });
                 let runners = runner_query
@@ -1234,7 +1376,10 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                 let workflows = workflow_query
                     .join()
                     .unwrap_or_else(|_| Err("workflow summary worker panicked".to_owned()));
-                (runners, workflows)
+                let active = active_query
+                    .join()
+                    .unwrap_or_else(|_| Err("active workflow query worker panicked".to_owned()));
+                (runners, workflows, active)
             });
 
             let remote_runners = match runner_result {
@@ -1273,6 +1418,22 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                 }
                 Err(error) => {
                     warnings.push(format!("{repo}: workflow-run summary failed: {error}"))
+                }
+            }
+            match active_result {
+                Ok(active) => {
+                    active_workflow_repositories_checked += 1;
+                    active_workflows.extend(active.into_iter().map(|run| {
+                        DashboardActiveWorkflowRun {
+                            repository: repo.clone(),
+                            id: run.id,
+                            name: run.name,
+                            status: "in_progress".into(),
+                        }
+                    }));
+                }
+                Err(error) => {
+                    warnings.push(format!("{repo}: active workflow inventory failed: {error}"))
                 }
             }
             let Some(remote_runners) = remote_runners else {
@@ -1318,11 +1479,13 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
             stale: false,
             complete: repositories_checked == config.repositories.len()
                 && workflow_repositories_checked == config.repositories.len()
+                && active_workflow_repositories_checked == config.repositories.len()
                 && warnings.is_empty(),
             repositories_checked,
             repositories_total: config.repositories.len(),
             workflow_repositories_checked,
             workflow_runs,
+            active_workflows,
             runners,
             warnings,
         })
@@ -1357,6 +1520,7 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
                             .unwrap_or(0),
                         workflow_repositories_checked: 0,
                         workflow_runs: Vec::new(),
+                        active_workflows: Vec::new(),
                         runners: Vec::new(),
                         warnings: Vec::new(),
                     });
@@ -1717,6 +1881,10 @@ fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
 /// available) rather than the dashboard round-tripping it back to them.
 #[tauri::command]
 fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), String> {
+    const MAX_VAULT_SECRET_BYTES: usize = 1024 * 1024;
+    if value.len() > MAX_VAULT_SECRET_BYTES {
+        return Err("GitVault secret exceeds the 1 MiB safety limit".into());
+    }
     let config = load_config()?;
     let mut vault = open_vault(&config)?;
     vault
@@ -1762,11 +1930,10 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
 fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
     let config = load_config()?;
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
-    let mut events = gitrun_gsr::events::read_all(&events_path).map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(500).min(500);
+    let mut events =
+        gitrun_gsr::events::read_last(&events_path, limit).map_err(|error| error.to_string())?;
     events.reverse(); // most recent first
-    if let Some(limit) = limit {
-        events.truncate(limit);
-    }
     Ok(events)
 }
 
@@ -1852,11 +2019,7 @@ pub struct ZizmorDashboardInfo {
 #[tauri::command]
 fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
     let config = load_config()?;
-    let already_installed = std::process::Command::new("zizmor")
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false);
+    let already_installed = gitrun_core::zizmor_is_installed();
     Ok(ZizmorDashboardInfo {
         info: gitrun_core::zizmor_info(),
         license_accepted: config.gsr_zizmor_license_accepted,
@@ -2044,6 +2207,7 @@ fn save_gitrun_settings(
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
 ) -> Result<(), String> {
+    let _write_guard = dashboard_settings_write_guard()?;
     let config = load_config()?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
         return Err(format!(
@@ -2075,9 +2239,7 @@ fn save_gitrun_settings(
                 .into(),
         );
     }
-    settings
-        .save(gitrun_settings_path(&config))
-        .map_err(|e| e.to_string())
+    persist_gitrun_settings(&settings, &gitrun_settings_path(&config))
 }
 
 #[tauri::command]
@@ -2110,13 +2272,14 @@ fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> 
         .collect())
 }
 
-#[tauri::command]
-fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
-    let config = load_config()?;
+fn load_dock_requirements_for_repo(
+    config: &Config,
+    repo: &str,
+) -> Result<Vec<DockRequirementSummary>, String> {
     if !config
         .repositories
         .iter()
-        .any(|configured| configured == &repo)
+        .any(|configured| configured == repo)
     {
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
@@ -2124,7 +2287,7 @@ fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, St
         .join("workflow-dock-requirements")
         .join(format!(
             "{}.json",
-            gitrun_scheduler::docker::sanitize(&repo, '_')
+            gitrun_scheduler::docker::sanitize(repo, '_')
         ));
     let raw = match std::fs::read_to_string(&path) {
         Ok(raw) => raw,
@@ -2145,6 +2308,56 @@ fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, St
                 .collect()
         })
         .map_err(|e| format!("decode Dock requirements: {e}"))
+}
+
+#[tauri::command]
+fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
+    let config = load_config()?;
+    load_dock_requirements_for_repo(&config, &repo)
+}
+
+#[derive(Debug, Serialize)]
+struct RepoDashboardBootstrap {
+    detail: RepoDetail,
+    requirements: Vec<DockRequirementSummary>,
+    settings: GitRunSettings,
+    config: Config,
+}
+
+/// Loads the repository's local dashboard state from one consistent config
+/// snapshot. The frontend previously issued four IPC calls that independently
+/// reloaded config and settings before it could render the policy form.
+#[tauri::command]
+fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, String> {
+    let config = load_config()?;
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == &repo)
+    {
+        return Err(format!("repository is not configured in GitRun: {repo}"));
+    }
+
+    let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
+    let logic_rules =
+        gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
+    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
+        .map_err(|e| e.to_string())?;
+    let docker_policy = settings.effective_for_repository(&repo).docker;
+    let detail = RepoDetail {
+        vault_groups: config.vault_groups_for_repo(&repo),
+        repo: repo.clone(),
+        logic_rules,
+        docker_policy,
+    };
+    let requirements = load_dock_requirements_for_repo(&config, &repo)?;
+
+    Ok(RepoDashboardBootstrap {
+        detail,
+        requirements,
+        settings,
+        config,
+    })
 }
 
 // ---------------------------------------------------------------------
@@ -2665,7 +2878,10 @@ fn save_dashboard_settings(
     updated: Config,
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
+    expected_config: Config,
+    expected_settings: GitRunSettings,
 ) -> Result<(), String> {
+    let _write_guard = dashboard_settings_write_guard()?;
     updated.validate().map_err(|error| error.to_string())?;
     let current_config = load_config()?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
@@ -2685,6 +2901,23 @@ fn save_dashboard_settings(
     let settings_path = gitrun_settings_path(&updated);
     let current_settings = GitRunSettings::load_or_default(gitrun_settings_path(&current_config))
         .map_err(|error| error.to_string())?;
+    match std::fs::symlink_metadata(&settings_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err("GitRun settings path must be a regular, non-symlink file".into());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("unable to inspect GitRun settings file: {error}")),
+    }
+    if current_config != expected_config {
+        return Err("GitRun configuration changed since this screen was loaded. Refresh the view and retry.".into());
+    }
+    if updated.state_dir != current_config.state_dir {
+        return Err("The runtime state directory is setup-managed and cannot be changed from the dashboard settings screen.".into());
+    }
+    if current_settings != expected_settings {
+        return Err("GitRun security settings changed since this screen was loaded. Refresh the view and retry.".into());
+    }
     let socket_opt_out = settings.repositories.iter().any(|(name, repository)| {
         repository.docker.direct_socket_enabled
             && !current_settings
@@ -2699,37 +2932,30 @@ fn save_dashboard_settings(
                 .into(),
         );
     }
-    let config_path = configured_config_path()
-        .ok_or_else(|| "No persistent GitRun configuration file could be resolved; refusing to save settings to an implicit path".to_owned())?;
-    let original_config = std::fs::read(&config_path)
-        .map_err(|error| format!("unable to back up configuration before saving: {error}"))?;
-    let original_settings = match std::fs::read(&settings_path) {
-        Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(format!(
-                "unable to back up GitRun settings before saving: {error}"
-            ))
-        }
-    };
-    if let Err(error) = gitrun_setup::update_env_file(&config_path, &updated) {
-        return match std::fs::write(&config_path, original_config.clone()) {
-            Ok(()) => Err(format!("GitRun configuration save failed: {error}. Original configuration restored.")),
-            Err(rollback) => Err(format!("GitRun configuration save failed: {error}; restoring the original file also failed: {rollback}")),
-        };
+    // The dashboard may be launched as an unprivileged desktop user while
+    // the canonical system config is root-owned. Use the same trusted
+    // elevation path as the dedicated config command, rather than attempting
+    // a direct write that can never succeed for this installation.
+    if let Err(save_error) = persist_dashboard_config_unlocked(&updated) {
+        let rollback = persist_dashboard_config_unlocked(&current_config);
+        return Err(match rollback {
+            Ok(()) => format!(
+                "GitRun configuration save failed: {save_error}. Previous configuration was restored."
+            ),
+            Err(rollback_error) => format!(
+                "GitRun configuration save failed: {save_error}; restoring the previous configuration also failed: {rollback_error}"
+            ),
+        });
     }
-    if let Err(save_error) = settings.save(&settings_path) {
-        let config_rollback = std::fs::write(&config_path, original_config);
-        let settings_rollback = match original_settings {
-            Some(bytes) => std::fs::write(&settings_path, bytes).map_err(|error| error.to_string()),
-            None => match std::fs::remove_file(&settings_path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error.to_string()),
-            },
-        };
+
+    if let Err(save_error) = persist_gitrun_settings(&settings, &settings_path) {
+        let config_rollback = persist_dashboard_config_unlocked(&current_config);
+        // Writing the previously effective defaults as an explicit settings
+        // file is semantically equivalent to restoring an absent file, and it
+        // also works when the system state directory is root-owned.
+        let settings_rollback = persist_gitrun_settings(&current_settings, &settings_path);
         let rollback_detail = match (config_rollback, settings_rollback) {
-            (Ok(()), Ok(())) => "Previous files were restored.".to_owned(),
+            (Ok(()), Ok(())) => "Previous configuration and settings were restored.".to_owned(),
             (config_result, settings_result) => format!(
                 "Rollback results: config={:?}; settings={:?}",
                 config_result.err(),
@@ -2767,9 +2993,11 @@ pub fn run() {
             reinstall_gitrun,
             get_overview,
             get_runner_snapshot,
+            fast_stop_workflow_run,
             get_repository_activity,
             get_host_resource_snapshot,
             get_repo_detail,
+            get_repo_dashboard_bootstrap,
             list_vault_secrets,
             set_vault_secret,
             delete_vault_secret,
@@ -2806,6 +3034,30 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashboard_settings_write_guard_serializes_concurrent_writers() {
+        let guard = dashboard_settings_write_guard().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let _worker_guard = dashboard_settings_write_guard().unwrap();
+            finished_tx.send(()).unwrap();
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker should start");
+        assert!(finished_rx.recv_timeout(Duration::from_millis(50)).is_err());
+
+        drop(guard);
+        finished_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("writer should continue after the lock is released");
+        worker.join().unwrap();
+    }
 
     #[test]
     fn dashboard_build_version_matches_workspace_version_txt() {

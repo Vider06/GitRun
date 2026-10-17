@@ -53,6 +53,9 @@ pub struct IdleInfo {
 pub struct ReconcileInput {
     pub min_runners: u32,
     pub max_runners: u32,
+    /// GitRun-managed runner containers reserved by active GitDockRun bindings.
+    /// They are excluded from ordinary planning but still consume the repository's global capacity.
+    pub reserved_runners: u32,
     pub containers: Vec<ContainerView>,
     pub runners: Vec<RunnerView>,
     pub queued_jobs: u32,
@@ -73,9 +76,6 @@ pub struct ReconcileInput {
     /// targets. A matching queued job gets dedicated dynamic capacity even
     /// when the default runner labels would otherwise satisfy it.
     pub dock_target_jobs: Vec<String>,
-    /// Labels configured on every default GitRun runner. Used to distinguish
-    /// jobs that can use the warm pool from jobs requiring specialized capacity.
-    pub configured_runner_labels: Vec<String>,
     /// Logic Containers rules loaded for this reconciliation cycle. A queued
     /// job matching one of these rules requires dedicated dynamic capacity
     /// so it can be created with the selected backend and image.
@@ -114,37 +114,41 @@ pub enum Action {
     /// Runner is online in Docker but GitHub doesn't know about it anymore:
     /// remove and recreate, preserving its permanent/dynamic role.
     RecreateOrphaned { name: String, permanent: bool },
-    /// Runner is running but reports offline to GitHub and isn't busy:
-    /// restart in place rather than replace.
+    /// A non-busy managed container is transitional or its runner reports
+    /// offline: restart in place rather than replacing its identity.
     RestartUnresponsive { name: String },
     /// Remove an idle container to scale back down toward the minimum.
     RemoveIdle { name: String },
 }
 
-/// Determines whether a queued job carries at least one label that is not
-/// already present on every default GitRun runner. Such a job needs a
-/// dedicated dynamic runner when Logic Containers routes it to specialized
-/// capacity.
-fn job_requires_specialized_runner(
-    job_labels: &[String],
-    configured_runner_labels: &[String],
-) -> bool {
-    job_labels.iter().any(|job_label| {
-        let job_label = job_label.trim();
-        !job_label.is_empty()
-            && !configured_runner_labels
-                .iter()
-                .map(|label| label.trim())
-                .filter(|label| !label.is_empty())
-                .any(|label| label.eq_ignore_ascii_case(job_label))
-    })
+/// Returns whether a queued job needs a dedicated dynamic runner.
+///
+/// GitDockRun targets always need their own runner, even when the default
+/// labels already match and no Logic Containers rule is configured. Other
+/// jobs need dedicated capacity only when a Logic Containers rule routes
+/// them and the default runner labels do not cover the request.
+fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[String]) -> bool {
+    let is_dock_target = input
+        .queued_job_names
+        .get(index)
+        .is_some_and(|name| input.dock_target_jobs.iter().any(|target| target == name));
+
+    // A matching Logic Containers rule selects a specific backend/image,
+    // so it must receive a dynamic runner even if its labels happen to match
+    // the default warm pool. GitDockRun targets likewise need isolated
+    // per-job capacity regardless of label coverage or routing rules.
+    is_dock_target || crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
 }
 
 /// Computes the desired runner count: enough to cover currently busy runners
 /// plus what's queued, clamped to [min, max]. Same formula as the Python
 /// original (`min(max, max(min, busy + queued))`).
 pub fn desired_count(input: &ReconcileInput) -> u32 {
-    let busy = input.runners.iter().filter(|r| r.online && r.busy).count() as u32;
+    // A runner reported busy must still count as occupied even if GitHub
+    // simultaneously reports it offline. Recovery deliberately never
+    // restarts a busy runner, so excluding it here would overprovision based
+    // on the same inconsistent snapshot.
+    let busy = input.runners.iter().filter(|r| r.busy).count() as u32;
     busy.saturating_add(input.queued_jobs)
         .clamp(input.min_runners, input.max_runners)
 }
@@ -176,12 +180,12 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // deciding how many *more* containers to create, so a container that's
     // about to be recreated isn't double-counted as "already satisfying
     // desired".
-    if input.recovery_enabled && input.queued_jobs > 0 {
+    if input.recovery_enabled {
         for container in &live_containers {
             let runner = by_name(&container.name);
             match runner {
                 Some(r) if r.busy => {} // never touch a busy runner
-                Some(r) if !r.online => {
+                Some(r) if !r.online || container.health != ContainerHealth::Running => {
                     let age = input
                         .recovery_age
                         .iter()
@@ -195,10 +199,22 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                     }
                 }
                 None => {
-                    actions.push(Action::RecreateOrphaned {
-                        name: container.name.clone(),
-                        permanent: container.permanent,
-                    });
+                    // A missing registration is ambiguous while a workflow job
+                    // may still be running under this runner name. The caller
+                    // marks such jobs as busy; otherwise require the same
+                    // recovery cooldown used for offline registrations.
+                    let age = input
+                        .recovery_age
+                        .iter()
+                        .find(|(name, _)| name == &container.name)
+                        .map(|(_, age)| *age)
+                        .unwrap_or_default();
+                    if age >= input.recovery_cooldown {
+                        actions.push(Action::RecreateOrphaned {
+                            name: container.name.clone(),
+                            permanent: container.permanent,
+                        });
+                    }
                 }
                 _ => {} // online and not busy: healthy, nothing to do
             }
@@ -208,15 +224,17 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // 3. Top up to `desired`, permanents first up to `min_runners`, the rest
     // as dynamic overflow. This is the single, non-duplicated version of the
     // Python file's two identical top-up loops.
-    let recreating: u32 = actions
-        .iter()
-        .filter(|a| matches!(a, Action::RecreateOrphaned { .. }))
-        .count() as u32;
-    let mut current = live_containers.len() as u32 + recreating;
-    let mut permanent_count =
-        live_containers.iter().filter(|c| c.permanent).count() as u32 + recreating;
+    // Recreating an orphan replaces its existing container; it does not
+    // consume an additional slot. Count permanent containers by their actual
+    // role rather than treating every orphan as permanent.
+    let mut current = (live_containers.len() as u32).saturating_add(input.reserved_runners);
+    let mut permanent_count = live_containers.iter().filter(|c| c.permanent).count() as u32;
 
-    while current < desired && permanent_count < input.min_runners {
+    // The permanent warm pool is a separate invariant from total demand:
+    // dynamic/orphaned runners must not satisfy the configured permanent
+    // minimum. Respect the global maximum even when the snapshot is already
+    // at or above the desired total.
+    while current < input.max_runners && permanent_count < input.min_runners {
         actions.push(Action::CreateRunner {
             permanent: true,
             job_labels: Vec::new(),
@@ -227,11 +245,12 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         permanent_count += 1;
     }
 
-    // Specialized queued jobs need capacity in addition to the guaranteed
-    // warm pool when the warm pool's default labels don't cover them. This
-    // intentionally may raise the total above desired_count, but never
-    // above max_runners: the count-based formula assumes runners are
-    // interchangeable, which is not true once Logic Containers exist.
+    // Jobs matched by Logic Containers and GitDockRun targets need capacity
+    // in addition to the guaranteed warm pool. This intentionally may raise
+    // the total above desired_count, but never above max_runners, including
+    // containers reserved by the GitDockRun lifecycle: the
+    // count-based formula assumes runners are interchangeable, which is not
+    // true when jobs require a particular backend/image or isolated target.
     let specialized_jobs: Vec<(Option<String>, Option<u64>, Vec<String>)> = input
         .queued_job_labels
         .iter()
@@ -239,12 +258,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         .filter_map(|(index, labels)| {
             let job_name = input.queued_job_names.get(index).cloned();
             let job_run_id = input.queued_job_run_ids.get(index).copied();
-            let routed = crate::logic_containers::resolve(&input.logic_rules, labels).is_some();
-            let specialized = routed
-                && (job_requires_specialized_runner(labels, &input.configured_runner_labels)
-                    || job_name.as_deref().is_some_and(|name| {
-                        input.dock_target_jobs.iter().any(|target| target == name)
-                    }));
+            let specialized = job_needs_dedicated_runner(input, index, labels);
 
             specialized.then_some((job_name, job_run_id, labels.clone()))
         })
@@ -274,10 +288,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             .queued_job_labels
             .iter()
             .enumerate()
-            .filter(|(_, labels)| {
-                !(crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
-                    && job_requires_specialized_runner(labels, &input.configured_runner_labels))
-            })
+            .filter(|(index, labels)| !job_needs_dedicated_runner(input, *index, labels))
             .nth(dynamic_index);
 
         let (job_name, job_run_id, job_labels) = next
@@ -303,8 +314,11 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // 4. Scale down idle containers beyond the minimum, oldest-idle first,
     // preferring to keep permanents (same tie-break as the Python version:
     // sort by (is_permanent, -age) so dynamic+oldest goes first).
-    if !input.ephemeral && current > input.min_runners {
-        let removable = current - input.min_runners;
+    // Reserved Dock containers count against the global maximum, but they
+    // must not reduce the ordinary runner pool's minimum guarantee.
+    let minimum_total = input.min_runners.saturating_add(input.reserved_runners);
+    if !input.ephemeral && current > minimum_total {
+        let removable = current - minimum_total;
         let mut candidates: Vec<&IdleInfo> = input
             .idle
             .iter()
@@ -320,10 +334,28 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                 .unwrap_or(false);
             (permanent, std::cmp::Reverse(i.idle_for))
         });
-        for info in candidates.into_iter().take(removable as usize) {
+        let mut remaining = removable;
+        for info in candidates {
+            if remaining == 0 {
+                break;
+            }
+            let is_permanent = live_containers
+                .iter()
+                .find(|container| container.name == info.name)
+                .is_some_and(|container| container.permanent);
+            // Never scale below the permanent warm-pool guarantee just to
+            // reach the total minimum. If dynamic capacity is not idle yet,
+            // temporarily keep the extra container instead.
+            if is_permanent && permanent_count <= input.min_runners {
+                continue;
+            }
             actions.push(Action::RemoveIdle {
                 name: info.name.clone(),
             });
+            remaining -= 1;
+            if is_permanent {
+                permanent_count = permanent_count.saturating_sub(1);
+            }
         }
     }
 
@@ -338,6 +370,7 @@ mod tests {
         ReconcileInput {
             min_runners: 3,
             max_runners: 8,
+            reserved_runners: 0,
             containers: Vec::new(),
             runners: Vec::new(),
             queued_jobs: 0,
@@ -345,7 +378,6 @@ mod tests {
             queued_job_names: Vec::new(),
             queued_job_run_ids: Vec::new(),
             dock_target_jobs: Vec::new(),
-            configured_runner_labels: vec!["self-hosted".into(), "Linux".into()],
             logic_rules: Vec::new(),
             idle: Vec::new(),
             recovery_enabled: true,
@@ -374,6 +406,21 @@ mod tests {
             busy: true,
         }];
         assert_eq!(desired_count(&input), u32::MAX);
+    }
+
+    #[test]
+    fn desired_count_includes_busy_runner_even_if_reported_offline() {
+        let mut input = base_input();
+        input.min_runners = 1;
+        input.max_runners = 8;
+        input.runners = vec![RunnerView {
+            name: "offline-but-busy".into(),
+            online: false,
+            busy: true,
+        }];
+        input.queued_jobs = 1;
+
+        assert_eq!(desired_count(&input), 2);
     }
 
     #[test]
@@ -440,38 +487,140 @@ mod tests {
     }
 
     #[test]
-    fn specialized_job_gets_dynamic_capacity_without_consuming_minimum_pool() {
+    fn routed_job_gets_dedicated_capacity_even_when_default_labels_match() {
         let mut input = base_input();
         input.queued_jobs = 1;
-        input.queued_job_labels = vec![vec!["self-hosted".into(), "windows".into()]];
+        input.queued_job_labels = vec![vec!["self-hosted".into(), "Linux".into()]];
         input.logic_rules = vec![crate::logic_containers::LogicRule {
-            name: "windows".into(),
-            match_labels: vec!["windows".into()],
+            name: "linux-special-image".into(),
+            match_labels: vec!["Linux".into()],
             backend: crate::logic_containers::Backend::LocalLinux,
-            image: "gitrun-runner:windows".into(),
+            image: "gitrun-runner:custom-linux".into(),
         }];
         let actions = plan(&input);
         assert_eq!(
             actions
                 .iter()
-                .filter(|action| {
-                    matches!(
-                        action,
-                        Action::CreateRunner {
-                            permanent: true,
-                            ..
-                        }
-                    )
-                })
+                .filter(|action| matches!(
+                    action,
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
+                ))
                 .count(),
             3
         );
         assert!(actions.contains(&Action::CreateRunner {
             permanent: false,
-            job_labels: vec!["self-hosted".into(), "windows".into()],
+            job_labels: vec!["self-hosted".into(), "Linux".into()],
             job_name: None,
             job_run_id: None,
         }));
+    }
+
+    #[test]
+    fn dock_target_gets_dedicated_capacity_without_logic_container_rule_or_duplicate() {
+        let mut input = base_input();
+        input.min_runners = 1;
+        input.max_runners = 4;
+        input.queued_jobs = 3;
+        input.queued_job_labels = vec![
+            vec!["self-hosted".into(), "Linux".into()],
+            vec!["self-hosted".into(), "Linux".into()],
+        ];
+        input.queued_job_names = vec!["deploy-production".into(), "build-docs".into()];
+        input.queued_job_run_ids = vec![42, 43];
+        input.dock_target_jobs = vec!["deploy-production".into()];
+        input.logic_rules = Vec::new();
+
+        let actions = plan(&input);
+        assert!(actions.contains(&Action::CreateRunner {
+            permanent: false,
+            job_labels: vec!["self-hosted".into(), "Linux".into()],
+            job_name: Some("deploy-production".into()),
+            job_run_id: Some(42),
+        }));
+        assert!(actions.contains(&Action::CreateRunner {
+            permanent: false,
+            job_labels: vec!["self-hosted".into(), "Linux".into()],
+            job_name: Some("build-docs".into()),
+            job_run_id: Some(43),
+        }));
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(action, Action::CreateRunner { .. }))
+                .count(),
+            3,
+            "one warm-pool runner, one dedicated GitDockRun runner, and one generic dynamic runner"
+        );
+    }
+
+    #[test]
+    fn orphan_recreation_does_not_double_count_orphan_or_promote_dynamic_to_permanent() {
+        let mut input = base_input();
+        input.min_runners = 3;
+        input.max_runners = 8;
+        input.queued_jobs = 1;
+        input.containers = vec![ContainerView {
+            name: "orphan-dynamic".into(),
+            health: ContainerHealth::Running,
+            permanent: false,
+        }];
+        input.runners = Vec::new();
+        // Orphan recreation is gated by the configured recovery cooldown.
+        input.recovery_age = vec![("orphan-dynamic".into(), Duration::from_secs(60))];
+
+        let actions = plan(&input);
+        assert!(actions.contains(&Action::RecreateOrphaned {
+            name: "orphan-dynamic".into(),
+            permanent: false,
+        }));
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(
+                    action,
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
+                ))
+                .count(),
+            3,
+            "the warm pool must still reach min_runners; the orphan replacement is dynamic"
+        );
+    }
+
+    #[test]
+    fn existing_dynamic_capacity_does_not_satisfy_permanent_warm_pool_minimum() {
+        let mut input = base_input();
+        input.min_runners = 2;
+        input.max_runners = 6;
+        input.queued_jobs = 0;
+        input.containers = (0..2)
+            .map(|i| ContainerView {
+                name: format!("dynamic-{i}"),
+                health: ContainerHealth::Running,
+                permanent: false,
+            })
+            .collect();
+
+        let actions = plan(&input);
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(
+                    action,
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
+                ))
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -626,8 +775,9 @@ mod tests {
             health: ContainerHealth::Running,
             permanent: false,
         }];
-        input.queued_jobs = 1; // recovery pass only runs when there's demand
+        input.queued_jobs = 1;
         input.runners = Vec::new(); // no matching runner registered anymore
+        input.recovery_age = vec![("gone-from-github".into(), Duration::from_secs(60))];
         let actions = plan(&input);
         assert!(actions.contains(&Action::RecreateOrphaned {
             name: "gone-from-github".into(),
@@ -656,6 +806,29 @@ mod tests {
         assert!(actions
             .iter()
             .all(|a| !matches!(a, Action::RecreateOrphaned { name, .. } if name == "busy-one")));
+    }
+
+    #[test]
+    fn transitional_container_with_online_registration_waits_for_cooldown() {
+        let mut input = base_input();
+        input.containers = vec![ContainerView {
+            name: "starting".into(),
+            health: ContainerHealth::Starting,
+            permanent: true,
+        }];
+        input.runners = vec![RunnerView {
+            name: "starting".into(),
+            online: true,
+            busy: false,
+        }];
+        input.recovery_age = vec![("starting".into(), Duration::from_secs(59))];
+        assert!(!plan(&input).iter().any(
+            |action| matches!(action, Action::RestartUnresponsive { name } if name == "starting")
+        ));
+        input.recovery_age = vec![("starting".into(), Duration::from_secs(60))];
+        assert!(plan(&input).iter().any(
+            |action| matches!(action, Action::RestartUnresponsive { name } if name == "starting")
+        ));
     }
 
     #[test]
@@ -759,6 +932,47 @@ mod tests {
     }
 
     #[test]
+    fn scale_down_preserves_permanent_warm_pool_when_only_permanents_are_idle() {
+        let mut input = base_input();
+        input.min_runners = 2;
+        input.max_runners = 6;
+        input.queued_jobs = 0;
+        input.containers = vec![
+            ContainerView {
+                name: "perm-1".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "perm-2".into(),
+                health: ContainerHealth::Running,
+                permanent: true,
+            },
+            ContainerView {
+                name: "dynamic-busy".into(),
+                health: ContainerHealth::Running,
+                permanent: false,
+            },
+        ];
+        input.idle = vec![
+            IdleInfo {
+                name: "perm-1".into(),
+                idle_for: Duration::from_secs(999),
+            },
+            IdleInfo {
+                name: "perm-2".into(),
+                idle_for: Duration::from_secs(999),
+            },
+        ];
+
+        let actions = plan(&input);
+        assert!(!actions.iter().any(|action| matches!(
+            action,
+            Action::RemoveIdle { name } if name == "perm-1" || name == "perm-2"
+        )));
+    }
+
+    #[test]
     fn ephemeral_mode_never_scales_down() {
         let mut input = base_input();
         input.ephemeral = true;
@@ -793,8 +1007,30 @@ mod tests {
     }
 
     #[test]
-    fn recovery_pass_is_skipped_when_no_jobs_queued() {
-        // Matches the Python behavior: recovery only runs when `queued > 0`.
+    fn orphaned_runner_waits_for_recovery_cooldown() {
+        let mut input = base_input();
+        input.containers = vec![ContainerView {
+            name: "orphaned".into(),
+            health: ContainerHealth::Running,
+            permanent: true,
+        }];
+        input.runners.clear();
+        input.recovery_age = vec![("orphaned".into(), Duration::from_secs(59))];
+        let actions = plan(&input);
+        assert!(!actions.iter().any(
+            |action| matches!(action, Action::RecreateOrphaned { name, .. } if name == "orphaned")
+        ));
+
+        input.recovery_age = vec![("orphaned".into(), Duration::from_secs(60))];
+        let actions = plan(&input);
+        assert!(actions.iter().any(
+            |action| matches!(action, Action::RecreateOrphaned { name, .. } if name == "orphaned")
+        ));
+    }
+
+    #[test]
+    fn recovery_pass_runs_when_no_jobs_are_queued() {
+        // Runner health and orphan cleanup are lifecycle invariants, not a function of queue depth.
         let mut input = base_input();
         input.containers = vec![ContainerView {
             name: "gone-from-github".into(),
@@ -803,10 +1039,81 @@ mod tests {
         }];
         input.queued_jobs = 0;
         input.runners = Vec::new();
+        input.recovery_age = vec![("gone-from-github".into(), Duration::from_secs(60))];
         let actions = plan(&input);
-        assert!(actions.iter().all(
-            |a| !matches!(a, Action::RecreateOrphaned { name, .. } if name == "gone-from-github")
+        assert!(actions.iter().any(
+            |a| matches!(a, Action::RecreateOrphaned { name, .. } if name == "gone-from-github")
         ));
+    }
+
+    #[test]
+    fn reserved_dock_runners_count_toward_global_maximum() {
+        let mut input = base_input();
+        input.min_runners = 3;
+        input.max_runners = 8;
+        input.reserved_runners = 1;
+        input.containers = (0..7)
+            .map(|i| ContainerView {
+                name: format!("runner-{i}"),
+                health: ContainerHealth::Running,
+                permanent: i < 3,
+            })
+            .collect();
+        input.runners = input
+            .containers
+            .iter()
+            .map(|container| RunnerView {
+                name: container.name.clone(),
+                online: true,
+                busy: false,
+            })
+            .collect();
+        input.queued_jobs = 20;
+
+        let actions = plan(&input);
+        assert!(
+            actions
+                .iter()
+                .all(|action| !matches!(action, Action::CreateRunner { .. })),
+            "seven ordinary runners plus one reserved Dock already consume max_runners"
+        );
+    }
+
+    #[test]
+    fn reserved_dock_capacity_does_not_satisfy_permanent_warm_pool_minimum() {
+        let mut input = base_input();
+        input.min_runners = 3;
+        input.max_runners = 8;
+        input.reserved_runners = 2;
+        input.containers = (0..2)
+            .map(|i| ContainerView {
+                name: format!("dynamic-{i}"),
+                health: ContainerHealth::Running,
+                permanent: false,
+            })
+            .collect();
+
+        let actions = plan(&input);
+        let permanent_creates = actions
+            .iter()
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::CreateRunner {
+                        permanent: true,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            permanent_creates, 3,
+            "reserved Dock containers are not permanent warm-pool runners"
+        );
+        assert!(
+            2 + input.containers.len() + permanent_creates <= input.max_runners as usize,
+            "reserved plus existing plus planned runners must respect the global maximum"
+        );
     }
 
     #[test]

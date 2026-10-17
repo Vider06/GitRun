@@ -142,7 +142,12 @@ try {
   }
 
   foreach ($repo in $repoList) {
-    if ($repo -notmatch "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") {
+    $repoParts = $repo.Split([char]'/')
+    if (
+      $repo -notmatch "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" -or
+      $repoParts[0] -eq "." -or $repoParts[0] -eq ".." -or
+      $repoParts[1] -eq "." -or $repoParts[1] -eq ".."
+    ) {
       throw "Invalid repository: $repo"
     }
 
@@ -161,14 +166,26 @@ try {
   }
 
   $lines = Get-Content -LiteralPath $EnvFile
+  $hasTokenKey = $false
+  $hasRepositoriesKey = $false
   $updatedLines = foreach ($line in $lines) {
-    if ($line -like "GITHUB_TOKEN=*") {
+    if ($line -match '^\\s*GITHUB_TOKEN=') {
+      $hasTokenKey = $true
       "GITHUB_TOKEN=$plainToken"
-    } elseif ($line -like "GITRUN_REPOSITORIES=*") {
+    } elseif ($line -match '^\\s*GITRUN_REPOSITORIES=') {
+      $hasRepositoriesKey = $true
       "GITRUN_REPOSITORIES=$($repoList -join ",")"
     } else {
       $line
     }
+  }
+  # Custom env files may omit either setting; append missing keys instead of
+  # silently completing an install with an empty or stale configuration.
+  if (-not $hasTokenKey) {
+    $updatedLines = @($updatedLines) + "GITHUB_TOKEN=$plainToken"
+  }
+  if (-not $hasRepositoriesKey) {
+    $updatedLines = @($updatedLines) + "GITRUN_REPOSITORIES=$($repoList -join ",")"
   }
 
   $utf8NoBom = New-Object System.Text.UTF8Encoding($false)

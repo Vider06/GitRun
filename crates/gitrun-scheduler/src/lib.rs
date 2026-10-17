@@ -45,7 +45,7 @@ use crate::state::SchedulerState;
 use crate::vm_resolution::VmResolutionRegistry;
 use gitrun_core::{Config, GitHubAuth, StateStore};
 use gitrun_vault::Vault;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -125,13 +125,20 @@ pub fn run() {
     // process instead crashes hard, the file survives with a now-dead PID
     // in it, which is exactly the signal the watchdog looks for.
     let pid_file = state_dir.join("gitrun-autoscaler.pid");
-    if let Err(error) = acquire_pid_file(&pid_file) {
-        eprintln!(
-            "gitrun-autoscaler: could not acquire scheduler PID file at {}: {error}",
-            pid_file.display()
-        );
-        std::process::exit(2);
-    }
+    // Keep the OS lock handle alive for the entire scheduler lifetime. The
+    // sidecar lock file is intentionally persistent: unlinking a locked inode
+    // would let a second process create and lock a different inode at the same
+    // path, defeating singleton enforcement.
+    let _pid_lock = match acquire_pid_file(&pid_file) {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!(
+                "gitrun-autoscaler: could not acquire scheduler PID file at {}: {error}",
+                pid_file.display()
+            );
+            std::process::exit(2);
+        }
+    };
 
     // Only start background workers after every fatal startup check has passed
     // and this process owns the singleton PID file. Otherwise GTUU/GSR/API could
@@ -143,23 +150,42 @@ pub fn run() {
         let _ = std::fs::remove_file(&pid_file);
         std::process::exit(2);
     }
-    spawn_gtuu_thread(&config, &stopping);
-    spawn_gsr_poll_thread(&config, &vm_registry, &stopping);
+    if let Err(error) = spawn_gtuu_thread(&config, &stopping) {
+        eprintln!("gitrun-autoscaler: failed to start GTUU worker: {error}");
+        let _ = std::fs::remove_file(&pid_file);
+        std::process::exit(2);
+    }
+    if let Err(error) = spawn_gsr_poll_thread(&config, &vm_registry, &stopping) {
+        eprintln!("gitrun-autoscaler: failed to start GSR poll worker: {error}");
+        stopping.store(true, Ordering::Relaxed);
+        let _ = std::fs::remove_file(&pid_file);
+        std::process::exit(2);
+    }
 
     println!(
         "gitrun-autoscaler: starting, polling every {}s",
         config.poll_interval
     );
     while !stopping.load(Ordering::Relaxed) {
+        // Pressure is a backpressure signal for capacity growth, not a reason
+        // to stop all lifecycle work. Keep safe cleanup and recovery running,
+        // but fail closed for any action that would create/recreate a runner.
+        let mut allow_new_runner_creation = true;
         if config.resource_pressure_enabled {
             match resource_pressure::sample(&config) {
                 Ok(snapshot) if snapshot.is_pressured(&config) => {
-                    eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), holding new runner creation until pressure falls", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
-                    sleep_interruptible(Duration::from_secs(config.poll_interval), &stopping);
-                    continue;
+                    eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), deferring runner creation while continuing safe cleanup/recovery", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
+                    allow_new_runner_creation = false;
                 }
                 Ok(_) => {}
-                Err(error) => eprintln!("gitrun-autoscaler: resource pressure check unavailable: {error}; continuing for availability"),
+                Err(error @ resource_pressure::ResourcePressureError::Disk { .. }) => {
+                    eprintln!("gitrun-autoscaler: critical filesystem pressure check failed: {error}; deferring runner creation while continuing safe cleanup/recovery");
+                    allow_new_runner_creation = false;
+                }
+                Err(error) => {
+                    eprintln!("gitrun-autoscaler: host resource pressure check unavailable: {error}; deferring runner creation while continuing safe cleanup/recovery");
+                    allow_new_runner_creation = false;
+                }
             }
         }
         for repo in &config.repositories {
@@ -175,7 +201,14 @@ pub fn run() {
                 );
                 continue;
             }
-            if let Err(error) = reconcile_repo(&client, &config, &state_dir, &vm_registry, repo) {
+            if let Err(error) = reconcile_repo(
+                &client,
+                &config,
+                &state_dir,
+                &vm_registry,
+                repo,
+                allow_new_runner_creation,
+            ) {
                 if let Some(GitHubError::RateLimited { retry_after }) =
                     error.downcast_ref::<GitHubError>()
                 {
@@ -195,60 +228,143 @@ pub fn run() {
     println!("gitrun-autoscaler: stopped");
 }
 
-fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<()> {
+#[cfg(unix)]
+fn open_protected_pid_file(
+    path: &std::path::Path,
+    read: bool,
+    write: bool,
+    create: bool,
+) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .read(read)
+        .write(write)
+        .create(create)
+        .truncate(false);
+    options
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "scheduler PID/lock file must be a regular file without hard links",
+        ));
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::io::{Error, ErrorKind, Read, Write};
+    use std::os::fd::AsRawFd;
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
-        Ok(mut file) => {
-            use std::io::Write;
-            file.write_all(std::process::id().to_string().as_bytes())?;
-            file.sync_all()?;
-            Ok(())
+    let lock_path = path.with_extension("pid.lock");
+    // Do not remove this file after unlocking: flock applies to the opened
+    // inode, so unlinking it can create two independently locked inodes.
+    let lock = open_protected_pid_file(&lock_path, true, true, true)?;
+    let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            return Err(Error::new(
+                ErrorKind::AlreadyExists,
+                "another gitrun-autoscaler instance holds the scheduler lock",
+            ));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing_pid = std::fs::read_to_string(path)
-                .ok()
-                .and_then(|raw| raw.trim().parse::<u32>().ok());
-
-            if let Some(pid) = existing_pid {
-                if process_is_alive(pid) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::AlreadyExists,
-                        format!(
-                            "another gitrun-autoscaler instance is already running (pid {pid})"
-                        ),
-                    ));
-                }
-            }
-
-            std::fs::remove_file(path)?;
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)?;
-            use std::io::Write;
-            file.write_all(std::process::id().to_string().as_bytes())?;
-            file.sync_all()?;
-            Ok(())
-        }
-        Err(error) => Err(error),
+        return Err(error);
     }
+
+    // Check the marker while holding the lock as well, so a live instance
+    // started by an older version (which may not use the sidecar lock yet)
+    // cannot be overwritten during an upgrade. A malformed or unsafe marker
+    // is an error, not an invitation to overwrite an unknown file.
+    let existing_pid = match open_protected_pid_file(path, true, false, false) {
+        Ok(mut file) => {
+            let mut raw = String::new();
+            file.read_to_string(&mut raw)?;
+            let pid = raw.trim().parse::<u32>().map_err(|_| {
+                Error::new(ErrorKind::InvalidData, "scheduler PID file is malformed")
+            })?;
+            if pid == 0 || pid > i32::MAX as u32 {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "scheduler PID is out of range",
+                ));
+            }
+            Some(pid)
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    if let Some(pid) = existing_pid {
+        if pid != std::process::id() && process_is_alive(pid) {
+            return Err(Error::new(
+                ErrorKind::AlreadyExists,
+                format!("another gitrun-autoscaler instance is already running (pid {pid})"),
+            ));
+        }
+    }
+
+    // The kernel lock serializes stale-PID replacement. Open without truncation,
+    // validate the inode, and only then truncate it so symlink/hardlink targets
+    // are never followed or modified.
+    let mut pid = open_protected_pid_file(path, false, true, true)?;
+    pid.set_len(0)?;
+    pid.write_all(std::process::id().to_string().as_bytes())?;
+    pid.sync_all()?;
+    Ok(lock)
+}
+
+#[cfg(not(unix))]
+fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
+    use std::io::Write;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let existing_pid = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok());
+    if let Some(pid) = existing_pid {
+        if process_is_alive(pid) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("another gitrun-autoscaler instance is already running (pid {pid})"),
+            ));
+        }
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    file.write_all(std::process::id().to_string().as_bytes())?;
+    file.sync_all()?;
+    Ok(None)
 }
 
 #[cfg(unix)]
 fn process_is_alive(pid: u32) -> bool {
+    // Never cast an untrusted oversized PID to i32: a negative value to
+    // kill(2) targets a process group rather than one process.
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     unsafe extern "C" {
         #[link_name = "kill"]
         fn kill(pid: i32, sig: i32) -> i32;
     }
     let result = unsafe { kill(pid as i32, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1)
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[cfg(not(unix))]
@@ -413,6 +529,31 @@ fn record_crash(state_dir: &std::path::Path, message: &str) -> std::io::Result<(
         .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
+/// Resource pressure blocks capacity growth, but should not freeze lifecycle
+/// safety work. Suppress whole replacement actions (rather than splitting
+/// remove/create), and suppress scale-down plans computed assuming deferred
+/// creations will succeed.
+fn actions_for_resource_pressure(
+    actions: Vec<reconcile::Action>,
+    allow_creation: bool,
+) -> Vec<reconcile::Action> {
+    if allow_creation {
+        return actions;
+    }
+
+    actions
+        .into_iter()
+        .filter(|action| {
+            !matches!(
+                action,
+                reconcile::Action::CreateRunner { .. }
+                    | reconcile::Action::RecreateOrphaned { .. }
+                    | reconcile::Action::RemoveIdle { .. }
+            )
+        })
+        .collect()
+}
+
 /// Runs one reconcile cycle for a single repository: snapshot, plan, execute.
 fn reconcile_repo(
     client: &GitHubClient,
@@ -420,7 +561,19 @@ fn reconcile_repo(
     state_dir: &std::path::Path,
     vm_registry: &VmResolutionRegistry,
     repo: &str,
+    allow_new_runner_creation: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // GTUU replaces permanent runners. Hold its process-shared lifecycle lock
+    // across the complete snapshot/plan/execute cycle so an update cannot
+    // replace a container between inventory and a destructive scheduler action.
+    let _lifecycle_lock = match GtuuLock::acquire(state_dir) {
+        Ok(lock) => lock,
+        Err(crate::gtuu::GtuuError::AlreadyRunning) => {
+            eprintln!("gitrun-autoscaler: deferring reconciliation for {repo}; GTUU owns the runner lifecycle lock");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
     api_service::reconcile_dock_bindings(client, state_dir, repo).map_err(std::io::Error::other)?;
 
     if config.gsr_workflow_validation_enabled {
@@ -428,6 +581,10 @@ fn reconcile_repo(
     }
 
     let containers = docker::managed_containers(repo)?;
+    // GitDockRun requirements are routing/security metadata: if the file
+    // exists but cannot be read or parsed, abort this repo's reconcile cycle
+    // rather than silently treating targeted jobs as ordinary local jobs.
+    let dock_target_jobs = load_dock_target_jobs(state_dir, repo)?;
     api_service::reconcile_dock_target_containers(client, state_dir, repo, &containers)
         .map_err(std::io::Error::other)?;
     let mut preserved_docks =
@@ -440,11 +597,7 @@ fn reconcile_repo(
                     && container
                         .workflow_job
                         .as_deref()
-                        .map(|job| {
-                            load_dock_target_jobs(state_dir, repo)
-                                .iter()
-                                .any(|target| target == job)
-                        })
+                        .map(|job| dock_target_jobs.iter().any(|target| target == job))
                         .unwrap_or(false)
             })
             .map(|container| container.name.clone()),
@@ -455,6 +608,54 @@ fn reconcile_repo(
         .cloned()
         .collect();
     let runners = client.list_runners(repo)?;
+    // A runner registration can disappear while its job is still reported as
+    // in progress. Query only these rare orphan cases and mark the planner
+    // view busy when GitHub still assigns an active job to that runner name;
+    // this prevents recovery from killing a job based on inconsistent snapshots.
+    for container in &containers {
+        let matches = runners
+            .iter()
+            .filter(|runner| runner.name == container.name)
+            .count();
+        if matches > 1 {
+            return Err(std::io::Error::other(format!(
+                "ambiguous GitHub runner identity for managed container {} in {repo}: {matches} registrations share the name",
+                container.name
+            )).into());
+        }
+    }
+    // The repository-level GitHub API also returns self-hosted runners that
+    // are not owned by GitRun. They must not inflate this scheduler's busy
+    // count or be joined to a managed container unless the Docker inventory
+    // confirms the exact name exists on this host.
+    let mut planner_runners: Vec<RunnerView> = runners
+        .iter()
+        .filter(|runner| {
+            containers
+                .iter()
+                .any(|container| container.name == runner.name)
+        })
+        .map(|runner| RunnerView {
+            name: runner.name.clone(),
+            online: runner.is_online(),
+            busy: runner.busy,
+        })
+        .collect();
+    for container in plan_containers.iter().filter(|container| {
+        container.status.eq_ignore_ascii_case("running")
+            && !runners.iter().any(|runner| runner.name == container.name)
+    }) {
+        if client
+            .find_active_workflow_job_for_runner(repo, &container.name)?
+            .is_some()
+        {
+            planner_runners.push(RunnerView {
+                name: container.name.clone(),
+                online: false,
+                busy: true,
+            });
+        }
+    }
     // Was: client.queued_self_hosted_jobs(repo)? (count only). Switched to
     // the labels-carrying variant so Logic Containers can route dynamic
     // runners per job; `queued_jobs` below is just this list's length, so
@@ -470,7 +671,6 @@ fn reconcile_repo(
         .map(|job| job.name.clone())
         .collect();
     let queued_job_run_ids: Vec<u64> = queued_jobs_info.iter().map(|job| job.run_id).collect();
-    let dock_target_jobs = load_dock_target_jobs(state_dir, repo);
     let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
         .map_err(|error| {
             std::io::Error::other(format!(
@@ -479,12 +679,26 @@ fn reconcile_repo(
         })?;
 
     let mut state = SchedulerState::load(state_dir)?;
+    let tracked_names: Vec<String> = plan_containers
+        .iter()
+        .filter(|container| !container.status.eq_ignore_ascii_case("exited"))
+        .map(|container| container.name.clone())
+        .collect();
     let live_names: Vec<String> = plan_containers
         .iter()
-        .filter(|c| c.status == "running")
-        .map(|c| c.name.clone())
+        .filter(|container| container.status.eq_ignore_ascii_case("running"))
+        .map(|container| container.name.clone())
         .collect();
-    state.prune(repo, &live_names);
+    // Recovery timestamps must survive for transitional Docker states too;
+    // only idle accounting is restricted to running containers.
+    state.prune(repo, &tracked_names);
+    for name in &tracked_names {
+        if !live_names.iter().any(|live_name| live_name == name) {
+            // Transitional containers must not retain an old idle timer that
+            // could trigger immediate scale-down after they become running again.
+            state.clear_idle(name);
+        }
+    }
 
     let idle: Vec<IdleInfo> = live_names
         .iter()
@@ -506,24 +720,22 @@ fn reconcile_repo(
         }
     }
 
-    // Bug fix: a container being tracked as "needs recovery" (via a prior
-    // RestartUnresponsive) that becomes healthy again (online and not busy)
-    // on its own, without ever going through RecreateOrphaned, previously
-    // never had its recovery_since entry cleared — plan()'s "healthy, nothing
-    // to do" branch doesn't emit any Action for it, and execute() only clears
-    // recovery on RemoveExited/RecreateOrphaned. That stale timestamp would
-    // then make a *future*, unrelated recovery episode for the same
-    // container look like it's been ongoing since the old episode, defeating
-    // the cooldown logic. Clear it here, once, based on the actual observed
-    // health, independent of what plan() decides to do this cycle.
-    for name in &live_names {
-        let healthy = runners
-            .iter()
-            .find(|r| &r.name == name)
-            .map(|r| r.is_online() && !r.busy)
-            .unwrap_or(false);
-        if healthy {
-            state.clear_recovery(name);
+    // Seed recovery cooldowns from the first observed unhealthy snapshot,
+    // including missing registrations. A fresh offline/orphan observation
+    // must not trigger an immediate destructive restart/recreation.
+    for name in &tracked_names {
+        let container_running = live_names.iter().any(|live_name| live_name == name);
+        match runners.iter().find(|runner| &runner.name == name) {
+            Some(runner) if container_running && runner.is_online() && !runner.busy => {
+                state.clear_recovery(name)
+            }
+            Some(runner) if !runner.busy && (!runner.is_online() || !container_running) => {
+                state.recovery_age(name);
+            }
+            None => {
+                state.recovery_age(name);
+            }
+            _ => {}
         }
     }
 
@@ -532,27 +744,22 @@ fn reconcile_repo(
     let input = ReconcileInput {
         min_runners: config.min_runners,
         max_runners: config.max_runners,
-        containers: plan_containers.iter().map(to_container_view).collect(),
-        runners: runners
+        reserved_runners: preserved_docks
             .iter()
-            .map(|r| RunnerView {
-                name: r.name.clone(),
-                online: r.is_online(),
-                busy: r.busy,
+            .filter(|name| {
+                containers.iter().any(|container| {
+                    &container.name == *name && !container.status.eq_ignore_ascii_case("exited")
+                })
             })
-            .collect(),
+            .count()
+            .min(u32::MAX as usize) as u32,
+        containers: plan_containers.iter().map(to_container_view).collect(),
+        runners: planner_runners,
         queued_jobs,
         queued_job_labels,
         queued_job_names,
         queued_job_run_ids,
         dock_target_jobs,
-        configured_runner_labels: config
-            .runner_labels
-            .split(',')
-            .map(str::trim)
-            .filter(|label| !label.is_empty())
-            .map(str::to_owned)
-            .collect(),
         logic_rules,
         idle,
         recovery_enabled: config.auto_container_recovery,
@@ -562,22 +769,23 @@ fn reconcile_repo(
         idle_timeout: Duration::from_secs(config.idle_timeout),
     };
 
-    let actions = reconcile::plan(&input);
+    let actions = actions_for_resource_pressure(reconcile::plan(&input), allow_new_runner_creation);
+    let execution_context = ExecuteContext {
+        client,
+        config,
+        state_dir,
+        vm_registry,
+        repo,
+    };
     for action in actions {
-        // Each action is executed independently: a failure on one (e.g. a
-        // transient Docker error creating one runner) is logged and the loop
-        // continues with the rest, rather than the Python behavior of one
-        // exception aborting the entire repo's cycle.
-        if let Err(error) = execute(
-            client,
-            config,
-            state_dir,
-            vm_registry,
-            repo,
-            &action,
-            &mut state,
-        ) {
-            eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}: {error}");
+        // The plan is ordered and later actions may rely on earlier removals
+        // or creations having succeeded (for example, RemoveExited followed
+        // by CreateRunner assumes the exited container was actually removed).
+        // Stop this repo's plan at the first failure and re-snapshot/replan on
+        // the next tick; continuing can exceed capacity or act on stale state.
+        if let Err(error) = execute(&execution_context, &containers, &action, &mut state) {
+            eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}; aborting remaining planned actions until next reconcile: {error}");
+            break;
         }
     }
 
@@ -600,20 +808,33 @@ fn to_container_view(container: &ManagedContainer) -> ContainerView {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ExecuteContext<'a> {
+    client: &'a GitHubClient,
+    config: &'a Config,
+    state_dir: &'a std::path::Path,
+    vm_registry: &'a VmResolutionRegistry,
+    repo: &'a str,
+}
+
 fn execute(
-    client: &GitHubClient,
-    config: &Config,
-    state_dir: &std::path::Path,
-    vm_registry: &VmResolutionRegistry,
-    repo: &str,
+    context: &ExecuteContext<'_>,
+    inventory: &[docker::ManagedContainer],
     action: &Action,
     state: &mut SchedulerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let ExecuteContext {
+        client,
+        config,
+        state_dir,
+        vm_registry,
+        repo,
+    } = *context;
     match action {
         Action::RemoveExited { name } => {
-            if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
-                return Ok(());
-            }
+            ensure_not_dock_bound(state_dir, repo, name, "remove exited container")?;
+            let expected_id = expected_container_id(inventory, name)?;
+            ensure_current_container_identity(name, expected_id)?;
             // An exited runner crosses a trust boundary: never restart/reuse
             // its filesystem or credentials. Quarantine the identity first,
             // then remove the container and create a fresh runner if capacity
@@ -628,7 +849,7 @@ fn execute(
             if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
                 eprintln!("gitrun-autoscaler: failed to emit runner quarantine event: {error}");
             }
-            deregister_and_remove(client, repo, name)?;
+            deregister_and_remove(client, repo, name, expected_id)?;
         }
         Action::CreateRunner {
             permanent,
@@ -651,7 +872,10 @@ fn execute(
             )?;
         }
         Action::RecreateOrphaned { name, permanent } => {
-            deregister_and_remove(client, repo, name)?;
+            ensure_not_dock_bound(state_dir, repo, name, "recreate orphaned runner")?;
+            let expected_id = expected_container_id(inventory, name)?;
+            ensure_current_container_identity(name, expected_id)?;
+            deregister_and_remove(client, repo, name, expected_id)?;
             // Recreation isn't tied to a specific queued job (it's replacing
             // a container GitHub lost track of, not opening new capacity),
             // so it keeps the pre-existing behavior of an empty label set.
@@ -671,20 +895,94 @@ fn execute(
             state.clear_recovery(name);
         }
         Action::RestartUnresponsive { name } => {
+            ensure_not_dock_bound(state_dir, repo, name, "restart unresponsive runner")?;
+            let expected_id = expected_container_id(inventory, name)?;
+            ensure_current_container_identity(name, expected_id)?;
             // Track when this container first needed a restart, so the
             // cooldown in ReconcileInput.recovery_age is meaningful on the
             // *next* cycle. This call also seeds the timer on first sight.
             state.recovery_age(name);
-            docker::restart_container(name)?;
+            docker::restart_container(expected_id)?;
         }
         Action::RemoveIdle { name } => {
-            if api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
-                return Ok(());
-            }
-            let _ = remove_if_still_idle(client, repo, name)?;
+            ensure_not_dock_bound(state_dir, repo, name, "remove idle runner")?;
+            let expected_id = expected_container_id(inventory, name)?;
+            ensure_current_container_identity(name, expected_id)?;
+            let _ = remove_if_still_idle(client, repo, name, expected_id)?;
             state.clear_idle(name);
         }
     }
+    Ok(())
+}
+
+/// A bound GitDockRun target is owned by the active dock lifecycle, not
+/// ordinary autoscaler recovery. Refuse destructive actions explicitly so
+/// reconciliation stops before later actions can overprovision around a
+/// container it deliberately left in place.
+fn ensure_not_dock_bound(
+    state_dir: &std::path::Path,
+    repo: &str,
+    name: &str,
+    operation: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !api_service::is_dock_bound(state_dir, repo, name).map_err(std::io::Error::other)? {
+        return Ok(());
+    }
+    let message = format!(
+        "refusing to {operation} GitDockRun-bound runner {name} for {repo}; dock lifecycle ownership must be resolved first"
+    );
+    let events_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
+    let event = gitrun_gsr::SecurityEvent::new(
+        "scheduler",
+        gitrun_gsr::Severity::Critical,
+        message.clone(),
+    );
+    if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
+        eprintln!("gitrun-autoscaler: {message} (failed to emit GSR event: {error})");
+    }
+    Err(std::io::Error::other(message).into())
+}
+
+fn expected_container_id<'a>(
+    inventory: &'a [docker::ManagedContainer],
+    name: &str,
+) -> Result<&'a str, Box<dyn std::error::Error>> {
+    inventory
+        .iter()
+        .find(|container| container.name == name)
+        .map(|container| container.id.as_str())
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+            "refusing destructive scheduler action: no immutable Docker ID in inventory for {name}"
+        ))
+            .into()
+        })
+}
+
+fn check_container_identity(
+    name: &str,
+    expected_id: &str,
+    current_id: Option<&str>,
+) -> Result<(), String> {
+    match current_id {
+        Some(current_id) if current_id == expected_id => Ok(()),
+        Some(current_id) => Err(format!(
+            "refusing destructive scheduler action for {name}: Docker identity changed from {expected_id} to {current_id}"
+        )),
+        None => Err(format!(
+            "refusing destructive scheduler action for {name}: inventoried container {expected_id} no longer exists"
+        )),
+    }
+}
+
+fn ensure_current_container_identity(
+    name: &str,
+    expected_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current_id = docker::container_id(name)?;
+    check_container_identity(name, expected_id, current_id.as_deref())
+        .map_err(std::io::Error::other)?;
     Ok(())
 }
 
@@ -692,14 +990,19 @@ fn deregister_and_remove(
     client: &GitHubClient,
     repo: &str,
     name: &str,
+    expected_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Recheck the mutable name before touching GitHub registration. Docker
+    // removal itself is always pinned to the immutable ID captured at snapshot.
+    ensure_current_container_identity(name, expected_id)?;
     // Do not remove the container if GitHub cannot be queried: otherwise
     // a transient API failure can leave an orphaned runner registration behind.
     let runners = client.list_runners(repo)?;
     if let Some(runner) = runners.iter().find(|r| r.name == name) {
+        ensure_current_container_identity(name, expected_id)?;
         client.delete_runner(repo, runner.id)?;
     }
-    docker::remove_container(name)?;
+    docker::remove_container(expected_id)?;
     Ok(())
 }
 
@@ -707,7 +1010,9 @@ fn remove_if_still_idle(
     client: &GitHubClient,
     repo: &str,
     name: &str,
+    expected_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    ensure_current_container_identity(name, expected_id)?;
     let runner = client
         .list_runners(repo)?
         .into_iter()
@@ -716,7 +1021,7 @@ fn remove_if_still_idle(
     let Some(runner) = runner else {
         // The registration disappeared on its own; there is no GitHub runner
         // left to protect, so removing the container is still safe.
-        docker::remove_container(name)?;
+        docker::remove_container(expected_id)?;
         return Ok(true);
     };
 
@@ -729,8 +1034,9 @@ fn remove_if_still_idle(
         return Ok(false);
     }
 
+    ensure_current_container_identity(name, expected_id)?;
     client.delete_runner(repo, runner.id)?;
-    docker::remove_container(name)?;
+    docker::remove_container(expected_id)?;
     Ok(true)
 }
 
@@ -768,8 +1074,7 @@ fn create_runner(
     let registration_token = client.registration_token(repo)?;
 
     let gsr_policy_env = gsr_policy_env(config);
-    let safe = docker::sanitize(repo, '-');
-    let name = format!("gitrun-{safe}-{}", uuid_like_suffix());
+    let name = format!("{}{}", docker::runner_name_prefix(repo), uuid_like_suffix());
     docker::ensure_shared_cache_volume(&config.shared_cache_volume)?;
     let settings = gitrun_core::GitRunSettings::load_or_default(
         gitrun_core::GitRunSettings::path_for_state_dir(state_dir),
@@ -780,7 +1085,7 @@ fn create_runner(
     } else {
         String::new()
     };
-    let secret_env = vault_env_for_repo(config, repo);
+    let secret_env = vault_env_for_repo(config, repo)?;
 
     let Some((backend, image, is_windows)) =
         resolve_backend_and_image(config, state_dir, vm_registry, job_labels)
@@ -821,7 +1126,7 @@ fn create_runner(
             is_windows,
             workflow_job_name: job_name,
             workflow_run_id: job_run_id,
-            dock_target: load_dock_target_jobs(state_dir, repo)
+            dock_target: load_dock_target_jobs(state_dir, repo)?
                 .into_iter()
                 .any(|target| Some(target.as_str()) == job_name),
             docker_socket_hardening: config.gsr_docker_socket_hardening,
@@ -831,26 +1136,95 @@ fn create_runner(
     Ok(())
 }
 
-fn load_dock_target_jobs(state_dir: &std::path::Path, repo: &str) -> Vec<String> {
-    let path = state_dir
-        .join("workflow-dock-requirements")
-        .join(format!("{}.json", docker::sanitize(repo, '_')));
-    let raw = match std::fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(_) => return Vec::new(),
-    };
+fn load_dock_target_jobs(
+    state_dir: &std::path::Path,
+    repo: &str,
+) -> Result<Vec<String>, std::io::Error> {
+    use std::io::Read;
 
-    serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw)
-        .map(|requests| {
-            let mut jobs = Vec::new();
-            for request in requests {
-                if !jobs.iter().any(|job| job == &request.target_job) {
-                    jobs.push(request.target_job);
-                }
-            }
-            jobs
-        })
-        .unwrap_or_default()
+    let state_metadata = match std::fs::symlink_metadata(state_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    if state_metadata.file_type().is_symlink() || !state_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "GitDockRun requirement state root must be a real directory",
+        ));
+    }
+
+    let directory = state_dir.join("workflow-dock-requirements");
+    let directory_metadata = match std::fs::symlink_metadata(&directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "GitDockRun requirements path must be a real directory",
+        ));
+    }
+
+    let path = directory.join(format!("{}.json", repo_storage_key(repo)));
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = match options.open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(std::io::Error::other(format!(
+                "cannot safely read GitDockRun requirements at {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "GitDockRun requirements at {} are not a regular file",
+                path.display()
+            ),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 || metadata.mode() & 0o022 != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "GitDockRun requirements at {} must have one link and no group/world write permission",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    let mut raw = String::new();
+    file.read_to_string(&mut raw)?;
+
+    let requests =
+        serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw).map_err(|error| {
+            std::io::Error::other(format!(
+                "invalid GitDockRun requirements at {}: {error}",
+                path.display()
+            ))
+        })?;
+    let mut jobs = Vec::new();
+    for request in requests {
+        if !jobs.iter().any(|job| job == &request.target_job) {
+            jobs.push(request.target_job);
+        }
+    }
+    Ok(jobs)
 }
 
 /// Combines the globally configured runner labels with the labels of the
@@ -885,26 +1259,19 @@ fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String
     labels.join(",")
 }
 
-/// Best-effort pre-flight workflow validation, run just before a runner is
-/// created for `repo` — see `gitrun_core::workflow_validation` for the
-/// scanning logic itself and `GitHubClient::workflow_files` for why this
-/// fetches via the Contents API rather than waiting for the runner's own
-/// checkout (too late for a pre-flight check to matter by then).
-///
-/// Deliberately never fails `create_runner` — a network hiccup fetching
-/// workflow files, or a finding in someone's workflow, should not block a
-/// job that would otherwise run fine; this is advisory, not enforcement
-/// (enforcement of *commands actually run* is `gitrun_gsr::agent` and
-/// `gsr_poll`'s job, which unlike this can and does act). Findings are
-/// written to the GSR event log so an operator can review a growing
-/// pattern of risky workflow changes even though no single one blocks
-/// anything by itself.
+/// Best-effort workflow pre-flight validation. Findings and unavailable
+/// checks are reported to the GSR event queue; this advisory scan does not
+/// replace command enforcement in the runner.
 fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, repo: &str) {
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let files = match client.workflow_files(repo) {
         Ok(files) => files,
         Err(error) => {
-            eprintln!("gitrun-autoscaler: workflow validation for {repo}: could not fetch workflow files: {error}");
+            emit_workflow_validation_warning(
+                &events_path,
+                repo,
+                &format!("could not fetch workflow files; built-in and zizmor scans were skipped: {error}"),
+            );
             return;
         }
     };
@@ -917,31 +1284,52 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
     }
 
     if let Err(error) = save_workflow_dock_requirements(&config.state_dir, repo, &dock_requests) {
-        eprintln!(
-            "gitrun-autoscaler: workflow validation for {repo}: could not persist GitDockRun requirements: {error}"
+        emit_workflow_validation_warning(
+            &events_path,
+            repo,
+            &format!("could not persist GitDockRun requirements: {error}"),
         );
     }
 
     if config.gsr_zizmor_enabled {
-        // zizmor works off files on disk, not in-memory strings - write
-        // the fetched content to a scratch directory under state_dir so
-        // it can run against exactly what was fetched, then clean up
-        // regardless of outcome.
+        let invocation = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         let scratch_dir = std::path::PathBuf::from(&config.state_dir)
             .join("gsr-workflow-scratch")
-            .join(docker::sanitize(repo, '_'));
+            .join(repo_storage_key(repo))
+            .join(format!("{}-{invocation}", std::process::id()));
         if let Err(error) = write_scratch_workflows(&scratch_dir, &files) {
-            eprintln!("gitrun-autoscaler: workflow validation for {repo}: could not stage files for zizmor: {error}");
+            emit_workflow_validation_warning(
+                &events_path,
+                repo,
+                &format!("could not stage files for zizmor; optional scan was skipped: {error}"),
+            );
         } else {
             match gitrun_core::run_zizmor(&scratch_dir) {
                 Ok(Some(zizmor_findings)) => findings.extend(zizmor_findings),
-                Ok(None) => {} // zizmor not installed - silently skipped, per its own design.
-                Err(error) => eprintln!(
-                    "gitrun-autoscaler: workflow validation for {repo}: zizmor run failed: {error}"
+                Ok(None) => emit_workflow_validation_warning(
+                    &events_path,
+                    repo,
+                    "zizmor is enabled but its binary is missing; optional scan was skipped",
+                ),
+                Err(error) => emit_workflow_validation_warning(
+                    &events_path,
+                    repo,
+                    &format!("zizmor run failed; optional scan was skipped: {error}"),
                 ),
             }
         }
-        let _ = std::fs::remove_dir_all(&scratch_dir);
+        if let Err(error) = std::fs::remove_dir_all(&scratch_dir) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                emit_workflow_validation_warning(
+                    &events_path,
+                    repo,
+                    &format!("could not remove workflow scan scratch directory: {error}"),
+                );
+            }
+        }
     }
 
     for finding in findings {
@@ -959,9 +1347,37 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
             message,
         );
         if let Err(error) = gitrun_gsr::events::emit(&events_path, &event) {
-            eprintln!("gitrun-autoscaler: workflow validation for {repo}: failed to write security event: {error}");
+            eprintln!(
+                "gitrun-autoscaler: workflow validation: failed to write security event: {error}"
+            );
         }
     }
+}
+
+fn emit_workflow_validation_warning(events_path: &std::path::Path, repo: &str, detail: &str) {
+    let message = format!("{repo}: workflow validation warning: {detail}");
+    eprintln!("gitrun-autoscaler: {message}");
+    let event = gitrun_gsr::SecurityEvent::new(
+        "workflow-validation",
+        gitrun_gsr::Severity::Warning,
+        message,
+    );
+    if let Err(error) = gitrun_gsr::events::emit(events_path, &event) {
+        eprintln!("gitrun-autoscaler: unable to persist workflow validation warning: {error}");
+    }
+}
+
+/// Collision-free filesystem key for repository identifiers. Replacing punctuation
+/// with a placeholder is not injective (for example, owner/repo names containing
+/// underscores can collide after replacing the slash), so security state must use
+/// the original bytes encoded losslessly.
+fn repo_storage_key(repo: &str) -> String {
+    let mut key = String::with_capacity(repo.len() * 2);
+    for byte in repo.bytes() {
+        use std::fmt::Write as _;
+        write!(&mut key, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    key
 }
 
 fn save_workflow_dock_requirements(
@@ -969,17 +1385,57 @@ fn save_workflow_dock_requirements(
     repo: &str,
     requests: &[gitrun_core::DockRequest],
 ) -> std::io::Result<()> {
-    let directory = std::path::Path::new(state_dir).join("workflow-dock-requirements");
-    std::fs::create_dir_all(&directory)?;
-    let path = directory.join(format!("{}.json", docker::sanitize(repo, '_')));
+    let state_root = std::path::Path::new(state_dir);
+    match std::fs::symlink_metadata(state_root) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workflow state root must be a real directory",
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(state_root)?;
+            let metadata = std::fs::symlink_metadata(state_root)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "workflow state root must be a real directory",
+                ));
+            }
+        }
+        Err(error) => return Err(error),
+    }
+
+    let directory = state_root.join("workflow-dock-requirements");
+    match std::fs::create_dir(&directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let directory_metadata = std::fs::symlink_metadata(&directory)?;
+    if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workflow requirements path must be a real directory",
+        ));
+    }
+
+    let path = directory.join(format!("{}.json", repo_storage_key(repo)));
     if requests.is_empty() {
         match std::fs::remove_file(&path) {
-            Ok(()) => return Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error),
-        }
+            Ok(()) => sync_directory(&directory),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }?;
+        return Ok(());
     }
-    let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp = path.with_extension(format!("json.{}-{nonce}.tmp", std::process::id()));
     let raw = serde_json::to_vec_pretty(requests).map_err(std::io::Error::other)?;
     {
         let mut options = std::fs::OpenOptions::new();
@@ -987,20 +1443,38 @@ fn save_workflow_dock_requirements(
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         }
         let mut file = options.open(&temp)?;
         use std::io::Write;
-        file.write_all(&raw)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
+        if let Err(error) = file
+            .write_all(&raw)
+            .and_then(|_| file.write_all(b"\n"))
+            .and_then(|_| file.sync_all())
+        {
+            let _ = std::fs::remove_file(&temp);
+            return Err(error);
+        }
     }
     if let Err(error) = std::fs::rename(&temp, &path) {
         let _ = std::fs::remove_file(&temp);
         return Err(error);
     }
+    sync_directory(&directory)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
+
 fn write_scratch_workflows(
     dir: &std::path::Path,
     files: &[(String, String)],
@@ -1008,23 +1482,67 @@ fn write_scratch_workflows(
     use std::path::Component;
 
     std::fs::create_dir_all(dir)?;
+    let directory_metadata = std::fs::symlink_metadata(dir)?;
+    if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workflow scratch path must be a real directory",
+        ));
+    }
     for (name, content) in files {
         let relative = std::path::Path::new(name);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|component| component == Component::ParentDir)
-        {
+        let mut components = relative.components();
+        let is_single_file_name =
+            matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
+        if relative.is_absolute() || !is_single_file_name {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("workflow path escapes scratch directory: {name}"),
+                format!("workflow path must be a direct filename: {name}"),
             ));
         }
         let target = dir.join(relative);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(target, content)?;
+        write_scratch_file_atomic(&target, content)?;
+    }
+    Ok(())
+}
+
+fn write_scratch_file_atomic(target: &std::path::Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = target.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "workflow target has no parent",
+        )
+    })?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp = parent.join(format!(
+        ".gitrun-workflow-{}-{nonce}.tmp",
+        std::process::id()
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = options.open(&temp)?;
+    if let Err(error) = file
+        .write_all(content.as_bytes())
+        .and_then(|_| file.sync_all())
+    {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    drop(file);
+    if let Err(error) = std::fs::rename(&temp, target) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
     }
     Ok(())
 }
@@ -1053,6 +1571,10 @@ fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
             config.gsr_command_policy_enabled.to_string(),
         ),
         (
+            "GITRUN_GSR_ALLOW_UNSAFE_RUNNER".into(),
+            config.gsr_allow_unsafe_runner.to_string(),
+        ),
+        (
             "GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED".into(),
             config.gsr_command_baseline_blacklist_enabled.to_string(),
         ),
@@ -1079,38 +1601,51 @@ fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
     ]
 }
 
-fn vault_env_for_repo(config: &Config, repo: &str) -> Vec<(String, String)> {
+fn vault_env_for_repo(
+    config: &Config,
+    repo: &str,
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
     if config.vault_dir.trim().is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
+    }
+    let vault_path = Path::new(&config.vault_dir);
+    match std::fs::symlink_metadata(vault_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "gitrun-autoscaler: GitVault directory {} is missing; creating runner without vault secrets",
+                vault_path.display()
+            );
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.into()),
     }
     let bridge = VaultToGsrBridge::new(&config.state_dir);
-    let vault = match Vault::open_with_sink(&config.vault_dir, Box::new(bridge)) {
-        Ok(vault) => vault,
-        Err(error) => {
-            eprintln!(
-                "gitrun-autoscaler: could not open GitVault at {}: {error}",
-                config.vault_dir
-            );
-            return Vec::new();
-        }
-    };
+    let vault = Vault::open_with_sink(&config.vault_dir, Box::new(bridge)).map_err(|error| {
+        std::io::Error::other(format!(
+            "cannot safely create runner for {repo}: GitVault could not be opened: {error}"
+        ))
+    })?;
 
     let groups = config.vault_groups_for_repo(repo);
-    // resolve_for_repo already applies repo > group > global precedence and
-    // only decrypts secrets that actually apply to this repo — see
-    // gitrun-vault's module docs for the full resolution rules.
-    vault
-        .resolve_for_repo(repo, &groups)
-        .into_iter()
-        .filter(|(name, _)| {
-            if is_valid_env_var_name(name) {
-                true
-            } else {
-                eprintln!("gitrun-autoscaler: skipping vault secret '{name}': not a valid environment variable name");
-                false
-            }
-        })
-        .collect()
+    // Never launch a runner with a partial secret environment: any selected
+    // secret decryption failure is fatal and propagated by GitVault.
+    let resolved = vault.resolve_for_repo(repo, &groups).map_err(|error| {
+        std::io::Error::other(format!(
+            "cannot safely create runner for {repo}: GitVault secret resolution failed: {error}"
+        ))
+    })?;
+    let mut env = Vec::with_capacity(resolved.len());
+    for (name, value) in resolved {
+        if is_valid_env_var_name(&name) {
+            env.push((name, value));
+        } else {
+            return Err(std::io::Error::other(format!(
+                "cannot safely create runner for {repo}: GitVault secret name '{name}' is not a valid environment variable name"
+            )).into());
+        }
+    }
+    Ok(env)
 }
 
 /// A conservative environment variable name check: uppercase letters,
@@ -1222,7 +1757,9 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         ),
         runner_rootfs_read_only: config.runner_rootfs_read_only,
         runner_windows_hyperv_isolation: config.runner_windows_hyperv_isolation,
-        secret_env_for_repo: &|repo: &str| vault_env_for_repo(&config, repo),
+        secret_env_for_repo: &|repo: &str| {
+            vault_env_for_repo(&config, repo).map_err(|error| error.to_string())
+        },
         online_wait_timeout: Duration::from_secs(120),
         docker_socket_hardening: config.gsr_docker_socket_hardening,
         gsr_policy_env: &gsr_policy_env,
@@ -1230,7 +1767,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     };
     Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
 }
-fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) {
+fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) -> std::io::Result<()> {
     let stopping = stopping.clone();
 
     std::thread::Builder::new()
@@ -1274,10 +1811,15 @@ fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) {
                         last_run_date = Some(now.date);
                     }
                 }
-                std::thread::sleep(Duration::from_secs(15));
+                let mut remaining = Duration::from_secs(15);
+                while !remaining.is_zero() && !stopping.load(Ordering::Relaxed) {
+                    let slice = remaining.min(Duration::from_millis(200));
+                    std::thread::sleep(slice);
+                    remaining = remaining.saturating_sub(slice);
+                }
             }
         })
-        .expect("failed to spawn GTUU thread");
+        .map(|_| ())
 }
 /// Spawns GSR's Layer 2 (external, host-side) enforcement poll loop — see
 /// `crate::gsr_poll` for the full design and
@@ -1290,9 +1832,9 @@ fn spawn_gsr_poll_thread(
     config: &Config,
     vm_registry: &VmResolutionRegistry,
     stopping: &Arc<AtomicBool>,
-) {
+) -> std::io::Result<()> {
     let Some(policy) = config.command_policy() else {
-        return;
+        return Ok(());
     };
     let action = config.violation_action();
     let state_dir = PathBuf::from(&config.state_dir);
@@ -1327,8 +1869,13 @@ fn spawn_gsr_poll_thread(
                 },
                 move |violation| {
                     let repo_note = violation.repo.as_deref().unwrap_or("unknown repo");
+                    let action_error = violation
+                        .action_error
+                        .as_deref()
+                        .map(|error| format!("; enforcement error: {error}"))
+                        .unwrap_or_default();
                     let message = format!(
-                        "container {} ({repo_note}) ran a denied command: {} — {} (action: {:?})",
+                        "container {} ({repo_note}) ran a denied command: {} — {} (action: {:?}{action_error})",
                         violation.container_name, violation.command_line, violation.reason, violation.action_taken
                     );
                     eprintln!("gitrun-autoscaler: gsr_poll: {message}");
@@ -1340,7 +1887,7 @@ fn spawn_gsr_poll_thread(
                 move || stopping_check.load(Ordering::Relaxed),
             );
         })
-        .expect("failed to spawn GSR poll thread");
+        .map(|_| ())
 }
 
 /// Minimal HH:MM + date string, UTC by default, without pulling in `chrono`
@@ -1431,6 +1978,92 @@ fn utc_now() -> SimpleNow {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn dock_requirement_reader_rejects_symlinked_file() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-dock-requirements-link-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let directory = base.join("workflow-dock-requirements");
+        std::fs::create_dir_all(&directory).unwrap();
+        let repo = "owner/repo";
+        let target = base.join("external.json");
+        std::fs::write(&target, "[]").unwrap();
+        symlink(
+            &target,
+            directory.join(format!("{}.json", repo_storage_key(repo))),
+        )
+        .unwrap();
+        assert!(load_dock_target_jobs(&base, repo).is_err());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dock_requirement_reader_rejects_hard_linked_file() {
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-dock-requirements-hardlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let directory = base.join("workflow-dock-requirements");
+        std::fs::create_dir_all(&directory).unwrap();
+        let repo = "owner/repo";
+        let target = base.join("external.json");
+        let path = directory.join(format!("{}.json", repo_storage_key(repo)));
+        std::fs::write(&target, "[]").unwrap();
+        std::fs::hard_link(&target, &path).unwrap();
+        assert!(load_dock_target_jobs(&base, repo).is_err());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn workflow_dock_requirements_use_exact_repo_key_and_remove_atomically() {
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-workflow-requirements-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repo = "owner/repo";
+        let request = gitrun_core::DockRequest {
+            file: "ci.yml".into(),
+            line: 4,
+            calling_job: Some("build".into()),
+            target_job: "cache".into(),
+            operation: gitrun_core::DockOperation::Connect,
+        };
+        save_workflow_dock_requirements(
+            base.to_str().unwrap(),
+            repo,
+            std::slice::from_ref(&request),
+        )
+        .unwrap();
+        let path = base
+            .join("workflow-dock-requirements")
+            .join(format!("{}.json", repo_storage_key(repo)));
+        let stored: Vec<gitrun_core::DockRequest> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(stored, vec![request]);
+        save_workflow_dock_requirements(base.to_str().unwrap(), repo, &[]).unwrap();
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn repository_storage_keys_are_collision_free_for_sanitization_collisions() {
+        let first = "foo_bar/baz";
+        let second = "foo/bar_baz";
+        assert_eq!(docker::sanitize(first, '_'), docker::sanitize(second, '_'));
+        assert_ne!(repo_storage_key(first), repo_storage_key(second));
+        assert_eq!(repo_storage_key("owner/repo"), "6f776e65722f7265706f");
+    }
+
     #[test]
     fn dynamic_runner_labels_include_job_labels() {
         let labels = runner_labels_for_job(
@@ -1446,6 +2079,106 @@ mod tests {
         let labels =
             runner_labels_for_job("self-hosted,Linux,gitrun-ci", true, &["windows".into()]);
         assert_eq!(labels, "self-hosted,Linux,gitrun-ci");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workflow_scratch_writer_replaces_symlinks_without_touching_targets() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-workflow-scratch-symlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let target = base.join("outside");
+        let scratch = base.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let workflow = scratch.join("ci.yml");
+        std::fs::write(&target, "keep").unwrap();
+        symlink(&target, &workflow).unwrap();
+        write_scratch_workflows(&scratch, &[("ci.yml".into(), "name: safe".into())]).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&workflow).unwrap(), "name: safe");
+        assert!(
+            write_scratch_workflows(&scratch, &[("../outside".into(), "bad".into())],).is_err()
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn gsr_policy_env_preserves_explicit_unsafe_runner_opt_in() {
+        let config = Config {
+            gsr_command_policy_enabled: false,
+            gsr_allow_unsafe_runner: true,
+            ..Config::default()
+        };
+        let env = gsr_policy_env(&config);
+        assert!(env.iter().any(|(key, value)| {
+            key == "GITRUN_GSR_COMMAND_POLICY_ENABLED" && value == "false"
+        }));
+        assert!(env
+            .iter()
+            .any(|(key, value)| { key == "GITRUN_GSR_ALLOW_UNSAFE_RUNNER" && value == "true" }));
+    }
+
+    #[test]
+    fn missing_configured_vault_does_not_get_initialized_silently() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-scheduler-missing-vault-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = Config {
+            vault_dir: dir.to_string_lossy().into_owned(),
+            ..Config::default()
+        };
+        let env = vault_env_for_repo(&config, "owner/repo").unwrap();
+        assert!(env.is_empty());
+        assert!(
+            !dir.exists(),
+            "missing vault must not be initialized implicitly"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scheduler_pid_file_rejects_symlink_without_modifying_target() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-scheduler-pid-symlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        let pid_path = dir.join("gitrun-autoscaler.pid");
+        std::fs::write(&target, "preserve me").unwrap();
+        symlink(&target, &pid_path).unwrap();
+        assert!(acquire_pid_file(&pid_path).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "preserve me");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scheduler_pid_lock_rejects_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-scheduler-lock-symlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        let pid_path = dir.join("gitrun-autoscaler.pid");
+        let lock_path = pid_path.with_extension("pid.lock");
+        std::fs::write(&target, "preserve me").unwrap();
+        symlink(&target, &lock_path).unwrap();
+        assert!(acquire_pid_file(&pid_path).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "preserve me");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1467,5 +2200,112 @@ mod tests {
         assert!(!is_valid_env_var_name("KEY=value"));
         assert!(!is_valid_env_var_name("KEY$(whoami)"));
         assert!(!is_valid_env_var_name(""));
+    }
+}
+
+#[cfg(test)]
+mod resource_pressure_reconciliation_tests {
+    use super::*;
+    use crate::reconcile::Action;
+
+    #[test]
+    fn pressure_defers_creation_replacement_and_plan_dependent_scale_down_only() {
+        let actions = vec![
+            Action::RemoveExited {
+                name: "exited".into(),
+            },
+            Action::CreateRunner {
+                permanent: true,
+                job_labels: Vec::new(),
+                job_name: None,
+                job_run_id: None,
+            },
+            Action::RestartUnresponsive {
+                name: "offline".into(),
+            },
+            Action::RecreateOrphaned {
+                name: "orphan".into(),
+                permanent: false,
+            },
+            Action::RemoveIdle {
+                name: "idle".into(),
+            },
+        ];
+
+        let filtered = actions_for_resource_pressure(actions, false);
+        assert_eq!(
+            filtered,
+            vec![
+                Action::RemoveExited {
+                    name: "exited".into()
+                },
+                Action::RestartUnresponsive {
+                    name: "offline".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn healthy_resource_sample_preserves_the_full_plan() {
+        let actions = vec![
+            Action::CreateRunner {
+                permanent: false,
+                job_labels: vec!["linux".into()],
+                job_name: Some("build".into()),
+                job_run_id: Some(42),
+            },
+            Action::RemoveIdle {
+                name: "idle".into(),
+            },
+        ];
+        assert_eq!(
+            actions_for_resource_pressure(actions.clone(), true),
+            actions
+        );
+    }
+}
+
+#[cfg(test)]
+mod reconcile_identity_pin_tests {
+    use super::*;
+
+    #[test]
+    fn destructive_action_requires_id_from_original_inventory() {
+        let inventory = vec![docker::ManagedContainer {
+            name: "gitrun-owner-repo-1".into(),
+            id: "immutable-container-id".into(),
+            status: "running".into(),
+            permanent: false,
+            dock_target: false,
+            workflow_job: None,
+            workflow_run_id: None,
+        }];
+        assert_eq!(
+            expected_container_id(&inventory, "gitrun-owner-repo-1").unwrap(),
+            "immutable-container-id"
+        );
+        assert!(expected_container_id(&inventory, "replacement-name").is_err());
+    }
+
+    #[test]
+    fn destructive_action_rejects_missing_or_replaced_container_identity() {
+        assert!(check_container_identity("runner", "expected-id", None).is_err());
+        assert!(check_container_identity("runner", "expected-id", Some("replacement-id")).is_err());
+        assert!(check_container_identity("runner", "expected-id", Some("expected-id")).is_ok());
+    }
+
+    #[test]
+    fn destructive_action_rejects_empty_inventory_id() {
+        let inventory = vec![docker::ManagedContainer {
+            name: "runner".into(),
+            id: String::new(),
+            status: "running".into(),
+            permanent: false,
+            dock_target: false,
+            workflow_job: None,
+            workflow_run_id: None,
+        }];
+        assert!(expected_container_id(&inventory, "runner").is_err());
     }
 }

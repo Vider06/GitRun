@@ -18,6 +18,8 @@ pub enum GitHubAuthError {
         path: String,
         source: std::io::Error,
     },
+    #[error("authentication env file contains more than one {key} entry")]
+    DuplicateEnvKey { key: String },
     #[error(transparent)]
     App(#[from] crate::app_auth::AppAuthError),
     #[error(transparent)]
@@ -80,6 +82,7 @@ fn read_env_file_value(path: &Path, wanted_key: &str) -> Result<String, GitHubAu
         path: path.display().to_string(),
         source,
     })?;
+    let mut found: Option<String> = None;
     for raw in content.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -89,10 +92,15 @@ fn read_env_file_value(path: &Path, wanted_key: &str) -> Result<String, GitHubAu
             continue;
         };
         if key.trim() == wanted_key {
-            return Ok(unquote(value.trim()));
+            if found.is_some() {
+                return Err(GitHubAuthError::DuplicateEnvKey {
+                    key: wanted_key.to_owned(),
+                });
+            }
+            found = Some(unquote(value.trim()));
         }
     }
-    Err(GitHubAuthError::MissingCredentials)
+    found.ok_or(GitHubAuthError::MissingCredentials)
 }
 
 fn unquote(value: &str) -> String {
@@ -131,6 +139,17 @@ mod tests {
         let token = read_env_file_value(&path, "GITHUB_TOKEN").expect("token");
         fs::remove_file(path).expect("remove temporary env file");
         assert_eq!(token, " token ");
+    }
+
+    #[test]
+    fn env_file_rejects_duplicate_token_entries() {
+        let path = temp_env_file("GITHUB_TOKEN=first\nGITHUB_TOKEN=second\n");
+        let result = read_env_file_value(&path, "GITHUB_TOKEN");
+        fs::remove_file(path).expect("remove temporary env file");
+        assert!(matches!(
+            result,
+            Err(GitHubAuthError::DuplicateEnvKey { key }) if key == "GITHUB_TOKEN"
+        ));
     }
 
     #[test]

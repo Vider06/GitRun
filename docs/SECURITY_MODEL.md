@@ -1,4 +1,4 @@
-# Security model — GitRun 1.4.6
+# Security model — GitRun 1.5.0
 
 This document states plainly what GitRun's design trusts, and what an operator is implicitly granting when they run it. It documents the security properties that exist today and the important limits that remain.
 
@@ -29,9 +29,17 @@ The workflow-facing API is a closed operation set. Policy can disable operations
 
 Authorization is fail-closed. Workflow-visible `GITHUB_*` values are claims only. The host maps the Unix peer to the current Docker runner, rejects stale/PID-reused cgroup identities, requires an in-progress GitHub job, resolves authoritative workflow/run information, and applies repository/resource policy before creating an `AuthorizedOperation`.
 
-GitDockRun adds an exact persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. `connect`/`disconnect` cannot select an arbitrary other job. Read/write/execute/melt operations revalidate the binding immediately before privileged execution, preventing container-name reuse/TOCTOU authorization.
+GitDockRun adds an exact persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. `connect`/`disconnect` cannot select an arbitrary other job. Disconnect drops the active job's binding without deleting its live runner; normal scheduler lifecycle owns cleanup after the job exits. Read/write/execute/melt/mount/unmount operations revalidate the binding immediately before privileged execution, preventing stale container-name bindings from authorizing a replacement container.
 
 A successful request therefore requires authenticated transport identity **and** authoritative workload binding; policy alone is never treated as proof of identity.
+
+## GitDockRun live host mounts
+
+GitDockRun's `mount` and `unmount` operations are a separate, privileged capability and are implemented only for a local Linux Docker daemon. A mount is accepted only if the global GitDockRun API policy, repository container allowlist, target Logic Container's `mountable` capability and repository host-source `MountPolicy` all allow it. The host source is canonicalized and opened before the namespace operation; explicit matching deny rules win. The default CLI mode is read-only, and a policy marked `read_only: true` cannot be used for a writable mount.
+
+The runtime pins the target using the immutable Docker container ID, checks the host PID against the container cgroup, validates a restricted existing target path, and performs bind/remount/unmount inside that container's mount namespace. Host sources are staged in an isolated private mount namespace, checked against the pinned source inode, cloned into a detached mount tree and attached by descriptor. The containing target mount is isolated from peer propagation without recursively changing the whole container mount tree. Read-only attributes are applied to the detached tree before attachment; unmount rechecks the expected kernel mount ID inside the target namespace. Before live operations, the helper inspects CapEff, CapPrm, CapInh, CapAmb and CapBnd for every visible thread in the bound container cgroup and fails closed if inspection is incomplete or CAP_SYS_ADMIN is present. Mount leases are stored in a private, cross-process-locked registry before the privileged side effect, then updated with the observed kernel mount ID; registry updates are atomically renamed and the directory is synced. Unmount requires the lease ID to match repository, run, job, requester and container identity. A previous full CI run passed the live read-only directory and read-write file bind/unmount smoke test; later adversarial follow-ups remain unverified as recorded in the refactor tracker.
+
+This is not a blanket filesystem sandbox: host paths are highly sensitive, write mounts permit host-file modification, and a runner with direct Docker socket access can exercise separate host-level authority. The helper requires host privileges and must be validated on the deployment's Linux kernel/runtime. Windows, macOS, and remote/VM Docker daemons are not supported by this live-mount implementation and must fail closed. Mount target paths must exist before the request; directory targets must be empty to avoid hiding existing content. If reconciliation preserves a lease, treat it as a recovery journal: inspect the lease ID, immutable container ID, recorded target, source device/inode and kernel mount ID against the live container's mount table before taking action. A `preparing` lease with no kernel ID proves the attach worker was not entered; an `attaching` or later lease without a uniquely verified mount is ambiguous. Do not delete such a registry entry or unmount by pathname alone. Preserve the record and escalate for host-level recovery if the exact original mount cannot be proven; remove the lease only after the exact mount is confirmed absent or safely unmounted.
 
 ## Filesystem isolation
 
@@ -54,6 +62,8 @@ The Docker socket remains a separate host-authority boundary: a runner explicitl
 GSR provides defense-in-depth through command/resource policy, workflow validation, Docker-side observation, security events and external process supervision.
 
 The standalone `gitrun-gsr` process is a watchdog with its own systemd unit. It watches the scheduler PID file and records unexpected scheduler exits as critical security events. The broader GSR hardening scope is still not a substitute for the Docker socket/host boundary, and the standalone service unit still warrants additional systemd sandboxing review.
+
+The shared security-event JSONL queue rotates the active file before it would exceed 16 MiB and retains up to ten archives. On Unix, producers and readers coordinate through a sidecar advisory lock, including during rotation, so current GitRun processes do not append into a renamed file or read across a partial rotation. Readers include retained archives; the newest-event view remains bounded. This is a finite retention policy: oldest archives are deleted when the cap is exceeded, so the queue is not a permanent audit archive. Preserve/export events externally if a longer compliance retention period is required. A single unusually large event can exceed the nominal per-file cap.
 
 ## GitVault and secrets at rest
 

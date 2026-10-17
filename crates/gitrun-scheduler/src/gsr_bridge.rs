@@ -1,16 +1,9 @@
-//! Concrete bridge from GitVault's `VaultEventSink` trait (defined in
-//! `gitrun-vault`, which does not depend on `gitrun-gsr` at all) to GSR's
-//! event queue (`gitrun-gsr::events`). This is the "gate" the operator
-//! asked to keep open between modules from early in the session: GitVault
-//! can report a tamper/decryption-failure event without ever knowing GSR
-//! exists, and this small piece of glue — living in `gitrun-scheduler`,
-//! which already depends on both — is what actually connects them.
+//! Bridges GitVault security callbacks to the GSR event queue.
 //!
-//! Living here rather than in `gitrun-vault` or `gitrun-gsr` themselves
-//! keeps both of those crates' dependency graphs clean: `gitrun-vault` only
-//! knows about its own trait, `gitrun-gsr` only knows about its own event
-//! queue, and this crate is the one place that's already allowed to know
-//! about both.
+//! The vault crate exposes the `VaultEventSink` trait without depending on
+//! GSR. This scheduler-owned adapter connects vault audit events to the
+//! shared event queue while keeping the vault and GSR dependency graphs
+//! independent.
 
 use gitrun_gsr::{SecurityEvent, Severity};
 use gitrun_vault::VaultEventSink;

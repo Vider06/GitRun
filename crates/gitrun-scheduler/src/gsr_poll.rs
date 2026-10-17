@@ -740,13 +740,13 @@ mod tests {
             ViolationAction::Kill,
             &mut ban_store,
             PollOperations {
-                read_processes: |target| {
+                read_processes: |target: &str| {
                     assert_eq!(target, original_id);
                     assert_ne!(target, replacement_id);
                     targets.borrow_mut().push(("processes", target.to_owned()));
                     Ok::<_, &'static str>(vec!["sudo rm -rf /".to_owned()])
                 },
-                read_repo: |target| {
+                read_repo: |target: &str| {
                     assert_eq!(target, original_id);
                     assert_ne!(target, replacement_id);
                     targets.borrow_mut().push(("repo-label", target.to_owned()));

@@ -2946,6 +2946,16 @@ mod internal_lifecycle_command_tests {
             parse_internal_command(&[
                 "gitrun",
                 "--no-cat",
+                "--save-gitrun-settings-root",
+                "/tmp/private-security-settings.json"
+            ]),
+            Command::SaveGitRunSettingsRoot { input_path }
+                if input_path == "/tmp/private-security-settings.json"
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
                 "--install-root",
                 "/tmp/private-token.json"
             ]),

@@ -2361,17 +2361,41 @@ impl ApiExecutionBackend {
                 ));
             }
         } else {
-            let target_binding = registry.bindings.iter().find(|binding| {
-                binding.repository == request.repository
-                    && binding.run_id == request_run_id(request)
-                    && binding.job == request.job
-                    && binding.requester_runner == self.caller.runner
-                    && binding.container == target_name
-                    && binding.container_id == target_id
-            });
-            if target_binding.is_none() {
+            let target_binding = find_dock_melt_target_binding(
+                &registry,
+                &request.repository,
+                run_id,
+                target_name,
+                &source,
+            )
+            .cloned()
+            .ok_or_else(|| {
+                failed(
+                    "GitDockRun --melt target is not bound to this repository and workflow run",
+                )
+            })?;
+            let target_job = self
+                .github
+                .find_workflow_job(
+                    &request.repository,
+                    target_binding.run_id,
+                    &target_binding.job,
+                )
+                .map_err(|error| failed(error.to_string()))?
+                .ok_or_else(|| failed("GitDockRun --melt target workflow job could not be verified"))?;
+            if !workflow_job_is_active_on_runner(
+                target_job.runner_name.as_deref(),
+                &target_job.status,
+                target_job.conclusion.as_deref(),
+                &target_binding.container,
+            ) {
                 return Err(failed(
-                    "GitDockRun --melt target is outside the caller's exact trust binding",
+                    "GitDockRun --melt explicit target must be the exact runner of an active workflow job",
+                ));
+            }
+            if target_job.runner_name.as_deref() != Some(target_binding.requester_runner.as_str()) {
+                return Err(failed(
+                    "GitDockRun --melt target binding no longer matches its recorded requester runner",
                 ));
             }
         }
@@ -4761,6 +4785,29 @@ fn find_dock_melt_source_binding<'a>(
     })
 }
 
+fn find_dock_melt_target_binding<'a>(
+    registry: &'a DockRegistry,
+    repository: &str,
+    run_id: u64,
+    target_container: &str,
+    source_container_id: &str,
+) -> Option<&'a DockBinding> {
+    if run_id == 0
+        || target_container.trim().is_empty()
+        || source_container_id.trim().is_empty()
+    {
+        return None;
+    }
+    registry.bindings.iter().find(|binding| {
+        binding.repository == repository
+            && binding.run_id == run_id
+            && binding.container == target_container
+            && !binding.container_id.is_empty()
+            && binding.container_id != source_container_id
+            && !binding.requester_runner.trim().is_empty()
+    })
+}
+
 fn validate_dock_binding_owner(
     binding: &DockBinding,
     requester_runner: &str,
@@ -4812,7 +4859,9 @@ fn resolve_dock_connect_dynamic(
 
 #[cfg(test)]
 mod dock_melt_binding_tests {
-    use super::{find_dock_melt_source_binding, DockBinding, DockRegistry};
+    use super::{
+        find_dock_melt_source_binding, find_dock_melt_target_binding, DockBinding, DockRegistry,
+    };
 
     fn binding(job: &str, container: &str, runner: &str) -> DockBinding {
         DockBinding {
@@ -4843,6 +4892,51 @@ mod dock_melt_binding_tests {
 
         assert_eq!(source.job, "build");
         assert_eq!(source.container_id, "test-id-build-runner");
+    }
+
+    #[test]
+    fn melt_can_select_an_explicit_target_from_another_active_job_in_the_same_run() {
+        let registry = DockRegistry {
+            bindings: vec![
+                binding("build", "build-runner", "build-runner"),
+                binding("publish", "publish-runner", "publish-runner"),
+            ],
+        };
+
+        let target = find_dock_melt_target_binding(
+            &registry,
+            "owner/repo",
+            42,
+            "publish-runner",
+            "test-id-build-runner",
+        )
+        .expect("configured same-run target must be selectable");
+
+        assert_eq!(target.job, "publish");
+        assert_eq!(target.container_id, "test-id-publish-runner");
+    }
+
+    #[test]
+    fn melt_target_lookup_rejects_other_runs_repositories_and_source_identity() {
+        let registry = DockRegistry {
+            bindings: vec![
+                binding("build", "build-runner", "build-runner"),
+                binding("publish", "publish-runner", "publish-runner"),
+            ],
+        };
+
+        assert!(find_dock_melt_target_binding(
+            &registry, "owner/repo", 99, "publish-runner", "test-id-build-runner"
+        )
+        .is_none());
+        assert!(find_dock_melt_target_binding(
+            &registry, "other/repo", 42, "publish-runner", "test-id-build-runner"
+        )
+        .is_none());
+        assert!(find_dock_melt_target_binding(
+            &registry, "owner/repo", 42, "build-runner", "test-id-build-runner"
+        )
+        .is_none());
     }
 
     #[test]

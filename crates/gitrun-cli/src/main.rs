@@ -69,15 +69,13 @@ fn trusted_system_config_path() -> Option<PathBuf> {
 
 fn update_config_path(system_install: bool) -> Option<PathBuf> {
     let configured_path = if system_install {
-        trusted_system_config_path()
+        // Validate the fixed path itself before selection. Do not permit a
+        // missing or unsafe trusted file to fall back to an environment path.
+        trusted_system_config_path()?
     } else {
-        persistent_config_path()
+        persistent_config_path()?
     };
-    let selected = select_update_config_path(system_install, configured_path)?;
-    if system_install && !selected.is_file() {
-        return None;
-    }
-    Some(selected)
+    select_update_config_path(system_install, Some(configured_path))
 }
 
 fn initialize_system_update_config_path(system_install: bool) {
@@ -453,9 +451,9 @@ fn update_command(
 
     let system_install = system_install_paths();
     let config_path = update_config_path(system_install.is_some());
-    if system_install.is_some() && plan.runner_image.is_some() && config_path.is_none() {
+    if system_install.is_some() && config_path.is_none() {
         return Err(
-            "trusted system config /etc/gitrun/gitrun.env is missing or unsafe; refusing update that changes the runner image"
+            "trusted system config /etc/gitrun/gitrun.env is missing or unsafe; refusing privileged update"
                 .into(),
         );
     }
@@ -2719,7 +2717,7 @@ fn run_rollback(backup_path: &str, presenter: &mut presenter::CatPresenter) -> i
 #[cfg(test)]
 mod internal_lifecycle_command_tests {
     use super::{
-        select_update_config_path, update_config_path, update_signing_environment,
+        select_update_config_path, update_signing_environment,
         update_signing_environment_changes, Cli, Command, DEFAULT_UPDATE_PUBLIC_KEY_HEX,
         DEFAULT_UPDATE_PUBLIC_KEY_ID, TRUSTED_SYSTEM_CONFIG_FILE,
     };

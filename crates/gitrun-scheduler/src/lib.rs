@@ -972,7 +972,8 @@ fn ensure_current_container_identity(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_id = docker::container_id(name)?;
     check_container_identity(name, expected_id, current_id.as_deref())
-        .map_err(std::io::Error::other)
+        .map_err(std::io::Error::other)?;
+    Ok(())
 }
 
 fn deregister_and_remove(

@@ -63,6 +63,7 @@ impl DockRegistry {
     pub fn save(&self, state_dir: impl AsRef<Path>) -> Result<(), DockRegistryError> {
         let state_dir = state_dir.as_ref();
         self.validate_unique_bindings()?;
+        validate_state_directory_parent(state_dir)?;
         fs::create_dir_all(state_dir)?;
         validate_state_directory(state_dir)?;
         let path = path_for(state_dir);
@@ -193,7 +194,46 @@ impl DockRegistry {
     }
 }
 
+#[cfg(unix)]
+fn effective_uid() -> u32 {
+    // SAFETY: geteuid has no preconditions and has no side effects.
+    unsafe { libc::geteuid() }
+}
+
+fn validate_state_directory_parent(state_dir: &Path) -> Result<(), DockRegistryError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let parent = state_dir
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let metadata = fs::symlink_metadata(parent)?;
+        if !metadata.is_dir() {
+            return Err(DockRegistryError::Invalid(
+                "registry state parent must be a real directory".into(),
+            ));
+        }
+        let mode = metadata.permissions().mode();
+        // A root service must not place its authoritative state under a
+        // directory owned by an unprivileged user. Sticky shared directories
+        // (e.g. /tmp in unit tests) are safe for unique child entries because
+        // the child itself is separately owner-checked and private.
+        if metadata.uid() != effective_uid()
+            && mode & 0o1000 == 0
+            || mode & 0o002 != 0 && mode & 0o1000 == 0
+            || mode & 0o020 != 0 && mode & 0o1000 == 0
+        {
+            return Err(DockRegistryError::Invalid(
+                "registry state parent is writable by an untrusted identity".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_state_directory(state_dir: &Path) -> Result<(), DockRegistryError> {
+    validate_state_directory_parent(state_dir)?;
     match fs::symlink_metadata(state_dir) {
         Ok(metadata) => {
             if !metadata.is_dir() {
@@ -204,7 +244,12 @@ fn validate_state_directory(state_dir: &Path) -> Result<(), DockRegistryError> {
             }
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
+                use std::os::unix::fs::{MetadataExt, PermissionsExt};
+                if metadata.uid() != effective_uid() {
+                    return Err(DockRegistryError::Invalid(
+                        "registry state directory must be owned by the service identity".into(),
+                    ));
+                }
                 if metadata.permissions().mode() & 0o022 != 0 {
                     return Err(DockRegistryError::Invalid(
                         "registry state directory must not be group- or world-writable".into(),
@@ -234,6 +279,11 @@ fn read_registry_file(path: &Path) -> Result<Option<String>, DockRegistryError> 
         if !metadata.is_file() || metadata.nlink() != 1 {
             return Err(DockRegistryError::Invalid(
                 "registry file must be a regular file without hard links".into(),
+            ));
+        }
+        if metadata.uid() != effective_uid() {
+            return Err(DockRegistryError::Invalid(
+                "registry file must be owned by the service identity".into(),
             ));
         }
         if metadata.permissions().mode() & 0o022 != 0 {

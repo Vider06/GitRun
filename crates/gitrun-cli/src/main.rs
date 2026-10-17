@@ -2672,7 +2672,9 @@ fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::
     config.validate()?;
     let system_config = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
     let config_metadata = std::fs::symlink_metadata(system_config)?;
-    let config_parent = system_config.parent().ok_or("system config has no parent directory")?;
+    let config_parent = system_config
+        .parent()
+        .ok_or("system config has no parent directory")?;
     let parent_metadata = std::fs::symlink_metadata(config_parent)?;
     if config_metadata.file_type().is_symlink()
         || !config_metadata.is_file()

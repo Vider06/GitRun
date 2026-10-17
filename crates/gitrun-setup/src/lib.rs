@@ -1250,20 +1250,25 @@ fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
     let output = Command::new("/usr/bin/getent")
         .args(["passwd", &uid.to_string()])
         .output()
-        .map_err(|error| SetupError::Command(format!("resolve primary group for uid {uid}: {error}")))?;
+        .map_err(|error| {
+            SetupError::Command(format!("resolve primary group for uid {uid}: {error}"))
+        })?;
     if !output.status.success() {
         return Err(SetupError::Command(format!(
             "unable to resolve passwd entry for uid {uid}"
         )));
     }
-    let line = String::from_utf8(output.stdout)
-        .map_err(|error| SetupError::Command(format!("decode passwd entry for uid {uid}: {error}")))?;
+    let line = String::from_utf8(output.stdout).map_err(|error| {
+        SetupError::Command(format!("decode passwd entry for uid {uid}: {error}"))
+    })?;
     let gid = line
         .trim_end()
         .split(':')
         .nth(3)
         .and_then(|value| value.parse::<u32>().ok())
-        .ok_or_else(|| SetupError::Command(format!("unable to resolve primary gid for uid {uid}")))?;
+        .ok_or_else(|| {
+            SetupError::Command(format!("unable to resolve primary gid for uid {uid}"))
+        })?;
     Ok(gid)
 }
 
@@ -1274,9 +1279,9 @@ fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
 pub fn secure_system_config_file(path: &Path, desktop_uid: Option<u32>) -> Result<(), SetupError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    let parent = path.parent().ok_or_else(|| {
-        SetupError::Command("system config path has no parent directory".into())
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| SetupError::Command("system config path has no parent directory".into()))?;
     let parent_metadata = fs::symlink_metadata(parent)?;
     if !parent_metadata.is_dir()
         || parent_metadata.uid() != 0

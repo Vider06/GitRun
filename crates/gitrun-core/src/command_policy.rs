@@ -114,6 +114,34 @@ pub enum Decision {
     },
 }
 
+/// Validate a GitDockRun Execute command before passing it to `sh -c`.
+///
+/// The command-policy evaluator is intentionally not a shell parser, so callers
+/// must not feed it shell programs and assume that checking the first command
+/// authorizes every command hidden behind operators, quoting, expansion, or
+/// redirection. This restricted grammar allows a single executable plus plain
+/// whitespace-separated arguments, with no shell metacharacters or control
+/// characters. Complex scripts should be checked into the workflow/repository
+/// and launched as a normal Actions step, where the GSR exec supervisor applies
+/// policy to each actual exec.
+pub fn validate_simple_shell_command(command: &str) -> Result<(), &'static str> {
+    if command.trim().is_empty() {
+        return Err("command must not be empty");
+    }
+    if command.bytes().any(|byte| {
+        !(byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+            ))
+    }) {
+        return Err(
+            "GitDockRun Execute accepts one simple command with plain arguments; shell operators, quoting, expansion, redirection and control characters are not allowed",
+        );
+    }
+    Ok(())
+}
+
 /// The full command policy: baseline (ours) + user blacklist + user
 /// whitelist, each independently togglable. Construct via
 /// `CommandPolicy::from_config` in normal use; the fields are public so
@@ -318,6 +346,46 @@ mod tests {
             baseline_blacklist: PatternList::new(true, baseline_patterns()),
             user_blacklist: PatternList::default(),
             user_whitelist: PatternList::default(),
+        }
+    }
+
+    #[test]
+    fn simple_shell_command_validator_rejects_compound_commands_and_expansion() {
+        for command in [
+            "",
+            "   ",
+            "cargo test; sudo sh",
+            "cargo test && curl example.com",
+            "cargo test | sh",
+            "cargo test > /workspace/out",
+            "cargo test $(id)",
+            "cargo test \\$(id)",
+            "python -c 'import os'",
+            "echo `id`",
+            "echo $HOME",
+            "echo first\necho second",
+            "echo first\techo second",
+        ] {
+            assert!(
+                validate_simple_shell_command(command).is_err(),
+                "dangerous shell syntax unexpectedly accepted: {command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn simple_shell_command_validator_allows_plain_executable_and_arguments() {
+        for command in [
+            "cargo build --release",
+            "/usr/bin/git status --short",
+            "curl https://example.com/path",
+            "docker image inspect gitrun-runner:latest",
+            "git -c core.safecrlf=true status",
+        ] {
+            assert!(
+                validate_simple_shell_command(command).is_ok(),
+                "ordinary command unexpectedly rejected: {command:?}"
+            );
         }
     }
 

@@ -2488,12 +2488,21 @@ impl ApiExecutionBackend {
             ));
         }
 
+        // MELT extracts archive members under the target container's root.
+        // If a GitDockRun bind mount is still attached in that namespace, tar
+        // can write matching archive paths through it into the approved host
+        // source. Refuse this cross-operation path rather than letting MELT
+        // implicitly inherit MOUNT's host-filesystem write capability.
+        #[cfg(target_os = "linux")]
+        let mut mount_registry = MountRegistry::load(&self.state_dir).map_err(failed)?;
+        #[cfg(target_os = "linux")]
+        validate_melt_target_has_no_mount_leases(&mount_registry, &target_id).map_err(failed)?;
+
         // The source can be a completed dock-only runner that still has mount
         // leases in its namespace. Remove only leases owned by this exact old
         // binding before the source container is destroyed.
         #[cfg(target_os = "linux")]
         {
-            let mut mount_registry = MountRegistry::load(&self.state_dir).map_err(failed)?;
             cleanup_owned_mounts_for_disconnect(
                 &mut mount_registry,
                 &self.state_dir,
@@ -3600,6 +3609,24 @@ struct MountCleanupOwner<'a> {
     job: &'a str,
     container_id: &'a str,
     requester_runner: &'a str,
+}
+
+#[cfg(target_os = "linux")]
+fn validate_melt_target_has_no_mount_leases(
+    registry: &MountRegistry,
+    target_container_id: &str,
+) -> Result<(), String> {
+    if registry
+        .mounts
+        .iter()
+        .any(|mount| mount.container_id == target_container_id)
+    {
+        return Err(
+            "GitDockRun --melt refuses a target with outstanding mount leases; unmount first to protect host-mounted data"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -5107,6 +5134,53 @@ mod dock_melt_binding_tests {
             "build-runner"
         )
         .is_none());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod dock_melt_mount_isolation_tests {
+    use super::{validate_melt_target_has_no_mount_leases, MountRecord, MountRegistry};
+
+    fn mount_record(container_id: &str) -> MountRecord {
+        MountRecord {
+            id: "mount-test".into(),
+            repository: "owner/repo".into(),
+            run_id: 42,
+            job: "build".into(),
+            requester_runner: "runner-a".into(),
+            container: "runner-a".into(),
+            container_id: container_id.into(),
+            source: "/srv/approved".into(),
+            target: "/workspace/cache".into(),
+            read_only: false,
+            source_device: Some(1),
+            source_inode: Some(2),
+            kernel_mount_id: Some(3),
+            state: "mounted".into(),
+            created_at: 1,
+        }
+    }
+
+    #[test]
+    fn melt_refuses_target_with_outstanding_gitdock_mount_lease() {
+        let registry = MountRegistry {
+            mounts: vec![mount_record("target-container-id")],
+        };
+        let error = validate_melt_target_has_no_mount_leases(&registry, "target-container-id")
+            .expect_err("MELT must not extract through an outstanding host bind mount");
+        assert!(error.contains("unmount first"));
+    }
+
+    #[test]
+    fn melt_allows_target_without_its_own_mount_leases() {
+        let registry = MountRegistry {
+            mounts: vec![mount_record("different-container-id")],
+        };
+        assert!(validate_melt_target_has_no_mount_leases(&registry, "target-container-id").is_ok());
+        assert!(
+            validate_melt_target_has_no_mount_leases(&MountRegistry::default(), "target-container-id")
+                .is_ok()
+        );
     }
 }
 

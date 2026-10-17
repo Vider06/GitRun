@@ -9,8 +9,8 @@ use crate::dock_registry::{validate_state_directory_parent, DockBinding, DockReg
 use crate::docker;
 use crate::GitHubClient;
 use gitrun_core::{
-    api_policy::parse_boolean_argument, command_policy::validate_simple_shell_command, Config,
-    GitRunApi, GitRunOperation, GitRunSettings,
+    api_policy::parse_boolean_argument, command_policy::parse_simple_command, Config, GitRunApi,
+    GitRunOperation, GitRunSettings,
 };
 use gitrun_exe::{
     ipc::{WireRequest, WireResponse, DEFAULT_SOCKET_PATH},
@@ -1824,11 +1824,12 @@ impl ApiExecutionBackend {
     ) -> Result<i32, ExecutionError> {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
-        validate_simple_shell_command(command).map_err(failed)?;
+        let argv = parse_simple_command(command).map_err(failed)?;
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
 
         docker::exec_container_stream_as_runner(
             container.as_str(),
-            &["sh", "-c", command],
+            &argv,
             |is_stderr, bytes| {
                 let value = String::from_utf8_lossy(bytes).into_owned();
                 if is_stderr {
@@ -1847,8 +1848,9 @@ impl ApiExecutionBackend {
     ) -> Result<ExecutionResult, ExecutionError> {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
-        validate_simple_shell_command(command).map_err(failed)?;
-        let output = docker::exec_container_as_runner(container.as_str(), &["sh", "-c", command])
+        let argv = parse_simple_command(command).map_err(failed)?;
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let output = docker::exec_container_as_runner(container.as_str(), &argv)
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }

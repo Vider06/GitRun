@@ -1827,18 +1827,14 @@ impl ApiExecutionBackend {
         let argv = parse_simple_command(command).map_err(failed)?;
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
 
-        docker::exec_container_stream_as_runner(
-            container.as_str(),
-            &argv,
-            |is_stderr, bytes| {
-                let value = String::from_utf8_lossy(bytes).into_owned();
-                if is_stderr {
-                    sink(ExecutionEvent::Stderr(value));
-                } else {
-                    sink(ExecutionEvent::Stdout(value));
-                }
-            },
-        )
+        docker::exec_container_stream_as_runner(container.as_str(), &argv, |is_stderr, bytes| {
+            let value = String::from_utf8_lossy(bytes).into_owned();
+            if is_stderr {
+                sink(ExecutionEvent::Stderr(value));
+            } else {
+                sink(ExecutionEvent::Stdout(value));
+            }
+        })
         .map_err(|error| failed(error.to_string()))
     }
 

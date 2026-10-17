@@ -1692,9 +1692,29 @@ fn is_full_container_id(value: &str) -> bool {
 /// Executes a command in a managed container after the caller has already
 /// passed the relevant GSR authorization gate.
 pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
+    exec_container_as(container, None, args)
+}
+
+/// Executes workflow-controlled commands as the non-root Actions runner account.
+/// Do not rely on the image's configured USER: GitRun's entrypoint intentionally
+/// starts as root to initialize protected runtime files before dropping the
+/// long-lived runner process to its unprivileged account.
+pub fn exec_container_as_runner(container: &str, args: &[&str]) -> Result<Output> {
+    exec_container_as(container, Some("runner"), args)
+}
+
+fn exec_container_as(
+    container: &str,
+    user: Option<&str>,
+    args: &[&str],
+) -> Result<Output> {
     // Reuse the bounded-output/timeout runner instead of Command::output(),
     // which would buffer arbitrary workflow-controlled output in scheduler RAM.
-    let mut command_args = vec!["exec", container];
+    let mut command_args = vec!["exec"];
+    if let Some(user) = user {
+        command_args.extend(["--user", user]);
+    }
+    command_args.push(container);
     command_args.extend_from_slice(args);
     run_on(&DockerHost::Local, &command_args)
 }
@@ -1825,7 +1845,33 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
 /// output to the caller. Each stream retains at most `MAX_DOCKER_OUTPUT_BYTES`;
 /// output beyond that cap is drained but not retained. The Docker CLI is killed
 /// after the shared command timeout, including descendants holding its pipes.
-pub fn exec_container_stream<F>(container: &str, args: &[&str], mut on_output: F) -> Result<i32>
+pub fn exec_container_stream<F>(container: &str, args: &[&str], on_output: F) -> Result<i32>
+where
+    F: FnMut(bool, &[u8]),
+{
+    exec_container_stream_as(container, None, args, on_output)
+}
+
+/// Streams a workflow-controlled command as the unprivileged Actions runner
+/// account. This is separate from the long-lived ptrace-supervised runner tree:
+/// Docker exec starts a daemon-created process, so explicitly drop its UID.
+pub fn exec_container_stream_as_runner<F>(
+    container: &str,
+    args: &[&str],
+    on_output: F,
+) -> Result<i32>
+where
+    F: FnMut(bool, &[u8]),
+{
+    exec_container_stream_as(container, Some("runner"), args, on_output)
+}
+
+fn exec_container_stream_as<F>(
+    container: &str,
+    user: Option<&str>,
+    args: &[&str],
+    mut on_output: F,
+) -> Result<i32>
 where
     F: FnMut(bool, &[u8]),
 {
@@ -1835,7 +1881,11 @@ where
         .env_remove("DOCKER_TLS_VERIFY")
         .env_remove("DOCKER_CERT_PATH")
         .env("DOCKER_HOST", "unix:///var/run/docker.sock")
-        .arg("exec")
+        .arg("exec");
+    if let Some(user) = user {
+        command.arg("--user").arg(user);
+    }
+    command
         .arg(container)
         .args(args)
         .stdout(Stdio::piped())

@@ -2655,14 +2655,13 @@ fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::
     if metadata.permissions().mode() & 0o077 != 0 {
         return Err("settings payload permissions must be 0600 or stricter".into());
     }
-    if let Some(expected_uid) = std::env::var("PKEXEC_UID")
+    let requester_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
-    {
-        if metadata.uid() != expected_uid {
-            return Err("settings payload is not owned by the user who requested elevation".into());
-        }
+        .ok_or("system config helper requires a verified requesting user UID")?;
+    if metadata.uid() != requester_uid {
+        return Err("settings payload is not owned by the user who requested elevation".into());
     }
     if metadata.len() > 1024 * 1024 {
         return Err("settings payload exceeds the 1 MiB safety limit".into());
@@ -2671,11 +2670,23 @@ fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::
     let bytes = std::fs::read(input)?;
     let config: Config = serde_json::from_slice(&bytes)?;
     config.validate()?;
-    let system_config = Path::new("/etc/gitrun/gitrun.env");
-    if !system_config.is_file() {
-        return Err("system GitRun configuration is missing; run setup first".into());
+    let system_config = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
+    let config_metadata = std::fs::symlink_metadata(system_config)?;
+    let config_parent = system_config.parent().ok_or("system config has no parent directory")?;
+    let parent_metadata = std::fs::symlink_metadata(config_parent)?;
+    if config_metadata.file_type().is_symlink()
+        || !config_metadata.is_file()
+        || config_metadata.uid() != 0
+        || config_metadata.permissions().mode() & 0o022 != 0
+        || !parent_metadata.is_dir()
+        || parent_metadata.uid() != 0
+        || parent_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("trusted system GitRun config path is missing or unsafe".into());
     }
     gitrun_setup::update_env_file(system_config, &config)?;
+    gitrun_setup::secure_system_config_file(system_config, Some(requester_uid))?;
+    std::fs::File::open(config_parent)?.sync_all()?;
     println!("GitRun settings saved successfully.");
     Ok(())
 }

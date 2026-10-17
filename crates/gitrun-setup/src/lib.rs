@@ -1272,6 +1272,56 @@ fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
     Ok(gid)
 }
 
+/// Validate the full directory chain for paths that will contain state or policy
+/// trusted by a privileged service. Checking only the final parent is not enough:
+/// an attacker-writable ancestor can rename a root-owned child directory.
+fn validate_root_owned_directory_chain(directory: &Path) -> Result<(), SetupError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if !directory.is_absolute()
+        || directory
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(SetupError::Command(
+            "trusted system directory must be absolute and contain no parent traversal".into(),
+        ));
+    }
+
+    let mut prefix = PathBuf::from("/");
+    for component in directory.components() {
+        match component {
+            std::path::Component::RootDir => continue,
+            std::path::Component::Normal(name) => prefix.push(name),
+            _ => {
+                return Err(SetupError::Command(
+                    "trusted system directory contains unsupported path components".into(),
+                ))
+            }
+        }
+        let metadata = fs::symlink_metadata(&prefix)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(SetupError::Command(format!(
+                "trusted system path {} must be a real directory",
+                prefix.display()
+            )));
+        }
+        if metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
+            return Err(SetupError::Command(format!(
+                "trusted system directory {} must be root-owned and not group/world-writable",
+                prefix.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate the complete root-owned state directory before any privileged
+/// policy or registry write is attempted.
+pub fn validate_system_state_directory(directory: &Path) -> Result<(), SetupError> {
+    validate_root_owned_directory_chain(directory)
+}
+
 /// Security policy is consumed by the root scheduler to authorize privileged
 /// workflow operations. Never make this file desktop-user-owned or writable:
 /// grant only read access through the desktop user's primary group.
@@ -1284,15 +1334,7 @@ pub fn secure_system_settings_file(
     let parent = path.parent().ok_or_else(|| {
         SetupError::Command("GitRun settings path has no parent directory".into())
     })?;
-    let parent_metadata = fs::symlink_metadata(parent)?;
-    if !parent_metadata.is_dir()
-        || parent_metadata.uid() != 0
-        || parent_metadata.permissions().mode() & 0o022 != 0
-    {
-        return Err(SetupError::Command(
-            "GitRun settings parent must be a root-owned, non-writable directory".into(),
-        ));
-    }
+    validate_root_owned_directory_chain(parent)?;
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(SetupError::Command(
@@ -1340,15 +1382,7 @@ pub fn secure_system_config_file(path: &Path, desktop_uid: Option<u32>) -> Resul
     let parent = path
         .parent()
         .ok_or_else(|| SetupError::Command("system config path has no parent directory".into()))?;
-    let parent_metadata = fs::symlink_metadata(parent)?;
-    if !parent_metadata.is_dir()
-        || parent_metadata.uid() != 0
-        || parent_metadata.permissions().mode() & 0o022 != 0
-    {
-        return Err(SetupError::Command(
-            "system config parent must be a root-owned, non-writable directory".into(),
-        ));
-    }
+    validate_root_owned_directory_chain(parent)?;
 
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {

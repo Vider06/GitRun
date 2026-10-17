@@ -34,6 +34,28 @@ macro_rules! eprintln {
     };
 }
 
+const TRUSTED_SYSTEM_CONFIG_FILE: &str = "/etc/gitrun/gitrun.env";
+
+fn update_config_path(system_install: bool) -> Option<PathBuf> {
+    if system_install {
+        // Installed system updates must never write to an environment-selected
+        // path. systemd's canonical EnvironmentFile is /etc/gitrun/gitrun.env.
+        Some(PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE))
+    } else {
+        persistent_config_path()
+    }
+}
+
+fn initialize_system_update_config_path(system_install: bool) {
+    if system_install {
+        // load_config() honors these variables for developer installs. Pin the
+        // installed update process to the service's trusted config and discard
+        // an alternate directory that could otherwise redirect root-side work.
+        std::env::set_var("GITRUN_CONFIG_FILE", TRUSTED_SYSTEM_CONFIG_FILE);
+        std::env::remove_var("GITRUN_CONFIG_DIR");
+    }
+}
+
 fn persistent_config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("GITRUN_CONFIG_FILE") {
         return Some(PathBuf::from(path));
@@ -400,8 +422,8 @@ fn update_command(
         println!("dependencies updated: {}", updated_dependencies.join(", "));
     }
 
-    let config_path = persistent_config_path();
     let system_install = system_install_paths();
+    let config_path = update_config_path(system_install.is_some());
     let work_root = match system_install {
         Some(_) => PathBuf::from("/var/lib/gitrun/update"),
         None => PathBuf::from(
@@ -2126,14 +2148,16 @@ fn run_doctor() -> i32 {
 }
 
 fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
-    initialize_update_signing_environment(system_install_paths().is_some());
+    let system_install = system_install_paths().is_some();
+    initialize_update_signing_environment(system_install);
+    initialize_system_update_config_path(system_install);
 
     let config = load_config()?;
     let _gtuu_lock = gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = latest_manifest(&repository)?;
     if let Some(image) = &manifest.runner_image {
-        let config_file = persistent_config_path().ok_or(
+        let config_file = update_config_path(system_install).ok_or(
             "GitRun config path is unavailable; cannot safely pin the verified runner image",
         )?;
         update_runner_image(image)?;
@@ -2157,14 +2181,15 @@ fn run_update(
     check_only: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
-    // Installed-system invocations must never inherit a caller-selected key or
-    // an opt-out from signature verification. The normal non-root path also
-    // sends these fixed values through sudo, but root-direct and --only-containers
-    // paths bypass that hand-off, so pin the trust anchor before branching.
+    // Installed-system invocations must never inherit caller-selected update
+    // keys, signature policy, or config paths. Direct-root and --only-containers
+    // paths bypass sudo's normal signing-key hand-off, so initialize the fixed
+    // trust anchors and service config before branching.
     let system_install = system_install_paths().is_some();
     if system_install || check_only || only_containers {
         initialize_update_signing_environment(system_install);
     }
+    initialize_system_update_config_path(system_install);
 
     if check_only {
         let args: Vec<String> = match manifest_url {
@@ -2647,8 +2672,9 @@ fn run_rollback(backup_path: &str, presenter: &mut presenter::CatPresenter) -> i
 #[cfg(test)]
 mod internal_lifecycle_command_tests {
     use super::{
-        update_signing_environment, update_signing_environment_changes, Cli, Command,
-        DEFAULT_UPDATE_PUBLIC_KEY_HEX, DEFAULT_UPDATE_PUBLIC_KEY_ID,
+        update_config_path, update_signing_environment, update_signing_environment_changes,
+        Cli, Command, TRUSTED_SYSTEM_CONFIG_FILE, DEFAULT_UPDATE_PUBLIC_KEY_HEX,
+        DEFAULT_UPDATE_PUBLIC_KEY_ID,
     };
     use clap::Parser;
 
@@ -2680,6 +2706,22 @@ mod internal_lifecycle_command_tests {
                 DEFAULT_UPDATE_PUBLIC_KEY_HEX.to_owned()
             )]
         );
+    }
+
+    #[test]
+    fn system_update_config_path_ignores_environment_selected_paths() {
+        assert_eq!(
+            update_config_path(true),
+            Some(std::path::PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE))
+        );
+    }
+
+    #[test]
+    fn developer_update_config_path_keeps_configurable_path_resolution() {
+        // A developer install continues to honor the normal persistent config
+        // selection, including explicit environment overrides where supplied.
+        let expected = super::persistent_config_path();
+        assert_eq!(update_config_path(false), expected);
     }
 
     fn parse_internal_command(arguments: &[&str]) -> Command {

@@ -200,7 +200,7 @@ fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-fn validate_state_directory_parent(state_dir: &Path) -> Result<(), DockRegistryError> {
+pub(crate) fn validate_state_directory_parent(state_dir: &Path) -> Result<(), DockRegistryError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};

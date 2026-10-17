@@ -324,25 +324,33 @@ pub fn poll_once(
             }
         };
 
-        violations.extend(poll_container_with_identity(
-            host,
+        violations.extend(poll_container_with_identity(host,
             &container_name,
             &container_id,
             policy,
             action,
             ban_store,
-            |target| docker::container_command_lines_on(host, target),
-            |target| docker::container_repo_label_on(host, target),
-            |target, repo, action, store| apply_violation_action(host, target, repo, action, store),
-        ));
+            PollOperations {
+            read_processes: |target| docker::container_command_lines_on(host, target),
+            read_repo: |target| docker::container_repo_label_on(host, target),
+            enforce: |target, repo, action, store| apply_violation_action(host, target, repo, action, store),
+        }));
     }
     Ok(violations)
 }
 
-/// Process one container using a pinned immutable Docker ID. The operations
-/// are injected only to make the identity flow deterministic in regression
-/// tests; production supplies the real Docker inspection and enforcement
-/// calls above.
+/// Operations are injected only to make the identity flow deterministic in
+/// regression tests; production supplies the real Docker inspection and
+/// enforcement calls above.
+struct PollOperations<P, R, A> {
+    read_processes: P,
+    read_repo: R,
+    enforce: A,
+}
+
+/// Process one container using a pinned immutable Docker ID. Keeping the
+/// callbacks together leaves identity and policy parameters explicit without
+/// a long positional-argument list.
 fn poll_container_with_identity<P, R, A, ProcessError, RepoError>(
     host: &DockerHost,
     container_name: &str,
@@ -350,9 +358,7 @@ fn poll_container_with_identity<P, R, A, ProcessError, RepoError>(
     policy: &CommandPolicy,
     action: ViolationAction,
     ban_store: &mut BanStore,
-    mut read_processes: P,
-    mut read_repo: R,
-    mut enforce: A,
+    operations: PollOperations<P, R, A>,
 ) -> Vec<PolledViolation>
 where
     P: FnMut(&str) -> Result<Vec<String>, ProcessError>,
@@ -361,6 +367,11 @@ where
     RepoError: std::fmt::Display,
     A: FnMut(&str, Option<&str>, ViolationAction, &mut BanStore) -> Option<String>,
 {
+    let PollOperations {
+        mut read_processes,
+        mut read_repo,
+        mut enforce,
+    } = operations;
     let command_lines = match read_processes(container_id) {
         Ok(command_lines) => command_lines,
         Err(error) => {
@@ -714,26 +725,26 @@ mod tests {
         let replacement_id = "test-container-id-replacement-b";
         let targets = RefCell::new(Vec::new());
 
-        let violations = poll_container_with_identity(
-            &DockerHost::Local,
+        let violations = poll_container_with_identity(&DockerHost::Local,
             name,
             original_id,
             &policy_with_baseline(),
             ViolationAction::Kill,
             &mut ban_store,
-            |target| {
+            PollOperations {
+            read_processes: |target| {
                 assert_eq!(target, original_id);
                 assert_ne!(target, replacement_id);
                 targets.borrow_mut().push(("processes", target.to_owned()));
                 Ok::<_, &'static str>(vec!["sudo rm -rf /".to_owned()])
             },
-            |target| {
+            read_repo: |target| {
                 assert_eq!(target, original_id);
                 assert_ne!(target, replacement_id);
                 targets.borrow_mut().push(("repo-label", target.to_owned()));
                 Ok::<_, &'static str>(Some("owner/repo".to_owned()))
             },
-            |target, repo, action, _store| {
+            enforce: |target, repo, action, _store| {
                 assert_eq!(target, original_id);
                 assert_ne!(target, replacement_id);
                 assert_eq!(repo, Some("owner/repo"));
@@ -741,7 +752,7 @@ mod tests {
                 targets.borrow_mut().push(("enforce", target.to_owned()));
                 None
             },
-        );
+        });
 
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].container_name, name);

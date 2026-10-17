@@ -216,13 +216,8 @@ fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), Str
 /// Persist security policy through the privileged helper for system installs.
 /// The state directory is root-owned so user-level atomic rename is intentionally
 /// unavailable; developer installations retain their configurable local path.
-fn persist_gitrun_settings(
-    settings: &GitRunSettings,
-    path: &Path,
-) -> Result<(), String> {
-    if trusted_system_cli_path().is_some()
-        && Path::new("/etc/gitrun/gitrun.env").is_file()
-    {
+fn persist_gitrun_settings(settings: &GitRunSettings, path: &Path) -> Result<(), String> {
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
         persist_gitrun_settings_as_root(settings)
     } else {
         settings.save(path).map_err(|error| error.to_string())

@@ -62,6 +62,7 @@ impl DockRegistry {
 
     pub fn save(&self, state_dir: impl AsRef<Path>) -> Result<(), DockRegistryError> {
         let state_dir = state_dir.as_ref();
+        self.validate_unique_bindings()?;
         fs::create_dir_all(state_dir)?;
         validate_state_directory(state_dir)?;
         let path = path_for(state_dir);
@@ -445,6 +446,49 @@ mod tests {
             Err(DockRegistryError::Invalid(message))
                 if message.contains("container ID")
         ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_rejects_duplicate_immutable_container_ids() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-save-duplicate-id-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let registry = DockRegistry {
+            bindings: vec![
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build-a".into(),
+                    container: "runner-a".into(),
+                    container_id: "same-immutable-id".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 1,
+                },
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build-b".into(),
+                    container: "runner-b".into(),
+                    container_id: "same-immutable-id".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 2,
+                },
+            ],
+        };
+
+        assert!(matches!(
+            registry.save(&dir),
+            Err(DockRegistryError::Invalid(message))
+                if message.contains("container ID")
+        ));
+        assert!(!path_for(&dir).exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

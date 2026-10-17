@@ -595,7 +595,8 @@ fn secret_associated_data(name: &str, scope: &Scope) -> Vec<u8> {
     };
     let name_bytes = name.as_bytes();
     let scope_bytes = scope_value.as_bytes();
-    let mut aad = Vec::with_capacity(DOMAIN.len() + 1 + 8 + name_bytes.len() + 8 + scope_bytes.len());
+    let mut aad =
+        Vec::with_capacity(DOMAIN.len() + 1 + 8 + name_bytes.len() + 8 + scope_bytes.len());
     aad.extend_from_slice(DOMAIN);
     aad.push(scope_tag);
     aad.extend_from_slice(&(name_bytes.len() as u64).to_be_bytes());

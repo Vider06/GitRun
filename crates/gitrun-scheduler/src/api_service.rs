@@ -1824,7 +1824,7 @@ impl ApiExecutionBackend {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
 
-        docker::exec_container_stream(
+        docker::exec_container_stream_as_runner(
             container.as_str(),
             &["sh", "-c", command],
             |is_stderr, bytes| {
@@ -1845,7 +1845,12 @@ impl ApiExecutionBackend {
     ) -> Result<ExecutionResult, ExecutionError> {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
-        run_docker_command(container.as_str(), &["sh", "-c", command])
+        let output = docker::exec_container_as_runner(
+            container.as_str(),
+            &["sh", "-c", command],
+        )
+        .map_err(|error| failed(error.to_string()))?;
+        command_output(output)
     }
 
     fn require_dock_binding_record(
@@ -5453,12 +5458,6 @@ mod dock_melt_source_status_tests {
 }
 
 fn docker_exec_checked(container: &str, args: &[&str]) -> Result<ExecutionResult, ExecutionError> {
-    let output =
-        docker::exec_container(container, args).map_err(|error| failed(error.to_string()))?;
-    command_output(output)
-}
-
-fn run_docker_command(container: &str, args: &[&str]) -> Result<ExecutionResult, ExecutionError> {
     let output =
         docker::exec_container(container, args).map_err(|error| failed(error.to_string()))?;
     command_output(output)

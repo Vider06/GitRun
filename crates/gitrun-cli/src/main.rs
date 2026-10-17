@@ -2672,9 +2672,9 @@ fn run_rollback(backup_path: &str, presenter: &mut presenter::CatPresenter) -> i
 #[cfg(test)]
 mod internal_lifecycle_command_tests {
     use super::{
-        update_config_path, update_signing_environment, update_signing_environment_changes,
-        Cli, Command, TRUSTED_SYSTEM_CONFIG_FILE, DEFAULT_UPDATE_PUBLIC_KEY_HEX,
-        DEFAULT_UPDATE_PUBLIC_KEY_ID,
+        update_config_path, update_signing_environment, update_signing_environment_changes, Cli,
+        Command, DEFAULT_UPDATE_PUBLIC_KEY_HEX, DEFAULT_UPDATE_PUBLIC_KEY_ID,
+        TRUSTED_SYSTEM_CONFIG_FILE,
     };
     use clap::Parser;
 

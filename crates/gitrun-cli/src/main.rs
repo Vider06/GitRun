@@ -138,10 +138,6 @@ const DEFAULT_UPDATE_PUBLIC_KEY_HEX: &str =
 const DEFAULT_UPDATE_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
 
 fn update_signing_environment() -> Vec<(String, String)> {
-    // This function is used only to cross the privilege boundary for a system
-    // update. Never forward caller-controlled key material or signature policy
-    // into the root process: the official release key and mandatory signature
-    // verification are fixed trust anchors for the installed system binary.
     vec![
         (
             "GITRUN_UPDATE_PUBLIC_KEY_HEX".to_owned(),
@@ -156,6 +152,24 @@ fn update_signing_environment() -> Vec<(String, String)> {
             "true".to_owned(),
         ),
     ]
+}
+
+fn update_signing_environment_changes(
+    force_trusted_values: bool,
+    is_set: impl Fn(&str) -> bool,
+) -> Vec<(String, String)> {
+    update_signing_environment()
+        .into_iter()
+        .filter(|(key, _)| force_trusted_values || !is_set(key))
+        .collect()
+}
+
+fn initialize_update_signing_environment(force_trusted_values: bool) {
+    for (key, value) in
+        update_signing_environment_changes(force_trusted_values, |key| std::env::var_os(key).is_some())
+    {
+        std::env::set_var(key, value);
+    }
 }
 
 fn elevate_system_update(
@@ -2112,11 +2126,7 @@ fn run_doctor() -> i32 {
 }
 
 fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
-    for (key, value) in update_signing_environment() {
-        if std::env::var_os(&key).is_none() {
-            std::env::set_var(key, value);
-        }
-    }
+    initialize_update_signing_environment(system_install_paths().is_some());
 
     let config = load_config()?;
     let _gtuu_lock = gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
@@ -2147,14 +2157,16 @@ fn run_update(
     check_only: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
+    // Installed-system invocations must never inherit a caller-selected key or
+    // an opt-out from signature verification. The normal non-root path also
+    // sends these fixed values through sudo, but root-direct and --only-containers
+    // paths bypass that hand-off, so pin the trust anchor before branching.
+    let system_install = system_install_paths().is_some();
+    if system_install || check_only || only_containers {
+        initialize_update_signing_environment(system_install);
+    }
+
     if check_only {
-        // Signature verification reads these values from the process environment.
-        // Resolve the trusted settings without elevating or writing to the host.
-        for (key, value) in update_signing_environment() {
-            if std::env::var_os(&key).is_none() {
-                std::env::set_var(key, value);
-            }
-        }
         let args: Vec<String> = match manifest_url {
             Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
             None => vec!["update".to_owned(), "--check".to_owned()],
@@ -2634,8 +2646,42 @@ fn run_rollback(backup_path: &str, presenter: &mut presenter::CatPresenter) -> i
 
 #[cfg(test)]
 mod internal_lifecycle_command_tests {
-    use super::{Cli, Command};
+    use super::{
+        update_signing_environment, update_signing_environment_changes, Cli, Command,
+        DEFAULT_UPDATE_PUBLIC_KEY_HEX, DEFAULT_UPDATE_PUBLIC_KEY_ID,
+    };
     use clap::Parser;
+
+    #[test]
+    fn system_update_signing_policy_overrides_every_preexisting_value() {
+        let changes = update_signing_environment_changes(true, |_| true);
+        assert_eq!(changes, update_signing_environment());
+        assert!(changes.iter().any(|(key, value)| {
+            key == "GITRUN_UPDATE_PUBLIC_KEY_HEX" && value == DEFAULT_UPDATE_PUBLIC_KEY_HEX
+        }));
+        assert!(changes.iter().any(|(key, value)| {
+            key == "GITRUN_UPDATE_PUBLIC_KEY_ID" && value == DEFAULT_UPDATE_PUBLIC_KEY_ID
+        }));
+        assert!(changes.iter().any(|(key, value)| {
+            key == "GITRUN_UPDATE_SIGNATURE_REQUIRED" && value == "true"
+        }));
+    }
+
+    #[test]
+    fn non_system_update_signing_policy_preserves_explicit_custom_values() {
+        assert!(update_signing_environment_changes(false, |_| true).is_empty());
+
+        let missing_key_only = update_signing_environment_changes(false, |key| {
+            key != "GITRUN_UPDATE_PUBLIC_KEY_HEX"
+        });
+        assert_eq!(
+            missing_key_only,
+            vec![(
+                "GITRUN_UPDATE_PUBLIC_KEY_HEX".to_owned(),
+                DEFAULT_UPDATE_PUBLIC_KEY_HEX.to_owned()
+            )]
+        );
+    }
 
     fn parse_internal_command(arguments: &[&str]) -> Command {
         let cli = Cli::try_parse_from(arguments.iter().copied())

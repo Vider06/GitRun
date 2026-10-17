@@ -2447,6 +2447,8 @@ impl ApiExecutionBackend {
             .ok_or_else(|| {
                 failed("GitDockRun --melt target is not bound to this repository and workflow run")
             })?;
+            validate_dock_melt_target_identity(&target_id, &target_binding.container_id)
+                .map_err(failed)?;
             let target_job = self
                 .github
                 .find_workflow_job(
@@ -4897,6 +4899,17 @@ fn find_dock_melt_target_binding<'a>(
     })
 }
 
+fn validate_dock_melt_target_identity(
+    resolved_container_id: &str,
+    bound_container_id: &str,
+) -> Result<(), &'static str> {
+    if !resolved_container_id.is_empty() && resolved_container_id == bound_container_id {
+        Ok(())
+    } else {
+        Err("GitDockRun --melt target is not the container recorded by its binding")
+    }
+}
+
 fn validate_dock_binding_owner(
     binding: &DockBinding,
     requester_runner: &str,
@@ -4949,7 +4962,8 @@ fn resolve_dock_connect_dynamic(
 #[cfg(test)]
 mod dock_melt_binding_tests {
     use super::{
-        find_dock_melt_source_binding, find_dock_melt_target_binding, DockBinding, DockRegistry,
+        find_dock_melt_source_binding, find_dock_melt_target_binding,
+        validate_dock_melt_target_identity, DockBinding, DockRegistry,
     };
 
     fn binding(job: &str, container: &str, runner: &str) -> DockBinding {
@@ -5003,6 +5017,26 @@ mod dock_melt_binding_tests {
 
         assert_eq!(target.job, "publish");
         assert_eq!(target.container_id, "test-id-publish-runner");
+    }
+
+    #[test]
+    fn melt_rejects_target_container_name_reuse_against_bound_identity() {
+        assert_eq!(
+            validate_dock_melt_target_identity("replacement-container-id", "bound-container-id"),
+            Err("GitDockRun --melt target is not the container recorded by its binding")
+        );
+        assert_eq!(
+            validate_dock_melt_target_identity("", "bound-container-id"),
+            Err("GitDockRun --melt target is not the container recorded by its binding")
+        );
+    }
+
+    #[test]
+    fn melt_accepts_the_exact_bound_target_identity() {
+        assert_eq!(
+            validate_dock_melt_target_identity("bound-container-id", "bound-container-id"),
+            Ok(())
+        );
     }
 
     #[test]

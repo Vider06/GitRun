@@ -124,7 +124,7 @@ pub enum Decision {
 /// characters. Complex scripts should be checked into the workflow/repository
 /// and launched as a normal Actions step, where the GSR exec supervisor applies
 /// policy to each actual exec.
-pub fn validate_simple_shell_command(command: &str) -> Result<(), &'static str> {
+pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> {
     if command.trim().is_empty() {
         return Err("command must not be empty");
     }
@@ -139,7 +139,22 @@ pub fn validate_simple_shell_command(command: &str) -> Result<(), &'static str> 
             "GitDockRun Execute accepts one simple command with plain arguments; shell operators, quoting, expansion, redirection and control characters are not allowed",
         );
     }
-    Ok(())
+    // Execute tokens directly with Docker, not through a shell. The accepted
+    // grammar has no quoting, so literal-space splitting is unambiguous and
+    // tabs/newlines have already been rejected above.
+    let argv: Vec<String> = command
+        .split(' ')
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if argv.is_empty() {
+        return Err("command must not be empty");
+    }
+    Ok(argv)
+}
+
+pub fn validate_simple_shell_command(command: &str) -> Result<(), &'static str> {
+    parse_simple_command(command).map(|_| ())
 }
 
 /// The full command policy: baseline (ours) + user blacklist + user
@@ -371,6 +386,19 @@ mod tests {
                 "dangerous shell syntax unexpectedly accepted: {command:?}"
             );
         }
+    }
+
+    #[test]
+    fn simple_command_parser_returns_direct_argv_without_a_shell() {
+        assert_eq!(
+            parse_simple_command("cargo  build --release").unwrap(),
+            ["cargo", "build", "--release"]
+        );
+        assert_eq!(
+            parse_simple_command("/usr/bin/git status --short").unwrap(),
+            ["/usr/bin/git", "status", "--short"]
+        );
+        assert!(parse_simple_command("cargo test; echo injected").is_err());
     }
 
     #[test]

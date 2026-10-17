@@ -1398,26 +1398,25 @@ pub fn secure_system_settings_file(
         ));
     }
 
-    let mode = if let Some(uid) = desktop_uid {
+    let (mode, expected_gid) = if let Some(uid) = desktop_uid {
         let gid = primary_gid_for_uid(uid)?;
         run_command(
             Command::new("/usr/bin/chown")
                 .arg(format!("0:{gid}"))
                 .arg(path),
         )?;
-        0o640
+        (0o640, gid)
     } else {
         run_command(Command::new("/usr/bin/chown").arg("0:0").arg(path))?;
-        0o600
+        (0o600, 0)
     };
     fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
 
     let final_metadata = fs::symlink_metadata(path)?;
-    let expected_gid = desktop_uid.map(primary_gid_for_uid).transpose()?;
     if final_metadata.file_type().is_symlink()
         || !final_metadata.is_file()
         || final_metadata.uid() != 0
-        || expected_gid.is_some_and(|gid| final_metadata.gid() != gid)
+        || final_metadata.gid() != expected_gid
         || final_metadata.permissions().mode() & 0o777 != mode
     {
         return Err(SetupError::Command(
@@ -1447,26 +1446,25 @@ pub fn secure_system_config_file(path: &Path, desktop_uid: Option<u32>) -> Resul
         ));
     }
 
-    let mode = if let Some(uid) = desktop_uid {
+    let (mode, expected_gid) = if let Some(uid) = desktop_uid {
         let gid = primary_gid_for_uid(uid)?;
         run_command(
             Command::new("/usr/bin/chown")
                 .arg(format!("0:{gid}"))
                 .arg(path),
         )?;
-        0o640
+        (0o640, gid)
     } else {
         run_command(Command::new("/usr/bin/chown").arg("0:0").arg(path))?;
-        0o600
+        (0o600, 0)
     };
     fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
 
     let final_metadata = fs::symlink_metadata(path)?;
-    let expected_gid = desktop_uid.map(primary_gid_for_uid).transpose()?;
     if final_metadata.file_type().is_symlink()
         || !final_metadata.is_file()
         || final_metadata.uid() != 0
-        || expected_gid.is_some_and(|gid| final_metadata.gid() != gid)
+        || final_metadata.gid() != expected_gid
         || final_metadata.permissions().mode() & 0o777 != mode
     {
         return Err(SetupError::Command(

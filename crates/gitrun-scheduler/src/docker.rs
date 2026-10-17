@@ -1710,11 +1710,7 @@ pub fn exec_container_as_runner(container: &str, args: &[&str]) -> Result<Output
     exec_container_as(container, Some("runner"), args)
 }
 
-fn exec_container_as(
-    container: &str,
-    user: Option<&str>,
-    args: &[&str],
-) -> Result<Output> {
+fn exec_container_as(container: &str, user: Option<&str>, args: &[&str]) -> Result<Output> {
     // Reuse the bounded-output/timeout runner instead of Command::output(),
     // which would buffer arbitrary workflow-controlled output in scheduler RAM.
     let mut command_args = vec!["exec"];

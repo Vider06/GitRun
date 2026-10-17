@@ -1845,11 +1845,8 @@ impl ApiExecutionBackend {
     ) -> Result<ExecutionResult, ExecutionError> {
         let container = self.require_dock_binding(request)?;
         let command = arg(request, "command")?;
-        let output = docker::exec_container_as_runner(
-            container.as_str(),
-            &["sh", "-c", command],
-        )
-        .map_err(|error| failed(error.to_string()))?;
+        let output = docker::exec_container_as_runner(container.as_str(), &["sh", "-c", command])
+            .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
 

@@ -165,9 +165,9 @@ fn update_signing_environment_changes(
 }
 
 fn initialize_update_signing_environment(force_trusted_values: bool) {
-    for (key, value) in
-        update_signing_environment_changes(force_trusted_values, |key| std::env::var_os(key).is_some())
-    {
+    for (key, value) in update_signing_environment_changes(force_trusted_values, |key| {
+        std::env::var_os(key).is_some()
+    }) {
         std::env::set_var(key, value);
     }
 }
@@ -2662,18 +2662,17 @@ mod internal_lifecycle_command_tests {
         assert!(changes.iter().any(|(key, value)| {
             key == "GITRUN_UPDATE_PUBLIC_KEY_ID" && value == DEFAULT_UPDATE_PUBLIC_KEY_ID
         }));
-        assert!(changes.iter().any(|(key, value)| {
-            key == "GITRUN_UPDATE_SIGNATURE_REQUIRED" && value == "true"
-        }));
+        assert!(changes
+            .iter()
+            .any(|(key, value)| { key == "GITRUN_UPDATE_SIGNATURE_REQUIRED" && value == "true" }));
     }
 
     #[test]
     fn non_system_update_signing_policy_preserves_explicit_custom_values() {
         assert!(update_signing_environment_changes(false, |_| true).is_empty());
 
-        let missing_key_only = update_signing_environment_changes(false, |key| {
-            key != "GITRUN_UPDATE_PUBLIC_KEY_HEX"
-        });
+        let missing_key_only =
+            update_signing_environment_changes(false, |key| key != "GITRUN_UPDATE_PUBLIC_KEY_HEX");
         assert_eq!(
             missing_key_only,
             vec![(

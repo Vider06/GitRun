@@ -770,22 +770,20 @@ fn reconcile_repo(
     };
 
     let actions = actions_for_resource_pressure(reconcile::plan(&input), allow_new_runner_creation);
+    let execution_context = ExecuteContext {
+        client,
+        config,
+        state_dir,
+        vm_registry,
+        repo,
+    };
     for action in actions {
         // The plan is ordered and later actions may rely on earlier removals
         // or creations having succeeded (for example, RemoveExited followed
         // by CreateRunner assumes the exited container was actually removed).
         // Stop this repo's plan at the first failure and re-snapshot/replan on
         // the next tick; continuing can exceed capacity or act on stale state.
-        if let Err(error) = execute(
-            client,
-            config,
-            state_dir,
-            vm_registry,
-            repo,
-            &containers,
-            &action,
-            &mut state,
-        ) {
+        if let Err(error) = execute(&execution_context, &containers, &action, &mut state) {
             eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}; aborting remaining planned actions until next reconcile: {error}");
             break;
         }
@@ -810,16 +808,28 @@ fn to_container_view(container: &ManagedContainer) -> ContainerView {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ExecuteContext<'a> {
+    client: &'a GitHubClient,
+    config: &'a Config,
+    state_dir: &'a std::path::Path,
+    vm_registry: &'a VmResolutionRegistry,
+    repo: &'a str,
+}
+
 fn execute(
-    client: &GitHubClient,
-    config: &Config,
-    state_dir: &std::path::Path,
-    vm_registry: &VmResolutionRegistry,
-    repo: &str,
+    context: &ExecuteContext<'_>,
     inventory: &[docker::ManagedContainer],
     action: &Action,
     state: &mut SchedulerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let ExecuteContext {
+        client,
+        config,
+        state_dir,
+        vm_registry,
+        repo,
+    } = *context;
     match action {
         Action::RemoveExited { name } => {
             ensure_not_dock_bound(state_dir, repo, name, "remove exited container")?;

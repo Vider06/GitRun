@@ -1460,7 +1460,7 @@ fn main() {
                     1
                 }
             }
-        },
+        }
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -2686,9 +2686,7 @@ fn save_config_root_command(_input_path: &str) -> Result<(), Box<dyn std::error:
 }
 
 #[cfg(target_os = "linux")]
-fn save_gitrun_settings_root_command(
-    input_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn save_gitrun_settings_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("saving GitRun security settings requires administrator privileges".into());
     }
@@ -2705,7 +2703,9 @@ fn save_gitrun_settings_root_command(
         return Err("security-settings payload must be a regular, non-symlink file".into());
     }
     if metadata.uid() != requester_uid {
-        return Err("security-settings payload is not owned by the user who requested elevation".into());
+        return Err(
+            "security-settings payload is not owned by the user who requested elevation".into(),
+        );
     }
     if metadata.permissions().mode() & 0o077 != 0 {
         return Err("security-settings payload permissions must be 0600 or stricter".into());
@@ -2720,7 +2720,8 @@ fn save_gitrun_settings_root_command(
         return Err(format!(
             "unsupported GitRun settings schema version {}",
             settings.schema_version
-        ).into());
+        )
+        .into());
     }
 
     let config_path = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
@@ -2735,9 +2736,14 @@ fn save_gitrun_settings_root_command(
     let config = Config::from_env_file(config_path)?;
     config.validate()?;
     if settings.repositories.keys().any(|repo| {
-        !config.repositories.iter().any(|configured| configured == repo)
+        !config
+            .repositories
+            .iter()
+            .any(|configured| configured == repo)
     }) {
-        return Err("security settings include a repository that is not configured in GitRun".into());
+        return Err(
+            "security settings include a repository that is not configured in GitRun".into(),
+        );
     }
 
     let state_dir = PathBuf::from(&config.state_dir);
@@ -2783,9 +2789,7 @@ fn save_gitrun_settings_root_command(
 }
 
 #[cfg(not(target_os = "linux"))]
-fn save_gitrun_settings_root_command(
-    _input_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn save_gitrun_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Err("system security-settings persistence through the privileged helper is Linux-only".into())
 }
 

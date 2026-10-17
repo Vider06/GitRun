@@ -753,7 +753,11 @@ pub fn bootstrap_linux_with_auth_and_profile(
 
     setup_progress(2, "Preparing GitRun system directories");
     ensure_directory(&config_dir, 0o755)?;
-    ensure_directory(&state_dir, 0o750)?;
+    // The scheduler performs privileged Docker and mount operations as root.
+    // Its state directory must therefore not be writable by the desktop/runner
+    // account: otherwise that account could replace root-authored DockRegistry
+    // and mount-lease directory entries even when the files are mode 0600.
+    ensure_directory(&state_dir, 0o755)?;
     ensure_directory(&log_dir, 0o750)?;
     ensure_directory(&root, 0o755)?;
     let vault_dir = state_dir.join("vault");
@@ -810,7 +814,11 @@ pub fn bootstrap_linux_with_auth_and_profile(
 
     if let Some(uid) = owner_uid {
         chown_path(&config_path, uid)?;
-        chown_path(&state_dir, uid)?;
+        // Keep the shared state directory root-owned. Specific user-managed
+        // files/directories (settings, vault, logs) are granted ownership below;
+        // the runner must not be able to replace privileged registry files.
+        chown_path(&state_dir, 0)?;
+        ensure_directory(&state_dir, 0o755)?;
         chown_path(&log_dir, uid)?;
         chown_path(&settings_path, uid)?;
         chown_path(&vault_dir, uid)?;

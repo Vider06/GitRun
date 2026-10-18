@@ -10,6 +10,7 @@
 
 use serde_json::Value;
 use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -631,6 +632,159 @@ fn control_volume_name(container_name: &str) -> String {
     format!("{container_name}-control")
 }
 
+/// Set or clear the dock-only marker from the host side. The control volume is
+/// mounted read-only inside the runner container because even a root process
+/// created by an explicitly enabled install API must not be able to forge
+/// lifecycle state. Only the privileged scheduler writes the volume contents.
+#[cfg(target_os = "linux")]
+pub fn set_dock_only_marker(container: &str, enabled: bool) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let resolved_name = run_checked(&["inspect", "--format", "{{.Name}}", container])?;
+    let name = resolved_name.trim().trim_start_matches('/');
+    if name.is_empty()
+        || name.contains('/')
+        || name.chars().any(char::is_control)
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    {
+        return Err(DockerError::Command(
+            "Docker returned an unsafe name for the dock-only control volume".into(),
+        ));
+    }
+
+    let volume = control_volume_name(name);
+    let raw_mountpoint = run_checked(&[
+        "volume",
+        "inspect",
+        "--format",
+        "{{.Mountpoint}}",
+        &volume,
+    ])?;
+    let mountpoint = PathBuf::from(raw_mountpoint.trim());
+    if !mountpoint.is_absolute()
+        || mountpoint.components().any(|component| {
+            matches!(component, Component::ParentDir | Component::CurDir | Component::Prefix(_))
+        })
+    {
+        return Err(DockerError::Command(
+            "Docker returned an unsafe control-volume mountpoint".into(),
+        ));
+    }
+
+    // Validate the entire host path chain before touching the Docker volume.
+    // A malicious symlink or non-root-writable ancestor must not redirect a
+    // privileged host write into another location.
+    let mut prefix = PathBuf::from("/");
+    for component in mountpoint.components() {
+        match component {
+            Component::RootDir => continue,
+            Component::Normal(part) => prefix.push(part),
+            _ => {
+                return Err(DockerError::Command(
+                    "control-volume mountpoint contains unsupported path components".into(),
+                ))
+            }
+        }
+        let metadata = std::fs::symlink_metadata(&prefix)?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_dir()
+            || metadata.uid() != 0
+            || metadata.permissions().mode() & 0o022 != 0
+        {
+            return Err(DockerError::Command(format!(
+                "control-volume path component {} is not a trusted root-owned directory",
+                prefix.display()
+            )));
+        }
+    }
+
+    set_dock_only_marker_in_volume(&mountpoint, enabled, 0)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_dock_only_marker(_container: &str, _enabled: bool) -> Result<()> {
+    Err(DockerError::Command(
+        "host-managed dock-only markers are supported only for local Linux Docker containers"
+            .into(),
+    ))
+}
+
+#[cfg(unix)]
+fn set_dock_only_marker_in_volume(
+    control_dir: &Path,
+    enabled: bool,
+    expected_uid: u32,
+) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let directory = std::fs::symlink_metadata(control_dir)?;
+    if directory.file_type().is_symlink()
+        || !directory.is_dir()
+        || directory.uid() != expected_uid
+        || directory.permissions().mode() & 0o077 != 0
+    {
+        return Err(DockerError::Command(
+            "dock-only control directory must be a private, real directory owned by the expected identity"
+                .into(),
+        ));
+    }
+
+    let marker = control_dir.join("dock-only");
+    let existing = match std::fs::symlink_metadata(&marker) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || metadata.nlink() != 1
+                || metadata.uid() != expected_uid
+            {
+                return Err(DockerError::Command(
+                    "existing dock-only marker is not a trusted regular file".into(),
+                ));
+            }
+            Some(metadata)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+
+    if !enabled {
+        if existing.is_some() {
+            std::fs::remove_file(&marker)?;
+            std::fs::File::open(control_dir)?.sync_all()?;
+        }
+        return Ok(());
+    }
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| DockerError::Command(error.to_string()))?
+        .as_nanos();
+    let temporary = control_dir.join(format!(
+        ".dock-only.tmp.{}.{}",
+        std::process::id(),
+        nonce
+    ));
+    let result = (|| -> Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.write_all(b"GitRun dock-only v1\\n")?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, &marker)?;
+        std::fs::File::open(control_dir)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
 pub fn remove_container(name: &str) -> Result<()> {
     remove_container_on(&DockerHost::Local, name)
 }
@@ -1166,7 +1320,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             // runner cannot access its 0700 directory or forge dock-only state.
             "--mount".into(),
             format!(
-                "type=volume,source={},target=/var/lib/gitrun/control",
+                "type=volume,source={},target=/var/lib/gitrun/control,readonly",
                 control_volume_name(spec.name)
             ),
             // The API service lives on the host. The runner gets only this
@@ -2506,6 +2660,70 @@ mod tests {
         assert!(
             validate_runner_network_metadata("gitrun-runner", "host|true|false", true,).is_err()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dock_only_marker_is_atomically_written_and_removed_from_control_volume() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "gitrun-dock-control-test-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let uid = std::fs::metadata(&directory).unwrap().uid();
+
+        set_dock_only_marker_in_volume(&directory, true, uid).unwrap();
+        let marker = directory.join("dock-only");
+        assert_eq!(
+            std::fs::read(&marker).unwrap(),
+            b"GitRun dock-only v1\\n"
+        );
+        let metadata = std::fs::symlink_metadata(&marker).unwrap();
+        assert!(metadata.is_file());
+        assert_eq!(metadata.nlink(), 1);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+
+        set_dock_only_marker_in_volume(&directory, false, uid).unwrap();
+        assert!(std::fs::symlink_metadata(&marker).is_err());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dock_only_marker_rejects_symlink_and_hardlink_entries() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "gitrun-dock-control-unsafe-test-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let uid = std::fs::metadata(&directory).unwrap().uid();
+        let outside = directory.with_extension("outside");
+        std::fs::write(&outside, b"do not replace").unwrap();
+        symlink(&outside, directory.join("dock-only")).unwrap();
+        assert!(set_dock_only_marker_in_volume(&directory, true, uid).is_err());
+        std::fs::remove_file(directory.join("dock-only")).unwrap();
+
+        std::fs::write(directory.join("dock-only"), b"marker").unwrap();
+        let hardlink = directory.with_extension("hardlink");
+        std::fs::hard_link(directory.join("dock-only"), &hardlink).unwrap();
+        assert!(set_dock_only_marker_in_volume(&directory, false, uid).is_err());
+        std::fs::remove_file(hardlink).unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        std::fs::remove_file(outside).unwrap();
     }
 
     #[test]

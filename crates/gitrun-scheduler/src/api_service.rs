@@ -1315,9 +1315,9 @@ impl ApiExecutionBackend {
                     return Err(failed("GitSaveRun file exceeds repository storage limit"));
                 }
 
-                docker_exec_checked(runner, &["mkdir", "-p", "/var/lib/gitrun/shared/files"])?;
+                docker_exec_checked_as_runner(runner, &["mkdir", "-p", "/var/lib/gitrun/shared/files"])?;
                 let destination = format!("/var/lib/gitrun/shared/files/{name}");
-                docker_exec_checked(runner, &["cp", "--", source, destination.as_str()])?;
+                docker_exec_checked_as_runner(runner, &["cp", "--", source, destination.as_str()])?;
 
                 // The source is mutable by the workflow between the initial stat
                 // and cp. Check the copied artifact too, and remove it rather than
@@ -1325,8 +1325,10 @@ impl ApiExecutionBackend {
                 let copied_size = match docker_file_size(runner, &destination) {
                     Ok(size) => size,
                     Err(error) => {
-                        let cleanup =
-                            docker_exec_checked(runner, &["rm", "-f", "--", destination.as_str()]);
+                        let cleanup = docker_exec_checked_as_runner(
+                            runner,
+                            &["rm", "-f", "--", destination.as_str()],
+                        );
                         return Err(match cleanup {
                             Ok(_) => failed(format!(
                                 "GitSaveRun could not verify copied file size: {error}"
@@ -1338,7 +1340,7 @@ impl ApiExecutionBackend {
                     }
                 };
                 if copied_size > policy.max_file_size_bytes {
-                    docker_exec_checked(
+                    docker_exec_checked_as_runner(
                         runner,
                         &["rm", "-f", "--", destination.as_str()],
                     )
@@ -1375,7 +1377,7 @@ impl ApiExecutionBackend {
                     return Err(failed("GitSaveRun logs exceed repository storage limit"));
                 }
 
-                let output = docker::exec_container_with_stdin(
+                let output = docker::exec_container_with_stdin_as_runner(
                     runner,
                     &[
                         "sh",
@@ -1489,7 +1491,8 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container(&self.caller_container_id, &["cat", "--", path])
+        let output =
+            docker::exec_container_as_runner(&self.caller_container_id, &["cat", "--", path])
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
@@ -1499,7 +1502,7 @@ impl ApiExecutionBackend {
         let value = arg(request, "value")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container_with_stdin(
+        let output = docker::exec_container_with_stdin_as_runner(
             &self.caller_container_id,
             &["sh", "-c", "cat > \"$1\"", "gitrun-write", path],
             value.as_bytes(),
@@ -1512,7 +1515,8 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container(&self.caller_container_id, &["sha256sum", "--", path])
+        let output =
+            docker::exec_container_as_runner(&self.caller_container_id, &["sha256sum", "--", path])
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
@@ -1797,7 +1801,7 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container(container.as_str(), &["cat", "--", path])
+        let output = docker::exec_container_as_runner(container.as_str(), &["cat", "--", path])
             .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
@@ -1808,7 +1812,7 @@ impl ApiExecutionBackend {
         let value = arg(request, "value")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container_with_stdin(
+        let output = docker::exec_container_with_stdin_as_runner(
             container.as_str(),
             &["sh", "-c", "cat > \"$1\"", "gitrun-dock-write", path],
             value.as_bytes(),
@@ -5469,8 +5473,17 @@ fn command_output(output: std::process::Output) -> Result<ExecutionResult, Execu
     })
 }
 
+fn docker_exec_checked_as_runner(
+    container: &str,
+    args: &[&str],
+) -> Result<ExecutionResult, ExecutionError> {
+    let output = docker::exec_container_as_runner(container, args)
+        .map_err(|error| failed(error.to_string()))?;
+    command_output(output)
+}
+
 fn docker_file_size(container: &str, path: &str) -> Result<u64, ExecutionError> {
-    let output = docker::exec_container(container, &["stat", "-c", "%s", "--", path])
+    let output = docker::exec_container_as_runner(container, &["stat", "-c", "%s", "--", path])
         .map_err(|error| failed(error.to_string()))?;
     if !output.status.success() {
         return Err(failed("GitSaveRun could not stat source file"));

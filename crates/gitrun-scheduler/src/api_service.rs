@@ -5601,7 +5601,10 @@ fn docker_container_has_marker(container: &str) -> Result<bool, ExecutionError> 
 }
 
 fn restore_runner(container: &str) -> Result<(), ExecutionError> {
-    let _ = docker::remove_file_in_container(container, DOCK_ONLY_MARKER);
+    // Remove the marker through the host-owned control volume. The container
+    // sees this mount read-only, so even container-root helpers cannot forge or
+    // suppress lifecycle state.
+    docker::set_dock_only_marker(container, false).map_err(|error| failed(error.to_string()))?;
     match docker::container_status(container).map_err(|error| failed(error.to_string()))? {
         Some(status) if status == "running" => {
             docker::stop_container(container).map_err(|error| failed(error.to_string()))?;
@@ -5613,7 +5616,7 @@ fn restore_runner(container: &str) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-fn make_dock_only(container: &str, state_dir: &Path) -> Result<(), ExecutionError> {
+fn make_dock_only(container: &str, _state_dir: &Path) -> Result<(), ExecutionError> {
     let status = docker::container_status(container)
         .map_err(|error| failed(error.to_string()))?
         .ok_or_else(|| failed("dock source container disappeared"))?;
@@ -5621,20 +5624,13 @@ fn make_dock_only(container: &str, state_dir: &Path) -> Result<(), ExecutionErro
     let mut marker_may_exist = false;
 
     let result = (|| {
+        // The control volume is read-only from inside the container. Set the
+        // marker through its host-side Docker volume mountpoint so neither the
+        // runner user nor a container-root install helper can modify it.
+        docker::set_dock_only_marker(container, true).map_err(|error| failed(error.to_string()))?;
+        marker_may_exist = true;
         if was_running {
-            docker_exec_checked(container, &["touch", "--", DOCK_ONLY_MARKER])?;
-            marker_may_exist = true;
             docker::stop_container(container).map_err(|error| failed(error.to_string()))?;
-        } else {
-            let marker = state_dir.join(format!(".dock-marker-{}-{}", std::process::id(), now()));
-            fs::write(&marker, b"GitDockRun\n").map_err(|error| failed(error.to_string()))?;
-            // Treat a failed copy as potentially partial: rollback removes the
-            // marker from the exact immutable container ID supplied by caller.
-            marker_may_exist = true;
-            let copy_result = docker::copy_to_container(container, &marker, DOCK_ONLY_MARKER)
-                .map_err(|error| failed(error.to_string()));
-            let _ = fs::remove_file(&marker);
-            copy_result?;
         }
 
         docker::start_container(container).map_err(|error| failed(error.to_string()))?;
@@ -5646,7 +5642,7 @@ fn make_dock_only(container: &str, state_dir: &Path) -> Result<(), ExecutionErro
             let rollback = if was_running {
                 restore_runner(container)
             } else {
-                docker::remove_file_in_container(container, DOCK_ONLY_MARKER)
+                docker::set_dock_only_marker(container, false)
                     .map_err(|rollback_error| failed(rollback_error.to_string()))
             };
             if let Err(rollback_error) = rollback {

@@ -632,6 +632,13 @@ fn control_volume_name(container_name: &str) -> String {
     format!("{container_name}-control")
 }
 
+fn control_volume_mount_argument(container_name: &str) -> String {
+    format!(
+        "type=volume,source={},target=/var/lib/gitrun/control,readonly",
+        control_volume_name(container_name)
+    )
+}
+
 /// Set or clear the dock-only marker from the host side. The control volume is
 /// mounted read-only inside the runner container because even a root process
 /// created by an explicitly enabled install API must not be able to forge
@@ -1344,10 +1351,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             // stop/start while the container rootfs remains read-only. The
             // runner cannot access its 0700 directory or forge dock-only state.
             "--mount".into(),
-            format!(
-                "type=volume,source={},target=/var/lib/gitrun/control,readonly",
-                control_volume_name(spec.name)
-            ),
+            control_volume_mount_argument(spec.name),
             // The API service lives on the host. The runner gets only this
             // Unix socket file, never the host API process or a workflow token.
             // Authentication happens from SO_PEERCRED + the container cgroup
@@ -2763,6 +2767,14 @@ mod tests {
         std::fs::remove_file(hardlink).unwrap();
         std::fs::remove_dir_all(&directory).unwrap();
         std::fs::remove_file(outside).unwrap();
+    }
+
+    #[test]
+    fn control_volume_mount_is_read_only_and_uses_its_own_named_volume() {
+        assert_eq!(
+            control_volume_mount_argument("runner-abc"),
+            "type=volume,source=runner-abc-control,target=/var/lib/gitrun/control,readonly"
+        );
     }
 
     #[test]

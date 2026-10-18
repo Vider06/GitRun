@@ -880,11 +880,16 @@ fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
         "DOCKER_CONFIG",
         "XDG_CONFIG_HOME",
         "NPM_CONFIG_CACHE",
-        "LD_PRELOAD",
-        "LD_LIBRARY_PATH",
         "BASH_ENV",
         "ENV",
         "IFS",
+        "SHELLOPTS",
+        "BASHOPTS",
+        "GLIBC_TUNABLES",
+        "GCONV_PATH",
+        "LOCPATH",
+        "NLSPATH",
+        "MALLOC_TRACE",
     ];
     for (name, value) in secret_env {
         let mut chars = name.chars();
@@ -897,6 +902,11 @@ fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
         }
         if name.starts_with("RUNNER_")
             || name.starts_with("GITRUN_GSR_")
+            // GitVault values are passed to Docker before the entrypoint starts.
+            // The dynamic loader processes LD_* variables before the root
+            // entrypoint can unset them; LD_AUDIT can load a shared object into
+            // root-run startup commands before the privilege drop.
+            || name.starts_with("LD_")
             || RESERVED_EXACT.contains(&name.as_str())
         {
             return Err(DockerError::Command(format!(
@@ -2292,6 +2302,16 @@ mod tests {
             "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
             "GITRUN_API_SOCKET",
             "LD_PRELOAD",
+            "LD_AUDIT",
+            "LD_DEBUG",
+            "LD_ORIGIN_PATH",
+            "SHELLOPTS",
+            "BASHOPTS",
+            "GLIBC_TUNABLES",
+            "GCONV_PATH",
+            "LOCPATH",
+            "NLSPATH",
+            "MALLOC_TRACE",
         ] {
             assert!(
                 validate_secret_env(&[(name.into(), "value".into())]).is_err(),

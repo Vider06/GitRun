@@ -2856,6 +2856,91 @@ fn run_rollback(backup_path: &str, presenter: &mut presenter::CatPresenter) -> i
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod privileged_payload_tests {
+    use super::read_privileged_user_payload;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gitrun-privileged-payload-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn privileged_payload_reads_only_private_regular_user_owned_files() {
+        let path = temp_path("valid");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(br#"{"schema_version":1}"#).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let uid = std::fs::metadata(&path).unwrap().uid();
+        assert_eq!(
+            read_privileged_user_payload(&path, uid, "test").unwrap(),
+            br#"{"schema_version":1}"#
+        );
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn privileged_payload_rejects_symlinks_hardlinks_and_broad_permissions() {
+        let original = temp_path("original");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&original)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(b"payload").unwrap();
+        drop(file);
+        let uid = std::fs::metadata(&original).unwrap().uid();
+
+        let link = temp_path("symlink");
+        std::os::unix::fs::symlink(&original, &link).unwrap();
+        assert!(read_privileged_user_payload(&link, uid, "test").is_err());
+        std::fs::remove_file(&link).unwrap();
+
+        let hardlink = temp_path("hardlink");
+        std::fs::hard_link(&original, &hardlink).unwrap();
+        assert!(read_privileged_user_payload(&original, uid, "test").is_err());
+        std::fs::remove_file(&hardlink).unwrap();
+
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_privileged_user_payload(&original, uid, "test").is_err());
+        std::fs::remove_file(&original).unwrap();
+    }
+
+    #[test]
+    fn privileged_payload_enforces_the_size_limit() {
+        let path = temp_path("oversized");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap()
+            .set_len(1024 * 1024 + 1)
+            .unwrap();
+        let uid = std::fs::metadata(&path).unwrap().uid();
+        assert!(read_privileged_user_payload(&path, uid, "test").is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+}
+
 #[cfg(test)]
 mod internal_lifecycle_command_tests {
     use super::{

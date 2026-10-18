@@ -90,8 +90,10 @@ RUN rustc --version \
     && cargo --version
 
 RUN useradd --create-home --shell /bin/bash runner \
-    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared \
+    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared /var/lib/gitrun/control \
     && chown -R runner:runner /home/runner /var/lib/gitrun/shared \
+    && chown root:root /var/lib/gitrun/control \
+    && chmod 0700 /var/lib/gitrun/control \
     && chown -R root:root /opt/rustup /opt/cargo \
     && chmod -R go-w /opt/rustup /opt/cargo \
     && test -x /opt/cargo/bin/cargo \

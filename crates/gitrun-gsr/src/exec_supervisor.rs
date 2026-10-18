@@ -947,6 +947,21 @@ mod linux {
             }
         };
 
+        // With an executable whitelist enabled, a relative execve pathname
+        // is resolved from the tracee's working directory, not through PATH.
+        // A runner can create a same-named binary in that writable directory
+        // (for example ./cargo) and otherwise inherit the whitelist by basename.
+        // Normal PATH lookup produces an absolute executable path, which the
+        // policy separately restricts to the runner image's trusted tool roots.
+        if policy.user_whitelist.enabled && !Path::new(&path).is_absolute() {
+            emit_inspection_failure(
+                events_path,
+                pid,
+                "whitelist mode refuses relative executable paths",
+            );
+            return Ok(ExecDecision::Deny);
+        }
+
         let command_line = std::iter::once(path.as_str())
             .chain(argv.iter().map(String::as_str))
             .collect::<Vec<_>>()

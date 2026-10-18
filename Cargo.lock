@@ -1595,6 +1595,7 @@ dependencies = [
  "gitrun-scheduler",
  "gitrun-setup",
  "gitrun-updater",
+ "libc",
  "ratatui",
  "reqwest 0.12.28",
  "serde",

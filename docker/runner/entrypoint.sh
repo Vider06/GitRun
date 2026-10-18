@@ -11,8 +11,12 @@ if [[ -L "$CONTROL_DIR" || ! -d "$CONTROL_DIR" ]]; then
   echo "gitrun-runner: root-only control volume is missing or unsafe" >&2
   exit 1
 fi
-chown --no-dereference root:root -- "$CONTROL_DIR"
-chmod 0700 -- "$CONTROL_DIR"
+# This volume is mounted read-only inside the container; only the host
+# scheduler may mutate its contents. Validate, do not chmod/chown in-container.
+if [[ "$(stat -c '%u:%g:%a' -- "$CONTROL_DIR")" != "0:0:700" ]]; then
+  echo "gitrun-runner: control volume must be root-owned mode 0700" >&2
+  exit 1
+fi
 
 DOCK_ONLY_MARKER="$CONTROL_DIR/dock-only"
 if [[ -L "$DOCK_ONLY_MARKER" ]]; then
@@ -24,12 +28,14 @@ if [[ -e "$DOCK_ONLY_MARKER" && ! -f "$DOCK_ONLY_MARKER" ]]; then
   exit 1
 fi
 if [[ -f "$DOCK_ONLY_MARKER" ]]; then
-  if [[ "$(stat -c '%h' -- "$DOCK_ONLY_MARKER")" != "1" ]]; then
-    echo "gitrun-runner: dock-only marker has unexpected hard links" >&2
+  if [[ "$(stat -c '%u:%g:%a:%h' -- "$DOCK_ONLY_MARKER")" != "0:0:600:1" ]]; then
+    echo "gitrun-runner: dock-only marker ownership or permissions are unsafe" >&2
     exit 1
   fi
-  chown --no-dereference root:root -- "$DOCK_ONLY_MARKER"
-  chmod 0600 -- "$DOCK_ONLY_MARKER"
+  if [[ "$(cat -- "$DOCK_ONLY_MARKER")" != "GitRun dock-only v1" ]]; then
+    echo "gitrun-runner: dock-only marker contents are invalid" >&2
+    exit 1
+  fi
 fi
 
 : "${RUNNER_URL:?RUNNER_URL is required}"

@@ -1440,15 +1440,23 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         }
     }
 
-    for (name, value) in spec.gsr_policy_env {
+    // Forward policy values through the child environment too; argv carries
+    // only names. Although these are configuration rather than Vault secrets,
+    // they may be lengthy or sensitive operator-controlled policy strings.
+    let mut forwarded_env: Vec<(String, String)> = spec
+        .gsr_policy_env
+        .iter()
+        .map(|(name, value)| ((*name).clone(), value.clone()))
+        .collect();
+    for (name, _) in spec.gsr_policy_env {
         args.push("-e".into());
-        args.push(format!("{name}={value}"));
+        args.push((*name).clone());
     }
 
-    let mut forwarded_env = vec![(
+    forwarded_env.push((
         "RUNNER_TOKEN".to_owned(),
         spec.registration_token.to_owned(),
-    )];
+    ));
     args.extend([
         "-e".into(),
         format!("RUNNER_URL=https://github.com/{}", spec.repo),
@@ -2801,7 +2809,7 @@ mod tests {
 
         set_dock_only_marker_in_volume(&directory, true, uid).unwrap();
         let marker = directory.join("dock-only");
-        assert_eq!(std::fs::read(&marker).unwrap(), b"GitRun dock-only v1\\n");
+        assert_eq!(std::fs::read(&marker).unwrap(), b"GitRun dock-only v1\n");
         let metadata = std::fs::symlink_metadata(&marker).unwrap();
         assert!(metadata.is_file());
         assert_eq!(metadata.nlink(), 1);

@@ -2642,32 +2642,70 @@ fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(target_os = "linux")]
+fn read_privileged_user_payload(
+    input_path: &Path,
+    requester_uid: u32,
+    label: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    const MAX_PAYLOAD_BYTES: u64 = 1024 * 1024;
+    let before = std::fs::symlink_metadata(input_path)?;
+    if before.file_type().is_symlink() || !before.is_file() || before.nlink() != 1 {
+        return Err(format!("{label} payload must be a regular file without symlinks or hard links").into());
+    }
+    if before.uid() != requester_uid {
+        return Err(format!("{label} payload is not owned by the requesting user").into());
+    }
+    if before.permissions().mode() & 0o077 != 0 {
+        return Err(format!("{label} payload permissions must be 0600 or stricter").into());
+    }
+    if before.len() > MAX_PAYLOAD_BYTES {
+        return Err(format!("{label} payload exceeds the 1 MiB safety limit").into());
+    }
+
+    // Open the exact non-symlink inode we checked. In a sticky shared directory
+    // such as /tmp, a same-UID process can still race a path-based read by
+    // unlinking/replacing the payload after lstat; fstat must match the checked
+    // inode, and subsequent parsing reads only from this already-open handle.
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(input_path)?;
+    let opened = file.metadata()?;
+    if opened.dev() != before.dev()
+        || opened.ino() != before.ino()
+        || opened.file_type().is_symlink()
+        || !opened.is_file()
+        || opened.nlink() != 1
+        || opened.uid() != requester_uid
+        || opened.permissions().mode() & 0o077 != 0
+        || opened.len() > MAX_PAYLOAD_BYTES
+    {
+        return Err(format!("{label} payload changed during validation or is unsafe").into());
+    }
+
+    let mut bytes = Vec::with_capacity(opened.len() as usize);
+    file.take(MAX_PAYLOAD_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_PAYLOAD_BYTES {
+        return Err(format!("{label} payload exceeds the 1 MiB safety limit").into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(target_os = "linux")]
 fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("saving system settings requires administrator privileges".into());
     }
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let input = Path::new(input_path);
-    let metadata = std::fs::symlink_metadata(input)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("settings payload must be a regular, non-symlink file".into());
-    }
-    if metadata.permissions().mode() & 0o077 != 0 {
-        return Err("settings payload permissions must be 0600 or stricter".into());
-    }
     let requester_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         .ok_or("system config helper requires a verified requesting user UID")?;
-    if metadata.uid() != requester_uid {
-        return Err("settings payload is not owned by the user who requested elevation".into());
-    }
-    if metadata.len() > 1024 * 1024 {
-        return Err("settings payload exceeds the 1 MiB safety limit".into());
-    }
-
-    let bytes = std::fs::read(input)?;
+    let bytes = read_privileged_user_payload(Path::new(input_path), requester_uid, "settings")?;
     let config: Config = serde_json::from_slice(&bytes)?;
     config.validate()?;
     let system_config = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
@@ -2710,24 +2748,8 @@ fn save_gitrun_settings_root_command(input_path: &str) -> Result<(), Box<dyn std
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         .ok_or("security-settings helper requires a verified requesting user UID")?;
-    let input = Path::new(input_path);
-    let metadata = std::fs::symlink_metadata(input)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("security-settings payload must be a regular, non-symlink file".into());
-    }
-    if metadata.uid() != requester_uid {
-        return Err(
-            "security-settings payload is not owned by the user who requested elevation".into(),
-        );
-    }
-    if metadata.permissions().mode() & 0o077 != 0 {
-        return Err("security-settings payload permissions must be 0600 or stricter".into());
-    }
-    if metadata.len() > 1024 * 1024 {
-        return Err("security-settings payload exceeds the 1 MiB safety limit".into());
-    }
-
-    let bytes = std::fs::read(input)?;
+    let bytes =
+        read_privileged_user_payload(Path::new(input_path), requester_uid, "security-settings")?;
     let settings: GitRunSettings = serde_json::from_slice(&bytes)?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
         return Err(format!(

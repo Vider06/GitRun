@@ -448,13 +448,12 @@ mod tests {
             ]
         );
         assert_eq!(
-            parse_simple_command("/usr/bin/git status --short").unwrap(),
-            vec![
-                "/usr/bin/git".to_owned(),
-                "status".to_owned(),
-                "--short".to_owned()
-            ]
+            parse_simple_command("git status --short").unwrap(),
+            vec!["git".to_owned(), "status".to_owned(), "--short".to_owned()]
         );
+        assert!(parse_simple_command("/usr/bin/git status --short").is_err());
+        assert!(parse_simple_command("./cargo build").is_err());
+        assert!(parse_simple_command("../bin/cargo build").is_err());
         assert!(parse_simple_command("cargo test; echo injected").is_err());
     }
 
@@ -462,7 +461,7 @@ mod tests {
     fn simple_shell_command_validator_allows_plain_executable_and_arguments() {
         for command in [
             "cargo build --release",
-            "/usr/bin/git status --short",
+            "git status --short",
             "curl https://example.com/path",
             "docker image inspect gitrun-runner:latest",
             "git -c core.safecrlf=true status",
@@ -588,6 +587,41 @@ mod tests {
         ));
         assert!(matches!(
             policy.evaluate("mount\\n--bind /host /mnt"),
+            Decision::Denied { .. }
+        ));
+    }
+
+    #[test]
+    fn whitelist_rejects_user_controlled_executable_paths() {
+        let policy = CommandPolicy {
+            baseline_blacklist: PatternList::default(),
+            user_blacklist: PatternList::default(),
+            user_whitelist: PatternList::new(true, vec!["cargo".into()]),
+        };
+
+        // A bare token is resolved through the protected image PATH. An
+        // absolute path is accepted only when it sits under a root-controlled
+        // executable directory. Paths inside a writable workspace or temp
+        // directory cannot inherit an allowlisted basename.
+        assert_eq!(policy.evaluate("cargo test"), Decision::Allowed);
+        assert_eq!(
+            policy.evaluate("/opt/cargo/bin/cargo cargo test"),
+            Decision::Allowed
+        );
+        assert!(matches!(
+            policy.evaluate("./cargo cargo test"),
+            Decision::Denied { .. }
+        ));
+        assert!(matches!(
+            policy.evaluate("/home/runner/actions-runner/cargo cargo test"),
+            Decision::Denied { .. }
+        ));
+        assert!(matches!(
+            policy.evaluate("/tmp/cargo cargo test"),
+            Decision::Denied { .. }
+        ));
+        assert!(matches!(
+            policy.evaluate("/opt/cargo/bin/../bin/cargo cargo test"),
             Decision::Denied { .. }
         ));
     }

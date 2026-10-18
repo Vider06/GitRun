@@ -5462,12 +5462,6 @@ mod dock_melt_source_status_tests {
     }
 }
 
-fn docker_exec_checked(container: &str, args: &[&str]) -> Result<ExecutionResult, ExecutionError> {
-    let output =
-        docker::exec_container(container, args).map_err(|error| failed(error.to_string()))?;
-    command_output(output)
-}
-
 fn command_output(output: std::process::Output) -> Result<ExecutionResult, ExecutionError> {
     Ok(ExecutionResult {
         exit_code: output.status.code().unwrap_or(1),

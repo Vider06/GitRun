@@ -2888,10 +2888,8 @@ mod privileged_payload_tests {
         drop(file);
 
         let uid = std::fs::metadata(&path).unwrap().uid();
-        assert_eq!(
-            read_privileged_user_payload(&path, uid, "test").unwrap(),
-            br#"{"schema_version":1}"#
-        );
+        let payload = read_privileged_user_payload(&path, uid, "test").unwrap();
+        assert_eq!(payload.as_slice(), br#"{"schema_version":1}"#.as_slice());
         std::fs::remove_file(&path).unwrap();
     }
 

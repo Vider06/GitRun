@@ -1315,7 +1315,10 @@ impl ApiExecutionBackend {
                     return Err(failed("GitSaveRun file exceeds repository storage limit"));
                 }
 
-                docker_exec_checked_as_runner(runner, &["mkdir", "-p", "/var/lib/gitrun/shared/files"])?;
+                docker_exec_checked_as_runner(
+                    runner,
+                    &["mkdir", "-p", "/var/lib/gitrun/shared/files"],
+                )?;
                 let destination = format!("/var/lib/gitrun/shared/files/{name}");
                 docker_exec_checked_as_runner(runner, &["cp", "--", source, destination.as_str()])?;
 
@@ -1493,7 +1496,7 @@ impl ApiExecutionBackend {
 
         let output =
             docker::exec_container_as_runner(&self.caller_container_id, &["cat", "--", path])
-            .map_err(|error| failed(error.to_string()))?;
+                .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
 
@@ -1517,7 +1520,7 @@ impl ApiExecutionBackend {
 
         let output =
             docker::exec_container_as_runner(&self.caller_container_id, &["sha256sum", "--", path])
-            .map_err(|error| failed(error.to_string()))?;
+                .map_err(|error| failed(error.to_string()))?;
         command_output(output)
     }
 

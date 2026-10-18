@@ -1722,11 +1722,7 @@ fn exec_container_as(container: &str, user: Option<&str>, args: &[&str]) -> Resu
 
 /// Executes a command in a managed container and writes a bounded payload to
 /// its stdin. Used by controlled GitWriteRun operations.
-pub fn exec_container_with_stdin(
-    container: &str,
-    args: &[&str],
-    input: &[u8],
-) -> Result<Output> {
+pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -> Result<Output> {
     exec_container_with_stdin_as(container, None, args, input)
 }
 

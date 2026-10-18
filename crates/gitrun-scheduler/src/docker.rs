@@ -2577,7 +2577,10 @@ mod tests {
         ];
         let secrets = vec![
             ("API_TOKEN".to_owned(), "plain-secret".to_owned()),
-            ("MULTILINE_KEY".to_owned(), "first line\nsecond line".to_owned()),
+            (
+                "MULTILINE_KEY".to_owned(),
+                "first line\nsecond line".to_owned(),
+            ),
         ];
         let mut env = vec![("RUNNER_TOKEN".to_owned(), "registration-secret".to_owned())];
 
@@ -2588,9 +2591,18 @@ mod tests {
         assert!(!args.iter().any(|arg| arg.contains("plain-secret")));
         assert!(!args.iter().any(|arg| arg.contains("registration-secret")));
         assert!(!args.iter().any(|arg| arg.contains("first line")));
-        assert_eq!(env[0], ("RUNNER_TOKEN".to_owned(), "registration-secret".to_owned()));
+        assert_eq!(
+            env[0],
+            ("RUNNER_TOKEN".to_owned(), "registration-secret".to_owned())
+        );
         assert_eq!(env[1], ("API_TOKEN".to_owned(), "plain-secret".to_owned()));
-        assert_eq!(env[2], ("MULTILINE_KEY".to_owned(), "first line\nsecond line".to_owned()));
+        assert_eq!(
+            env[2],
+            (
+                "MULTILINE_KEY".to_owned(),
+                "first line\nsecond line".to_owned()
+            )
+        );
     }
 
     #[test]

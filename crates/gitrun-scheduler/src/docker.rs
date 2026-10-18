@@ -655,17 +655,15 @@ pub fn set_dock_only_marker(container: &str, enabled: bool) -> Result<()> {
     }
 
     let volume = control_volume_name(name);
-    let raw_mountpoint = run_checked(&[
-        "volume",
-        "inspect",
-        "--format",
-        "{{.Mountpoint}}",
-        &volume,
-    ])?;
+    let raw_mountpoint =
+        run_checked(&["volume", "inspect", "--format", "{{.Mountpoint}}", &volume])?;
     let mountpoint = PathBuf::from(raw_mountpoint.trim());
     if !mountpoint.is_absolute()
         || mountpoint.components().any(|component| {
-            matches!(component, Component::ParentDir | Component::CurDir | Component::Prefix(_))
+            matches!(
+                component,
+                Component::ParentDir | Component::CurDir | Component::Prefix(_)
+            )
         })
     {
         return Err(DockerError::Command(
@@ -762,11 +760,7 @@ fn set_dock_only_marker_in_volume(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| DockerError::Command(error.to_string()))?
         .as_nanos();
-    let temporary = control_dir.join(format!(
-        ".dock-only.tmp.{}.{}",
-        std::process::id(),
-        nonce
-    ));
+    let temporary = control_dir.join(format!(".dock-only.tmp.{}.{}", std::process::id(), nonce));
     let result = (|| -> Result<()> {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -2681,10 +2675,7 @@ mod tests {
 
         set_dock_only_marker_in_volume(&directory, true, uid).unwrap();
         let marker = directory.join("dock-only");
-        assert_eq!(
-            std::fs::read(&marker).unwrap(),
-            b"GitRun dock-only v1\\n"
-        );
+        assert_eq!(std::fs::read(&marker).unwrap(), b"GitRun dock-only v1\\n");
         let metadata = std::fs::symlink_metadata(&marker).unwrap();
         assert!(metadata.is_file());
         assert_eq!(metadata.nlink(), 1);

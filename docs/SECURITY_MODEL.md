@@ -43,6 +43,8 @@ This is not a blanket filesystem sandbox: host paths are highly sensitive, write
 
 ## Filesystem isolation
 
+Filesystem operations exposed by GitReadRun, GitWriteRun, GitVerifyRun, GitSaveRun and GitDockRun Read/Write execute inside the container as the unprivileged `runner` identity. Lexical path allowlists are additional validation, not a substitute for OS permissions or symlink safety. `GitInstallRun` is a separate explicitly policy-gated package-install capability that may execute as container root; it does not imply host root unless the Docker socket is separately exposed.
+
 Linux runner containers mount their root filesystem read-only by default. Writable state is explicitly provided through:
 
 - a per-runner Docker volume at `/home/runner/actions-runner`;
@@ -79,7 +81,11 @@ Secret read/write/delete activity can be bridged into GSR security events withou
 
 Runner package caches default to **per-runner Docker volumes**. Repository/global cache scopes are explicit broader trust decisions and should not be used as a substitute for trust-domain isolation when workflows are mutually untrusted.
 
-Managed runners attach to a dedicated GitRun Docker network. GitRun rejects ordinary `bridge`, `host` and `container:*` network modes. The dedicated network is a stable segregation point for deployment firewall/proxy policy; it does **not** itself enforce egress filtering.
+Managed Linux runners attach to the stable, GitRun-owned bridge configured by `GITRUN_RUNNER_NETWORK`. That bridge must be created with `com.docker.network.bridge.enable_icc=false`; a network whose ICC option is missing or true is rejected before GitRun starts another Linux runner. This closes direct runner-to-runner port/DNS connectivity on the shared bridge while retaining outbound NAT and a fixed bridge identity for host firewall/proxy policy. It does **not** enforce egress filtering, and operators still need an explicit egress policy.
+
+**Existing-install migration:** older bridges may have ICC enabled. Drain the workflows, stop/remove or disconnect every runner attached to the network, then remove the now-empty managed network (default name: `gitrun-runner`). The scheduler creates it with ICC disabled on the next Linux runner creation. Do not remove a network with connected containers. GitRun deliberately fails closed rather than using an existing bridge whose isolation it cannot verify.
+
+Windows runner network isolation is a separate deployment boundary: Windows containers use a configured VM-backed Docker daemon and do not use the Linux bridge ICC option. Treat the guest VM firewall and per-VM network policy as required controls until live Windows container-to-container isolation is independently verified.
 
 Docker uses the host's configured seccomp/AppArmor policy. GitRun-specific hardened AppArmor/seccomp profiles are not yet universally shipped because their availability and compatibility are host/deployment dependent. Operators requiring stronger syscall/LSM confinement should provide and enforce suitable profiles explicitly.
 

@@ -894,6 +894,10 @@ mod linux {
         }
     }
 
+    fn exec_path_allowed_for_whitelist(path: &str, whitelist_enabled: bool) -> bool {
+        !whitelist_enabled || Path::new(path).is_absolute()
+    }
+
     fn inspect_exec(
         pid: libc::pid_t,
         policy: &CommandPolicy,
@@ -953,7 +957,7 @@ mod linux {
         // (for example ./cargo) and otherwise inherit the whitelist by basename.
         // Normal PATH lookup produces an absolute executable path, which the
         // policy separately restricts to the runner image's trusted tool roots.
-        if policy.user_whitelist.enabled && !Path::new(&path).is_absolute() {
+        if !exec_path_allowed_for_whitelist(&path, policy.user_whitelist.enabled) {
             emit_inspection_failure(
                 events_path,
                 pid,
@@ -1283,6 +1287,15 @@ mod linux {
                 0,
                 "seccomp filter did not enforce clone policy"
             );
+        }
+
+        #[test]
+        fn whitelist_requires_kernel_resolved_absolute_exec_paths() {
+            assert!(exec_path_allowed_for_whitelist("/usr/bin/cargo", true));
+            assert!(!exec_path_allowed_for_whitelist("./cargo", true));
+            assert!(!exec_path_allowed_for_whitelist("cargo", true));
+            assert!(!exec_path_allowed_for_whitelist("<execveat-empty>", true));
+            assert!(exec_path_allowed_for_whitelist("./cargo", false));
         }
 
         #[test]

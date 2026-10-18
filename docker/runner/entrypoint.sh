@@ -3,6 +3,35 @@ set -Eeuo pipefail
 
 cd /home/runner/actions-runner
 
+# This volume is mounted separately from the read-only rootfs and from the
+# runner-owned home/cache volumes. Only root may inspect or change lifecycle
+# state here; never fall back to a writable workspace/home marker.
+CONTROL_DIR=/var/lib/gitrun/control
+if [[ -L "$CONTROL_DIR" || ! -d "$CONTROL_DIR" ]]; then
+  echo "gitrun-runner: root-only control volume is missing or unsafe" >&2
+  exit 1
+fi
+chown --no-dereference root:root -- "$CONTROL_DIR"
+chmod 0700 -- "$CONTROL_DIR"
+
+DOCK_ONLY_MARKER="$CONTROL_DIR/dock-only"
+if [[ -L "$DOCK_ONLY_MARKER" ]]; then
+  echo "gitrun-runner: refusing a symlinked dock-only marker" >&2
+  exit 1
+fi
+if [[ -e "$DOCK_ONLY_MARKER" && ! -f "$DOCK_ONLY_MARKER" ]]; then
+  echo "gitrun-runner: dock-only marker is not a regular file" >&2
+  exit 1
+fi
+if [[ -f "$DOCK_ONLY_MARKER" ]]; then
+  if [[ "$(stat -c '%h' -- "$DOCK_ONLY_MARKER")" != "1" ]]; then
+    echo "gitrun-runner: dock-only marker has unexpected hard links" >&2
+    exit 1
+  fi
+  chown --no-dereference root:root -- "$DOCK_ONLY_MARKER"
+  chmod 0600 -- "$DOCK_ONLY_MARKER"
+fi
+
 : "${RUNNER_URL:?RUNNER_URL is required}"
 : "${RUNNER_NAME:?RUNNER_NAME is required}"
 
@@ -70,10 +99,8 @@ chmod 0600 "$GSR_EVENTS_FILE"
 mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 
-# GitDockRun can temporarily convert a completed runner container into a
-# dock-only resource. The marker lives in the per-runner home volume, so the
-# state survives stop/start without starting another GitHub Actions runner.
-DOCK_ONLY_MARKER=/var/lib/gitrun/dock-only
+# GitDockRun's lifecycle marker lives in the root-only persistent control
+# volume, not the read-only rootfs or a runner-writable home/cache location.
 if [[ ! -f "$DOCK_ONLY_MARKER" ]]; then
   : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
 fi

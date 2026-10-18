@@ -984,10 +984,7 @@ fn ensure_runner_network(
     // without ICC=false are rejected above rather than silently trusted.
     let mut create_args = vec!["network", "create", "--driver", "bridge"];
     if require_inter_container_isolation {
-        create_args.extend([
-            "--opt",
-            "com.docker.network.bridge.enable_icc=false",
-        ]);
+        create_args.extend(["--opt", "com.docker.network.bridge.enable_icc=false"]);
     }
     create_args.extend(["--label", "gitrun.managed=true", network]);
     run_checked_on(host, &create_args)?;
@@ -2438,52 +2435,35 @@ mod tests {
 
     #[test]
     fn runner_network_rejects_bridge_with_inter_container_connectivity() {
-        assert!(validate_runner_network_metadata(
-            "gitrun-runner",
-            "bridge|true|true",
-            true,
-        )
-        .unwrap_err()
-        .contains("enable_icc=false"));
-        assert!(validate_runner_network_metadata(
-            "gitrun-runner",
-            "bridge|true|<no value>",
-            true,
-        )
-        .is_err());
+        assert!(
+            validate_runner_network_metadata("gitrun-runner", "bridge|true|true", true,)
+                .unwrap_err()
+                .contains("enable_icc=false")
+        );
+        assert!(
+            validate_runner_network_metadata("gitrun-runner", "bridge|true|<no value>", true,)
+                .is_err()
+        );
     }
 
     #[test]
     fn runner_network_accepts_managed_bridge_with_icc_disabled() {
-        assert!(validate_runner_network_metadata(
-            "gitrun-runner",
-            "bridge|true|false",
-            true,
-        )
-        .is_ok());
-        assert!(validate_runner_network_metadata(
-            "gitrun-runner",
-            "bridge|true",
-            false,
-        )
-        .is_ok());
+        assert!(
+            validate_runner_network_metadata("gitrun-runner", "bridge|true|false", true,).is_ok()
+        );
+        assert!(validate_runner_network_metadata("gitrun-runner", "bridge|true", false,).is_ok());
     }
 
     #[test]
     fn runner_network_rejects_unmanaged_or_non_bridge_networks() {
-        assert!(validate_runner_network_metadata(
-            "gitrun-runner",
-            "bridge|false|false",
-            true,
-        )
-        .unwrap_err()
-        .contains("GitRun-managed bridge"));
-        assert!(validate_runner_network_metadata(
-            "gitrun-runner",
-            "host|true|false",
-            true,
-        )
-        .is_err());
+        assert!(
+            validate_runner_network_metadata("gitrun-runner", "bridge|false|false", true,)
+                .unwrap_err()
+                .contains("GitRun-managed bridge")
+        );
+        assert!(
+            validate_runner_network_metadata("gitrun-runner", "host|true|false", true,).is_err()
+        );
     }
 
     #[test]

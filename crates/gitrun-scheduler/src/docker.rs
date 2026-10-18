@@ -655,6 +655,15 @@ pub fn set_dock_only_marker(container: &str, enabled: bool) -> Result<()> {
     }
 
     let volume = control_volume_name(name);
+    let mount_inventory = run_checked(&[
+        "inspect",
+        "--format",
+        "{{range .Mounts}}{{if eq .Destination \"/var/lib/gitrun/control\"}}{{.Name}}|{{.RW}}{{end}}{{end}}",
+        container,
+    ])?;
+    validate_control_volume_attachment(&volume, &mount_inventory)
+        .map_err(DockerError::Command)?;
+
     let raw_mountpoint =
         run_checked(&["volume", "inspect", "--format", "{{.Mountpoint}}", &volume])?;
     let mountpoint = PathBuf::from(raw_mountpoint.trim());
@@ -699,6 +708,25 @@ pub fn set_dock_only_marker(container: &str, enabled: bool) -> Result<()> {
     }
 
     set_dock_only_marker_in_volume(&mountpoint, enabled, 0)
+}
+
+fn validate_control_volume_attachment(expected_volume: &str, mount_inventory: &str) -> std::result::Result<(), String> {
+    let Some((actual_volume, read_write)) = mount_inventory.trim().split_once('|') else {
+        return Err(
+            "container is missing the dedicated GitRun dock-only control-volume mount".into(),
+        );
+    };
+    if actual_volume != expected_volume {
+        return Err(
+            "container control-volume mount does not match its deterministic runner identity".into(),
+        );
+    }
+    if read_write != "false" {
+        return Err(
+            "container control-volume mount must be read-only so container-root code cannot forge lifecycle state".into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -2654,6 +2682,17 @@ mod tests {
         assert!(
             validate_runner_network_metadata("gitrun-runner", "host|true|false", true,).is_err()
         );
+    }
+
+    #[test]
+    fn dock_only_control_mount_must_be_exact_and_read_only() {
+        assert!(validate_control_volume_attachment("runner-control", "runner-control|false").is_ok());
+        assert!(validate_control_volume_attachment("runner-control", "").is_err());
+        assert!(validate_control_volume_attachment("runner-control", "runner-control|true")
+            .unwrap_err()
+            .contains("read-only"));
+        assert!(validate_control_volume_attachment("runner-control", "other-control|false").is_err());
+        assert!(validate_control_volume_attachment("runner-control", "runner-control").is_err());
     }
 
     #[cfg(unix)]

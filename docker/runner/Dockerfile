@@ -95,7 +95,7 @@ RUN useradd --create-home --shell /bin/bash runner \
     && chown -R root:root /opt/rustup /opt/cargo \
     && chmod -R go-w /opt/rustup /opt/cargo \
     && test -x /opt/cargo/bin/cargo \
-    && test -z "$(find /opt/cargo /opt/rustup -xdev \\( ! -user root -o -perm /022 \\) -print -quit)"
+    && test -z "$(find /opt/cargo /opt/rustup -xdev \( ! -user root -o -perm /022 \) -print -quit)"
 
 WORKDIR /home/runner/actions-runner
 

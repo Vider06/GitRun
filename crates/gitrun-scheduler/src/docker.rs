@@ -922,29 +922,47 @@ fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
     Ok(())
 }
 
-fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
+fn validate_runner_network_metadata(
+    network: &str,
+    metadata: &str,
+    require_inter_container_isolation: bool,
+) -> Result<(), String> {
+    let mut fields = metadata.trim().split('|');
+    let driver = fields.next().unwrap_or("");
+    let managed = fields.next().unwrap_or("");
+    let icc = fields.next();
+
+    if driver != "bridge" || managed != "true" {
+        return Err(format!(
+            "refusing runner network {network}: expected a GitRun-managed bridge (driver={driver}, gitrun.managed={managed})"
+        ));
+    }
+    if require_inter_container_isolation && icc != Some("false") {
+        return Err(format!(
+            "refusing runner network {network}: Linux runner bridges must set com.docker.network.bridge.enable_icc=false; drain connected runners and recreate the network before retrying"
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_runner_network(
+    host: &DockerHost,
+    network: &str,
+    require_inter_container_isolation: bool,
+) -> Result<()> {
+    let inspect_format = if require_inter_container_isolation {
+        "{{.Driver}}|{{index .Labels \"gitrun.managed\"}}|{{index .Options \"com.docker.network.bridge.enable_icc\"}}"
+    } else {
+        "{{.Driver}}|{{index .Labels \"gitrun.managed\"}}"
+    };
     let output = run_on(
         host,
-        &[
-            "network",
-            "inspect",
-            "--format",
-            "{{.Driver}}|{{index .Labels \"gitrun.managed\"}}",
-            network,
-        ],
+        &["network", "inspect", "--format", inspect_format, network],
     )?;
     if output.status.success() {
         let metadata = String::from_utf8_lossy(&output.stdout);
-        let (driver, managed) = metadata.trim().split_once('|').ok_or_else(|| {
-            DockerError::Command(format!(
-                "Docker network {network} returned malformed ownership metadata"
-            ))
-        })?;
-        if driver != "bridge" || managed != "true" {
-            return Err(DockerError::Command(format!(
-                "refusing runner network {network}: expected a GitRun-managed bridge (driver={driver}, gitrun.managed={managed})"
-            )));
-        }
+        validate_runner_network_metadata(network, &metadata, require_inter_container_isolation)
+            .map_err(DockerError::Command)?;
         return Ok(());
     }
 
@@ -959,22 +977,20 @@ fn ensure_runner_network(host: &DockerHost, network: &str) -> Result<()> {
         }));
     }
 
-    // A stable, GitRun-owned bridge network provides container-to-container
-    // separation from Docker's default bridge and gives operators one fixed
-    // network identity to attach host firewall/proxy policy to. It is not
-    // itself an egress firewall: outbound control remains deployment-specific.
-    run_checked_on(
-        host,
-        &[
-            "network",
-            "create",
-            "--driver",
-            "bridge",
-            "--label",
-            "gitrun.managed=true",
-            network,
-        ],
-    )?;
+    // Linux runner containers share this stable, GitRun-owned bridge so
+    // operators can attach one host firewall/proxy policy. Disable bridge ICC:
+    // a custom bridge alone still allows every attached runner to reach every
+    // other runner's listening ports and Docker DNS names. Existing bridges
+    // without ICC=false are rejected above rather than silently trusted.
+    let mut create_args = vec!["network", "create", "--driver", "bridge"];
+    if require_inter_container_isolation {
+        create_args.extend([
+            "--opt",
+            "com.docker.network.bridge.enable_icc=false",
+        ]);
+    }
+    create_args.extend(["--label", "gitrun.managed=true", network]);
+    run_checked_on(host, &create_args)?;
     Ok(())
 }
 
@@ -994,7 +1010,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
 
     validate_secret_env(spec.secret_env)?;
-    ensure_runner_network(host, spec.network)?;
+    ensure_runner_network(host, spec.network, !spec.is_windows)?;
     if spec.is_windows && spec.docker_socket_enabled {
         return Err(DockerError::Command(
             "Windows runner cannot enable the Linux Docker socket compatibility option".into(),
@@ -2418,6 +2434,56 @@ mod tests {
             parse_top_output(raw),
             vec!["cargo build --release", "sh -c echo hi"]
         );
+    }
+
+    #[test]
+    fn runner_network_rejects_bridge_with_inter_container_connectivity() {
+        assert!(validate_runner_network_metadata(
+            "gitrun-runner",
+            "bridge|true|true",
+            true,
+        )
+        .unwrap_err()
+        .contains("enable_icc=false"));
+        assert!(validate_runner_network_metadata(
+            "gitrun-runner",
+            "bridge|true|<no value>",
+            true,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn runner_network_accepts_managed_bridge_with_icc_disabled() {
+        assert!(validate_runner_network_metadata(
+            "gitrun-runner",
+            "bridge|true|false",
+            true,
+        )
+        .is_ok());
+        assert!(validate_runner_network_metadata(
+            "gitrun-runner",
+            "bridge|true",
+            false,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn runner_network_rejects_unmanaged_or_non_bridge_networks() {
+        assert!(validate_runner_network_metadata(
+            "gitrun-runner",
+            "bridge|false|false",
+            true,
+        )
+        .unwrap_err()
+        .contains("GitRun-managed bridge"));
+        assert!(validate_runner_network_metadata(
+            "gitrun-runner",
+            "host|true|false",
+            true,
+        )
+        .is_err());
     }
 
     #[test]

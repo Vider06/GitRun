@@ -99,7 +99,10 @@ trap - EXIT
 
 GSR_EVENTS_FILE="${GSR_POLICY_DIR}/gsr-events.jsonl"
 touch "$GSR_EVENTS_FILE"
-chown runner:runner "$GSR_EVENTS_FILE"
+# The root-owned GSR agent emits events after dropping only its runner child.
+# Never grant the untrusted job identity write access to the local audit queue:
+# it could otherwise truncate or forge the security trail.
+chown root:root "$GSR_EVENTS_FILE"
 chmod 0600 "$GSR_EVENTS_FILE"
 
 mkdir -p "$SHARED_CACHE_DIR"

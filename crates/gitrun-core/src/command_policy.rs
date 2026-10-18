@@ -114,16 +114,17 @@ pub enum Decision {
     },
 }
 
-/// Validate a GitDockRun Execute command before passing it to `sh -c`.
+/// Parse a GitDockRun Execute command into direct argv without invoking a shell.
 ///
-/// The command-policy evaluator is intentionally not a shell parser, so callers
-/// must not feed it shell programs and assume that checking the first command
-/// authorizes every command hidden behind operators, quoting, expansion, or
-/// redirection. This restricted grammar allows a single executable plus plain
-/// whitespace-separated arguments, with no shell metacharacters or control
-/// characters. Complex scripts should be checked into the workflow/repository
-/// and launched as a normal Actions step, where the GSR exec supervisor applies
-/// policy to each actual exec.
+/// The command-policy evaluator is intentionally not a shell parser. This
+/// restricted grammar accepts one bare executable name plus plain
+/// whitespace-separated arguments, with no shell metacharacters, executable
+/// paths, or control characters. Requiring a bare name prevents a whitelist
+/// entry such as `cargo` from matching a job-controlled `./cargo` executable
+/// in the writable runner directory. The container's executable search path
+/// must remain root-owned; the runner image enforces that for toolchain paths.
+/// Complex scripts should be checked into the workflow/repository and launched
+/// as normal Actions steps, where GSR supervises each actual exec.
 pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> {
     if command.trim().is_empty() {
         return Err("command must not be empty");
@@ -149,6 +150,11 @@ pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> 
         .collect();
     if argv.is_empty() {
         return Err("command must not be empty");
+    }
+    if argv[0].contains('/') || argv[0] == "." || argv[0] == ".." {
+        return Err(
+            "GitDockRun Execute requires a bare executable name; paths in the executable slot are not allowed",
+        );
     }
     Ok(argv)
 }
@@ -245,6 +251,52 @@ fn normalize_command(value: &str) -> String {
 /// its initial arguments. It must not match a phrase that appears only in a
 /// later argument (for example, a Python script whose filename contains
 /// `cargo build --release`).
+fn whitelist_executable_name(executable: &str) -> Option<&str> {
+    if executable.is_empty() {
+        return None;
+    }
+
+    // Relative execve paths are resolved from the caller's working directory,
+    // not searched through PATH. A workflow can create "./cargo" under its
+    // writable workspace; comparing only the basename would turn that file
+    // into an allowlisted executable.
+    let path = std::path::Path::new(executable);
+    if !executable.contains('/') {
+        return Some(executable);
+    }
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+
+    // These are the runner image's root-controlled executable roots. The
+    // Dockerfile must keep them non-writable by user runner; repository,
+    // workspace, home, temporary and relative paths are not whitelistable by
+    // basename. Fully qualified command paths still need to live under a
+    // trusted root so a policy cannot bless an arbitrary user-controlled file.
+    const TRUSTED_EXECUTABLE_ROOTS: &[&str] = &[
+        "/bin",
+        "/usr/bin",
+        "/usr/local/bin",
+        "/sbin",
+        "/usr/sbin",
+        "/opt/cargo/bin",
+        "/opt/rustup/toolchains",
+        "/opt/microsoft/powershell",
+    ];
+    if !TRUSTED_EXECUTABLE_ROOTS
+        .iter()
+        .any(|root| path.starts_with(root))
+    {
+        return None;
+    }
+
+    path.file_name().and_then(std::ffi::OsStr::to_str)
+}
+
 fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     let pattern = normalize_command(pattern);
     if pattern.is_empty() {
@@ -259,22 +311,18 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     // allowed word later in argv (for example, `python evil.py cargo`).
     // Wrapper commands must be explicitly allowlisted as the executable.
     if pattern_tokens.len() == 1 {
-        let token = pattern_tokens[0];
         let Some(executable) = command_tokens.first() else {
             return false;
         };
-        let executable_name = executable.rsplit('/').next().unwrap_or(executable);
-        return executable_name == token;
+        return whitelist_executable_name(executable) == Some(pattern_tokens[0]);
     }
 
     let Some(command_executable) = command_tokens.first() else {
         return false;
     };
-
-    let executable_name = command_executable
-        .rsplit('/')
-        .next()
-        .unwrap_or(command_executable);
+    let Some(executable_name) = whitelist_executable_name(command_executable) else {
+        return false;
+    };
     if executable_name != pattern_tokens[0] {
         return false;
     }
@@ -284,7 +332,8 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     // provide the conventional executable, argv[1..] form instead.
     let args_start = if command_tokens
         .get(1)
-        .is_some_and(|token| token.rsplit('/').next().unwrap_or(token) == executable_name)
+        .and_then(|token| whitelist_executable_name(token))
+        .is_some_and(|token| token == executable_name)
     {
         2
     } else {

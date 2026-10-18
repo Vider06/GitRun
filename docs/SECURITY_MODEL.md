@@ -45,6 +45,8 @@ This is not a blanket filesystem sandbox: host paths are highly sensitive, write
 
 Filesystem operations exposed by GitReadRun, GitWriteRun, GitVerifyRun, GitSaveRun and GitDockRun Read/Write execute inside the container as the unprivileged `runner` identity. Lexical path allowlists are additional validation, not a substitute for OS permissions or symlink safety. `GitInstallRun` is a separate explicitly policy-gated package-install capability that may execute as container root; it does not imply host root unless the Docker socket is separately exposed.
 
+GitDockRun's dock-only lifecycle marker is stored in a dedicated per-container control volume mounted **read-only** into the runner container. The host scheduler changes it through the Docker volume's validated host mountpoint only after confirming the exact volume is mounted read-only on the bound container. The entrypoint fails closed on a missing/writable control mount, symlink, hard-linked marker, unexpected ownership/mode or invalid marker payload. This distinction matters because container-root APIs (including an administrator-enabled package-install operation) can bypass mode 0700 on any volume mounted writable inside the container. Existing runner containers without the new control-volume mount must be recreated before they can transition into dock-only mode.
+
 Linux runner containers mount their root filesystem read-only by default. Writable state is explicitly provided through:
 
 - a per-runner Docker volume at `/home/runner/actions-runner`;

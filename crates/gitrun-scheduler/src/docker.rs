@@ -170,6 +170,14 @@ fn terminate_child(child: &mut Child) {
 }
 
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
+    run_on_with_env(host, args, &[])
+}
+
+fn run_on_with_env(
+    host: &DockerHost,
+    args: &[&str],
+    env_overrides: &[(String, String)],
+) -> Result<Output> {
     let mut command = Command::new("/usr/bin/docker");
 
     // A Docker context inherited from the scheduler environment must never
@@ -200,6 +208,13 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
                 .env("DOCKER_TLS_VERIFY", "1")
                 .env("DOCKER_CERT_PATH", cert_dir);
         }
+    }
+
+    // Secret values travel in the Docker CLI process environment, not its
+    // argv. Linux exposes argv through /proc/<pid>/cmdline to local observers
+    // authorized to inspect the process; "-e NAME" forwards by name only.
+    for (name, value) in env_overrides {
+        command.env(name, value);
     }
 
     let command_name = args.first().copied().unwrap_or("command");
@@ -276,13 +291,19 @@ fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
 }
 
 fn run_checked_on(host: &DockerHost, args: &[&str]) -> Result<String> {
-    let output = run_on(host, args)?;
+    run_checked_on_with_env(host, args, &[])
+}
+
+fn run_checked_on_with_env(
+    host: &DockerHost,
+    args: &[&str],
+    env_overrides: &[(String, String)],
+) -> Result<String> {
+    let output = run_on_with_env(host, args, env_overrides)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let command_name = args.first().copied().unwrap_or("command");
         return Err(DockerError::Command(if stderr.is_empty() {
-            // Never include the complete argument vector here: docker run
-            // arguments can contain runner registration tokens and vault secrets.
             format!("docker {command_name} failed with status {}", output.status)
         } else {
             stderr
@@ -1091,6 +1112,23 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
     create_runner_on(&DockerHost::Local, spec)
 }
 
+/// Insert only environment variable names into Docker argv and keep values
+/// for the spawned CLI's private environment. This avoids putting runner
+/// registration tokens or GitVault plaintext in /proc/<pid>/cmdline.
+fn append_env_passthrough_args(
+    args: &mut Vec<String>,
+    env_values: &[(String, String)],
+    forwarded_env: &mut Vec<(String, String)>,
+) {
+    let mut image_index = args.len().saturating_sub(1);
+    for (name, value) in env_values {
+        args.insert(image_index, "-e".into());
+        args.insert(image_index + 1, name.clone());
+        forwarded_env.push((name.clone(), value.clone()));
+        image_index += 2;
+    }
+}
+
 fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
     const RESERVED_EXACT: &[&str] = &[
         "GITRUN_API_SOCKET",
@@ -1407,11 +1445,15 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.push(format!("{name}={value}"));
     }
 
+    let mut forwarded_env = vec![(
+        "RUNNER_TOKEN".to_owned(),
+        spec.registration_token.to_owned(),
+    )];
     args.extend([
         "-e".into(),
         format!("RUNNER_URL=https://github.com/{}", spec.repo),
         "-e".into(),
-        format!("RUNNER_TOKEN={}", spec.registration_token),
+        "RUNNER_TOKEN".into(),
         "-e".into(),
         format!("RUNNER_NAME={}", spec.name),
         "-e".into(),
@@ -1424,18 +1466,12 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         "GITRUN_API_SOCKET=/run/gitrun/api.sock".into(),
         spec.image.to_owned(),
     ]);
-    // Secrets are inserted before the image argument (Docker requires -e
-    // flags to precede the image name). Names were already validated as
-    // safe env-var identifiers by the caller (see main.rs::vault_env_for_repo)
-    // before reaching this point.
-    let mut image_index = args.len() - 1;
-    for (name, value) in spec.secret_env {
-        args.insert(image_index, "-e".into());
-        args.insert(image_index + 1, format!("{name}={value}"));
-        image_index += 2;
-    }
+    // Docker accepts "-e NAME" and reads NAME from the CLI process
+    // environment. Keep registration tokens and Vault plaintext out of argv;
+    // only variable names are visible in the process listing.
+    append_env_passthrough_args(&mut args, spec.secret_env, &mut forwarded_env);
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_checked_on(host, &arg_refs)?;
+    run_checked_on_with_env(host, &arg_refs, &forwarded_env)?;
     Ok(())
 }
 
@@ -2529,6 +2565,32 @@ mod tests {
         // uuid_like_suffix is at most 36 ASCII characters; the encoded
         // prefix must leave room under Docker's 255-character name limit.
         assert!(runner_name_prefix(&maximum_repo).len() + 36 <= 255);
+    }
+
+    #[test]
+    fn docker_env_passthrough_keeps_secret_values_out_of_argv() {
+        let mut args = vec![
+            "run".to_owned(),
+            "-e".to_owned(),
+            "RUNNER_TOKEN".to_owned(),
+            "gitrun-runner:latest".to_owned(),
+        ];
+        let secrets = vec![
+            ("API_TOKEN".to_owned(), "plain-secret".to_owned()),
+            ("MULTILINE_KEY".to_owned(), "first line\nsecond line".to_owned()),
+        ];
+        let mut env = vec![("RUNNER_TOKEN".to_owned(), "registration-secret".to_owned())];
+
+        append_env_passthrough_args(&mut args, &secrets, &mut env);
+
+        assert!(args.iter().any(|arg| arg == "API_TOKEN"));
+        assert!(args.iter().any(|arg| arg == "MULTILINE_KEY"));
+        assert!(!args.iter().any(|arg| arg.contains("plain-secret")));
+        assert!(!args.iter().any(|arg| arg.contains("registration-secret")));
+        assert!(!args.iter().any(|arg| arg.contains("first line")));
+        assert_eq!(env[0], ("RUNNER_TOKEN".to_owned(), "registration-secret".to_owned()));
+        assert_eq!(env[1], ("API_TOKEN".to_owned(), "plain-secret".to_owned()));
+        assert_eq!(env[2], ("MULTILINE_KEY".to_owned(), "first line\nsecond line".to_owned()));
     }
 
     #[test]

@@ -625,6 +625,12 @@ fn home_volume_name(container_name: &str) -> String {
     format!("{container_name}-home")
 }
 
+/// Persistent, root-only lifecycle metadata. Unlike the runner-home volume,
+/// workflow code must not be able to forge or remove the dock-only marker.
+fn control_volume_name(container_name: &str) -> String {
+    format!("{container_name}-control")
+}
+
 pub fn remove_container(name: &str) -> Result<()> {
     remove_container_on(&DockerHost::Local, name)
 }
@@ -678,7 +684,7 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
     // Resolve the deterministic home-volume name before removing the container.
     // Callers may intentionally pass an immutable container ID, so deriving
     // the volume name from that ID would leak the per-runner volume.
-    let (home_volume, home_volume_resolution_error) =
+    let (home_volume, control_volume, home_volume_resolution_error) =
         match run_on(host, &["inspect", "-f", "{{.Name}}", name_or_id]) {
             Ok(output) if output.status.success() => {
                 let resolved = String::from_utf8_lossy(&output.stdout)
@@ -688,12 +694,19 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
                 if resolved.is_empty() {
                     (
                         None,
+                        None,
                         Some(format!(
                             "docker inspect returned an empty name for {name_or_id}"
                         )),
                     )
                 } else {
-                    (Some(home_volume_name(&resolved)), None)
+                    // Resolve volume names while the container still exists;
+                    // cleanup callers may have supplied an immutable container ID.
+                    (
+                        Some(home_volume_name(&resolved)),
+                        Some(control_volume_name(&resolved)),
+                        None,
+                    )
                 }
             }
             Ok(output) => {
@@ -704,11 +717,12 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
                 } else {
                     (
                         None,
+                        None,
                         Some(if stderr.is_empty() {
-                            format!("unable to resolve runner home volume for {name_or_id}")
+                            format!("unable to resolve runner/control volumes for {name_or_id}")
                         } else {
                             format!(
-                                "unable to resolve runner home volume for {name_or_id}: {stderr}"
+                                "unable to resolve runner/control volumes for {name_or_id}: {stderr}"
                             )
                         }),
                     )
@@ -716,8 +730,9 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
             }
             Err(error) => (
                 None,
+                None,
                 Some(format!(
-                    "unable to resolve runner home volume for {name_or_id}: {error}"
+                    "unable to resolve runner/control volumes for {name_or_id}: {error}"
                 )),
             ),
         };
@@ -748,6 +763,25 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
                     format!("container removed but runner home volume cleanup failed for {volume}")
                 } else {
                     format!("container removed but runner home volume cleanup failed for {volume}: {stderr}")
+                }));
+            }
+        }
+    }
+
+    // The dock-only marker lives on its own root-only persistent volume, not
+    // in the read-only container rootfs or the runner-owned home volume.
+    // Remove it with the container's home volume so marker state can't leak
+    // into a later container that reuses the deterministic name.
+    if let Some(volume) = control_volume {
+        let output = run_on(host, &["volume", "rm", "-f", &volume])?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let normalized = stderr.to_ascii_lowercase();
+            if !(normalized.contains("no such volume") || normalized.contains("volume not found")) {
+                return Err(DockerError::Command(if stderr.is_empty() {
+                    format!("container removed but control volume cleanup failed for {volume}")
+                } else {
+                    format!("container removed but control volume cleanup failed for {volume}: {stderr}")
                 }));
             }
         }
@@ -1126,6 +1160,14 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             format!(
                 "type=volume,source={},target=/var/lib/gitrun/shared",
                 cache_volume
+            ),
+            // A dedicated volume persists root-owned lifecycle markers across
+            // stop/start while the container rootfs remains read-only. The
+            // runner cannot access its 0700 directory or forge dock-only state.
+            "--mount".into(),
+            format!(
+                "type=volume,source={},target=/var/lib/gitrun/control",
+                control_volume_name(spec.name)
             ),
             // The API service lives on the host. The runner gets only this
             // Unix socket file, never the host API process or a workflow token.
@@ -2463,6 +2505,15 @@ mod tests {
         );
         assert!(
             validate_runner_network_metadata("gitrun-runner", "host|true|false", true,).is_err()
+        );
+    }
+
+    #[test]
+    fn control_volume_name_is_deterministic_and_separate_from_runner_home() {
+        assert_eq!(control_volume_name("runner-abc"), "runner-abc-control");
+        assert_ne!(
+            control_volume_name("runner-abc"),
+            home_volume_name("runner-abc")
         );
     }
 

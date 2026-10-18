@@ -767,7 +767,7 @@ fn set_dock_only_marker_in_volume(
             .create_new(true)
             .mode(0o600)
             .open(&temporary)?;
-        file.write_all(b"GitRun dock-only v1\\n")?;
+        file.write_all(b"GitRun dock-only v1\n")?;
         file.sync_all()?;
         std::fs::rename(&temporary, &marker)?;
         std::fs::File::open(control_dir)?.sync_all()?;

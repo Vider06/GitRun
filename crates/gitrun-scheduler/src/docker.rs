@@ -2659,7 +2659,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dock_only_marker_is_atomically_written_and_removed_from_control_volume() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2689,7 +2689,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dock_only_marker_rejects_symlink_and_hardlink_entries() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

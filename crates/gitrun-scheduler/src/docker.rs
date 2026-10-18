@@ -1722,7 +1722,31 @@ fn exec_container_as(container: &str, user: Option<&str>, args: &[&str]) -> Resu
 
 /// Executes a command in a managed container and writes a bounded payload to
 /// its stdin. Used by controlled GitWriteRun operations.
-pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -> Result<Output> {
+pub fn exec_container_with_stdin(
+    container: &str,
+    args: &[&str],
+    input: &[u8],
+) -> Result<Output> {
+    exec_container_with_stdin_as(container, None, args, input)
+}
+
+/// Writes a bounded payload into a container as the unprivileged Actions runner
+/// account. User-controlled paths must never gain container-root access simply
+/// because the host scheduler performs the Docker API call.
+pub fn exec_container_with_stdin_as_runner(
+    container: &str,
+    args: &[&str],
+    input: &[u8],
+) -> Result<Output> {
+    exec_container_with_stdin_as(container, Some("runner"), args, input)
+}
+
+fn exec_container_with_stdin_as(
+    container: &str,
+    user: Option<&str>,
+    args: &[&str],
+    input: &[u8],
+) -> Result<Output> {
     if input.len() > 16 * 1024 * 1024 {
         return Err(DockerError::Command(
             "container stdin payload exceeds the 16 MiB safety limit".into(),
@@ -1737,6 +1761,7 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
         .env("DOCKER_HOST", "unix:///var/run/docker.sock")
         .arg("exec")
         .arg("-i")
+        .args(exec_user_arguments(user))
         .arg(container)
         .args(args)
         .stdin(Stdio::piped())

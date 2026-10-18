@@ -91,7 +91,9 @@ RUN rustc --version \
 
 RUN useradd --create-home --shell /bin/bash runner \
     && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared \
-    && chown -R runner:runner /home/runner /var/lib/gitrun/shared /opt/rustup /opt/cargo
+    && chown -R runner:runner /home/runner /var/lib/gitrun/shared \
+    && chown -R root:root /opt/rustup /opt/cargo \
+    && chmod -R go-w /opt/rustup /opt/cargo
 
 WORKDIR /home/runner/actions-runner
 

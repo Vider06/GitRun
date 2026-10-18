@@ -684,60 +684,58 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
     // Resolve deterministic home/control volume names before removing the container.
     // Callers may pass an immutable container ID, so deriving volume names
     // from that ID would leak per-runner state.
-    let (home_volume, control_volume, home_volume_resolution_error) = match run_on(
-        host,
-        &["inspect", "-f", "{{.Name}}", name_or_id],
-    ) {
-        Ok(output) if output.status.success() => {
-            let resolved = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .trim_start_matches('/')
-                .to_owned();
-            if resolved.is_empty() {
-                (
-                    None,
-                    None,
-                    Some(format!(
-                        "docker inspect returned an empty name for {name_or_id}"
-                    )),
-                )
-            } else {
-                // Resolve volume names while the container still exists;
-                // cleanup callers may have supplied an immutable container ID.
-                (
-                    Some(home_volume_name(&resolved)),
-                    Some(control_volume_name(&resolved)),
-                    None,
-                )
+    let (home_volume, control_volume, home_volume_resolution_error) =
+        match run_on(host, &["inspect", "-f", "{{.Name}}", name_or_id]) {
+            Ok(output) if output.status.success() => {
+                let resolved = String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .trim_start_matches('/')
+                    .to_owned();
+                if resolved.is_empty() {
+                    (
+                        None,
+                        None,
+                        Some(format!(
+                            "docker inspect returned an empty name for {name_or_id}"
+                        )),
+                    )
+                } else {
+                    // Resolve volume names while the container still exists;
+                    // cleanup callers may have supplied an immutable container ID.
+                    (
+                        Some(home_volume_name(&resolved)),
+                        Some(control_volume_name(&resolved)),
+                        None,
+                    )
+                }
             }
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            if is_missing_container_error(&stderr) {
-                // Another cleanup worker may already have removed it.
-                (None, None, None)
-            } else {
-                (
-                    None,
-                    None,
-                    Some(if stderr.is_empty() {
-                        format!("unable to resolve runner/control volumes for {name_or_id}")
-                    } else {
-                        format!(
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                if is_missing_container_error(&stderr) {
+                    // Another cleanup worker may already have removed it.
+                    (None, None, None)
+                } else {
+                    (
+                        None,
+                        None,
+                        Some(if stderr.is_empty() {
+                            format!("unable to resolve runner/control volumes for {name_or_id}")
+                        } else {
+                            format!(
                             "unable to resolve runner/control volumes for {name_or_id}: {stderr}"
                         )
-                    }),
-                )
+                        }),
+                    )
+                }
             }
-        }
-        Err(error) => (
-            None,
-            None,
-            Some(format!(
-                "unable to resolve runner/control volumes for {name_or_id}: {error}"
-            )),
-        ),
-    };
+            Err(error) => (
+                None,
+                None,
+                Some(format!(
+                    "unable to resolve runner/control volumes for {name_or_id}: {error}"
+                )),
+            ),
+        };
 
     let output = run_on(host, &["rm", "-f", "-v", name_or_id])?;
     if !output.status.success() {

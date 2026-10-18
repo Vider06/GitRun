@@ -93,7 +93,9 @@ RUN useradd --create-home --shell /bin/bash runner \
     && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared \
     && chown -R runner:runner /home/runner /var/lib/gitrun/shared \
     && chown -R root:root /opt/rustup /opt/cargo \
-    && chmod -R go-w /opt/rustup /opt/cargo
+    && chmod -R go-w /opt/rustup /opt/cargo \
+    && test -x /opt/cargo/bin/cargo \
+    && test -z "$(find /opt/cargo /opt/rustup -xdev \\( ! -user root -o -perm /022 \\) -print -quit)"
 
 WORKDIR /home/runner/actions-runner
 

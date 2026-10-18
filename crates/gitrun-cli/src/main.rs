@@ -2653,7 +2653,10 @@ fn read_privileged_user_payload(
     const MAX_PAYLOAD_BYTES: u64 = 1024 * 1024;
     let before = std::fs::symlink_metadata(input_path)?;
     if before.file_type().is_symlink() || !before.is_file() || before.nlink() != 1 {
-        return Err(format!("{label} payload must be a regular file without symlinks or hard links").into());
+        return Err(format!(
+            "{label} payload must be a regular file without symlinks or hard links"
+        )
+        .into());
     }
     if before.uid() != requester_uid {
         return Err(format!("{label} payload is not owned by the requesting user").into());

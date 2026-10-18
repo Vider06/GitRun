@@ -681,9 +681,9 @@ pub fn rename_container(from: &str, to: &str) -> Result<()> {
 }
 
 pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
-    // Resolve the deterministic home-volume name before removing the container.
-    // Callers may intentionally pass an immutable container ID, so deriving
-    // the volume name from that ID would leak the per-runner volume.
+    // Resolve deterministic home/control volume names before removing the container.
+    // Callers may pass an immutable container ID, so deriving volume names
+    // from that ID would leak per-runner state.
     let (home_volume, control_volume, home_volume_resolution_error) = match run_on(
         host,
         &["inspect", "-f", "{{.Name}}", name_or_id],
@@ -715,7 +715,7 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             if is_missing_container_error(&stderr) {
                 // Another cleanup worker may already have removed it.
-                (None, None)
+                (None, None, None)
             } else {
                 (
                     None,

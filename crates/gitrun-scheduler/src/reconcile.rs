@@ -1216,11 +1216,11 @@ mod tests {
         assert_eq!(prewarms.len(), 2);
         assert!(actions.len() <= input.max_runners as usize);
         assert!(prewarms.iter().all(|(code, target, hold, name, labels)| {
-            code == &"wk-0123456789abcdef"
+            code.as_str() == "wk-0123456789abcdef"
                 && *target == 7_200
                 && *hold == 8_100
-                && name == &"build-linux"
-                && labels == &vec!["self-hosted".to_owned(), "linux".to_owned()]
+                && name.as_str() == "build-linux"
+                && labels.iter().map(String::as_str).eq(["self-hosted", "linux"])
         }));
         assert!(!actions.iter().any(|action| matches!(action, Action::RemoveIdle { .. })));
     }

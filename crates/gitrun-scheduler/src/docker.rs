@@ -2937,6 +2937,9 @@ mod tests {
     fn docker_cgroup_parser_extracts_only_full_container_id() {
         let id = "0123456789abcdef".repeat(4);
         let cgroup = format!("0::/system.slice/docker-{id}.scope");
-        assert_eq!(container_id_from_cgroup(&cgroup).as_deref(), Some(id.as_str()));
+        assert_eq!(
+            container_id_from_cgroup(&cgroup).as_deref(),
+            Some(id.as_str())
+        );
     }
 }

@@ -2558,32 +2558,32 @@ fn compute_forecast(
         let seasonal_slot = weekday_hour_slot(seasonal_target_epoch);
         let seasonal_stats = seasonal_slot_stats(model, seasonal_slot, now_epoch);
         let seasonal_occurrences = seasonal_stats.occurrences;
-        if seasonal_occurrences >= MIN_SEASONAL_OCCURRENCES
-            && seasonal_stats.weighted_samples > 0.0
+        if seasonal_occurrences >= MIN_SEASONAL_OCCURRENCES && seasonal_stats.weighted_samples > 0.0
         {
-        let seasonal_mean = seasonal_stats.weighted_demand_sum / seasonal_stats.weighted_samples;
-        let schedule_correction = model
-            .predictions
-            .iter()
-            .filter(|record| {
-                record.horizon_seconds == settings.warm_pool_lead_seconds
-                    && record.actual_demand.is_some()
-                    && !record.skipped_missing_observation
-            })
-            .rev()
-            .take(48)
-            .filter_map(|record| {
-                record
-                    .actual_demand
-                    .map(|actual| f64::from(actual) - f64::from(record.predicted_demand))
-            })
-            .collect::<Vec<_>>();
-        let seasonal_bias_correction =
-            (schedule_correction.len() >= 4).then(|| mean(&schedule_correction));
-        let corrected = (seasonal_mean + seasonal_bias_correction.unwrap_or(0.0))
-            .max(0.0)
-            .ceil()
-            .min(u32::MAX as f64) as u32;
+            let seasonal_mean =
+                seasonal_stats.weighted_demand_sum / seasonal_stats.weighted_samples;
+            let schedule_correction = model
+                .predictions
+                .iter()
+                .filter(|record| {
+                    record.horizon_seconds == settings.warm_pool_lead_seconds
+                        && record.actual_demand.is_some()
+                        && !record.skipped_missing_observation
+                })
+                .rev()
+                .take(48)
+                .filter_map(|record| {
+                    record
+                        .actual_demand
+                        .map(|actual| f64::from(actual) - f64::from(record.predicted_demand))
+                })
+                .collect::<Vec<_>>();
+            let seasonal_bias_correction =
+                (schedule_correction.len() >= 4).then(|| mean(&schedule_correction));
+            let corrected = (seasonal_mean + seasonal_bias_correction.unwrap_or(0.0))
+                .max(0.0)
+                .ceil()
+                .min(u32::MAX as f64) as u32;
             Some((corrected, seasonal_bias_correction))
         } else {
             None

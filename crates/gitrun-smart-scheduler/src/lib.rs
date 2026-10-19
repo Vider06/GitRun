@@ -3122,7 +3122,6 @@ fn record_started_job_occurrences_with_coverage(
             existing.observed_at_epoch = observed_at_epoch;
             existing.occurrence_code = occurrence_code.clone();
             existing.counted_prediction_target_epoch = None;
-            changed = true;
         }
 
         let profile_exists_before = model
@@ -3213,7 +3212,6 @@ fn record_started_job_occurrences_with_coverage(
                     && started_at_epoch < record.target_epoch.saturating_add(3_600)
             }) {
             prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
-            changed = true;
             Some(prediction.target_epoch)
         } else {
             None
@@ -3439,7 +3437,7 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                         .to_owned(),
                     hour: (index % 24) as u8,
                     observed_occurrences: slot.0,
-                    distinct_weeks: slot.3,
+                    distinct_weeks: u64::from(slot.3),
                 })
                 .collect();
             recurring_slots.sort_by_key(|slot| {

@@ -280,7 +280,7 @@ fn run_embedded_privileged_helper(
         std::env::temp_dir().join(format!("{prefix}-{}-{nonce}.sh", std::process::id()));
 
     let result = (|| -> Result<i32, Box<dyn std::error::Error>> {
-        let mut file = std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o700)

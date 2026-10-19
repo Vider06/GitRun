@@ -715,6 +715,10 @@ fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
         || repo_hash
             .bytes()
             .any(|byte| !(byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+        || sequence.len() != 16
+        || sequence
+            .bytes()
+            .any(|byte| !(byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
     {
         return None;
     }
@@ -3577,6 +3581,7 @@ fn compute_forecast(
                 })
                 .rev()
                 .take(48)
+                .filter(|record| weekday_hour_slot(record.target_bucket) == seasonal_slot)
                 .filter_map(|record| {
                     record
                         .actual_demand
@@ -3646,11 +3651,16 @@ fn compute_forecast(
                 && record.horizon_seconds == settings.warm_pool_lead_seconds
                 && record.actual_demand.is_some()
                 && !record.skipped_missing_observation
+                && seasonal_target_epoch > 0
+                && weekday_hour_slot(record.target_bucket) == weekday_hour_slot(seasonal_target_epoch)
         })
         .rev()
         .take(48)
         .collect();
-    let seasonal_quality_score = if seasonal_evaluated.len() >= 24 {
+    // A weekday/hour slot recurs once per week. Require at least four matching
+    // historical targets rather than validating one seasonal slot with outcomes
+    // from unrelated hours and days.
+    let seasonal_quality_score = if seasonal_evaluated.len() >= MIN_SEASONAL_OCCURRENCES as usize {
         let errors: Vec<f64> = seasonal_evaluated
             .iter()
             .filter_map(|record| {
@@ -3666,7 +3676,9 @@ fn compute_forecast(
                 .collect::<Vec<_>>(),
         );
         let accuracy = (1.0 - mean(&errors) / actual_mean.max(1.0)).clamp(0.0, 1.0);
-        let evaluation_factor = (seasonal_evaluated.len() as f64 / 48.0).clamp(0.0, 1.0);
+        let evaluation_factor = (seasonal_evaluated.len() as f64
+            / MIN_SEASONAL_OCCURRENCES.max(4.0))
+            .clamp(0.0, 1.0);
         Some((sample_factor * evaluation_factor * accuracy * freshness_factor).clamp(0.0, 1.0))
     } else {
         None
@@ -4966,6 +4978,17 @@ mod tests {
         assert!(conflicting
             .validate_for("owner/repo", MAX_HISTORY_BUCKETS)
             .is_err());
+    }
+
+    #[test]
+    fn gitrun_job_id_parser_rejects_noncanonical_sequence_encodings() {
+        let valid = generate_occurrence_id("owner/repo", 1).unwrap();
+        assert!(valid_generated_gitrun_job_id_for_repository(&valid, "owner/repo"));
+        let hash = repository_identity_hash("owner/repo").unwrap();
+        assert!(generated_gitrun_job_sequence(&format!("grj-{hash}-1")).is_none());
+        assert!(generated_gitrun_job_sequence(&format!("grj-{hash}-000000000000000A")).is_none());
+        assert!(generated_gitrun_job_sequence(&format!("grj-{hash}-0000000000000000")).is_none());
+        assert!(generated_gitrun_job_sequence(&format!("grj-{hash}-0000000000000001")).is_some());
     }
 
     #[test]

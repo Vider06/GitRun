@@ -707,9 +707,7 @@ mod tests {
         input.min_runners = 0;
         input.max_runners = 3;
         input.queued_jobs = 1;
-        input.queued_job_labels = vec![vec![
-            "gitrun-job-wk-0123456789abcdef".into(),
-        ]];
+        input.queued_job_labels = vec![vec!["gitrun-job-wk-0123456789abcdef".into()]];
         input.queued_job_names = vec!["build".into()];
         input.queued_job_run_ids = vec![42];
         input.queued_job_ids = vec![420];

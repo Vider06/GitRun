@@ -2691,9 +2691,7 @@ pub fn generate_workload_id(
     {
         return None;
     }
-    if has_workload_routing_marker(labels)
-        && workload_id_from_routing_labels(labels).is_none()
-    {
+    if has_workload_routing_marker(labels) && workload_id_from_routing_labels(labels).is_none() {
         return None;
     }
     let mut labels: Vec<String> = labels

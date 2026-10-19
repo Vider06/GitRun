@@ -1099,9 +1099,7 @@ impl GitHubClient {
                 parsed
                     .jobs
                     .into_iter()
-                    .filter(|job| {
-                        job.status == "queued" && job_targets_gitrun_runner(&job.labels)
-                    })
+                    .filter(|job| job.status == "queued" && job_targets_gitrun_runner(&job.labels))
                     .map(|job| QueuedJobInfo {
                         run_id,
                         job_id: job.id,

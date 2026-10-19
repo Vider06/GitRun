@@ -4070,6 +4070,8 @@ mod tests {
                         labels: vec!["self-hosted".into(), "linux".into()],
                         started_at_epoch: Some(1_800),
                     }],
+                    started_job_history_complete: false,
+                    poll_interval_seconds: BUCKET_SECONDS,
                     queued_jobs: 2,
                     busy_runners: 1,
                     online_runners: 2,

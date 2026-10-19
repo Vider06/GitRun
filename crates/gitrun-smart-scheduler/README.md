@@ -10,7 +10,7 @@ Kitty is an optional, deterministic-statistics add-on to GitRun. It is not an LL
 - Shadow mode by default; predictive capacity changes require shadow mode to be explicitly disabled, sufficient fresh history, and forecast quality at or above the configured threshold.
 - Unsafe paths, symlinks, hard links, unexpected owner, corrupt settings/model, excessive file size, missing data, stale observations, and persistence errors fail closed to the deterministic runner floor.
 
-Kitty has no GitHub client, Docker access, shell execution, API authorization authority, GSR bypass, or Vault access. It does not collect workflow contents, job payloads, secret values, tokens, environment values, commands, or job names. Host-wide resource readings are explicitly not represented as per-job resource attribution.
+Kitty has no GitHub client, Docker access, shell execution, API authorization authority, GSR bypass, or Vault access. It does not persist workflow contents, job payloads, secret values, tokens, environment values, or command strings. For recurring-workload identification it does store bounded workflow paths, job names, runner labels, and GitHub run/job IDs for correlation and deduplication. These are operator-visible metadata, not workflow payloads; model files remain private to the scheduler service, while the dashboard status snapshot exposes bounded recent occurrences and workload profiles. Host-wide resource readings are explicitly not represented as per-job resource attribution.
 
 Adaptive Resource Management and Smart Fast Stop triggers are schema-visible reserved capabilities, not active automation. They must remain disabled until GitRun has reliable per-job resource attribution and active-job duration/cancellation outcome evidence.
 
@@ -39,7 +39,7 @@ Example:
 
 Changing enabled to true permits Kitty telemetry and forecasts; it does not enable capacity automation. Leave shadow_mode true while comparing predictions with observed demand. To opt into predictive warm-pool changes, separately set predictive_warm_pool_enabled true, explicitly set shadow_mode false, and choose the smallest acceptable max_additional_warm_runners. The existing global maximum and resource-pressure backpressure remain authoritative.
 
-The model files model-<repository-hash>.json are stored in the same private directory. Each model retains at most seven days of five-minute samples, at most 2016 prediction outcomes, and 128 audit decisions. At most 64 repository models are loaded by a process. No telemetry or model is persisted while Kitty is disabled.
+The model files model-<repository-hash>.json are stored in the same private directory. Each model retains up to 2016 five-minute observations (seven days), 256 aggregate forecast outcomes, 256 per-workload prediction records, 256 recent job occurrences, 64 decision-audit records, and bounded weekly/four-week/48-week/lifetime summaries. The retention tiers are fixed-duration windows: four weeks form a compact month and 48 weeks form a compact year, as designed for bounded compaction rather than calendar-month arithmetic. At most 64 repository models are loaded by a process. No new telemetry or model history is persisted while Kitty is disabled. The current recent-job-start sampler intentionally has bounded run coverage; incomplete history is not treated as proof of zero starts, so workload-level error correction may remain unavailable until complete coverage is wired in.
 
 ## Forecast limitations
 

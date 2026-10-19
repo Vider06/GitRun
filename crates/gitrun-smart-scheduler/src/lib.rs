@@ -1110,7 +1110,7 @@ impl KittyRuntime {
             None
         };
 
-        let workload_prewarms = if self.settings.predictive_warm_pool_enabled
+        let mut workload_prewarms = if self.settings.predictive_warm_pool_enabled
             && forecast.is_some_and(|f| {
                 f.confidence_score >= self.settings.minimum_quality_score
                     && sample_count >= self.settings.minimum_samples
@@ -1119,6 +1119,35 @@ impl KittyRuntime {
         } else {
             Vec::new()
         };
+
+        // Never prewarm a workload type when a matching job is already queued;
+        // that job is handled by the ordinary planner's live queue path.
+        workload_prewarms.retain(|target| {
+            !input.job_occurrences.iter().any(|job| {
+                valid_queued_job(job)
+                    && workload_fingerprint(job) == target.workload_code
+            })
+        });
+
+        // Record one forecast per (workload, target hour). Repeated scheduler
+        // polls must not inflate the self-correction sample count.
+        for target in &workload_prewarms {
+            let exists = model.workload_predictions.iter().any(|record| {
+                record.workload_code == target.workload_code
+                    && record.target_epoch == target.target_epoch
+            });
+            if !exists && model.workload_predictions.len() < MAX_WORKLOAD_PREDICTIONS {
+                model.workload_predictions.push(WorkloadPredictionRecord {
+                    workload_code: target.workload_code.clone(),
+                    issued_at_bucket: bucket,
+                    target_epoch: target.target_epoch,
+                    predicted_occurrences: target.runner_count,
+                    observed_occurrences: 0,
+                    actual_occurrences: None,
+                });
+                self.dirty_models.insert(key.clone());
+            }
+        }
         let capability_note = if self.settings.adaptive_resource_management_enabled {
             " Adaptive Resource Management is reserved and is not executed in this version."
         } else {
@@ -2408,7 +2437,7 @@ fn record_queued_job_occurrences(
         for prediction in &mut model.workload_predictions {
             if prediction.workload_code == workload_code
                 && prediction.actual_occurrences.is_none()
-                && observed_at_epoch >= prediction.target_epoch
+                && observed_at_epoch >= prediction.issued_at_bucket
                 && observed_at_epoch < prediction.target_epoch.saturating_add(3_600)
             {
                 prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
@@ -2496,11 +2525,20 @@ fn forecast_workload_prewarms(
             if distinct_weeks < MIN_SEASONAL_OCCURRENCES as u64 || slot.0 == 0 {
                 return None;
             }
-            let occurrences_per_week = slot.0 as f64 / distinct_weeks as f64;
-            if !occurrences_per_week.is_finite() || occurrences_per_week <= 0.0 {
+            let historical_occurrences_per_week = slot.0 as f64 / distinct_weeks as f64;
+            if !historical_occurrences_per_week.is_finite()
+                || historical_occurrences_per_week <= 0.0
+            {
                 return None;
             }
-            let runner_count = occurrences_per_week
+            // Self-correction uses the mean residual from the last 48 evaluated
+            // predictions for this exact workload. Ignore sparse corrections.
+            let corrected_occurrences = historical_occurrences_per_week
+                + workload_prediction_bias(model, &pattern.workload_code).unwrap_or(0.0);
+            if !corrected_occurrences.is_finite() || corrected_occurrences <= 0.0 {
+                return None;
+            }
+            let runner_count = corrected_occurrences
                 .ceil()
                 .clamp(1.0, f64::from(settings.max_additional_warm_runners))
                 as u32;
@@ -2514,7 +2552,7 @@ fn forecast_workload_prewarms(
                 hold_until_epoch: target_epoch.saturating_add(settings.warm_pool_min_hold_seconds),
                 runner_count,
                 observed_distinct_weeks: distinct_weeks,
-                historical_occurrences_per_week: occurrences_per_week,
+                historical_occurrences_per_week: corrected_occurrences,
             })
         })
         .collect();

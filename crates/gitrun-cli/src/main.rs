@@ -280,7 +280,7 @@ fn run_embedded_privileged_helper(
         std::env::temp_dir().join(format!("{prefix}-{}-{nonce}.sh", std::process::id()));
 
     let result = (|| -> Result<i32, Box<dyn std::error::Error>> {
-        let file = std::fs::OpenOptions::new()
+        let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o700)
@@ -2672,7 +2672,7 @@ fn read_privileged_user_payload(
     // such as /tmp, a same-UID process can still race a path-based read by
     // unlinking/replacing the payload after lstat; fstat must match the checked
     // inode, and subsequent parsing reads only from this already-open handle.
-    let mut file = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(input_path)?;

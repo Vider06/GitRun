@@ -25,6 +25,9 @@ const MAX_MODEL_BYTES: u64 = 1024 * 1024;
 const MAX_HISTORY_BUCKETS: usize = 2016; // Seven days, sampled every five minutes.
 const MAX_MODELS: usize = 64;
 const MAX_DASHBOARD_REPOSITORIES: usize = 64;
+const MAX_JOB_PATTERNS: usize = 24;
+const MAX_JOB_OCCURRENCES: usize = 512;
+const MAX_DASHBOARD_JOB_OCCURRENCES: usize = 32;
 const MAX_AUDIT_RECORDS: usize = 128;
 const MAX_EVALUATED_FORECASTS: usize = 4032;
 const FORECAST_HORIZON_SECONDS: u64 = 3600;
@@ -340,6 +343,61 @@ pub struct PredictionRecord {
     pub skipped_missing_observation: bool,
 }
 
+/// Bounded, metadata-only identity of one queued GitHub Actions job.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QueuedJobOccurrence {
+    pub run_id: u64,
+    pub job_id: u64,
+    pub workflow_id: u64,
+    pub workflow_path: String,
+    pub name: String,
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkloadPattern {
+    pub workload_code: String,
+    pub workflow_id: u64,
+    pub workflow_path: String,
+    pub job_name: String,
+    pub labels: Vec<String>,
+    pub first_seen_epoch: u64,
+    pub last_seen_epoch: u64,
+    pub occurrence_count: u64,
+    pub slots: Vec<TemporalDemandSlot>,
+    pub slot_last_week: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecentJobOccurrence {
+    pub occurrence_code: String,
+    pub workload_code: String,
+    pub run_id: u64,
+    pub job_id: u64,
+    pub observed_at_epoch: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkloadSlotSummary {
+    pub weekday: String,
+    pub hour: u8,
+    pub observed_occurrences: u64,
+    pub distinct_weeks: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkloadPatternStatus {
+    pub workload_code: String,
+    pub workflow_id: u64,
+    pub workflow_path: String,
+    pub job_name: String,
+    pub labels: Vec<String>,
+    pub occurrence_count: u64,
+    pub first_seen_epoch: u64,
+    pub last_seen_epoch: u64,
+    pub recurring_slots: Vec<WorkloadSlotSummary>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DecisionAudit {
     pub bucket_epoch: u64,
@@ -380,6 +438,10 @@ pub struct WorkflowModel {
     pub repository: String,
     pub generated_at_epoch: u64,
     pub history: Vec<Observation>,
+    #[serde(default)]
+    pub workload_patterns: Vec<WorkloadPattern>,
+    #[serde(default)]
+    pub recent_job_occurrences: Vec<RecentJobOccurrence>,
     /// Bounded four-week view after raw five-minute samples expire.
     #[serde(default)]
     pub weekly_summaries: Vec<PeriodSummary>,
@@ -405,6 +467,8 @@ impl WorkflowModel {
             repository: repository.to_owned(),
             generated_at_epoch: 0,
             history: Vec::new(),
+            workload_patterns: Vec::new(),
+            recent_job_occurrences: Vec::new(),
             weekly_summaries: Vec::new(),
             monthly_summaries: Vec::new(),
             yearly_summaries: Vec::new(),
@@ -431,6 +495,8 @@ impl WorkflowModel {
             ));
         }
         if self.history.len() > history_limit
+            || self.workload_patterns.len() > MAX_JOB_PATTERNS
+            || self.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES
             || self.weekly_summaries.len() > MAX_WEEKLY_SUMMARIES
             || self.monthly_summaries.len() > MAX_MONTHLY_SUMMARIES
             || self.yearly_summaries.len() > MAX_YEARLY_SUMMARIES
@@ -440,6 +506,41 @@ impl WorkflowModel {
             return Err(KittyError::Invalid(
                 "stored model exceeds its bounded history limits".into(),
             ));
+        }
+        let mut workload_codes = HashSet::new();
+        for pattern in &self.workload_patterns {
+            if pattern.workload_code.len() != 19
+                || !pattern.workload_code.starts_with("wk-")
+                || pattern.slots.len() != TEMPORAL_SLOT_COUNT
+                || pattern.slot_last_week.len() != TEMPORAL_SLOT_COUNT
+                || pattern.job_name.is_empty()
+                || pattern.job_name.len() > 256
+                || pattern.workflow_path.len() > 512
+                || pattern.labels.len() > 32
+                || pattern.first_seen_epoch > pattern.last_seen_epoch
+                || pattern.occurrence_count == 0
+                || pattern.labels.iter().any(|label| label.len() > 128)
+                || !workload_codes.insert(pattern.workload_code.as_str())
+            {
+                return Err(KittyError::Invalid(
+                    "stored workload pattern is malformed or exceeds bounds".into(),
+                ));
+            }
+        }
+        let mut occurrence_codes = HashSet::new();
+        for occurrence in &self.recent_job_occurrences {
+            if occurrence.run_id == 0
+                || occurrence.job_id == 0
+                || occurrence.occurrence_code
+                    != format!("run-{}-job-{}", occurrence.run_id, occurrence.job_id)
+                || occurrence.workload_code.len() != 19
+                || !workload_codes.contains(occurrence.workload_code.as_str())
+                || !occurrence_codes.insert(occurrence.occurrence_code.as_str())
+            {
+                return Err(KittyError::Invalid(
+                    "stored job occurrence has an invalid identity or workload reference".into(),
+                ));
+            }
         }
         for (summaries, period_seconds) in [
             (&self.weekly_summaries, WEEK_SECONDS),
@@ -587,6 +688,8 @@ impl KittyDecision {
 pub struct ObservationInput {
     pub repository: String,
     pub observed_at_epoch: u64,
+    /// Bounded run/job identity metadata from GitHub's queue API.
+    pub job_occurrences: Vec<QueuedJobOccurrence>,
     pub queued_jobs: u32,
     pub busy_runners: u32,
     pub online_runners: u32,
@@ -748,6 +851,9 @@ impl KittyRuntime {
         let model = self.models.get_mut(&key).ok_or_else(|| {
             KittyError::Invalid("model disappeared during a single-threaded update".into())
         })?;
+        if record_queued_job_occurrences(model, &input.job_occurrences, input.observed_at_epoch) {
+            self.dirty_models.insert(key.clone());
+        }
         if compact_model_history(
             model,
             input.observed_at_epoch,
@@ -1274,6 +1380,14 @@ impl KittyRuntime {
                 latest_observation_epoch: model.history.last().map(|entry| entry.bucket_epoch),
                 latest_forecast: model.latest_forecast.clone(),
                 latest_decision: model.decision_audit.last().cloned(),
+                workload_patterns: workload_pattern_status(model),
+                recent_job_occurrences: model
+                    .recent_job_occurrences
+                    .iter()
+                    .rev()
+                    .take(MAX_DASHBOARD_JOB_OCCURRENCES)
+                    .cloned()
+                    .collect(),
             })
             .collect();
         repositories.sort_by(|left, right| left.repository.cmp(&right.repository));
@@ -1928,6 +2042,198 @@ fn seasonal_slot_stats(
     stats
 }
 
+fn workload_fingerprint(job: &QueuedJobOccurrence) -> String {
+    let mut labels: Vec<String> = job
+        .labels
+        .iter()
+        .map(|label| label.trim().to_ascii_lowercase())
+        .collect();
+    labels.sort();
+    labels.dedup();
+    let canonical = format!(
+        "{}|{}|{}|{}",
+        job.workflow_id,
+        job.workflow_path.trim().to_ascii_lowercase(),
+        job.name.trim().to_ascii_lowercase(),
+        labels.join(",")
+    );
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in canonical.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("wk-{hash:016x}")
+}
+
+fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
+    job.run_id > 0
+        && job.job_id > 0
+        && !job.name.trim().is_empty()
+        && job.name.len() <= 256
+        && job.workflow_path.len() <= 512
+        && job.labels.len() <= 32
+        && !job.name.chars().any(char::is_control)
+        && !job.workflow_path.chars().any(char::is_control)
+        && job.labels.iter().all(|label| {
+            !label.is_empty()
+                && label.len() <= 128
+                && !label.chars().any(char::is_control)
+        })
+}
+
+fn record_queued_job_occurrences(
+    model: &mut WorkflowModel,
+    jobs: &[QueuedJobOccurrence],
+    observed_at_epoch: u64,
+) -> bool {
+    let mut changed = false;
+    let mut jobs_seen_this_poll = HashSet::new();
+    for job in jobs.iter().take(MAX_JOB_OCCURRENCES) {
+        if !valid_queued_job(job) {
+            continue;
+        }
+        let occurrence_code = format!("run-{}-job-{}", job.run_id, job.job_id);
+        if !jobs_seen_this_poll.insert(occurrence_code.clone()) {
+            continue;
+        }
+        let workload_code = workload_fingerprint(job);
+
+        if let Some(existing) = model
+            .recent_job_occurrences
+            .iter_mut()
+            .find(|entry| entry.occurrence_code == occurrence_code)
+        {
+            if existing.workload_code != workload_code {
+                // One authoritative run/job ID must never change workload identity.
+                continue;
+            }
+            existing.observed_at_epoch = observed_at_epoch;
+            if let Some(pattern) = model
+                .workload_patterns
+                .iter_mut()
+                .find(|pattern| pattern.workload_code == workload_code)
+            {
+                pattern.last_seen_epoch = observed_at_epoch;
+            }
+            changed = true;
+            continue;
+        }
+
+        if !model
+            .workload_patterns
+            .iter()
+            .any(|pattern| pattern.workload_code == workload_code)
+        {
+            if model.workload_patterns.len() >= MAX_JOB_PATTERNS {
+                if let Some((index, stale)) = model
+                    .workload_patterns
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, pattern)| pattern.last_seen_epoch)
+                    .map(|(index, pattern)| (index, pattern.workload_code.clone()))
+                {
+                    model.workload_patterns.remove(index);
+                    model
+                        .recent_job_occurrences
+                        .retain(|entry| entry.workload_code != stale);
+                }
+            }
+            let mut labels: Vec<String> = job
+                .labels
+                .iter()
+                .map(|label| label.trim().to_ascii_lowercase())
+                .collect();
+            labels.sort();
+            labels.dedup();
+            model.workload_patterns.push(WorkloadPattern {
+                workload_code: workload_code.clone(),
+                workflow_id: job.workflow_id,
+                workflow_path: job.workflow_path.chars().take(512).collect(),
+                job_name: job.name.chars().take(256).collect(),
+                labels,
+                first_seen_epoch: observed_at_epoch,
+                last_seen_epoch: observed_at_epoch,
+                occurrence_count: 0,
+                slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+                slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            });
+        }
+
+        if let Some(pattern) = model
+            .workload_patterns
+            .iter_mut()
+            .find(|pattern| pattern.workload_code == workload_code)
+        {
+            pattern.last_seen_epoch = observed_at_epoch;
+            pattern.occurrence_count = pattern.occurrence_count.saturating_add(1);
+            let slot_index = weekday_hour_slot(observed_at_epoch);
+            let week = weekly_period_start(observed_at_epoch);
+            let slot = &mut pattern.slots[slot_index];
+            slot.0 = slot.0.saturating_add(1);
+            slot.1 = slot.1.saturating_add(1);
+            slot.2 = slot.2.max(1);
+            if pattern.slot_last_week[slot_index] != week {
+                slot.3 = slot.3.saturating_add(1);
+                pattern.slot_last_week[slot_index] = week;
+            }
+        }
+
+        model.recent_job_occurrences.push(RecentJobOccurrence {
+            occurrence_code,
+            workload_code,
+            run_id: job.run_id,
+            job_id: job.job_id,
+            observed_at_epoch,
+        });
+        if model.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES {
+            let excess = model.recent_job_occurrences.len() - MAX_JOB_OCCURRENCES;
+            model.recent_job_occurrences.drain(0..excess);
+        }
+        changed = true;
+    }
+    changed
+}
+
+fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> {
+    let mut patterns: Vec<_> = model
+        .workload_patterns
+        .iter()
+        .map(|pattern| {
+            let mut recurring_slots: Vec<_> = pattern
+                .slots
+                .iter()
+                .enumerate()
+                .filter(|(_, slot)| slot.0 > 0 && slot.3 > 0)
+                .map(|(index, slot)| WorkloadSlotSummary {
+                    weekday: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index / 24]
+                        .to_owned(),
+                    hour: (index % 24) as u8,
+                    observed_occurrences: slot.0,
+                    distinct_weeks: slot.3,
+                })
+                .collect();
+            recurring_slots.sort_by_key(|slot| {
+                (std::cmp::Reverse(slot.distinct_weeks), std::cmp::Reverse(slot.observed_occurrences))
+            });
+            recurring_slots.truncate(3);
+            WorkloadPatternStatus {
+                workload_code: pattern.workload_code.clone(),
+                workflow_id: pattern.workflow_id,
+                workflow_path: pattern.workflow_path.clone(),
+                job_name: pattern.job_name.clone(),
+                labels: pattern.labels.clone(),
+                occurrence_count: pattern.occurrence_count,
+                first_seen_epoch: pattern.first_seen_epoch,
+                last_seen_epoch: pattern.last_seen_epoch,
+                recurring_slots,
+            }
+        })
+        .collect();
+    patterns.sort_by_key(|pattern| std::cmp::Reverse(pattern.last_seen_epoch));
+    patterns.truncate(MAX_JOB_PATTERNS);
+    patterns
+}
+
 fn compute_forecast(
     model: &WorkflowModel,
     settings: &KittySettings,
@@ -2374,6 +2680,7 @@ mod tests {
         ObservationInput {
             repository: "owner/repo".into(),
             observed_at_epoch: bucket,
+            job_occurrences: Vec::new(),
             queued_jobs: queue,
             busy_runners: busy,
             online_runners: 2,

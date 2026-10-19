@@ -4932,7 +4932,10 @@ mod tests {
             },
         ];
         assert!(migrate_job_identity(&mut model));
-        assert_eq!(model.workload_patterns[0].slot_first_week.len(), TEMPORAL_SLOT_COUNT);
+        assert_eq!(
+            model.workload_patterns[0].slot_first_week.len(),
+            TEMPORAL_SLOT_COUNT
+        );
         let mut ids = HashSet::new();
         for occurrence in &model.recent_job_occurrences {
             assert!(valid_generated_gitrun_job_id_for_repository(

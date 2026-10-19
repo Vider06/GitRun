@@ -1344,18 +1344,19 @@ fn execute(
                 gitrun_smart_scheduler::load_settings_for_dashboard(state_dir).ok();
             let automation_scope = kitty_settings.as_ref().is_some_and(|settings| {
                 settings.automation_mode
-                    && settings.automation_allowed_repositories.iter().any(|allowed| {
-                        allowed.eq_ignore_ascii_case(repo)
-                    })
+                    && settings
+                        .automation_allowed_repositories
+                        .iter()
+                        .any(|allowed| allowed.eq_ignore_ascii_case(repo))
             });
             if automation_scope {
                 let registered_runner = client
                     .list_runners(repo)?
                     .into_iter()
                     .find(|runner| runner.name == *name);
-                if let Some(runner) = registered_runner.filter(|runner| {
-                    runner.is_online() && !runner.busy
-                }) {
+                if let Some(runner) =
+                    registered_runner.filter(|runner| runner.is_online() && !runner.busy)
+                {
                     let settings = kitty_settings.as_ref().expect("automation scope checked");
                     let policy = kitty_automation_policy(config, settings);
                     let intent = gitrun_gsr::automation_gate::AutomationIntent {
@@ -1380,12 +1381,9 @@ fn execute(
                     };
                     let audit_path =
                         gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
-                    let permit = gitrun_gsr::automation_gate::authorize_action(
-                        &policy,
-                        intent,
-                        &audit_path,
-                    )
-                    .map_err(|error| std::io::Error::other(error.to_string()))?;
+                    let permit =
+                        gitrun_gsr::automation_gate::authorize_action(&policy, intent, &audit_path)
+                            .map_err(|error| std::io::Error::other(error.to_string()))?;
                     let removed = remove_if_still_idle(client, repo, name, expected_id)?;
                     if let Err(error) = permit.record_outcome(
                         removed,

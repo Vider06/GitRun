@@ -438,6 +438,9 @@ pub struct RecentJobOccurrence {
     pub run_id: u64,
     pub job_id: u64,
     pub observed_at_epoch: u64,
+    /// Authoritative started_at timestamp from GitHub Actions.
+    #[serde(default)]
+    pub started_at_epoch: Option<u64>,
     /// Target hour in which this unique job first contributed to a workload
     /// forecast. This avoids duplicate counts across queue polls and hours.
     #[serde(default)]
@@ -897,8 +900,10 @@ impl KittyDecision {
 pub struct ObservationInput {
     pub repository: String,
     pub observed_at_epoch: u64,
-    /// Bounded run/job identity metadata from GitHub's queue API.
-    pub job_occurrences: Vec<QueuedJobOccurrence>,
+    /// Live queue snapshot; used for real-time planning and prewarm suppression.
+    pub queued_job_occurrences: Vec<QueuedJobOccurrence>,
+    /// Bounded history sample with authoritative started_at timestamps.
+    pub started_job_occurrences: Vec<QueuedJobOccurrence>,
     pub queued_jobs: u32,
     pub busy_runners: u32,
     pub online_runners: u32,
@@ -913,6 +918,7 @@ pub struct KittyRuntime {
     settings: KittySettings,
     settings_error: Option<String>,
     last_settings_reload: Option<Instant>,
+    last_workload_history_poll: HashMap<String, u64>,
     models: HashMap<String, WorkflowModel>,
     disabled_models: HashSet<String>,
     dirty_models: HashSet<String>,
@@ -925,6 +931,7 @@ impl KittyRuntime {
             settings: KittySettings::default(),
             settings_error: None,
             last_settings_reload: None,
+            last_workload_history_poll: HashMap::new(),
             models: HashMap::new(),
             disabled_models: HashSet::new(),
             dirty_models: HashSet::new(),

@@ -323,7 +323,11 @@ pub struct KittyDecision {
 }
 
 impl KittyDecision {
-    pub fn fallback(repository: &str, configured_min_runners: u32, reason: impl Into<String>) -> Self {
+    pub fn fallback(
+        repository: &str,
+        configured_min_runners: u32,
+        reason: impl Into<String>,
+    ) -> Self {
         Self {
             repository: repository.to_owned(),
             status: DecisionStatus::SafeFallback,
@@ -498,7 +502,11 @@ impl KittyRuntime {
             }
         };
 
-        if let Some(last) = model.history.last_mut().filter(|last| last.bucket_epoch == bucket) {
+        if let Some(last) = model
+            .history
+            .last_mut()
+            .filter(|last| last.bucket_epoch == bucket)
+        {
             last.merge_snapshot(&observation);
         } else {
             model.history.push(observation);
@@ -531,13 +539,12 @@ impl KittyRuntime {
         }
 
         let forecast = if self.settings.predictive_analytics_enabled {
-            model
-                .latest_forecast
-                .as_ref()
-                .filter(|forecast| {
-                    input.observed_at_epoch.saturating_sub(forecast.generated_at_epoch)
-                        <= BUCKET_SECONDS.saturating_mul(2)
-                })
+            model.latest_forecast.as_ref().filter(|forecast| {
+                input
+                    .observed_at_epoch
+                    .saturating_sub(forecast.generated_at_epoch)
+                    <= BUCKET_SECONDS.saturating_mul(2)
+            })
         } else {
             None
         };
@@ -834,9 +841,10 @@ impl KittyRuntime {
     }
 
     fn persist_model(&self, key: &str) -> Result<()> {
-        let model = self.models.get(key).ok_or_else(|| {
-            KittyError::Invalid("attempted to persist an absent model".into())
-        })?;
+        let model = self
+            .models
+            .get(key)
+            .ok_or_else(|| KittyError::Invalid("attempted to persist an absent model".into()))?;
         ensure_private_data_dir(&self.state_dir.join("kitty"))?;
         let path = self
             .state_dir
@@ -892,7 +900,10 @@ fn compute_forecast(
         return None;
     }
 
-    let demands: Vec<f64> = history.iter().map(|observation| observation.demand() as f64).collect();
+    let demands: Vec<f64> = history
+        .iter()
+        .map(|observation| observation.demand() as f64)
+        .collect();
     let recent_start = demands.len().saturating_sub(12);
     let previous_start = recent_start.saturating_sub(12);
     let recent = &demands[recent_start..];
@@ -940,10 +951,10 @@ fn compute_forecast(
     };
     let sample_factor = (history.len() as f64 / settings.minimum_samples as f64).clamp(0.0, 1.0);
     let evaluation_factor = (evaluated.len() as f64 / 48.0).clamp(0.0, 1.0);
-    let freshness_factor = (1.0 - age as f64 / (BUCKET_SECONDS.saturating_mul(3) as f64))
-        .clamp(0.0, 1.0);
-    let confidence_score = (sample_factor * evaluation_factor * quality_score * freshness_factor)
-        .clamp(0.0, 1.0);
+    let freshness_factor =
+        (1.0 - age as f64 / (BUCKET_SECONDS.saturating_mul(3) as f64)).clamp(0.0, 1.0);
+    let confidence_score =
+        (sample_factor * evaluation_factor * quality_score * freshness_factor).clamp(0.0, 1.0);
 
     Some(Forecast {
         model_version: MODEL_VERSION,
@@ -971,9 +982,7 @@ fn evaluate_matured_predictions(model: &mut WorkflowModel, current_bucket: u64) 
         }
         if let Some(actual) = actuals.get(&prediction.target_bucket) {
             prediction.actual_demand = Some(*actual);
-        } else if current_bucket
-            > prediction.target_bucket.saturating_add(BUCKET_SECONDS)
-        {
+        } else if current_bucket > prediction.target_bucket.saturating_add(BUCKET_SECONDS) {
             prediction.skipped_missing_observation = true;
         }
     }
@@ -1087,7 +1096,8 @@ fn read_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
         }
     }
     let mut bytes = Vec::with_capacity(opened.len().min(max_bytes) as usize);
-    file.take(max_bytes.saturating_add(1)).read_to_end(&mut bytes)?;
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > max_bytes {
         return Err(KittyError::Invalid(format!(
             "{} exceeded its read-size bound",
@@ -1148,17 +1158,16 @@ fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         }
     }
     let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let temporary = parent.join(format!(
-        ".kitty-tmp-{}-{sequence}",
-        std::process::id()
-    ));
+    let temporary = parent.join(format!(".kitty-tmp-{}-{sequence}", std::process::id()));
     let result = (|| -> Result<()> {
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         }
         let mut file = options.open(&temporary)?;
         file.write_all(bytes)?;
@@ -1186,10 +1195,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-kitty-{label}-{}-{now}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-kitty-{label}-{}-{now}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -1224,11 +1231,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(
-                path.parent().unwrap(),
-                fs::Permissions::from_mode(0o700),
-            )
-            .unwrap();
+            fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
             fs::set_permissions(
                 KittyRuntime::settings_path(state),
                 fs::Permissions::from_mode(0o600),
@@ -1263,7 +1266,11 @@ mod tests {
         let dir = temp_dir("bad-settings");
         let path = KittyRuntime::settings_path(&dir);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, br#"{"schema_version":1,"enabled":true,"surprise":true}"#).unwrap();
+        fs::write(
+            &path,
+            br#"{"schema_version":1,"enabled":true,"surprise":true}"#,
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1330,7 +1337,8 @@ mod tests {
         assert!(decision.proposed_min_runners <= 3);
         assert!(matches!(
             decision.status,
-            DecisionStatus::AppliedWarmPoolFloor | DecisionStatus::RecommendationOnly
+            DecisionStatus::AppliedWarmPoolFloor
+                | DecisionStatus::RecommendationOnly
                 | DecisionStatus::InsufficientHistory
         ));
         let _ = fs::remove_dir_all(dir);
@@ -1398,12 +1406,7 @@ mod tests {
             });
         }
         // Forecast is held back when no evaluated forecast quality exists.
-        let forecast = compute_forecast(
-            &model,
-            &settings,
-            start + 23 * BUCKET_SECONDS,
-        )
-        .unwrap();
+        let forecast = compute_forecast(&model, &settings, start + 23 * BUCKET_SECONDS).unwrap();
         assert_eq!(forecast.predicted_peak_concurrency, 3);
         assert_eq!(forecast.confidence_score, 0.0);
         assert_eq!(forecast.evaluated_forecasts, 0);

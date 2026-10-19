@@ -2846,9 +2846,7 @@ fn promote_staged_kitty_settings(
         || staged_metadata.nlink() != 1
         || staged_metadata.permissions().mode() & 0o777 != 0o640
     {
-        return Err(
-            "staged Kitty settings failed its ownership/permission postcondition".into(),
-        );
+        return Err("staged Kitty settings failed its ownership/permission postcondition".into());
     }
 
     match std::fs::symlink_metadata(destination) {
@@ -2881,9 +2879,7 @@ fn promote_staged_kitty_settings(
         || final_metadata.nlink() != 1
         || final_metadata.permissions().mode() & 0o777 != 0o640
     {
-        return Err(
-            "saved Kitty settings failed final ownership/permission verification".into(),
-        );
+        return Err("saved Kitty settings failed final ownership/permission verification".into());
     }
     Ok(())
 }
@@ -2976,7 +2972,6 @@ fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std:
 fn save_kitty_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Err("system Kitty settings persistence through the privileged helper is Linux-only".into())
 }
-
 
 #[cfg(all(test, target_os = "linux"))]
 mod kitty_settings_promotion_tests {

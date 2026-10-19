@@ -920,6 +920,9 @@ fn reconcile_repo(
     let queued_job_ids: Vec<u64> = queued_jobs_info.iter().map(|job| job.job_id).collect();
     let job_occurrences: Vec<gitrun_smart_scheduler::QueuedJobOccurrence> = queued_jobs_info
         .iter()
+        // GitDockRun targets have a reserved lifecycle and must never seed
+        // ordinary-pool recurring prewarm profiles.
+        .filter(|job| !dock_target_jobs.iter().any(|target| target == &job.name))
         .take(512)
         .map(|job| gitrun_smart_scheduler::QueuedJobOccurrence {
             run_id: job.run_id,
@@ -1055,14 +1058,54 @@ fn reconcile_repo(
             )
         }
     };
-    let mut kitty_automation_permit = None;
-    if matches!(
+    let kitty_settings_snapshot = kitty_runtime.settings().clone();
+    let can_schedule_workload_prewarms = kitty_settings_snapshot.enabled
+        && kitty_settings_snapshot.telemetry_enabled
+        && kitty_settings_snapshot.predictive_analytics_enabled
+        && kitty_settings_snapshot.predictive_warm_pool_enabled
+        && !kitty_settings_snapshot.shadow_mode
+        && allow_new_runner_creation
+        && kitty_decision
+            .confidence_score
+            .is_some_and(|score| score >= kitty_settings_snapshot.minimum_quality_score);
+    let mut pending_workload_prewarms = if can_schedule_workload_prewarms {
+        kitty_decision
+            .workload_prewarms
+            .iter()
+            .filter_map(|target| {
+                let existing = containers
+                    .iter()
+                    .filter(|container| {
+                        !container.status.eq_ignore_ascii_case("exited")
+                            && container.prewarm_workload_code.as_deref()
+                                == Some(target.workload_code.as_str())
+                            && container.prewarm_target_epoch == Some(target.target_epoch)
+                    })
+                    .count()
+                    .min(u32::MAX as usize) as u32;
+                let missing = target.runner_count.saturating_sub(existing);
+                (missing > 0).then(|| {
+                    let mut pending = target.clone();
+                    pending.runner_count = missing;
+                    pending
+                })
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let prewarm_runner_count = pending_workload_prewarms
+        .iter()
+        .fold(0u32, |count, target| count.saturating_add(target.runner_count));
+    let floor_growth_requested = matches!(
         kitty_decision.status,
         gitrun_smart_scheduler::DecisionStatus::AppliedWarmPoolFloor
             | gitrun_smart_scheduler::DecisionStatus::WarmPoolHold
-    ) && kitty_decision.effective_min_runners > config.min_runners
-    {
-        let settings = kitty_runtime.settings();
+    ) && kitty_decision.effective_min_runners > config.min_runners;
+    let workload_prewarm_requested = !pending_workload_prewarms.is_empty();
+    let mut kitty_automation_permit = None;
+    if floor_growth_requested || workload_prewarm_requested {
+        let settings = &kitty_settings_snapshot;
         let policy = gitrun_gsr::automation_gate::AutomationPolicy {
             kitty_enabled: settings.enabled,
             telemetry_enabled: settings.telemetry_enabled,
@@ -1087,13 +1130,39 @@ fn reconcile_repo(
             retaining_previously_authorized_floor: kitty_decision.status
                 == gitrun_smart_scheduler::DecisionStatus::WarmPoolHold,
             configured_min_runners: Some(config.min_runners),
-            proposed_min_runners: Some(kitty_decision.effective_min_runners),
+            proposed_min_runners: Some(
+                kitty_decision
+                    .effective_min_runners
+                    .max(config.min_runners.min(config.max_runners))
+                    .saturating_add(prewarm_runner_count)
+                    .min(config.max_runners),
+            ),
             max_runners: Some(config.max_runners),
             runner_is_verified_idle: false,
             runner_is_dock_bound: false,
             workflow_run_is_verified_active: false,
             run_age_seconds: None,
-            reason: kitty_decision.reason.clone(),
+            reason: {
+                let workload_summary = pending_workload_prewarms
+                    .iter()
+                    .map(|target| {
+                        format!(
+                            "{}x{}@{}",
+                            target.workload_code, target.runner_count, target.target_epoch
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let combined = if workload_summary.is_empty() {
+                    kitty_decision.reason.clone()
+                } else {
+                    format!(
+                        "{}; recurring workload prewarm request: {}",
+                        kitty_decision.reason, workload_summary
+                    )
+                };
+                combined.chars().take(800).collect()
+            },
         };
         let audit_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
         match gitrun_gsr::automation_gate::authorize_action(&policy, intent, &audit_path) {
@@ -1165,6 +1234,11 @@ fn reconcile_repo(
         queued_job_names,
         queued_job_run_ids,
         queued_job_ids,
+        workload_prewarms: if kitty_automation_permit.is_some() {
+            std::mem::take(&mut pending_workload_prewarms)
+        } else {
+            Vec::new()
+        },
         dock_target_jobs,
         logic_rules,
         idle,

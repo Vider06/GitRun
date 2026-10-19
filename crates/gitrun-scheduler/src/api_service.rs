@@ -4742,6 +4742,76 @@ mod mount_runtime_tests {
             .expect("verify target no longer mounted")
             .is_none());
 
+        // Exercise the same owned-lease cleanup helper called by
+        // DISCONNECT against a real mount inside this disposable container
+        // namespace. This is stronger than testing only registry selection:
+        // cleanup must remove the exact kernel mount and persist lease removal.
+        execute_mount_namespace(
+            &container_id,
+            pid,
+            Some(source.as_raw_fd()),
+            Some(&canonical_source),
+            &target,
+            MountAction::Bind { read_only: true },
+        )
+        .expect("recreate mount for disconnect-cleanup integration");
+        let disconnect_mount = mountinfo_by_target(pid, &target)
+            .expect("inspect mount before disconnect cleanup")
+            .expect("mount must exist before disconnect cleanup");
+        let disconnect_state_dir = std::env::temp_dir().join(format!(
+            "gitrun-disconnect-live-cleanup-{suffix}"
+        ));
+        let _disconnect_state_guard = TemporaryDirectory(disconnect_state_dir.clone());
+        let disconnect_source_metadata = fs::metadata(&canonical_source).unwrap();
+        let disconnect_record = MountRecord {
+            id: "gm-disconnect-live-cleanup".into(),
+            repository: "owner/repo".into(),
+            run_id: 73,
+            job: "integration".into(),
+            requester_runner: "integration-runner".into(),
+            container: name.clone(),
+            container_id: container_id.clone(),
+            source: canonical_source.to_string_lossy().into_owned(),
+            target: target.clone(),
+            read_only: true,
+            source_device: Some(disconnect_source_metadata.dev()),
+            source_inode: Some(disconnect_source_metadata.ino()),
+            kernel_mount_id: Some(disconnect_mount.id),
+            state: "mounted".into(),
+            created_at: now(),
+        };
+        let mut disconnect_registry = MountRegistry::default();
+        disconnect_registry.mounts.push(disconnect_record);
+        disconnect_registry
+            .save(&disconnect_state_dir)
+            .expect("persist simulated disconnect lease");
+        cleanup_owned_mounts_for_disconnect(
+            &mut disconnect_registry,
+            &disconnect_state_dir,
+            MountCleanupOwner {
+                repository: "owner/repo",
+                run_id: 73,
+                job: "integration",
+                container_id: &container_id,
+                requester_runner: "integration-runner",
+            },
+            cleanup_mount_record,
+        )
+        .expect("disconnect helper should unmount the owned lease");
+        assert!(mountinfo_by_id(pid, disconnect_mount.id)
+            .expect("verify disconnect removed exact mount ID")
+            .is_none());
+        assert!(mountinfo_by_target(pid, &target)
+            .expect("verify disconnect left target unmounted")
+            .is_none());
+        assert!(
+            MountRegistry::load(&disconnect_state_dir)
+                .expect("reload disconnect registry")
+                .mounts
+                .is_empty(),
+            "disconnect cleanup must durably remove the cleaned lease"
+        );
+
         // Simulate a service crash on both sides of the bind syscall. An
         // intent-only lease with no mount at its target should be safely
         // discarded; a lease pointing at an unrelated source must never

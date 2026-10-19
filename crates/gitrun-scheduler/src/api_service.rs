@@ -6892,6 +6892,7 @@ mod api_socket_identity_integration_tests {
             run: Some(WorkflowRunInfo {
                 id: 42,
                 name: "CI".into(),
+                started_at_epoch: Some(1_700_000_000),
             }),
             failure_at: None,
             calls: Arc::new(Mutex::new(Vec::new())),

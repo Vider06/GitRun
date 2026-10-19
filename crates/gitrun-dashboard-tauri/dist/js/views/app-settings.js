@@ -81,7 +81,8 @@ export async function renderAppSettings() {
       return '<div class="field-hint mt-8"><strong>' + esc(workload.job_name) + '</strong>' +
         '<small>' + esc(String(workload.workflow_path)) + ' · workload ' +
         esc(String(workload.gitrun_job_id)) + ' · ' + esc(String(workload.occurrence_count)) +
-        ' unique observations</small><small>Observed runner labels: ' +
+        ' actual job starts · last seen ' + esc(formatEpoch(workload.last_seen_epoch)) +
+        '</small><small>Observed runner labels: ' +
         esc((workload.labels || []).slice(0, 8).join(', ')) +
         ((workload.labels || []).length > 8 ? ' …' : '') +
         '</small><small>Recurring: ' + esc(recurring) +
@@ -89,7 +90,9 @@ export async function renderAppSettings() {
     }).join("");
     const recentJobs = (entry.recent_job_occurrences || []).slice(-3).reverse().map((job) =>
       '<small>Job occurrence ' + esc(String(job.occurrence_code)) +
-        ' · workload ' + esc(String(job.gitrun_job_id)) + '</small>'
+        ' · workload ' + esc(String(job.gitrun_job_id)) +
+        (job.started_at_epoch ? ' · started ' + esc(formatEpoch(job.started_at_epoch)) : ' · start time unavailable') +
+        '</small>'
     ).join("");
     return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>' +
       esc(String(entry.sample_count)) + ' recent five-minute samples · last observation ' + esc(formatEpoch(entry.latest_observation_epoch)) +

@@ -5489,7 +5489,7 @@ ROOTS = (
 def checked_parts(path):
     if not path.startswith("/") or path.startswith("//") or path.endswith("/") or "\x00" in path:
         raise ValueError("path must be a clean absolute file path")
-    parts = path[1:].split("/")
+    parts = tuple(path[1:].split("/"))
     if not parts or any(part in ("", ".", "..") for part in parts):
         raise ValueError("path has an empty or traversal component")
     return parts

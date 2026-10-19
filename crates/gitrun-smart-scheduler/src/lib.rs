@@ -4540,9 +4540,14 @@ mod tests {
             2_000,
         ));
         assert_eq!(model.recent_job_occurrences[0].gitrun_job_id, gitrun_id);
-        assert_eq!(model.recent_job_occurrences[0].started_at_epoch, Some(1_920));
+        assert_eq!(
+            model.recent_job_occurrences[0].started_at_epoch,
+            Some(1_920)
+        );
         assert_eq!(model.workload_patterns[0].occurrence_count, 1);
-        model.validate_for("owner/repo", MAX_HISTORY_BUCKETS).unwrap();
+        model
+            .validate_for("owner/repo", MAX_HISTORY_BUCKETS)
+            .unwrap();
     }
 
     #[test]
@@ -4583,7 +4588,9 @@ mod tests {
             model.recent_job_occurrences[0].occurrence_code,
             provider_occurrence_key(&workload_id, 41, 410)
         );
-        model.validate_for("owner/repo", MAX_HISTORY_BUCKETS).unwrap();
+        model
+            .validate_for("owner/repo", MAX_HISTORY_BUCKETS)
+            .unwrap();
     }
 
     #[test]

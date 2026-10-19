@@ -80,14 +80,17 @@ export async function renderAppSettings() {
       return '<div class="field-hint mt-8"><strong>' + esc(workload.job_name) + '</strong>' +
         '<small>' + esc(String(workload.workflow_path)) + ' · workload ' +
         esc(String(workload.workload_code)) + ' · ' + esc(String(workload.occurrence_count)) +
-        ' unique occurrences</small><small>Recurring: ' + esc(recurring) +
+        ' unique occurrences</small><small>Observed runner labels: ' +
+        esc((workload.labels || []).slice(0, 8).join(', ')) +
+        ((workload.labels || []).length > 8 ? ' …' : '') +
+        '</small><small>Recurring: ' + esc(recurring) +
         '</small><small>' + esc(predictionText) + '</small></div>';
     }).join("");
     const recentJobs = (entry.recent_job_occurrences || []).slice(-3).reverse().map((job) =>
       '<small>Job occurrence ' + esc(String(job.occurrence_code)) +
         ' · workload ' + esc(String(job.workload_code)) + '</small>'
     ).join("");
-    return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>'
+    return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>' +
       esc(String(entry.sample_count)) + ' recent five-minute samples · last observation ' + esc(formatEpoch(entry.latest_observation_epoch)) +
       '</small><small>Predicted concurrency: ' + esc(predicted) +
       (forecast && forecast.seasonal_predicted_peak_concurrency != null
@@ -106,7 +109,7 @@ export async function renderAppSettings() {
       pill(forecastLabel, forecastFresh ? "good" : forecast ? "neutral" : "info") + '</div>';
   }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);
   const kittyPanel = '<div class="section">' + panel("Kitty Smart Scheduler",
-    '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. It is disabled by default; recommendations never authorize themselves.</p>' +
+    '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. It is disabled by default; recommendations never authorize themselves. Scheduled prewarms reuse the workflow’s existing runner labels: GitHub does not expose a host API to pin a queued or future job to one named runner. Exact workload affinity requires a distinctive label in that job’s runs-on contract.</p>' +
     (kittyLoadError ? '<div class="notice warn"><div><strong>Kitty settings could not be loaded</strong><p>' + esc(kittyLoadError) + '</p><p>The visible fields use safe defaults and may not reflect saved values. Saving will replace the current settings with the values shown. Unsafe ownership, permissions or trusted-path failures require administrator repair.</p></div></div>' : '') +
     (kittyStatusError ? '<div class="notice warn"><div><strong>Workflow Model status is unavailable</strong><p>' + esc(kittyStatusError) + '</p><p>Kitty settings are still available, but the status snapshot was rejected. Inspect the status file ownership and permissions before retrying.</p></div></div>' : '') +
     '<label class="checkbox-row"><input id="kitty-enabled" type="checkbox" ' + (kittySettings.enabled ? "checked" : "") + '><span><strong>Enable Kitty</strong>Enable the optional observer and its statistical model. This does not enable automatic scaling.</span></label>' +

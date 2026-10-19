@@ -2621,10 +2621,12 @@ mod tests {
         let mut header = tar::Header::new_gnu();
         header.set_size(payload.len() as u64);
         header.set_mode(0o644);
+        // Write the hostile path directly into the tar header. The tar builder's
+        // append_data validates paths and rejects traversal before the extractor
+        // under test ever sees the archive.
+        header.as_mut_bytes()[..14].copy_from_slice(b"../outside.txt");
         header.set_cksum();
-        archive
-            .append_data(&mut header, "../outside.txt", &payload[..])
-            .unwrap();
+        archive.append(&header, &payload[..]).unwrap();
         archive.into_inner().unwrap().finish().unwrap();
 
         let destination = root.join("destination");

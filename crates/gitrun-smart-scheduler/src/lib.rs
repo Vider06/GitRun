@@ -450,6 +450,22 @@ pub struct WorkloadPatternStatus {
     pub recurring_slots: Vec<WorkloadSlotSummary>,
 }
 
+/// A bounded suggestion to reserve compatible runner capacity for a recurring
+/// workload. This profiles a job type, not a future GitHub run/job ID (those
+/// IDs do not exist until GitHub creates that run and job).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkloadPrewarm {
+    pub workload_code: String,
+    pub workflow_id: u64,
+    pub workflow_path: String,
+    pub job_name: String,
+    pub labels: Vec<String>,
+    pub target_epoch: u64,
+    pub runner_count: u32,
+    pub observed_distinct_weeks: u64,
+    pub historical_occurrences_per_week: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DecisionAudit {
     pub bucket_epoch: u64,
@@ -715,6 +731,8 @@ pub struct KittyDecision {
     pub sample_count: usize,
     pub shadow_mode: bool,
     pub decision_bucket: Option<u64>,
+    #[serde(default)]
+    pub workload_prewarms: Vec<WorkloadPrewarm>,
 }
 
 impl KittyDecision {
@@ -735,6 +753,7 @@ impl KittyDecision {
             sample_count: 0,
             shadow_mode: true,
             decision_bucket: None,
+            workload_prewarms: Vec::new(),
         }
     }
 }
@@ -1045,10 +1064,18 @@ impl KittyRuntime {
             None
         };
 
-        let capability_note = if self.settings.adaptive_resource_management_enabled
-            || self.settings.smart_fast_stop_enabled
+        let workload_prewarms = if self.settings.predictive_warm_pool_enabled
+            && forecast.is_some_and(|f| {
+                f.confidence_score >= self.settings.minimum_quality_score
+                    && sample_count >= self.settings.minimum_samples
+            })
         {
-            " Adaptive resource automation and Smart Fast Stop triggers are reserved capabilities in this version and are not executed."
+            forecast_workload_prewarms(model, bucket, &self.settings)
+        } else {
+            Vec::new()
+        };
+        let capability_note = if self.settings.adaptive_resource_management_enabled {
+            " Adaptive Resource Management is reserved and is not executed in this version."
         } else {
             ""
         };
@@ -1180,6 +1207,7 @@ impl KittyRuntime {
             sample_count,
             shadow_mode: self.settings.shadow_mode,
             decision_bucket: Some(bucket),
+            workload_prewarms,
         };
         if decision.effective_min_runners > max_runners {
             // Defensive final bound at the integration boundary.
@@ -1409,6 +1437,7 @@ impl KittyRuntime {
             sample_count: 0,
             shadow_mode: self.settings.shadow_mode,
             decision_bucket: None,
+            workload_prewarms: Vec::new(),
         }
     }
 
@@ -2324,6 +2353,88 @@ fn record_queued_job_occurrences(
         changed = true;
     }
     changed
+}
+
+fn upcoming_schedule_target(bucket_epoch: u64, lead_seconds: u64) -> Option<u64> {
+    let target = bucket_epoch.saturating_add(lead_seconds);
+    (target > bucket_epoch && target % 3_600 == 0).then_some(target)
+}
+
+fn forecast_workload_prewarms(
+    model: &WorkflowModel,
+    bucket_epoch: u64,
+    settings: &KittySettings,
+) -> Vec<WorkloadPrewarm> {
+    if !settings.predictive_warm_pool_enabled || settings.max_additional_warm_runners == 0 {
+        return Vec::new();
+    }
+    let Some(target_epoch) =
+        upcoming_schedule_target(bucket_epoch, settings.warm_pool_lead_seconds)
+    else {
+        return Vec::new();
+    };
+    let slot_index = weekday_hour_slot(target_epoch);
+    let recent_cutoff = bucket_epoch.saturating_sub(90 * 86_400);
+    let mut candidates: Vec<WorkloadPrewarm> = model
+        .workload_patterns
+        .iter()
+        .filter_map(|pattern| {
+            if pattern.last_seen_epoch < recent_cutoff {
+                return None;
+            }
+            let slot = pattern.slots.get(slot_index)?;
+            let distinct_weeks = u64::from(slot.3);
+            if distinct_weeks < MIN_SEASONAL_OCCURRENCES as u64 || slot.0 == 0 {
+                return None;
+            }
+            let occurrences_per_week = slot.0 as f64 / distinct_weeks as f64;
+            if !occurrences_per_week.is_finite() || occurrences_per_week <= 0.0 {
+                return None;
+            }
+            let runner_count = occurrences_per_week
+                .ceil()
+                .clamp(1.0, f64::from(settings.max_additional_warm_runners))
+                as u32;
+            Some(WorkloadPrewarm {
+                workload_code: pattern.workload_code.clone(),
+                workflow_id: pattern.workflow_id,
+                workflow_path: pattern.workflow_path.clone(),
+                job_name: pattern.job_name.clone(),
+                labels: pattern.labels.clone(),
+                target_epoch,
+                runner_count,
+                observed_distinct_weeks: distinct_weeks,
+                historical_occurrences_per_week: occurrences_per_week,
+            })
+        })
+        .collect();
+
+    // Favor workloads observed consistently over more weeks; then favor the
+    // profiles that historically needed more than one compatible runner.
+    candidates.sort_by(|left, right| {
+        right
+            .observed_distinct_weeks
+            .cmp(&left.observed_distinct_weeks)
+            .then_with(|| {
+                right
+                    .historical_occurrences_per_week
+                    .total_cmp(&left.historical_occurrences_per_week)
+            })
+            .then_with(|| left.workload_code.cmp(&right.workload_code))
+    });
+
+    let mut budget = settings.max_additional_warm_runners;
+    candidates
+        .into_iter()
+        .filter_map(|mut candidate| {
+            if budget == 0 {
+                return None;
+            }
+            candidate.runner_count = candidate.runner_count.min(budget);
+            budget = budget.saturating_sub(candidate.runner_count);
+            Some(candidate)
+        })
+        .collect()
 }
 
 fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> {

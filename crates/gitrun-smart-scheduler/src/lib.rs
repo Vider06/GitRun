@@ -5328,6 +5328,7 @@ mod tests {
         let slot = weekday_hour_slot(target);
         pattern.slots[slot] = TemporalDemandSlot(8, 8, 8, 4);
         pattern.slot_last_week[slot] = weekly_period_start(bucket);
+        pattern.slot_first_week[slot] = weekly_period_start(bucket - 3 * WEEK_SECONDS);
         let mut model = WorkflowModel::empty("owner/repo");
         model.workload_patterns.push(pattern);
 
@@ -5338,6 +5339,12 @@ mod tests {
         assert_eq!(prewarms[0].hold_until_epoch, target + 900);
         assert_eq!(prewarms[0].observed_distinct_weeks, 4);
         assert_eq!(prewarms[0].workload_id, workload_id);
+        model.workload_patterns[0].slot_first_week[slot] =
+            weekly_period_start(bucket - 7 * WEEK_SECONDS);
+        assert!(
+            forecast_workload_prewarms(&model, bucket, &settings, BUCKET_SECONDS).is_empty(),
+            "a slot active in only half of its observed weeks is too intermittent to prewarm"
+        );
     }
 
     #[test]
@@ -5373,6 +5380,7 @@ mod tests {
         };
         pattern.slots[slot_index] = TemporalDemandSlot(40, 40, 40, 20);
         pattern.slot_last_week[slot_index] = old_week;
+        pattern.slot_first_week[slot_index] = old_week.saturating_sub(19 * WEEK_SECONDS);
         let mut model = WorkflowModel::empty("owner/repo");
         model.workload_patterns.push(pattern);
 
@@ -5560,6 +5568,58 @@ mod tests {
             workload_prediction_bias(&model, &workload_id),
             Some(-1.75),
             "repeated over-prediction should lower the next warm-up request"
+        );
+    }
+
+    #[test]
+    fn slow_poll_catches_a_nearby_hour_boundary_without_shifting_fast_polling() {
+        let target = 200 * WEEK_SECONDS + 16 * 3_600;
+        assert_eq!(upcoming_schedule_target(target - 300, 300, 300), Some(target));
+        assert_eq!(upcoming_schedule_target(target - 600, 300, 600), Some(target));
+        assert_eq!(upcoming_schedule_target(target - 600, 300, 300), None);
+    }
+
+    #[test]
+    fn seasonal_forecast_keeps_high_demand_peaks_after_averaging() {
+        let settings = enabled_settings();
+        let mut model = WorkflowModel::empty("owner/repo");
+        let target = 200 * WEEK_SECONDS + 16 * 3_600;
+        let now = target - BUCKET_SECONDS;
+        for week_back in (1..=24u64).rev() {
+            let stamp = target + BUCKET_SECONDS - week_back * WEEK_SECONDS;
+            let peak = week_back == 8;
+            model.history.push(Observation {
+                bucket_epoch: stamp,
+                queued_jobs: if peak { 7 } else { 1 },
+                busy_runners: 0,
+                online_runners: 8,
+                managed_runners: 8,
+                host_cpu_percent: None,
+                host_memory_percent: None,
+                host_disk_percent: None,
+                snapshots_in_bucket: 1,
+            });
+        }
+        for index in 0..24u64 {
+            let stamp = now - (23 - index) * BUCKET_SECONDS;
+            model.history.push(Observation {
+                bucket_epoch: stamp,
+                queued_jobs: 1,
+                busy_runners: 0,
+                online_runners: 8,
+                managed_runners: 8,
+                host_cpu_percent: None,
+                host_memory_percent: None,
+                host_disk_percent: None,
+                snapshots_in_bucket: 1,
+            });
+        }
+        let forecast = compute_forecast(&model, &settings, now, BUCKET_SECONDS).unwrap();
+        assert_eq!(forecast.seasonal_target_epoch, target);
+        assert_eq!(forecast.seasonal_predicted_peak_concurrency, Some(7));
+        assert_eq!(
+            forecast.seasonal_quality_score, None,
+            "seasonal automation must wait for independent evaluated outcomes"
         );
     }
 

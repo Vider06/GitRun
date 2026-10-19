@@ -335,6 +335,16 @@ pub fn sanitize(value: &str, replacement: char) -> String {
 /// Collision-resistant, URL-safe repository prefix for runner container names.
 /// The short readable prefix is cosmetic; the full unpadded Base64URL encoding
 /// makes distinct repository identifiers map to distinct prefixes.
+fn valid_workload_routing_id(code: &str) -> bool {
+    let Some(digest) = code.strip_prefix("wk-") else {
+        return false;
+    };
+    digest.len() == 16
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn valid_prewarm_workload_id(code: &str) -> bool {
     let Some(digest) = code.strip_prefix("wk-") else {
         return false;
@@ -365,6 +375,8 @@ pub struct ManagedContainer {
     pub workflow_job: Option<String>,
     pub workflow_run_id: Option<u64>,
     pub workflow_job_id: Option<u64>,
+    /// Stable workload family for routing both prewarmed and queued-job runners.
+    pub workload_routing_id: Option<String>,
     /// Predicted recurring workload attached to a time-bounded warmup, if any.
     pub prewarm_workload_id: Option<String>,
     pub prewarm_target_epoch: Option<u64>,
@@ -520,6 +532,7 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
                 "managed runner {name} has incomplete authoritative workflow job binding labels"
             )));
         }
+        let raw_workload_id = container_label_on(host, &id, "gitrun.workload_id")?;
         let raw_prewarm_code = container_label_on(host, &id, "gitrun.prewarm_workload_code")?;
         let raw_prewarm_target = container_label_on(host, &id, "gitrun.prewarm_target_epoch")?;
         let raw_prewarm_hold = container_label_on(host, &id, "gitrun.prewarm_hold_until_epoch")?;
@@ -554,6 +567,23 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
                     )));
                 }
             };
+        let workload_routing_id = match (raw_workload_id, raw_prewarm_code.as_deref()) {
+            (Some(workload_id), Some(prewarm_id)) if workload_id != prewarm_id => {
+                return Err(DockerError::Command(format!(
+                    "managed runner {name} has inconsistent workload and prewarm identity labels"
+                )));
+            }
+            (Some(workload_id), _) => {
+                if !valid_workload_routing_id(&workload_id) {
+                    return Err(DockerError::Command(format!(
+                        "managed runner {name} has an invalid workload routing identity label"
+                    )));
+                }
+                Some(workload_id)
+            }
+            (None, Some(prewarm_id)) => Some(prewarm_id.to_owned()),
+            (None, None) => None,
+        };
         // Labels/status above are looked up by name. Refuse to publish a
         // mixed snapshot if that name was rebound to a different container
         // while inventory metadata was being read.
@@ -571,6 +601,7 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             workflow_job,
             workflow_run_id,
             workflow_job_id,
+            workload_routing_id,
             prewarm_workload_id,
             prewarm_target_epoch,
             prewarm_hold_until_epoch,
@@ -1078,6 +1109,8 @@ pub struct RunnerSpec<'a> {
     pub registration_token: &'a str,
     pub image: &'a str,
     pub labels: &'a str,
+    /// Stable workload family that this runner is allowed to accept.
+    pub workload_routing_id: Option<&'a str>,
     /// Remove GitHub's default self-hosted/OS labels for exclusive workload
     /// family routing. Only GitRun job-family labels may remain on such runners.
     pub no_default_labels: bool,
@@ -1384,6 +1417,19 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         }
     }
 
+    if let Some(workload_id) = spec.workload_routing_id {
+        if !valid_workload_routing_id(workload_id) {
+            return Err(DockerError::Command(
+                "invalid stable workload routing identity".into(),
+            ));
+        }
+        let expected_label = format!("gitrun-job-{workload_id}");
+        if !spec.labels.split(',').map(str::trim).any(|label| label.eq_ignore_ascii_case(&expected_label)) {
+            return Err(DockerError::Command(
+                "routed runner labels do not contain their workload identity".into(),
+            ));
+        }
+    }
     if spec.no_default_labels {
         let route_labels = vec![spec.labels.to_owned()];
         if spec.is_windows {
@@ -1459,6 +1505,9 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
     if let Some(job_id) = spec.workflow_job_id {
         args.extend(["--label".into(), format!("gitrun.workflow_job_id={job_id}")]);
+    }
+    if let Some(workload_id) = spec.workload_routing_id {
+        args.extend(["--label".into(), format!("gitrun.workload_id={workload_id}")]);
     }
     if let (Some(code), Some(target), Some(hold)) = (
         spec.prewarm_workload_id,

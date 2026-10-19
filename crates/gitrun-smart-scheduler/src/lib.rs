@@ -466,6 +466,8 @@ pub struct WorkloadPredictionStatus {
     pub target_epoch: u64,
     pub predicted_occurrences: u32,
     pub actual_occurrences: Option<u32>,
+    #[serde(default)]
+    pub prewarm_runners_created: u32,
     pub mean_error_correction: Option<f64>,
 }
 
@@ -2771,6 +2773,7 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                         target_epoch: record.target_epoch,
                         predicted_occurrences: record.predicted_occurrences,
                         actual_occurrences: record.actual_occurrences,
+                        prewarm_runners_created: record.prewarm_runners_created,
                         mean_error_correction: workload_prediction_bias(
                             model,
                             &pattern.workload_code,

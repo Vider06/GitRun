@@ -34,6 +34,8 @@ GitRun host service / GSR authorization
 The workflow-facing Git*Run API is a **closed, explicit API surface**, not a generic shell wrapper. Requests are validated against the API/operation contract, checked against effective repository policy and GSR command/resource policy, and only then handed to the internal execution layer.
 
 See:
+- [v1.5.0 refactor status and verification report](docs/v1.5.0-refactor-status.md) — phase status, current-head evidence and known limitations.
+- [v1.5.0 contract inventory](docs/v1.5.0-contract-inventory.md) — source-to-test evidence and contract gaps.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component and data-flow architecture.
 - [docs/GITRUN_API.md](docs/GITRUN_API.md) — Git*Run API reference and authorization boundary.
 - [docs/VM.md](docs/VM.md) — VM-backed runner architecture and lifecycle modes.
@@ -216,3 +218,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [SUPPORT.
 ## License
 
 GitRun is distributed under the Apache License 2.0.
+
+
+> **v1.5.0 refactor note:** PR #83 is under final documentation and implementation review. A green CI run is evidence for the checks executed on its commit, not a claim that desktop privilege transitions, real KVM/VirtualBox lifecycle runs, full API-driven disconnect cleanup, or every custom runner-image migration have been exercised. See the status tracker before using this branch as a release candidate.

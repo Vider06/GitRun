@@ -1934,6 +1934,16 @@ fn create_runner(
         Some(workload_id) => exclusive_workload_routing_label(workload_id)?,
         None => runner_labels_for_job(&config.runner_labels, permanent, job_labels),
     };
+    let dock_target = load_dock_target_jobs(state_dir, repo)?
+        .into_iter()
+        .any(|target| Some(target.as_str()) == job_name);
+    if routed_workload_id.is_some() && dock_target {
+        return Err(std::io::Error::other(
+            "a GitDockRun-owned lifecycle cannot be mixed with a Kitty workload-family route",
+        ).into());
+    }
+    let (container_job_name, container_run_id, container_job_id) =
+        runner_workflow_binding(routed_workload_id.as_deref(), job_name, job_run_id, job_id);
     let registration_token = client.registration_token(repo)?;
 
     docker::create_runner_on(
@@ -1964,16 +1974,14 @@ fn create_runner(
             secret_env: &secret_env,
             gsr_policy_env: &gsr_policy_env,
             is_windows,
-            workflow_job_name: job_name,
-            workflow_run_id: job_run_id,
-            workflow_job_id: job_id,
+            workflow_job_name: container_job_name,
+            workflow_run_id: container_run_id,
+            workflow_job_id: container_job_id,
             workload_routing_id: routed_workload_id.as_deref(),
             prewarm_workload_id,
             prewarm_target_epoch,
             prewarm_hold_until_epoch,
-            dock_target: load_dock_target_jobs(state_dir, repo)?
-                .into_iter()
-                .any(|target| Some(target.as_str()) == job_name),
+            dock_target,
             docker_socket_hardening: config.gsr_docker_socket_hardening,
             windows_hyperv_isolation: config.runner_windows_hyperv_isolation,
         },
@@ -2076,6 +2084,23 @@ fn load_dock_target_jobs(
 /// queued job that caused a dynamic runner to be created. This prevents a
 /// dynamically routed runner (for example a Windows/VM runner) from becoming
 /// eligible for an unrelated job after registration.
+fn runner_workflow_binding<'a>(
+    routed_workload_id: Option<&str>,
+    job_name: Option<&'a str>,
+    run_id: Option<u64>,
+    job_id: Option<u64>,
+) -> (Option<&'a str>, Option<u64>, Option<u64>) {
+    // A family-labeled runner can be assigned by GitHub to any job requesting
+    // that family label, so it must not claim a single occurrence ID in the
+    // runner container metadata. The API independently verifies the actual
+    // active run/job and that GitHub reports this runner name for that job.
+    if routed_workload_id.is_some() {
+        (None, None, None)
+    } else {
+        (job_name, run_id, job_id)
+    }
+}
+
 fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String]) -> String {
     if permanent || job_labels.is_empty() {
         return configured.to_owned();
@@ -2145,6 +2170,23 @@ fn exclusive_workload_routing_label(workload_id: &str) -> Result<String, std::io
 #[cfg(test)]
 mod workload_routing_label_tests {
     use super::*;
+
+    #[test]
+    fn family_runners_do_not_claim_a_single_run_or_job_binding() {
+        assert_eq!(
+            runner_workflow_binding(
+                Some("wk-0123456789abcdef"),
+                Some("build"),
+                Some(41),
+                Some(410),
+            ),
+            (None, None, None),
+        );
+        assert_eq!(
+            runner_workflow_binding(None, Some("build"), Some(41), Some(410)),
+            (Some("build"), Some(41), Some(410)),
+        );
+    }
 
     #[test]
     fn family_label_is_exclusive_and_rejects_untrusted_ids() {

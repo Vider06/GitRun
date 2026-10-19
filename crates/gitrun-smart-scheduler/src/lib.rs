@@ -4018,7 +4018,7 @@ mod tests {
     fn write_settings(state: &Path, settings: &KittySettings) {
         let path = KittyRuntime::settings_path(state);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, serde_json::to_vec(settings).unwrap()).unwrap();
+        fs::write(&path, serde_json::to_vec(settings).unwrap()).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -4526,7 +4526,6 @@ mod tests {
 
     #[test]
     fn corrupt_forecast_and_prediction_records_fail_model_validation() {
-        let settings = enabled_settings();
         let history_limit = 48;
         let mut model = WorkflowModel::empty("owner/repo");
         let start = 50_000 / BUCKET_SECONDS * BUCKET_SECONDS;
@@ -5551,7 +5550,7 @@ mod tests {
             started_at_epoch: Some(target + 30),
         };
         let workload_id = workload_id_for("owner/repo", &job).unwrap();
-        let mut pattern = WorkflowPattern {
+        let mut pattern = WorkloadPattern {
             workload_id: workload_id.clone(),
             workflow_id: job.workflow_id,
             workflow_path: job.workflow_path.clone(),

@@ -2826,7 +2826,7 @@ fn record_started_job_occurrences(
             model.next_gitrun_job_sequence = next;
             id
         };
-        let was_legacy_queue_record = if let Some(index) = existing_index {
+        if let Some(index) = existing_index {
             let existing = &mut model.recent_job_occurrences[index];
             if existing.workload_id != workload_id {
                 // One authoritative run/job pair must never change workload family.
@@ -2836,17 +2836,13 @@ fn record_started_job_occurrences(
                 // Same GitHub execution was already learned in a prior poll.
                 continue;
             }
-            // Upgrade a legacy queue-only occurrence: retain its stable ID but
-            // replace queue-time metadata with the authoritative start.
+            // Upgrade a queued occurrence while retaining its GitRun-generated ID.
             existing.started_at_epoch = Some(started_at_epoch);
             existing.observed_at_epoch = observed_at_epoch;
             existing.occurrence_code = occurrence_code.clone();
             existing.counted_prediction_target_epoch = None;
             changed = true;
-            true
-        } else {
-            false
-        };
+        }
 
         let profile_exists_before = model
             .workload_patterns

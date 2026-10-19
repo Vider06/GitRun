@@ -107,7 +107,7 @@ Package identifiers are validated before they reach the container package manage
 GitReadRun --read PATH
 ```
 
-Only approved workflow filesystem prefixes are accepted.
+Only approved workflow filesystem prefixes are accepted. Paths are opened component-by-component without following symlinks; reads reject non-regular and hard-linked targets and are capped at 16 MiB.
 
 ### GitWriteRun
 
@@ -115,7 +115,7 @@ Only approved workflow filesystem prefixes are accepted.
 GitWriteRun --write PATH VALUE
 ```
 
-The same filesystem allowlist and path safety rules apply.
+The same descriptor-based path checks apply. Writes are capped at 16 MiB and reject symlinked path components and hard-linked targets.
 
 ### GitVerifyRun
 
@@ -123,7 +123,7 @@ The same filesystem allowlist and path safety rules apply.
 GitVerifyRun --read PATH
 ```
 
-The operation computes a SHA-256 digest of an allowed path.
+The operation computes a SHA-256 digest through a checked file descriptor, rejects symlinked path components and hard-linked/non-regular files, and caps hashing at 1 GiB.
 
 ### GitStatusRun
 

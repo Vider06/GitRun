@@ -476,7 +476,8 @@ pub struct DecisionAudit {
     pub source_window_start: Option<u64>,
     pub source_window_end: Option<u64>,
     pub status: DecisionStatus,
-    /// True only after GSR has authorized and durably audited this floor.
+    /// True only after GSR has durably authorized the predictive floor or
+    /// recurring-workload prewarm represented by this decision.
     #[serde(default)]
     pub gsr_authorized: bool,
     pub reason: String,
@@ -1295,9 +1296,9 @@ impl KittyRuntime {
         Ok(decision)
     }
 
-    /// Persist the result of GSR's authorization decision before the
-    /// scheduler is allowed to use a raised runner floor. Unapproved floors
-    /// are never eligible for retention after a restart.
+    /// Persist GSR's result before the scheduler may use a raised runner floor
+    /// or create a recurring-workload prewarm. Unapproved floors are never
+    /// eligible for retention after a restart.
     pub fn record_gsr_authorization(
         &mut self,
         decision: &mut KittyDecision,
@@ -1326,16 +1327,31 @@ impl KittyRuntime {
             })?;
 
         if authorized {
-            if !matches!(
+            let raised_floor = matches!(
                 decision.status,
                 DecisionStatus::AppliedWarmPoolFloor | DecisionStatus::WarmPoolHold
-            ) || decision.effective_min_runners <= decision.configured_min_runners
-            {
+            ) && decision.effective_min_runners > decision.configured_min_runners;
+            let authorized_workload_prewarm = !decision.workload_prewarms.is_empty()
+                && decision
+                    .confidence_score
+                    .is_some_and(|score| score.is_finite() && (0.0..=1.0).contains(&score))
+                && !decision.shadow_mode;
+            if !raised_floor && !authorized_workload_prewarm {
                 return Err(KittyError::Invalid(
-                    "GSR granted a decision that is not a raised warm-pool floor".into(),
+                    "GSR granted a decision with neither a raised floor nor an eligible workload prewarm"
+                        .into(),
                 ));
             }
             audit.gsr_authorized = true;
+            let bounded_reason: String = reason.chars().take(512).collect();
+            audit.reason = format!("{}; GSR authorized: {bounded_reason}", audit.reason)
+                .chars()
+                .take(1024)
+                .collect();
+            decision.reason = format!("{} GSR authorized the predictive action.", decision.reason)
+                .chars()
+                .take(1024)
+                .collect();
         } else {
             let bounded_fallback = fallback_minimum.min(decision.configured_min_runners);
             let bounded_reason: String = reason.chars().take(512).collect();

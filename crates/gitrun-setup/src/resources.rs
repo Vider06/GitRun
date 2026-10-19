@@ -351,7 +351,9 @@ mod tests {
             include_str!("../../../docker/runner/entrypoint.sh")
         );
         assert!(RUNNER_ENTRYPOINT.contains("sudo -P -u runner"));
-        assert!(RUNNER_ENTRYPOINT.contains("/var/lib/gitrun/control/dock-only"));
+        assert!(RUNNER_ENTRYPOINT.contains("CONTROL_DIR=/var/lib/gitrun/control"));
+        assert!(RUNNER_ENTRYPOINT.contains('DOCK_ONLY_MARKER="$CONTROL_DIR/dock-only"'));
+        assert!(RUNNER_ENTRYPOINT.contains('echo "gitrun-runner: starting in GitDockRun dock-only mode"'));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
         assert_eq!(
             SYSTEMD_SERVICE,

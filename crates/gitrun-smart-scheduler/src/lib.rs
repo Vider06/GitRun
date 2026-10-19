@@ -1124,8 +1124,7 @@ impl KittyRuntime {
         // that job is handled by the ordinary planner's live queue path.
         workload_prewarms.retain(|target| {
             !input.job_occurrences.iter().any(|job| {
-                valid_queued_job(job)
-                    && workload_fingerprint(job) == target.workload_code
+                valid_queued_job(job) && workload_fingerprint(job) == target.workload_code
             })
         });
 

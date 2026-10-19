@@ -260,8 +260,7 @@ fn parse_github_timestamp_epoch(raw: &str) -> Option<u64> {
     let year_of_era = adjusted_year - era * 400;
     let adjusted_month = month + if month > 2 { -3 } else { 9 };
     let day_of_year = (153 * adjusted_month + 2) / 5 + day - 1;
-    let day_of_era =
-        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     let days = era * 146_097 + day_of_era - 719_468;
     let seconds = days
         .checked_mul(86_400)?
@@ -284,10 +283,7 @@ mod timestamp_tests {
             parse_github_timestamp_epoch("1970-01-01T01:00:00+01:00"),
             Some(0)
         );
-        assert_eq!(
-            parse_github_timestamp_epoch("2024-02-30T12:00:00Z"),
-            None
-        );
+        assert_eq!(parse_github_timestamp_epoch("2024-02-30T12:00:00Z"), None);
     }
 }
 

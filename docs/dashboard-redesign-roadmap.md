@@ -1,6 +1,6 @@
 # Dashboard redesign roadmap
 
-Status: implementation in progress on \`feat/dashboard-redesign\`.
+Status: dashboard changes are being reviewed as part of PR [#83](https://github.com/Vider06/GitRun/pull/83), branch `refactor/v1.5.0-total-cleanup`.
 
 ## Goals
 
@@ -101,3 +101,8 @@ Refresh windows are defaults, not a reason to poll on every component render. Vi
 - The Tauri backend has explicit service start/stop/restart commands, a bounded read-only host health report, coordinated config/settings persistence with rollback, and cached runner/workflow/repository/resource snapshots.
 
 These implementation notes describe code that has been authored on this branch; CI and runtime testing are still required before the PR can be considered ready.
+
+
+## v1.5.0 verification note
+
+The Tauri GUI build/package and executable-trust regression tests pass in the current PR CI. This does not replace manual verification of the actual desktop authorization prompt (`pkexec`) or install/uninstall/reinstall privilege transitions on supported desktop environments. Do not describe those flows as fully verified until their runtime evidence is recorded in the [status tracker](v1.5.0-refactor-status.md).

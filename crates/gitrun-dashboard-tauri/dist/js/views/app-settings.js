@@ -21,9 +21,10 @@ export async function renderAppSettings() {
     warm_pool_min_hold_seconds:900, minimum_quality_score:0.85
   };
   const kittyStatus = kittyData?.status || {repositories:[]};
+  const kittyStatusError = kittyData?.status_error || null;
   const formatEpoch = (value) => value ? new Date(value * 1000).toLocaleString() : "Not recorded";
   const hiddenModelPlaceholder = '<div class="notice"><div><strong>Workflow Model details are hidden</strong><p>Historical predictions remain stored privately. Re-enable model visibility to show the summarized history and latest decision.</p></div></div>';
-  const emptyModelPlaceholder = '<div class="notice"><div><strong>No Workflow Model history yet</strong><p>Kitty is off by default. After enabling telemetry, aggregated observations are collected in five-minute buckets. Forecasts require sufficient history and evaluated outcomes.</p></div></div>';
+  const emptyModelPlaceholder = '<div class="notice"><div><strong>No Workflow Model history yet</strong><p>No observations are recorded yet. Kitty must be enabled for aggregate telemetry, and forecasts require sufficient history and evaluated outcomes.</p></div></div>';
   const kittyRows = (kittyStatus.repositories || []).map((entry) => {
     const forecast = entry.latest_forecast;
     const decision = entry.latest_decision;
@@ -48,7 +49,8 @@ export async function renderAppSettings() {
   }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);
   const kittyPanel = '<div class="section">' + panel("Kitty Smart Scheduler",
     '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. It is disabled by default; recommendations never authorize themselves.</p>' +
-    (kittyLoadError ? '<div class="notice warn"><div><strong>Kitty settings could not be loaded</strong><p>' + esc(kittyLoadError) + '</p><p>Saving below can repair a malformed or inaccessible settings file.</p></div></div>' : '') +
+    (kittyLoadError ? '<div class="notice warn"><div><strong>Kitty settings could not be loaded</strong><p>' + esc(kittyLoadError) + '</p><p>Saving valid settings may repair malformed configuration. Unsafe ownership, permissions or trusted-path failures require administrator repair.</p></div></div>' : '') +
+    (kittyStatusError ? '<div class="notice warn"><div><strong>Workflow Model status is unavailable</strong><p>' + esc(kittyStatusError) + '</p><p>Kitty settings are still available, but the status snapshot was rejected. Inspect the status file ownership and permissions before retrying.</p></div></div>' : '') +
     '<label class="checkbox-row"><input id="kitty-enabled" type="checkbox" ' + (kittySettings.enabled ? "checked" : "") + '><span><strong>Enable Kitty</strong>Enable the optional observer and its statistical model. This does not enable automatic scaling.</span></label>' +
     '<label class="checkbox-row"><input id="kitty-telemetry-enabled" type="checkbox" ' + (kittySettings.telemetry_enabled ? "checked" : "") + '><span><strong>Collect aggregate telemetry</strong>Queue and runner counts plus optional host resource measurements. No job payloads, environment values, tokens or secrets.</span></label>' +
     '<label class="checkbox-row"><input id="kitty-analytics-enabled" type="checkbox" ' + (kittySettings.predictive_analytics_enabled ? "checked" : "") + '><span><strong>Predictive analytics</strong>Forecast aggregate busy-plus-queued demand and evaluate forecasts against later observations.</span></label>' +

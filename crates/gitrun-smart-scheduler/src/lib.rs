@@ -323,6 +323,55 @@ impl WorkflowModel {
             }
             previous = Some(item.bucket_epoch);
         }
+        for prediction in &self.predictions {
+            if prediction.issued_at_bucket % BUCKET_SECONDS != 0
+                || prediction.target_bucket
+                    != prediction.issued_at_bucket.saturating_add(FORECAST_HORIZON_SECONDS)
+                || prediction.target_bucket % BUCKET_SECONDS != 0
+                || (prediction.skipped_missing_observation && prediction.actual_demand.is_some())
+            {
+                return Err(KittyError::Invalid(
+                    "stored prediction record has inconsistent timestamps or outcome flags".into(),
+                ));
+            }
+        }
+        if let Some(forecast) = &self.latest_forecast {
+            let valid_score = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
+            if forecast.model_version != self.model_version
+                || forecast.horizon_seconds != FORECAST_HORIZON_SECONDS
+                || forecast.target_epoch
+                    != forecast.generated_at_epoch.saturating_add(FORECAST_HORIZON_SECONDS)
+                || forecast.sample_count == 0
+                || forecast.sample_count > self.history.len()
+                || forecast.evaluated_forecasts > self.predictions.len()
+                || !valid_score(forecast.quality_score)
+                || !valid_score(forecast.confidence_score)
+                || forecast
+                    .mean_absolute_error
+                    .is_some_and(|value| !value.is_finite() || value < 0.0)
+            {
+                return Err(KittyError::Invalid(
+                    "stored forecast record is outside supported bounds".into(),
+                ));
+            }
+        }
+        for audit in &self.decision_audit {
+            if audit.bucket_epoch % BUCKET_SECONDS != 0
+                || audit.model_version != self.model_version
+                || audit.sample_count > history_limit
+                || audit.source_window_start.zip(audit.source_window_end).is_some_and(
+                    |(start, end)| start > end || end > audit.bucket_epoch
+                )
+                || audit.source_window_start.is_some() != audit.source_window_end.is_some()
+                || audit
+                    .confidence_score
+                    .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+            {
+                return Err(KittyError::Invalid(
+                    "stored decision audit is outside supported bounds".into(),
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -488,6 +537,16 @@ impl KittyRuntime {
         observation.validate()?;
 
         let key = repository_key(&input.repository);
+        if !self.models.contains_key(&key)
+            && !self.disabled_models.contains(&key)
+            && self.disabled_models.len() >= MAX_MODELS
+        {
+            return Ok(KittyDecision::fallback(
+                &input.repository,
+                configured_min_runners,
+                "Kitty validation-failure cache is full; deterministic scheduler remains authoritative",
+            ));
+        }
         if self.disabled_models.contains(&key) {
             return Ok(KittyDecision::fallback(
                 &input.repository,
@@ -508,7 +567,9 @@ impl KittyRuntime {
                     self.models.insert(key.clone(), model);
                 }
                 Err(error) => {
-                    self.disabled_models.insert(key.clone());
+                    if self.disabled_models.len() < MAX_MODELS {
+                        self.disabled_models.insert(key.clone());
+                    }
                     eprintln!(
                         "gitrun-smart-scheduler: model for {} failed closed: {}",
                         input.repository, error
@@ -608,23 +669,21 @@ impl KittyRuntime {
             })
             .unwrap_or(configured_min_runners.min(max_runners));
 
-        let held_floor = forecast
-            .filter(|f| {
-                self.settings.predictive_warm_pool_enabled
-                    && !self.settings.shadow_mode
-                    && f.confidence_score >= self.settings.minimum_quality_score
-                    && sample_count >= self.settings.minimum_samples
-                    && capacity_growth_allowed
-            })
-            .and_then(|_| {
-                retained_warm_pool_floor(
-                    model,
-                    bucket,
-                    configured_min_runners,
-                    max_runners,
-                    self.settings.warm_pool_min_hold_seconds,
-                )
-            });
+        let held_floor = if self.settings.predictive_warm_pool_enabled
+            && !self.settings.shadow_mode
+            && capacity_growth_allowed
+        {
+            retained_warm_pool_floor(
+                model,
+                bucket,
+                configured_min_runners,
+                max_runners,
+                self.settings.max_additional_warm_runners,
+                self.settings.warm_pool_min_hold_seconds,
+            )
+        } else {
+            None
+        };
 
         let capability_note = if self.settings.adaptive_resource_management_enabled
             || self.settings.smart_fast_stop_enabled
@@ -641,27 +700,49 @@ impl KittyRuntime {
                 "Telemetry-only mode; predictive analytics is disabled.".to_owned(),
             )
         } else if forecast.is_none() {
-            (
-                DecisionStatus::InsufficientHistory,
-                configured_min_runners,
-                format!(
-                    "Collecting bounded five-minute observations; {} samples are available and {} are required. No predictive action is permitted.",
-                    sample_count, self.settings.minimum_samples
-                ),
-            )
+            if let Some(held) = held_floor.filter(|floor| *floor > configured_min_runners) {
+                (
+                    DecisionStatus::WarmPoolHold,
+                    held,
+                    format!(
+                        "No fresh actionable forecast is available; retaining the previously approved warm-pool floor at {} until its bounded hold expires.",
+                        held
+                    ),
+                )
+            } else {
+                (
+                    DecisionStatus::InsufficientHistory,
+                    configured_min_runners,
+                    format!(
+                        "Collecting bounded five-minute observations; {} samples are available and {} are required. No predictive action is permitted.",
+                        sample_count, self.settings.minimum_samples
+                    ),
+                )
+            }
         } else {
             let f = forecast.expect("checked forecast");
             let acceptable = f.confidence_score >= self.settings.minimum_quality_score
                 && sample_count >= self.settings.minimum_samples;
             if !acceptable {
-                (
-                    DecisionStatus::InsufficientHistory,
-                    configured_min_runners,
-                    format!(
-                        "Forecast readiness {:.3} is below the configured threshold {:.3}; no action.",
-                        f.confidence_score, self.settings.minimum_quality_score
-                    ),
-                )
+                if let Some(held) = held_floor.filter(|floor| *floor > configured_min_runners) {
+                    (
+                        DecisionStatus::WarmPoolHold,
+                        held,
+                        format!(
+                            "Forecast readiness {:.3} is below the configured threshold {:.3}; retaining the previously approved warm-pool floor at {} only until its bounded hold expires.",
+                            f.confidence_score, self.settings.minimum_quality_score, held
+                        ),
+                    )
+                } else {
+                    (
+                        DecisionStatus::InsufficientHistory,
+                        configured_min_runners,
+                        format!(
+                            "Forecast readiness {:.3} is below the configured threshold {:.3}; no predictive action.",
+                            f.confidence_score, self.settings.minimum_quality_score
+                        ),
+                    )
+                }
             } else if !self.settings.predictive_warm_pool_enabled {
                 (
                     DecisionStatus::RecommendationOnly,
@@ -777,6 +858,7 @@ impl KittyRuntime {
                 decision.status,
                 DecisionStatus::ShadowRecommendation
                     | DecisionStatus::AppliedWarmPoolFloor
+                    | DecisionStatus::WarmPoolHold
                     | DecisionStatus::ResourcePressureHold
                     | DecisionStatus::SafeFallback
             ) {
@@ -800,34 +882,8 @@ impl KittyRuntime {
             self.dirty_models.insert(key);
         }
 
-        // A live capacity change is impossible unless its model and decision
-        // audit are durable before the deterministic planner sees the raised floor.
-        if decision.status == DecisionStatus::AppliedWarmPoolFloor
-            && self.dirty_models.contains(&key)
-        {
-            if let Err(error) = self.persist_model(&key) {
-                self.disabled_models.insert(key.clone());
-                return Err(error);
-            }
-            self.dirty_models.remove(&key);
-        }
-
-        // Persist the source window and audit before allowing an automated
-        // floor increase to reach the planner. A storage failure blocks this
-        // recommendation now, not only on the following reconcile cycle.
-        if decision.status == DecisionStatus::AppliedWarmPoolFloor
-            && self.dirty_models.contains(&key)
-        {
-            if let Err(error) = self.persist_model(&key) {
-                self.disabled_models.insert(key.clone());
-                return Err(error);
-            }
-            self.dirty_models.remove(&key);
-        }
-
-        // Persist model, forecast and decision audit before the scheduler is
-        // allowed to act on a raised floor. Persistence failure fails closed
-        // for this recommendation, not for the deterministic reconcile cycle.
+        // A raised floor is not passed to the planner until its source model and
+        // decision audit have been persisted successfully. Failure fails closed.
         if decision.status == DecisionStatus::AppliedWarmPoolFloor
             && self.dirty_models.contains(&key)
         {
@@ -1097,28 +1153,6 @@ pub fn save_settings_for_local_state_dir(state_dir: &Path, settings: &KittySetti
 
 /// Root-only writer called by the authenticated internal CLI command. The CLI
 /// then grants the desktop user's primary group read-only access.
-pub fn save_settings_as_root(state_dir: &Path, settings: &KittySettings) -> Result<()> {
-    settings.validate()?;
-    #[cfg(unix)]
-    if unsafe { libc::geteuid() } != 0 {
-        return Err(KittyError::Invalid(
-            "system Kitty settings require root privileges".into(),
-        ));
-    }
-    if !KittyRuntime::uses_system_settings_path(state_dir) {
-        return Err(KittyError::Invalid(
-            "trusted system GitRun installation was not detected".into(),
-        ));
-    }
-    let bytes = serde_json::to_vec(settings)?;
-    if bytes.len() as u64 > MAX_SETTINGS_BYTES {
-        return Err(KittyError::Invalid(
-            "Kitty settings exceed the size limit".into(),
-        ));
-    }
-    atomic_write_system_private(&KittyRuntime::settings_path(state_dir), &bytes)
-}
-
 pub fn load_dashboard_status(state_dir: &Path) -> Result<KittyDashboardStatus> {
     let settings = load_settings_for_dashboard(state_dir)?;
     let path = KittyRuntime::dashboard_status_path(state_dir);
@@ -1191,6 +1225,7 @@ fn trusted_system_state_dir() -> Option<PathBuf> {
             || config_meta.file_type().is_symlink()
             || !config_meta.is_file()
             || config_meta.uid() != 0
+            || config_meta.nlink() != 1
             || config_meta.mode() & 0o022 != 0
             || config_meta.len() > 1024 * 1024
         {
@@ -1293,7 +1328,7 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
         || !metadata.is_file()
         || metadata.uid() != 0
         || metadata.nlink() != 1
-        || metadata.mode() & 0o022 != 0
+        || metadata.mode() & 0o777 != 0o640
         || metadata.len() > max_bytes
     {
         return Err(KittyError::Invalid(format!(
@@ -1309,7 +1344,7 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     if !opened.is_file()
         || opened.uid() != 0
         || opened.nlink() != 1
-        || opened.mode() & 0o022 != 0
+        || opened.mode() & 0o777 != 0o640
         || opened.len() > max_bytes
     {
         return Err(KittyError::Invalid(format!(
@@ -1331,62 +1366,6 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
 
 #[cfg(not(unix))]
 fn read_system_checked(_path: &Path, _max_bytes: u64) -> Result<Option<Vec<u8>>> {
-    Err(KittyError::Invalid(
-        "system Kitty settings are supported only on Unix".into(),
-    ))
-}
-
-#[cfg(unix)]
-fn atomic_write_system_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-    if unsafe { libc::geteuid() } != 0 {
-        return Err(KittyError::Invalid(
-            "system Kitty settings require root privileges".into(),
-        ));
-    }
-    validate_system_parent(path)?;
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink()
-            || !metadata.is_file()
-            || metadata.uid() != 0
-            || metadata.nlink() != 1
-            || metadata.mode() & 0o022 != 0
-        {
-            return Err(KittyError::Invalid(format!(
-                "{} is an unsafe existing settings file",
-                path.display()
-            )));
-        }
-    }
-    let parent = path.parent().expect("validated parent");
-    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let temporary = parent.join(format!(
-        ".kitty-settings-tmp-{}-{sequence}",
-        std::process::id()
-    ));
-    let result = (|| -> Result<()> {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temporary, path)?;
-        fs::File::open(parent)?.sync_all()?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
-}
-
-#[cfg(not(unix))]
-fn atomic_write_system_private(_path: &Path, _bytes: &[u8]) -> Result<()> {
     Err(KittyError::Invalid(
         "system Kitty settings are supported only on Unix".into(),
     ))
@@ -1558,6 +1537,7 @@ fn retained_warm_pool_floor(
     current_bucket: u64,
     configured_min_runners: u32,
     max_runners: u32,
+    max_additional_warm_runners: u32,
     hold_seconds: u64,
 ) -> Option<u32> {
     let latest = model.decision_audit.iter().rev().find(|audit| {
@@ -1571,7 +1551,13 @@ fn retained_warm_pool_floor(
     {
         return None;
     }
-    let previous = latest.effective_min_runners.min(max_runners);
+    let current_operator_cap = configured_min_runners
+        .saturating_add(max_additional_warm_runners)
+        .min(max_runners);
+    let previous = latest
+        .effective_min_runners
+        .min(max_runners)
+        .min(current_operator_cap);
     (previous > configured_min_runners).then_some(previous)
 }
 
@@ -2007,6 +1993,50 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_forecast_and_prediction_records_fail_model_validation() {
+        let settings = enabled_settings();
+        let history_limit = 48;
+        let mut model = WorkflowModel::empty("owner/repo");
+        let start = 50_000 / BUCKET_SECONDS * BUCKET_SECONDS;
+        for index in 0..24u64 {
+            model.history.push(Observation {
+                bucket_epoch: start + index * BUCKET_SECONDS,
+                queued_jobs: 1,
+                busy_runners: 2,
+                online_runners: 3,
+                managed_runners: 3,
+                host_cpu_percent: None,
+                host_memory_percent: None,
+                host_disk_percent: None,
+                snapshots_in_bucket: 1,
+            });
+        }
+        model.latest_forecast = Some(Forecast {
+            model_version: MODEL_VERSION,
+            generated_at_epoch: start + 23 * BUCKET_SECONDS,
+            target_epoch: start + 23 * BUCKET_SECONDS + 7,
+            horizon_seconds: FORECAST_HORIZON_SECONDS,
+            sample_count: 24,
+            evaluated_forecasts: 0,
+            predicted_peak_concurrency: 3,
+            mean_absolute_error: None,
+            quality_score: 0.8,
+            confidence_score: 0.8,
+        });
+        assert!(model.validate_for("owner/repo", history_limit).is_err());
+
+        model.latest_forecast = None;
+        model.predictions.push(PredictionRecord {
+            issued_at_bucket: start,
+            target_bucket: start + 2 * BUCKET_SECONDS,
+            predicted_demand: 3,
+            actual_demand: None,
+            skipped_missing_observation: false,
+        });
+        assert!(model.validate_for("owner/repo", history_limit).is_err());
+    }
+
+    #[test]
     fn snapshot_merging_never_fabricates_combined_peak_demand() {
         let mut sample = Observation {
             bucket_epoch: 1_800,
@@ -2056,10 +2086,10 @@ mod tests {
             planned_action_count: Some(1),
             execution_outcome: Some("plan_executed".into()),
         });
-        assert_eq!(retained_warm_pool_floor(&model, 10_600, 2, 5, 900), Some(4));
-        assert_eq!(retained_warm_pool_floor(&model, 10_600, 3, 5, 900), None);
-        assert_eq!(retained_warm_pool_floor(&model, 11_000, 2, 5, 900), None);
-        assert_eq!(retained_warm_pool_floor(&model, 10_600, 2, 3, 900), Some(3));
+        assert_eq!(retained_warm_pool_floor(&model, 10_600, 2, 5, 2, 900), Some(4));
+        assert_eq!(retained_warm_pool_floor(&model, 10_600, 3, 5, 2, 900), None);
+        assert_eq!(retained_warm_pool_floor(&model, 11_000, 2, 5, 2, 900), None);
+        assert_eq!(retained_warm_pool_floor(&model, 10_600, 2, 3, 2, 900), Some(3));
     }
 
     #[test]

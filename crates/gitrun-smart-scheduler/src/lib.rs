@@ -776,6 +776,11 @@ impl WorkflowModel {
         for audit in &self.decision_audit {
             if !audit.bucket_epoch.is_multiple_of(BUCKET_SECONDS)
                 || audit.model_version != self.model_version
+                || audit.reason.len() > 1024
+                || audit
+                    .execution_outcome
+                    .as_ref()
+                    .is_some_and(|outcome| outcome.len() > 256)
                 // Audit counts describe the history size at decision time; they
                 // can legitimately exceed a later reduced retention setting.
                 // The hard on-disk cap still rejects implausible/corrupt counts.

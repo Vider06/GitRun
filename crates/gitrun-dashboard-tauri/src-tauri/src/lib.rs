@@ -2267,24 +2267,23 @@ fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
     let state_dir = Path::new(&config.state_dir);
     let settings = gitrun_smart_scheduler::load_settings_for_dashboard(state_dir)
         .map_err(|e| e.to_string())?;
-    let (status, status_error) =
-        match gitrun_smart_scheduler::load_dashboard_status(state_dir) {
-            Ok(status) => (status, None),
-            Err(error) => (
-                KittyDashboardStatus {
-                    schema_version: gitrun_smart_scheduler::SETTINGS_SCHEMA_VERSION,
-                    generated_at_epoch: 0,
-                    enabled: settings.enabled,
-                    telemetry_enabled: settings.telemetry_enabled,
-                    predictive_analytics_enabled: settings.predictive_analytics_enabled,
-                    workflow_model_visible: settings.workflow_model_visible,
-                    predictive_warm_pool_enabled: settings.predictive_warm_pool_enabled,
-                    shadow_mode: settings.shadow_mode,
-                    repositories: Vec::new(),
-                },
-                Some(error.to_string()),
-            ),
-        };
+    let (status, status_error) = match gitrun_smart_scheduler::load_dashboard_status(state_dir) {
+        Ok(status) => (status, None),
+        Err(error) => (
+            KittyDashboardStatus {
+                schema_version: gitrun_smart_scheduler::SETTINGS_SCHEMA_VERSION,
+                generated_at_epoch: 0,
+                enabled: settings.enabled,
+                telemetry_enabled: settings.telemetry_enabled,
+                predictive_analytics_enabled: settings.predictive_analytics_enabled,
+                workflow_model_visible: settings.workflow_model_visible,
+                predictive_warm_pool_enabled: settings.predictive_warm_pool_enabled,
+                shadow_mode: settings.shadow_mode,
+                repositories: Vec::new(),
+            },
+            Some(error.to_string()),
+        ),
+    };
     Ok(KittyDashboardData {
         settings,
         status,

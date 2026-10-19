@@ -326,7 +326,9 @@ impl WorkflowModel {
         for prediction in &self.predictions {
             if prediction.issued_at_bucket % BUCKET_SECONDS != 0
                 || prediction.target_bucket
-                    != prediction.issued_at_bucket.saturating_add(FORECAST_HORIZON_SECONDS)
+                    != prediction
+                        .issued_at_bucket
+                        .saturating_add(FORECAST_HORIZON_SECONDS)
                 || prediction.target_bucket % BUCKET_SECONDS != 0
                 || (prediction.skipped_missing_observation && prediction.actual_demand.is_some())
             {
@@ -340,7 +342,9 @@ impl WorkflowModel {
             if forecast.model_version != self.model_version
                 || forecast.horizon_seconds != FORECAST_HORIZON_SECONDS
                 || forecast.target_epoch
-                    != forecast.generated_at_epoch.saturating_add(FORECAST_HORIZON_SECONDS)
+                    != forecast
+                        .generated_at_epoch
+                        .saturating_add(FORECAST_HORIZON_SECONDS)
                 || forecast.sample_count == 0
                 || forecast.sample_count > self.history.len()
                 || forecast.evaluated_forecasts > self.predictions.len()
@@ -359,9 +363,10 @@ impl WorkflowModel {
             if audit.bucket_epoch % BUCKET_SECONDS != 0
                 || audit.model_version != self.model_version
                 || audit.sample_count > history_limit
-                || audit.source_window_start.zip(audit.source_window_end).is_some_and(
-                    |(start, end)| start > end || end > audit.bucket_epoch
-                )
+                || audit
+                    .source_window_start
+                    .zip(audit.source_window_end)
+                    .is_some_and(|(start, end)| start > end || end > audit.bucket_epoch)
                 || audit.source_window_start.is_some() != audit.source_window_end.is_some()
                 || audit
                     .confidence_score
@@ -2086,10 +2091,16 @@ mod tests {
             planned_action_count: Some(1),
             execution_outcome: Some("plan_executed".into()),
         });
-        assert_eq!(retained_warm_pool_floor(&model, 10_600, 2, 5, 2, 900), Some(4));
+        assert_eq!(
+            retained_warm_pool_floor(&model, 10_600, 2, 5, 2, 900),
+            Some(4)
+        );
         assert_eq!(retained_warm_pool_floor(&model, 10_600, 3, 5, 2, 900), None);
         assert_eq!(retained_warm_pool_floor(&model, 11_000, 2, 5, 2, 900), None);
-        assert_eq!(retained_warm_pool_floor(&model, 10_600, 2, 3, 2, 900), Some(3));
+        assert_eq!(
+            retained_warm_pool_floor(&model, 10_600, 2, 3, 2, 900),
+            Some(3)
+        );
     }
 
     #[test]

@@ -2870,15 +2870,16 @@ fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std:
         .parent()
         .ok_or("Kitty settings path has no parent directory")?;
     if parent != config_parent {
-        return Err("Kitty settings path does not resolve to the trusted GitRun configuration directory".into());
+        return Err(
+            "Kitty settings path does not resolve to the trusted GitRun configuration directory"
+                .into(),
+        );
     }
 
     // Stage in the same trusted directory but outside the active settings path.
     // The scheduler can never observe the new values until ownership and
     // group-readable permissions have been verified successfully.
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_nanos();
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let staged = parent.join(format!(
         ".kitty-settings-pending-{}-{unique}.tmp",
         std::process::id()
@@ -2905,7 +2906,9 @@ fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std:
             || staged_metadata.nlink() != 1
             || staged_metadata.permissions().mode() & 0o777 != 0o640
         {
-            return Err("staged Kitty settings failed its ownership/permission postcondition".into());
+            return Err(
+                "staged Kitty settings failed its ownership/permission postcondition".into(),
+            );
         }
 
         match std::fs::symlink_metadata(&destination) {
@@ -2916,7 +2919,9 @@ fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std:
                     && metadata.nlink() == 1
                     && metadata.permissions().mode() & 0o022 == 0 => {}
             Ok(_) => {
-                return Err("existing Kitty settings path has unsafe type, owner, or permissions".into());
+                return Err(
+                    "existing Kitty settings path has unsafe type, owner, or permissions".into(),
+                );
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
@@ -2933,7 +2938,9 @@ fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std:
             || final_metadata.nlink() != 1
             || final_metadata.permissions().mode() & 0o777 != 0o640
         {
-            return Err("saved Kitty settings failed final ownership/permission verification".into());
+            return Err(
+                "saved Kitty settings failed final ownership/permission verification".into(),
+            );
         }
         Ok(())
     })();

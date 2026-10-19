@@ -899,10 +899,7 @@ fn handle_stream_with_identity_provider(
         )?;
         return Ok(());
     };
-    if identity
-        .workflow_job_id
-        .is_some_and(|bound_job_id| bound_job_id != current_job.id)
-    {
+    if !workflow_job_id_matches(identity.workflow_job_id, current_job.id) {
         send_error(
             &mut stream,
             "authoritative GitHub job ID does not match the runner's exact queued-job binding",
@@ -1071,6 +1068,10 @@ fn validate_runner_invocation_binding(
         run_id,
         requires_active_job_lookup,
     })
+}
+
+fn workflow_job_id_matches(bound_job_id: Option<u64>, authoritative_job_id: u64) -> bool {
+    bound_job_id.is_none_or(|bound| bound == authoritative_job_id)
 }
 
 fn active_job_matches(active_job_name: &str, requested_job: &str) -> bool {
@@ -6496,6 +6497,13 @@ mod api_identity_validation_tests {
         assert!(result.requires_active_job_lookup);
         assert!(active_job_matches("build", "build"));
         assert!(!active_job_matches("deploy", "build"));
+    }
+
+    #[test]
+    fn exact_queued_job_binding_rejects_a_different_job_id() {
+        assert!(workflow_job_id_matches(Some(101), 101));
+        assert!(!workflow_job_id_matches(Some(101), 102));
+        assert!(workflow_job_id_matches(None, 102));
     }
 
     #[test]

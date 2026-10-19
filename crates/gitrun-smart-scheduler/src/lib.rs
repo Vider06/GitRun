@@ -650,10 +650,9 @@ impl WorkflowModel {
                 || pattern.job_name.len() > 256
                 || pattern.workflow_path.len() > 512
                 || pattern.labels.len() > 8
-                || pattern
-                    .labels
-                    .iter()
-                    .any(|label| label.is_empty() || label.len() > 48 || label.chars().any(char::is_control))
+                || pattern.labels.iter().any(|label| {
+                    label.is_empty() || label.len() > 48 || label.chars().any(char::is_control)
+                })
                 || pattern.first_seen_epoch == 0
                 || pattern.first_seen_epoch > pattern.last_seen_epoch
                 || pattern.occurrence_count == 0

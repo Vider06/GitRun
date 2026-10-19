@@ -19,6 +19,8 @@
 
 use std::time::Duration;
 
+type SpecializedJob = (Option<String>, Option<u64>, Option<u64>, Vec<String>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerHealth {
     Running,
@@ -276,7 +278,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // count-based formula assumes runners are interchangeable, which is not
     // true when jobs require a particular backend/image or isolated target.
     let mut routed_family_ordinals = std::collections::HashMap::<String, u32>::new();
-    let specialized_jobs: Vec<(Option<String>, Option<u64>, Option<u64>, Vec<String>)> = input
+    let specialized_jobs: Vec<SpecializedJob> = input
         .queued_job_labels
         .iter()
         .enumerate()

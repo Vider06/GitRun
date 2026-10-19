@@ -1243,10 +1243,10 @@ impl KittyRuntime {
         // that job is handled by the ordinary planner's live queue path, but
         // its profile prediction above still participates in self-correction.
         workload_prewarms.retain(|target| {
-            !input
-                .job_occurrences
-                .iter()
-                .any(|job| valid_queued_job(job) && gitrun_job_id_for(&model.repository, job) == target.gitrun_job_id)
+            !input.job_occurrences.iter().any(|job| {
+                valid_queued_job(job)
+                    && gitrun_job_id_for(&model.repository, job) == target.gitrun_job_id
+            })
         });
 
         let capability_note = if self.settings.adaptive_resource_management_enabled {
@@ -4341,8 +4341,16 @@ mod tests {
         // This is a GitRun-generated logical-job identity. GitHub occurrence
         // IDs distinguish executions, but cannot change the recurring profile.
         assert_ne!(
-            generated_occurrence_id(&gitrun_job_id_for("owner/repo", &first).unwrap(), first.run_id, first.job_id),
-            generated_occurrence_id(&gitrun_job_id_for("owner/repo", &later).unwrap(), later.run_id, later.job_id)
+            generated_occurrence_id(
+                &gitrun_job_id_for("owner/repo", &first).unwrap(),
+                first.run_id,
+                first.job_id
+            ),
+            generated_occurrence_id(
+                &gitrun_job_id_for("owner/repo", &later).unwrap(),
+                later.run_id,
+                later.job_id
+            )
         );
     }
 

@@ -1567,8 +1567,7 @@ fn execute(
             let job_labels = route_labels.as_deref().unwrap_or(&[]);
             let prewarm_workload_id =
                 prior.and_then(|container| container.prewarm_workload_id.as_deref());
-            let prewarm_target_epoch =
-                prior.and_then(|container| container.prewarm_target_epoch);
+            let prewarm_target_epoch = prior.and_then(|container| container.prewarm_target_epoch);
             let prewarm_hold_until_epoch =
                 prior.and_then(|container| container.prewarm_hold_until_epoch);
             deregister_and_remove(client, repo, name, expected_id)?;

@@ -4087,6 +4087,56 @@ mod tests {
     }
 
     #[test]
+    fn successful_prewarm_creation_is_persisted_and_bounded() {
+        let dir = temp_dir("prewarm-created");
+        let mut runtime = KittyRuntime::new(&dir);
+        let workload_code = "wk-0123456789abcdef".to_owned();
+        let mut model = WorkflowModel::empty("owner/repo");
+        model.workload_patterns.push(WorkloadPattern {
+            workload_code: workload_code.clone(),
+            workflow_id: 7,
+            workflow_path: ".github/workflows/build.yml".into(),
+            job_name: "build".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            first_seen_epoch: 1_800,
+            last_seen_epoch: 1_800,
+            occurrence_count: 4,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+            slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+        });
+        model.workload_predictions.push(WorkloadPredictionRecord {
+            workload_code: workload_code.clone(),
+            issued_at_bucket: 6_900,
+            target_epoch: 7_200,
+            predicted_occurrences: 2,
+            observed_occurrences: 0,
+            actual_occurrences: None,
+            prewarm_runners_created: 0,
+        });
+        let key = repository_key("owner/repo");
+        runtime.models.insert(key.clone(), model);
+        runtime.persist_model(&key).unwrap();
+
+        runtime
+            .record_workload_prewarm_created("owner/repo", &workload_code, 7_200, 1)
+            .unwrap();
+        let path = dir
+            .join("kitty")
+            .join(format!("model-{}.json", repository_key("owner/repo")));
+        let stored: WorkflowModel = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(stored.workload_predictions[0].prewarm_runners_created, 1);
+        assert!(stored.validate_for("owner/repo", MAX_HISTORY_BUCKETS).is_ok());
+
+        assert!(
+            runtime
+                .record_workload_prewarm_created("owner/repo", &workload_code, 7_200, 2)
+                .is_err(),
+            "completion counts must never exceed the predicted runner count"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn workload_fingerprint_validation_rejects_uppercase_or_malformed_codes() {
         assert!(valid_workload_code("wk-0123456789abcdef"));
         assert!(!valid_workload_code("wk-0123456789abcdeG"));

@@ -1068,8 +1068,7 @@ impl KittyRuntime {
             && forecast.is_some_and(|f| {
                 f.confidence_score >= self.settings.minimum_quality_score
                     && sample_count >= self.settings.minimum_samples
-            })
-        {
+            }) {
             forecast_workload_prewarms(model, bucket, &self.settings)
         } else {
             Vec::new()

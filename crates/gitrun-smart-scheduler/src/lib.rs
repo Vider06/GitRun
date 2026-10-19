@@ -3455,6 +3455,9 @@ mod tests {
         settings.warm_pool_min_hold_seconds = 299;
         assert!(settings.validate().is_err());
         settings.warm_pool_min_hold_seconds = 900;
+        settings.warm_pool_lead_seconds = 299;
+        assert!(settings.validate().is_err());
+        settings.warm_pool_lead_seconds = 600;
         settings.minimum_quality_score = 0.49;
         assert!(settings.validate().is_err());
     }

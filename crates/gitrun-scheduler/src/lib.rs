@@ -539,6 +539,120 @@ fn record_crash(state_dir: &std::path::Path, message: &str) -> std::io::Result<(
         .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
+fn kitty_automation_policy(
+    config: &Config,
+    settings: &gitrun_smart_scheduler::KittySettings,
+) -> gitrun_gsr::automation_gate::AutomationPolicy {
+    gitrun_gsr::automation_gate::AutomationPolicy {
+        kitty_enabled: settings.enabled,
+        telemetry_enabled: settings.telemetry_enabled,
+        predictive_analytics_enabled: settings.predictive_analytics_enabled,
+        predictive_warm_pool_enabled: settings.predictive_warm_pool_enabled,
+        shadow_mode: settings.shadow_mode,
+        automation_mode: settings.automation_mode,
+        smart_fast_stop_enabled: settings.smart_fast_stop_enabled,
+        minimum_readiness_score: settings.minimum_quality_score,
+        fast_stop_max_runtime_seconds: settings.fast_stop_max_runtime_seconds,
+        allowed_repositories: settings.automation_allowed_repositories.clone(),
+        configured_repositories: config.repositories.clone(),
+    }
+}
+
+fn maybe_fast_stop_workflow(
+    client: &GitHubClient,
+    config: &Config,
+    state_dir: &std::path::Path,
+    repo: &str,
+    settings: &gitrun_smart_scheduler::KittySettings,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let threshold = settings.fast_stop_max_runtime_seconds;
+    if threshold < 300 || threshold > 604_800 || !settings.smart_fast_stop_enabled {
+        return Ok(false);
+    }
+    if !config.repositories.iter().any(|configured| configured.eq_ignore_ascii_case(repo))
+        || !settings.automation_allowed_repositories.iter().any(|allowed| allowed.eq_ignore_ascii_case(repo))
+    {
+        return Ok(false);
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut runs = match client.list_active_workflow_runs(repo) {
+        Ok(runs) => runs,
+        Err(error) => {
+            eprintln!("gitrun-autoscaler: cannot verify active workflow runs for Fast Stop in {repo}: {error}");
+            return Ok(false);
+        }
+    };
+    runs.sort_by_key(|run| run.started_at_epoch.unwrap_or(u64::MAX));
+
+    for run in runs {
+        let Some(started) = run.started_at_epoch else {
+            continue;
+        };
+        if now < started {
+            continue;
+        }
+        let age = now.saturating_sub(started);
+        if age < threshold {
+            continue;
+        }
+        let policy = kitty_automation_policy(config, settings);
+        let intent = gitrun_gsr::automation_gate::AutomationIntent {
+            action: gitrun_gsr::automation_gate::AutomationAction::FastStopWorkflowRun,
+            repository: repo.to_owned(),
+            run_id: Some(run.id),
+            job_id: None,
+            runner_name: None,
+            readiness_score: None,
+            retaining_previously_authorized_floor: false,
+            configured_min_runners: None,
+            proposed_min_runners: None,
+            max_runners: None,
+            runner_is_verified_idle: false,
+            runner_is_dock_bound: false,
+            workflow_run_is_verified_active: true,
+            run_age_seconds: Some(age),
+            reason: format!(
+                "workflow run {} ({}) exceeded the configured runtime threshold of {} seconds; GitHub cancellation affects the entire run",
+                run.id, run.name, threshold
+            ),
+        };
+        let audit_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
+        let permit = match gitrun_gsr::automation_gate::authorize_action(&policy, intent, &audit_path) {
+            Ok(permit) => permit,
+            Err(error) => {
+                eprintln!("gitrun-autoscaler: GSR denied Kitty Fast Stop for {repo} run {}: {error}", run.id);
+                return Ok(false);
+            }
+        };
+        match client.force_cancel_workflow_run(repo, run.id) {
+            Ok(()) => {
+                if let Err(error) = permit.record_outcome(
+                    true,
+                    "GitHub accepted force-cancel request for the verified active workflow run",
+                ) {
+                    eprintln!("gitrun-autoscaler: GSR outcome audit failed after cancelling {repo} run {}: {error}", run.id);
+                }
+                eprintln!(
+                    "gitrun-autoscaler: Kitty Fast Stop cancelled allowlisted workflow run {} for {repo} after {} seconds",
+                    run.id, age
+                );
+                return Ok(true);
+            }
+            Err(error) => {
+                if let Err(audit_error) = permit.record_outcome(false, &format!("GitHub force-cancel failed: {error}")) {
+                    eprintln!("gitrun-autoscaler: GSR outcome audit also failed for {repo} run {}: {audit_error}", run.id);
+                }
+                return Err(error.into());
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Resource pressure blocks capacity growth, but should not freeze lifecycle
 /// safety work. Suppress whole replacement actions (rather than splitting
 /// remove/create), and suppress scale-down plans computed assuming deferred
@@ -673,6 +787,30 @@ fn reconcile_repo(
         config.gsr_workflow_validation_enabled,
     )
     .map_err(std::io::Error::other)?;
+
+    // Fast Stop is an explicit, allowlisted run deadline. Settings must be
+    // trusted and valid; an unreadable policy disables this optional action.
+    if let Ok(settings) = gitrun_smart_scheduler::load_settings_for_dashboard(state_dir) {
+        if settings.enabled
+            && settings.automation_mode
+            && settings.smart_fast_stop_enabled
+            && settings.automation_allowed_repositories.iter().any(|allowed| {
+                allowed.eq_ignore_ascii_case(repo)
+            })
+        {
+            match maybe_fast_stop_workflow(client, config, state_dir, repo, &settings) {
+                Ok(true) => {
+                    // Cancellation changes GitHub's live queue, so do not plan
+                    // against snapshots taken before the cancellation.
+                    return Ok(());
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!(
+                    "gitrun-autoscaler: Kitty Fast Stop failed closed for {repo}: {error}"
+                ),
+            }
+        }
+    }
 
     let containers = docker::managed_containers(repo)?;
     // GitDockRun requirements are routing/security metadata: if the file
@@ -867,7 +1005,7 @@ fn reconcile_repo(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let kitty_decision = match kitty_runtime.observe(
+    let mut kitty_decision = match kitty_runtime.observe(
         gitrun_smart_scheduler::ObservationInput {
             repository: repo.to_owned(),
             observed_at_epoch,
@@ -894,6 +1032,88 @@ fn reconcile_repo(
             )
         }
     };
+    let mut kitty_automation_permit = None;
+    if matches!(
+        kitty_decision.status,
+        gitrun_smart_scheduler::DecisionStatus::AppliedWarmPoolFloor
+            | gitrun_smart_scheduler::DecisionStatus::WarmPoolHold
+    ) && kitty_decision.effective_min_runners > config.min_runners
+    {
+        let settings = kitty_runtime.settings();
+        let policy = gitrun_gsr::automation_gate::AutomationPolicy {
+            kitty_enabled: settings.enabled,
+            telemetry_enabled: settings.telemetry_enabled,
+            predictive_analytics_enabled: settings.predictive_analytics_enabled,
+            predictive_warm_pool_enabled: settings.predictive_warm_pool_enabled,
+            shadow_mode: settings.shadow_mode,
+            automation_mode: settings.automation_mode,
+            smart_fast_stop_enabled: settings.smart_fast_stop_enabled,
+            minimum_readiness_score: settings.minimum_quality_score,
+            fast_stop_max_runtime_seconds: settings.fast_stop_max_runtime_seconds,
+            allowed_repositories: settings.automation_allowed_repositories.clone(),
+            configured_repositories: config.repositories.clone(),
+        };
+        let intent = gitrun_gsr::automation_gate::AutomationIntent {
+            action: gitrun_gsr::automation_gate::AutomationAction::PredictiveWarmPool,
+            repository: repo.to_owned(),
+            run_id: None,
+            job_id: None,
+            runner_name: None,
+            readiness_score: kitty_decision.confidence_score,
+            retaining_previously_authorized_floor: kitty_decision.status
+                == gitrun_smart_scheduler::DecisionStatus::WarmPoolHold,
+            configured_min_runners: Some(config.min_runners),
+            proposed_min_runners: Some(kitty_decision.effective_min_runners),
+            max_runners: Some(config.max_runners),
+            runner_is_verified_idle: false,
+            runner_is_dock_bound: false,
+            workflow_run_is_verified_active: false,
+            run_age_seconds: None,
+            reason: kitty_decision.reason.clone(),
+        };
+        let audit_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
+        match gitrun_gsr::automation_gate::authorize_action(&policy, intent, &audit_path) {
+            Ok(permit) => {
+                match kitty_runtime.record_gsr_authorization(
+                    &mut kitty_decision,
+                    true,
+                    config.min_runners.min(config.max_runners),
+                    "GSR durably authorized the predictive warm-pool floor",
+                ) {
+                    Ok(()) => kitty_automation_permit = Some(permit),
+                    Err(error) => {
+                        let reason = format!(
+                            "GSR grant could not be committed to the Kitty model audit: {error}"
+                        );
+                        let _ = permit.record_outcome(false, &reason);
+                        kitty_decision.status =
+                            gitrun_smart_scheduler::DecisionStatus::SafeFallback;
+                        kitty_decision.effective_min_runners =
+                            config.min_runners.min(config.max_runners);
+                        kitty_decision.reason = reason;
+                    }
+                }
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                if let Err(persist_error) = kitty_runtime.record_gsr_authorization(
+                    &mut kitty_decision,
+                    false,
+                    config.min_runners.min(config.max_runners),
+                    &reason,
+                ) {
+                    eprintln!("gitrun-autoscaler: failed to persist GSR denial in Kitty audit for {repo}: {persist_error}");
+                    kitty_decision.status =
+                        gitrun_smart_scheduler::DecisionStatus::SafeFallback;
+                    kitty_decision.effective_min_runners =
+                        config.min_runners.min(config.max_runners);
+                    kitty_decision.reason = format!(
+                        "GSR denied the predictive floor and the Kitty audit could not be updated: {reason}"
+                    );
+                }
+            }
+        }
+    }
     let effective_min_runners = if config.min_runners <= config.max_runners {
         kitty_decision
             .effective_min_runners
@@ -963,6 +1183,17 @@ fn reconcile_repo(
         action_execution_succeeded,
     ) {
         eprintln!("gitrun-autoscaler: Kitty audit persistence failed for {repo}; scheduler remains deterministic next cycle: {error}");
+    }
+
+    if let Some(permit) = kitty_automation_permit {
+        let outcome = if action_execution_succeeded {
+            format!("scheduler completed {} planned actions", planned_action_count)
+        } else {
+            "scheduler stopped after an action error; next reconcile will re-snapshot".into()
+        };
+        if let Err(error) = permit.record_outcome(action_execution_succeeded, &outcome) {
+            eprintln!("gitrun-autoscaler: GSR could not persist Kitty warm-pool action outcome for {repo}: {error}");
+        }
     }
 
     state.save()?;

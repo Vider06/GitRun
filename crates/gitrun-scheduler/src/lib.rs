@@ -1093,8 +1093,8 @@ fn reconcile_repo(
                     .iter()
                     .filter(|container| {
                         !container.status.eq_ignore_ascii_case("exited")
-                            && container.prewarm_workload_code.as_deref()
-                                == Some(target.workload_code.as_str())
+                            && container.prewarm_gitrun_job_id.as_deref()
+                                == Some(target.gitrun_job_id.as_str())
                             && container.prewarm_target_epoch == Some(target.target_epoch)
                     })
                     .count()
@@ -1177,7 +1177,7 @@ fn reconcile_repo(
                     .map(|target| {
                         format!(
                             "{}x{}@{}",
-                            target.workload_code, target.runner_count, target.target_epoch
+                            target.gitrun_job_id, target.runner_count, target.target_epoch
                         )
                     })
                     .collect::<Vec<_>>()
@@ -1296,15 +1296,15 @@ fn reconcile_repo(
         // Stop this repo's plan at the first failure and re-snapshot/replan on
         // the next tick; continuing can exceed capacity or act on stale state.
         match execute(&execution_context, &containers, &action, &mut state) {
-            Ok(Some((workload_code, target_epoch))) => {
+            Ok(Some((gitrun_job_id, target_epoch))) => {
                 if let Err(error) = kitty_runtime.record_workload_prewarm_created(
                     repo,
-                    &workload_code,
+                    &gitrun_job_id,
                     target_epoch,
                     1,
                 ) {
                     eprintln!(
-                        "gitrun-autoscaler: prewarm runner was created for {repo}/{workload_code}, but its durable completion record failed: {error}"
+                        "gitrun-autoscaler: prewarm runner was created for {repo}/{gitrun_job_id}, but its durable completion record failed: {error}"
                     );
                     action_execution_succeeded = false;
                     break;
@@ -1424,7 +1424,7 @@ fn execute(
                     job_run_id: *job_run_id,
                     job_id: *job_id,
                     job_labels,
-                    prewarm_workload_code: None,
+                    prewarm_gitrun_job_id: None,
                     prewarm_target_epoch: None,
                     prewarm_hold_until_epoch: None,
                 },
@@ -1436,7 +1436,7 @@ fn execute(
             }
         }
         Action::PrewarmWorkload {
-            workload_code,
+            gitrun_job_id,
             target_epoch,
             hold_until_epoch,
             job_name,
@@ -1457,7 +1457,7 @@ fn execute(
                     job_run_id: None,
                     job_id: None,
                     job_labels,
-                    prewarm_workload_code: Some(workload_code),
+                    prewarm_gitrun_job_id: Some(gitrun_job_id),
                     prewarm_target_epoch: Some(*target_epoch),
                     prewarm_hold_until_epoch: Some(*hold_until_epoch),
                 },
@@ -1469,9 +1469,9 @@ fn execute(
             }
             eprintln!(
                 "gitrun-autoscaler: prewarmed workload {} ({}) for {} at target epoch {}",
-                workload_code, job_name, repo, target_epoch
+                gitrun_job_id, job_name, repo, target_epoch
             );
-            return Ok(Some((workload_code.clone(), *target_epoch)));
+            return Ok(Some((gitrun_job_id.clone(), *target_epoch)));
         }
         Action::RecreateOrphaned { name, permanent } => {
             ensure_not_dock_bound(state_dir, repo, name, "recreate orphaned runner")?;
@@ -1493,7 +1493,7 @@ fn execute(
                     job_run_id: None,
                     job_id: None,
                     job_labels: &[],
-                    prewarm_workload_code: None,
+                    prewarm_gitrun_job_id: None,
                     prewarm_target_epoch: None,
                     prewarm_hold_until_epoch: None,
                 },
@@ -1768,7 +1768,7 @@ struct RunnerCreateContext<'a> {
     job_run_id: Option<u64>,
     job_id: Option<u64>,
     job_labels: &'a [String],
-    prewarm_workload_code: Option<&'a str>,
+    prewarm_gitrun_job_id: Option<&'a str>,
     prewarm_target_epoch: Option<u64>,
     prewarm_hold_until_epoch: Option<u64>,
 }
@@ -1787,7 +1787,7 @@ fn create_runner(
         job_run_id,
         job_id,
         job_labels,
-        prewarm_workload_code,
+        prewarm_gitrun_job_id,
         prewarm_target_epoch,
         prewarm_hold_until_epoch,
     } = context;
@@ -1857,7 +1857,7 @@ fn create_runner(
             workflow_job_name: job_name,
             workflow_run_id: job_run_id,
             workflow_job_id: job_id,
-            prewarm_workload_code,
+            prewarm_gitrun_job_id,
             prewarm_target_epoch,
             prewarm_hold_until_epoch,
             dock_target: load_dock_target_jobs(state_dir, repo)?
@@ -3029,11 +3029,11 @@ mod resource_pressure_reconciliation_tests {
     #[test]
     fn recurring_workload_prewarms_share_the_global_predictive_runner_budget() {
         let target =
-            |workload_code: &str, runner_count: u32| gitrun_smart_scheduler::WorkloadPrewarm {
-                workload_code: workload_code.into(),
+            |gitrun_job_id: &str, runner_count: u32| gitrun_smart_scheduler::WorkloadPrewarm {
+                gitrun_job_id: gitrun_job_id.into(),
                 workflow_id: 9,
                 workflow_path: ".github/workflows/build.yml".into(),
-                job_name: workload_code.into(),
+                job_name: gitrun_job_id.into(),
                 labels: vec!["self-hosted".into(), "linux".into()],
                 target_epoch: 7_200,
                 hold_until_epoch: 8_100,
@@ -3075,7 +3075,7 @@ mod resource_pressure_reconciliation_tests {
                 job_id: None,
             },
             Action::PrewarmWorkload {
-                workload_code: "wk-0123456789abcdef".into(),
+                gitrun_job_id: "wk-0123456789abcdef".into(),
                 target_epoch: 3_600,
                 hold_until_epoch: 4_500,
                 job_name: "build".into(),
@@ -3111,7 +3111,7 @@ mod resource_pressure_reconciliation_tests {
     fn prewarm_capacity_shares_the_operator_extra_runner_budget() {
         let mut targets = vec![
             gitrun_smart_scheduler::WorkloadPrewarm {
-                workload_code: "wk-0123456789abcdef".into(),
+                gitrun_job_id: "wk-0123456789abcdef".into(),
                 workflow_id: 7,
                 workflow_path: ".github/workflows/build.yml".into(),
                 job_name: "build".into(),
@@ -3124,7 +3124,7 @@ mod resource_pressure_reconciliation_tests {
                 historical_occurrences_per_week: 2.0,
             },
             gitrun_smart_scheduler::WorkloadPrewarm {
-                workload_code: "wk-fedcba9876543210".into(),
+                gitrun_job_id: "wk-fedcba9876543210".into(),
                 workflow_id: 8,
                 workflow_path: ".github/workflows/test.yml".into(),
                 job_name: "test".into(),
@@ -3248,7 +3248,7 @@ mod reconcile_identity_pin_tests {
             workflow_job: None,
             workflow_run_id: None,
             workflow_job_id: None,
-            prewarm_workload_code: None,
+            prewarm_gitrun_job_id: None,
             prewarm_target_epoch: None,
             prewarm_hold_until_epoch: None,
         }];
@@ -3284,7 +3284,7 @@ mod reconcile_identity_pin_tests {
             workflow_job: None,
             workflow_run_id: None,
             workflow_job_id: None,
-            prewarm_workload_code: None,
+            prewarm_gitrun_job_id: None,
             prewarm_target_epoch: None,
             prewarm_hold_until_epoch: None,
         }];

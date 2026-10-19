@@ -418,7 +418,7 @@ pub struct QueuedJobOccurrence {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkloadPattern {
-    #[serde(alias = "workload_code")]
+    #[serde(alias = "workload_code", alias = "gitrun_job_id")]
     pub workload_id: String,
     pub workflow_id: u64,
     pub workflow_path: String,
@@ -439,7 +439,7 @@ pub struct RecentJobOccurrence {
     pub gitrun_job_id: String,
     /// Stable ID for the recurring workflow/job profile; several occurrences
     /// can share this profile without sharing their GitRun job IDs.
-    #[serde(alias = "workload_code")]
+    #[serde(default, alias = "workload_code")]
     pub workload_id: String,
     /// Provider occurrence IDs are correlation/deduplication metadata only.
     #[serde(default)]
@@ -460,7 +460,7 @@ pub struct RecentJobOccurrence {
 /// evaluated against unique job start timestamps in the following hour.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkloadPredictionRecord {
-    #[serde(alias = "workload_code")]
+    #[serde(alias = "workload_code", alias = "gitrun_job_id")]
     pub workload_id: String,
     pub issued_at_bucket: u64,
     pub target_epoch: u64,
@@ -495,7 +495,7 @@ pub struct WorkloadPredictionStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkloadPatternStatus {
-    #[serde(alias = "workload_code")]
+    #[serde(alias = "workload_code", alias = "gitrun_job_id")]
     pub workload_id: String,
     pub workflow_id: u64,
     pub workflow_path: String,
@@ -514,7 +514,7 @@ pub struct WorkloadPatternStatus {
 /// IDs do not exist until GitHub creates that run and job).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkloadPrewarm {
-    #[serde(alias = "workload_code")]
+    #[serde(alias = "workload_code", alias = "gitrun_job_id")]
     pub workload_id: String,
     pub workflow_id: u64,
     pub workflow_path: String,
@@ -705,7 +705,8 @@ impl WorkflowModel {
                 "stored repository identity does not match requested repository".into(),
             ));
         }
-        if self.history.len() > history_limit
+        if self.next_gitrun_job_sequence == 0
+            || self.history.len() > history_limit
             || self.workload_patterns.len() > MAX_JOB_PATTERNS
             || self.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES
             || self.workload_predictions.len() > MAX_WORKLOAD_PREDICTIONS
@@ -737,7 +738,6 @@ impl WorkflowModel {
                 })
                 || pattern.first_seen_epoch == 0
                 || pattern.first_seen_epoch > pattern.last_seen_epoch
-                || pattern.occurrence_count == 0
                 || pattern.labels.iter().any(|label| label.len() > 128)
                 || !workload_ids.insert(pattern.workload_id.as_str())
             {
@@ -771,8 +771,11 @@ impl WorkflowModel {
             }
         }
         let mut occurrence_codes = HashSet::new();
+        let mut generated_job_ids = HashSet::new();
         for occurrence in &self.recent_job_occurrences {
-            if occurrence.run_id == 0
+            if !valid_generated_gitrun_job_id(&occurrence.gitrun_job_id)
+                || !generated_job_ids.insert(occurrence.gitrun_job_id.as_str())
+                || occurrence.run_id == 0
                 || occurrence.job_id == 0
                 || !valid_occurrence_id(
                     &occurrence.occurrence_code,
@@ -1143,6 +1146,9 @@ impl KittyRuntime {
         let model = self.models.get_mut(&key).ok_or_else(|| {
             KittyError::Invalid("model disappeared during a single-threaded update".into())
         })?;
+        if record_queued_job_occurrences(model, &input.queued_job_occurrences, input.observed_at_epoch) {
+            self.dirty_models.insert(key.clone());
+        }
         if record_started_job_occurrences(
             model,
             &input.started_job_occurrences,
@@ -2618,6 +2624,125 @@ fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
         && job.labels.iter().all(|label| {
             !label.is_empty() && label.len() <= 128 && !label.chars().any(char::is_control)
         })
+}
+
+/// Assign a persistent GitRun ID as soon as a job enters the observed queue.
+/// GitHub's run/job IDs are only correlation keys used to recognize the same
+/// provider record across polls; they never generate the GitRun identity.
+fn record_queued_job_occurrences(
+    model: &mut WorkflowModel,
+    jobs: &[QueuedJobOccurrence],
+    observed_at_epoch: u64,
+) -> bool {
+    let mut changed = false;
+    let mut seen_provider_keys = HashSet::new();
+    for job in jobs.iter().take(MAX_JOB_OCCURRENCES) {
+        if !valid_queued_job(job) {
+            continue;
+        }
+        let Some(workload_id) = workload_id_for(&model.repository, job) else {
+            continue;
+        };
+        let provider_key = provider_occurrence_key(&workload_id, job.run_id, job.job_id);
+        if !seen_provider_keys.insert(provider_key.clone()) {
+            continue;
+        }
+
+        if let Some(index) = model
+            .recent_job_occurrences
+            .iter()
+            .position(|entry| entry.run_id == job.run_id && entry.job_id == job.job_id)
+        {
+            let existing = &mut model.recent_job_occurrences[index];
+            if existing.workload_id != workload_id {
+                // A provider occurrence cannot mutate into a different job profile.
+                continue;
+            }
+            if existing.gitrun_job_id.is_empty()
+                || !valid_generated_gitrun_job_id(&existing.gitrun_job_id)
+            {
+                let Some(id) = generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence) else {
+                    continue;
+                };
+                let Some(next) = model.next_gitrun_job_sequence.checked_add(1) else {
+                    continue;
+                };
+                existing.gitrun_job_id = id;
+                model.next_gitrun_job_sequence = next;
+                changed = true;
+            }
+            if existing.occurrence_code != provider_key {
+                existing.occurrence_code = provider_key;
+                changed = true;
+            }
+            let heartbeat_bucket = observed_at_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
+            if existing.started_at_epoch.is_none()
+                && existing.observed_at_epoch / BUCKET_SECONDS < heartbeat_bucket / BUCKET_SECONDS
+            {
+                existing.observed_at_epoch = heartbeat_bucket;
+                changed = true;
+            }
+            continue;
+        }
+
+        // Register the recurring profile without counting it as completed work;
+        // only authoritative job-start observations teach the seasonal model.
+        if !model.workload_patterns.iter().any(|pattern| pattern.workload_id == workload_id) {
+            if model.workload_patterns.len() >= MAX_JOB_PATTERNS {
+                if let Some((index, stale)) = model.workload_patterns.iter()
+                    .enumerate()
+                    .min_by_key(|(_, pattern)| pattern.last_seen_epoch)
+                    .map(|(index, pattern)| (index, pattern.workload_id.clone()))
+                {
+                    model.workload_patterns.remove(index);
+                    model.recent_job_occurrences.retain(|entry| entry.workload_id != stale);
+                    model.workload_predictions.retain(|prediction| prediction.workload_id != stale);
+                }
+            }
+            if model.workload_patterns.len() >= MAX_JOB_PATTERNS {
+                continue;
+            }
+            let mut labels: Vec<String> = job.labels.iter()
+                .map(|label| label.trim().to_ascii_lowercase()).collect();
+            labels.sort();
+            labels.dedup();
+            model.workload_patterns.push(WorkloadPattern {
+                workload_id: workload_id.clone(),
+                workflow_id: job.workflow_id,
+                workflow_path: job.workflow_path.chars().take(512).collect(),
+                job_name: job.name.chars().take(256).collect(),
+                labels,
+                first_seen_epoch: observed_at_epoch,
+                last_seen_epoch: observed_at_epoch,
+                occurrence_count: 0,
+                slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+                slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            });
+        }
+        let Some(gitrun_job_id) = generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence) else {
+            continue;
+        };
+        let Some(next) = model.next_gitrun_job_sequence.checked_add(1) else {
+            continue;
+        };
+        model.next_gitrun_job_sequence = next;
+        model.recent_job_occurrences.push(RecentJobOccurrence {
+            gitrun_job_id,
+            workload_id,
+            occurrence_code: provider_key,
+            run_id: job.run_id,
+            job_id: job.job_id,
+            observed_at_epoch,
+            started_at_epoch: None,
+            counted_prediction_target_epoch: None,
+        });
+        if model.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES {
+            let excess = model.recent_job_occurrences.len() - MAX_JOB_OCCURRENCES;
+            model.recent_job_occurrences.drain(0..excess);
+        }
+        changed = true;
+    }
+    changed
 }
 
 fn record_started_job_occurrences(

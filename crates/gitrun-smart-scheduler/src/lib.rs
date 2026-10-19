@@ -4306,16 +4306,8 @@ mod tests {
         // This is a GitRun-generated logical-job identity. GitHub occurrence
         // IDs distinguish executions, but cannot change the recurring profile.
         assert_ne!(
-            generated_occurrence_id(
-                &gitrun_job_id_for(&first),
-                first.run_id,
-                first.job_id
-            ),
-            generated_occurrence_id(
-                &gitrun_job_id_for(&later),
-                later.run_id,
-                later.job_id
-            )
+            generated_occurrence_id(&gitrun_job_id_for(&first), first.run_id, first.job_id),
+            generated_occurrence_id(&gitrun_job_id_for(&later), later.run_id, later.job_id)
         );
     }
 

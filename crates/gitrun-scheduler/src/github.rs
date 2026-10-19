@@ -996,7 +996,13 @@ impl GitHubClient {
                 &run.path,
             )?);
         }
-        jobs.sort_by_key(|job| (job.started_at_epoch.unwrap_or(u64::MAX), job.run_id, job.job_id));
+        jobs.sort_by_key(|job| {
+            (
+                job.started_at_epoch.unwrap_or(u64::MAX),
+                job.run_id,
+                job.job_id,
+            )
+        });
         Ok(jobs)
     }
 

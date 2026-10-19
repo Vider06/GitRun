@@ -645,20 +645,66 @@ fn generate_occurrence_id(repository: &str, sequence: u64) -> Option<String> {
     Some(format!("grj-{hash:016x}-{sequence:016x}"))
 }
 
-fn valid_generated_gitrun_job_id(code: &str) -> bool {
-    let Some((repo_hash, sequence)) = code
-        .strip_prefix("grj-")
-        .and_then(|value| value.split_once('-'))
-    else {
-        return false;
-    };
-    repo_hash.len() == 16
-        && sequence.len() == 16
-        && repo_hash
+fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
+    let (repo_hash, sequence) = code.strip_prefix("grj-")?.split_once('-')?;
+    if repo_hash.len() != 16
+        || repo_hash
             .bytes()
-            .chain(sequence.bytes())
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        && sequence.bytes().any(|byte| byte != b'0')
+            .any(|byte| !(byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+    {
+        return None;
+    }
+    let value = u64::from_str_radix(sequence, 16).ok()?;
+    (value > 0).then_some(value)
+}
+
+fn valid_generated_gitrun_job_id(code: &str) -> bool {
+    generated_gitrun_job_sequence(code).is_some()
+}
+
+fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
+    let mut changed = false;
+    if model.next_gitrun_job_sequence == 0 {
+        model.next_gitrun_job_sequence = 1;
+        changed = true;
+    }
+    for occurrence in &mut model.recent_job_occurrences {
+        // Older models stored the stable workload/profile key in this field.
+        if occurrence.workload_id.is_empty() && valid_workload_id(&occurrence.gitrun_job_id) {
+            occurrence.workload_id = std::mem::take(&mut occurrence.gitrun_job_id);
+            changed = true;
+        }
+        if let Some(sequence) = generated_gitrun_job_sequence(&occurrence.gitrun_job_id) {
+            if let Some(next) = sequence.checked_add(1) {
+                model.next_gitrun_job_sequence = model.next_gitrun_job_sequence.max(next);
+            } else {
+                model.next_gitrun_job_sequence = u64::MAX;
+            }
+        }
+    }
+    for occurrence in &mut model.recent_job_occurrences {
+        if !valid_generated_gitrun_job_id(&occurrence.gitrun_job_id) {
+            if let Some(id) = generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence) {
+                if let Some(next) = model.next_gitrun_job_sequence.checked_add(1) {
+                    occurrence.gitrun_job_id = id;
+                    model.next_gitrun_job_sequence = next;
+                    changed = true;
+                }
+            }
+        }
+        if valid_workload_id(&occurrence.workload_id) {
+            let expected = provider_occurrence_key(
+                &occurrence.workload_id,
+                occurrence.run_id,
+                occurrence.job_id,
+            );
+            if occurrence.occurrence_code != expected {
+                occurrence.occurrence_code = expected;
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 fn valid_occurrence_id(code: &str, workload_id: &str, run_id: u64, job_id: u64) -> bool {
@@ -1123,8 +1169,11 @@ impl KittyRuntime {
                 }
             }
             match self.load_model(&input.repository, &key) {
-                Ok(model) => {
+                Ok((model, migrated)) => {
                     self.models.insert(key.clone(), model);
+                    if migrated {
+                        self.dirty_models.insert(key.clone());
+                    }
                 }
                 Err(error) => {
                     if self.disabled_models.len() < MAX_MODELS {
@@ -1816,23 +1865,24 @@ impl KittyRuntime {
         }
     }
 
-    fn load_model(&self, repository: &str, key: &str) -> Result<WorkflowModel> {
+    fn load_model(&self, repository: &str, key: &str) -> Result<(WorkflowModel, bool)> {
         let dir = self.state_dir.join("kitty");
         if !validate_read_data_dir(&dir)? {
-            return Ok(WorkflowModel::empty(repository));
+            return Ok((WorkflowModel::empty(repository), false));
         }
         let path = dir.join(format!("model-{key}.json"));
         match read_checked(&path, MAX_MODEL_BYTES)? {
-            None => Ok(WorkflowModel::empty(repository)),
+            None => Ok((WorkflowModel::empty(repository), false)),
             Some(bytes) => {
                 let mut model: WorkflowModel = serde_json::from_slice(&bytes)?;
+                let migrated = migrate_job_identity(&mut model);
                 // Validate against the hard storage bound first. The active
                 // operator history window is applied in observe(), where the
                 // truncation is marked dirty and then durably saved.
                 model.validate_for(repository, MAX_HISTORY_BUCKETS)?;
                 model.history.shrink_to_fit();
                 model.predictions.shrink_to_fit();
-                Ok(model)
+                Ok((model, migrated))
             }
         }
     }

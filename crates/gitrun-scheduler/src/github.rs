@@ -996,6 +996,17 @@ impl GitHubClient {
                 &run.path,
             )?);
         }
+        // Prefer the newest authoritative starts when a matrix-heavy run
+        // returns more rows than Kitty can persist in one sample. Sort back
+        // into chronological order before handing the bounded batch to Kitty.
+        jobs.sort_by_key(|job| {
+            (
+                std::cmp::Reverse(job.started_at_epoch.unwrap_or(0)),
+                std::cmp::Reverse(job.run_id),
+                std::cmp::Reverse(job.job_id),
+            )
+        });
+        jobs.truncate(256);
         jobs.sort_by_key(|job| {
             (
                 job.started_at_epoch.unwrap_or(u64::MAX),

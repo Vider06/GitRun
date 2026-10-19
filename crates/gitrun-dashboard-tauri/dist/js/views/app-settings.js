@@ -16,7 +16,8 @@ export async function renderAppSettings() {
   const kittySettings = kittyData?.settings || {
     schema_version:1, enabled:false, telemetry_enabled:true, predictive_analytics_enabled:true,
     workflow_model_visible:true, predictive_warm_pool_enabled:false,
-    adaptive_resource_management_enabled:false, smart_fast_stop_enabled:false, shadow_mode:true,
+    adaptive_resource_management_enabled:false, smart_fast_stop_enabled:false, automation_mode:false,
+    automation_allowed_repositories:[], shadow_mode:true,
     minimum_samples:576, history_buckets:2016, max_additional_warm_runners:2,
     warm_pool_min_hold_seconds:900, warm_pool_lead_seconds:300, minimum_quality_score:0.85
   };
@@ -87,8 +88,10 @@ export async function renderAppSettings() {
     '<label class="checkbox-row"><input id="kitty-model-visible" type="checkbox" ' + (kittySettings.workflow_model_visible ? "checked" : "") + '><span><strong>Show Workflow Model details</strong>Show the summarized forecast, sample count and latest decision in this dashboard.</span></label>' +
     '<label class="checkbox-row"><input id="kitty-shadow-mode" type="checkbox" ' + (kittySettings.shadow_mode ? "checked" : "") + '><span><strong>Shadow mode</strong>Keep recommendations observational. This should stay on until forecasts have been reviewed against real workloads.</span></label>' +
     '<label class="checkbox-row"><input id="kitty-warm-pool-enabled" type="checkbox" ' + (kittySettings.predictive_warm_pool_enabled ? "checked" : "") + '><span><strong>Predictive Warm Pool</strong>Separately opt in to raising the minimum runner floor after the forecast meets the configured quality threshold. It never lowers the configured floor or exceeds the global maximum.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-automation-mode" type="checkbox" ' + (kittySettings.automation_mode ? "checked" : "") + '><span><strong>Automation mode</strong>Permit explicitly allowlisted Stop/Fast Stop actions without per-action prompts. Every action must still pass the GSR authorization gate and durable audit; this is not a security-policy bypass.</span></label>' +
+    '<div class="field mt-12"><label for="kitty-automation-repositories">Automation repository allowlist</label><textarea id="kitty-automation-repositories" rows="3" placeholder="owner/repo, one per line">' + esc((kittySettings.automation_allowed_repositories || []).join("\n")) + '</textarea><small class="field-hint">Automation remains disabled for repositories not listed here. Only repositories configured in GitRun can be acted on.</small></div>' +
+    '<label class="checkbox-row"><input id="kitty-fast-stop-enabled" type="checkbox" ' + (kittySettings.smart_fast_stop_enabled ? "checked" : "") + ' ' + (!kittySettings.automation_mode || !(kittySettings.automation_allowed_repositories || []).length ? "disabled" : "") + '><span><strong>Smart Fast Stop</strong>Reserved for a validated run-level trigger. GitHub cancellation stops the whole workflow run, not an individual job.</span></label>' +
     '<label class="checkbox-row"><input type="checkbox" disabled><span><strong>Adaptive Resource Management</strong>Unavailable in this version; reliable per-job resource attribution and bounded profiles are not ready.</span></label>' +
-    '<label class="checkbox-row"><input type="checkbox" disabled><span><strong>Smart Fast Stop triggers</strong>Unavailable in this version; Kitty cannot cancel workflows automatically.</span></label>' +
     '<div class="two-col mt-12">' +
       '<div class="field"><label for="kitty-min-samples">Minimum five-minute samples</label><input id="kitty-min-samples" type="number" min="24" max="2016" value="' + esc(String(kittySettings.minimum_samples)) + '"><small class="field-hint">Default 576 samples (48 hours); forecast quality needs later outcomes too.</small></div>' +
       '<div class="field"><label for="kitty-history-buckets">History buckets (maximum 2016)</label><input id="kitty-history-buckets" type="number" min="24" max="2016" value="' + esc(String(kittySettings.history_buckets)) + '"><small class="field-hint">Five-minute buckets, at most seven days of history.</small></div>' +
@@ -152,7 +155,10 @@ export async function renderAppSettings() {
       shadow_mode: document.getElementById("kitty-shadow-mode").checked,
       predictive_warm_pool_enabled: document.getElementById("kitty-warm-pool-enabled").checked,
       adaptive_resource_management_enabled: false,
-      smart_fast_stop_enabled: false,
+      automation_mode: document.getElementById("kitty-automation-mode").checked,
+      automation_allowed_repositories: [...new Set(document.getElementById("kitty-automation-repositories").value
+        .split(/[\n,;]/).map((repo) => repo.trim()).filter(Boolean))],
+      smart_fast_stop_enabled: document.getElementById("kitty-fast-stop-enabled").checked,
       minimum_samples: Number(document.getElementById("kitty-min-samples").value),
       history_buckets: Number(document.getElementById("kitty-history-buckets").value),
       max_additional_warm_runners: Number(document.getElementById("kitty-max-additional").value),
@@ -171,7 +177,11 @@ export async function renderAppSettings() {
         updated.warm_pool_lead_seconds < 300 || updated.warm_pool_lead_seconds > 3600 ||
         updated.warm_pool_lead_seconds % 300 !== 0 ||
         !Number.isFinite(updated.minimum_quality_score) || updated.minimum_quality_score < 0.5 ||
-        updated.minimum_quality_score > 1) {
+        updated.minimum_quality_score > 1 ||
+        updated.automation_allowed_repositories.length > 64 ||
+        updated.automation_allowed_repositories.some((repo) => !/^[A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/.test(repo)) ||
+        (updated.automation_mode && updated.automation_allowed_repositories.length === 0) ||
+        (updated.smart_fast_stop_enabled && !updated.automation_mode)) {
       toast("Kitty settings are outside the supported bounds.", "error");
       return;
     }
@@ -180,6 +190,20 @@ export async function renderAppSettings() {
         "Replace Kitty settings that could not be loaded?",
         "GitRun could not read the saved settings. The visible fields use safe defaults, not verified saved values. Saving will overwrite the current settings with the values shown and may reset existing options. Continue only if you intend to repair or replace them.",
         "Replace Kitty settings",
+        true
+      );
+      if (!confirmed) return;
+    }
+    const automationRiskChanged = updated.automation_mode && (
+      !kittySettings.automation_mode ||
+      JSON.stringify(updated.automation_allowed_repositories) !== JSON.stringify(kittySettings.automation_allowed_repositories || []) ||
+      (updated.smart_fast_stop_enabled && !kittySettings.smart_fast_stop_enabled)
+    );
+    if (automationRiskChanged) {
+      const confirmed = await confirmModal(
+        "Enable allowlisted automation?",
+        "Kitty may act without a prompt for every individual action, but only for the listed repositories. GSR must authorize and durably audit every action. Smart Fast Stop can cancel the entire workflow run, including other jobs in that run. Continue only if that impact is intended.",
+        "Confirm Automation mode",
         true
       );
       if (!confirmed) return;

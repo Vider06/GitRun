@@ -4169,6 +4169,7 @@ mod tests {
             predicted_occurrences: 3,
             observed_occurrences: 0,
             actual_occurrences: None,
+            prewarm_runners_created: 0,
         });
 
         // A job already queued before the target window must not inflate this
@@ -4206,6 +4207,7 @@ mod tests {
                 predicted_occurrences: 2,
                 observed_occurrences: 0,
                 actual_occurrences: Some(0),
+                prewarm_runners_created: 0,
             });
         }
         assert_eq!(

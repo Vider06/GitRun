@@ -346,13 +346,67 @@ fn valid_workload_routing_id(code: &str) -> bool {
 }
 
 fn valid_prewarm_workload_id(code: &str) -> bool {
-    let Some(digest) = code.strip_prefix("wk-") else {
-        return false;
-    };
-    digest.len() == 16
-        && digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    valid_workload_routing_id(code)
+}
+
+fn validate_workload_routing_contract(
+    labels: &str,
+    workload_routing_id: Option<&str>,
+    prewarm_workload_id: Option<&str>,
+    no_default_labels: bool,
+    permanent: bool,
+    dock_target: bool,
+    is_windows: bool,
+) -> std::result::Result<(), String> {
+    match (workload_routing_id, prewarm_workload_id) {
+        (None, None) => {}
+        (Some(workload_id), None) if valid_workload_routing_id(workload_id) => {}
+        (Some(workload_id), Some(prewarm_id))
+            if valid_workload_routing_id(workload_id) && workload_id == prewarm_id => {}
+        _ => {
+            return Err(
+                "workload routing identity and prewarm metadata must agree and use a canonical family ID"
+                    .into(),
+            );
+        }
+    }
+
+    match workload_routing_id {
+        None if no_default_labels => {
+            Err("default labels may be removed only for a validated workload family".into())
+        }
+        None => Ok(()),
+        Some(workload_id) => {
+            if !no_default_labels {
+                return Err(
+                    "workload-family runners must disable default labels to avoid unrelated jobs claiming them"
+                        .into(),
+                );
+            }
+            if permanent || dock_target {
+                return Err(
+                    "exclusive workload-family routing is only valid for ordinary dynamic runners"
+                        .into(),
+                );
+            }
+            if is_windows {
+                return Err(
+                    "exclusive workload-family routing requires the managed Linux runner bootstrap"
+                        .into(),
+                );
+            }
+            let route_labels = vec![labels.to_owned()];
+            if gitrun_smart_scheduler::workload_id_from_routing_labels(&route_labels).as_deref()
+                != Some(workload_id)
+            {
+                return Err(
+                    "exclusive runner must expose exactly its matching gitrun-job workload label"
+                        .into(),
+                );
+            }
+            Ok(())
+        }
+    }
 }
 
 pub fn runner_name_prefix(repo: &str) -> String {
@@ -1417,42 +1471,16 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         }
     }
 
-    if let Some(workload_id) = spec.workload_routing_id {
-        if !valid_workload_routing_id(workload_id) {
-            return Err(DockerError::Command(
-                "invalid stable workload routing identity".into(),
-            ));
-        }
-        let expected_label = format!("gitrun-job-{workload_id}");
-        if !spec
-            .labels
-            .split(',')
-            .map(str::trim)
-            .any(|label| label.eq_ignore_ascii_case(&expected_label))
-        {
-            return Err(DockerError::Command(
-                "routed runner labels do not contain their workload identity".into(),
-            ));
-        }
-    }
-    if spec.no_default_labels {
-        let route_labels = vec![spec.labels.to_owned()];
-        if spec.is_windows {
-            return Err(DockerError::Command(
-                "exclusive workload-family labels require the managed Linux runner bootstrap; Windows runner bootstrap has no verified no-default-labels contract"
-                    .into(),
-            ));
-        }
-        if spec.permanent
-            || spec.dock_target
-            || gitrun_smart_scheduler::workload_id_from_routing_labels(&route_labels).is_none()
-        {
-            return Err(DockerError::Command(
-                "no-default-label routing is allowed only for one valid GitRun workload-family label on an ordinary dynamic runner"
-                    .into(),
-            ));
-        }
-    }
+    validate_workload_routing_contract(
+        spec.labels,
+        spec.workload_routing_id,
+        spec.prewarm_workload_id,
+        spec.no_default_labels,
+        spec.permanent,
+        spec.dock_target,
+        spec.is_windows,
+    )
+    .map_err(DockerError::Command)?;
 
     validate_secret_env(spec.secret_env)?;
     ensure_runner_network(host, spec.network, !spec.is_windows)?;

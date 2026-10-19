@@ -2170,7 +2170,7 @@ fn record_queued_job_occurrences(
             slot.0 = slot.0.saturating_add(1);
             slot.1 = slot.1.saturating_add(1);
             slot.2 = slot.2.max(1);
-            if pattern.slot_last_week[slot_index] != week {
+            if slot.0 == 1 || pattern.slot_last_week[slot_index] != week {
                 slot.3 = slot.3.saturating_add(1);
                 pattern.slot_last_week[slot_index] = week;
             }

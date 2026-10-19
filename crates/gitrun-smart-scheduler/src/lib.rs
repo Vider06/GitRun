@@ -735,6 +735,9 @@ impl WorkflowModel {
                 )
                 || occurrence.observed_at_epoch == 0
                 || occurrence
+                    .started_at_epoch
+                    .is_some_and(|started| started == 0 || started > occurrence.observed_at_epoch)
+                || occurrence
                     .counted_prediction_target_epoch
                     .is_some_and(|target| target == 0 || !target.is_multiple_of(3_600))
                 || !valid_gitrun_job_id(&occurrence.gitrun_job_id)
@@ -4170,7 +4173,28 @@ mod tests {
     }
 
     #[test]
-    fn queued_job_occurrences_receive_stable_codes_and_are_counted_once() {
+    fn historical_job_start_polling_is_bounded_per_repository() {
+        let dir = temp_dir("history-poll-cadence");
+        let mut settings = enabled_settings();
+        settings.predictive_analytics_enabled = true;
+        write_settings(&dir, &settings);
+        let mut runtime = KittyRuntime::new(&dir);
+
+        assert!(runtime.should_poll_workload_history("owner/repo", 1_800));
+        assert!(!runtime.should_poll_workload_history("owner/repo", 2_099));
+        assert!(runtime.should_poll_workload_history("owner/repo", 2_100));
+        assert!(runtime.should_poll_workload_history("other/repo", 1_800));
+
+        settings.predictive_analytics_enabled = false;
+        write_settings(&dir, &settings);
+        runtime.last_settings_reload = None;
+        assert!(!runtime.should_poll_workload_history("owner/repo", 2_500));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn started_job_occurrences_receive_stable_codes_and_are_counted_once() {
         let dir = temp_dir("job-identity");
         let mut settings = enabled_settings();
         settings.predictive_warm_pool_enabled = false;
@@ -4202,8 +4226,8 @@ mod tests {
             first_model.recent_job_occurrences[1].occurrence_code
         );
 
-        // A still-queued job appears in every poll, but its run/job code is
-        // counted as a single workload occurrence.
+        // Re-reading the same GitHub run/job start in a later history sample
+        // must not count it as a second workload occurrence.
         let mut repeat = input(1_860, 2, 1);
         repeat.started_job_occurrences = vec![job(100, 1000), job(101, 1001)];
         let repeat_decision = runtime.observe(repeat, 2, 8, true).unwrap();

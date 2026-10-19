@@ -410,6 +410,9 @@ pub struct QueuedJobOccurrence {
     pub workflow_path: String,
     pub name: String,
     pub labels: Vec<String>,
+    /// GitHub's authoritative job start time; None in a queue-only snapshot.
+    #[serde(default)]
+    pub started_at_epoch: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

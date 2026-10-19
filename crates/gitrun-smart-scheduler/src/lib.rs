@@ -570,7 +570,10 @@ fn valid_workload_code(code: &str) -> bool {
     let Some(digest) = code.strip_prefix("wk-") else {
         return false;
     };
-    digest.len() == 16 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    digest.len() == 16
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 impl WorkflowModel {
@@ -3971,6 +3974,14 @@ mod tests {
             serialized.len() <= MAX_MODEL_BYTES as usize,
             "tiered retention should keep representative multi-decade JSON within the storage cap"
         );
+    }
+
+    #[test]
+    fn workload_fingerprint_validation_rejects_uppercase_or_malformed_codes() {
+        assert!(valid_workload_code("wk-0123456789abcdef"));
+        assert!(!valid_workload_code("wk-0123456789abcdeG"));
+        assert!(!valid_workload_code("wk-0123456789ABCDEf"));
+        assert!(!valid_workload_code("wk-0123"));
     }
 
     #[test]

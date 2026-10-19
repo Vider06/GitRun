@@ -457,6 +457,9 @@ pub struct DecisionAudit {
     pub source_window_start: Option<u64>,
     pub source_window_end: Option<u64>,
     pub status: DecisionStatus,
+    /// True only after GSR has authorized and durably audited this floor.
+    #[serde(default)]
+    pub gsr_authorized: bool,
     pub reason: String,
     pub configured_min_runners: u32,
     pub proposed_min_runners: u32,
@@ -1193,6 +1196,7 @@ impl KittyRuntime {
             source_window_start: model.history.first().map(|sample| sample.bucket_epoch),
             source_window_end: model.history.last().map(|sample| sample.bucket_epoch),
             status: decision.status,
+            gsr_authorized: false,
             reason: decision.reason.clone(),
             configured_min_runners,
             proposed_min_runners: decision.proposed_min_runners,
@@ -1259,6 +1263,82 @@ impl KittyRuntime {
         }
 
         Ok(decision)
+    }
+
+    /// Persist the result of GSR's authorization decision before the
+    /// scheduler is allowed to use a raised runner floor. Unapproved floors
+    /// are never eligible for retention after a restart.
+    pub fn record_gsr_authorization(
+        &mut self,
+        decision: &mut KittyDecision,
+        authorized: bool,
+        fallback_minimum: u32,
+        reason: &str,
+    ) -> Result<()> {
+        let Some(bucket) = decision.decision_bucket else {
+            return Err(KittyError::Invalid(
+                "GSR authorization result has no model decision bucket".into(),
+            ));
+        };
+        let key = repository_key(&decision.repository);
+        let model = self.models.get_mut(&key).ok_or_else(|| {
+            KittyError::Invalid("GSR authorization result refers to an absent model".into())
+        })?;
+        let audit = model
+            .decision_audit
+            .iter_mut()
+            .rev()
+            .find(|audit| audit.bucket_epoch == bucket)
+            .ok_or_else(|| {
+                KittyError::Invalid("GSR authorization result has no matching decision audit".into())
+            })?;
+
+        if authorized {
+            if !matches!(
+                decision.status,
+                DecisionStatus::AppliedWarmPoolFloor | DecisionStatus::WarmPoolHold
+            ) || decision.effective_min_runners <= decision.configured_min_runners
+            {
+                return Err(KittyError::Invalid(
+                    "GSR granted a decision that is not a raised warm-pool floor".into(),
+                ));
+            }
+            audit.gsr_authorized = true;
+        } else {
+            let bounded_fallback = fallback_minimum.min(decision.configured_min_runners);
+            let bounded_reason: String = reason.chars().take(512).collect();
+            let denial_reason = format!(
+                "GSR denied the predicted warm-pool floor; deterministic minimum retained: {bounded_reason}"
+            );
+            audit.status = DecisionStatus::SafeFallback;
+            audit.gsr_authorized = false;
+            audit.effective_min_runners = bounded_fallback;
+            audit.reason = denial_reason.clone();
+            decision.status = DecisionStatus::SafeFallback;
+            decision.effective_min_runners = bounded_fallback;
+            decision.reason = denial_reason;
+        }
+
+        self.dirty_models.insert(key.clone());
+        if let Err(error) = self.persist_model(&key) {
+            if let Some(model) = self.models.get_mut(&key) {
+                if let Some(audit) = model
+                    .decision_audit
+                    .iter_mut()
+                    .rev()
+                    .find(|audit| audit.bucket_epoch == bucket)
+                {
+                    audit.gsr_authorized = false;
+                }
+            }
+            self.disabled_models.insert(key.clone());
+            return Err(error);
+        }
+        self.dirty_models.remove(&key);
+        if let Err(error) = self.persist_dashboard_snapshot() {
+            eprintln!("gitrun-smart-scheduler: dashboard status persistence failed after GSR authorization: {error}");
+        }
+        Ok(())
     }
 
     /// Records whether the existing deterministic plan ran, had no actions, or
@@ -2450,6 +2530,7 @@ fn retained_warm_pool_floor(
 ) -> Option<u32> {
     let latest = model.decision_audit.iter().rev().find(|audit| {
         audit.status == DecisionStatus::AppliedWarmPoolFloor
+            && audit.gsr_authorized
             && audit.effective_min_runners > audit.configured_min_runners
     })?;
     if latest.model_version != model.model_version
@@ -3303,7 +3384,8 @@ mod tests {
                 source_window_start: Some(stamp.saturating_sub(BUCKET_SECONDS)),
                 source_window_end: Some(stamp),
                 status: DecisionStatus::AppliedWarmPoolFloor,
-                reason: "seed a previously approved floor for the reload regression".into(),
+                gsr_authorized: true,
+                reason: "seed a previously GSR-authorized floor for the reload regression".into(),
                 configured_min_runners: 2,
                 proposed_min_runners: 6,
                 effective_min_runners: 6,
@@ -3382,6 +3464,7 @@ mod tests {
             source_window_start: Some(1_000),
             source_window_end: Some(10_000),
             status: DecisionStatus::AppliedWarmPoolFloor,
+            gsr_authorized: true,
             reason: "test".into(),
             configured_min_runners: 2,
             proposed_min_runners: 4,

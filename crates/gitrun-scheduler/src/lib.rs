@@ -1096,7 +1096,9 @@ fn reconcile_repo(
     };
     let prewarm_runner_count = pending_workload_prewarms
         .iter()
-        .fold(0u32, |count, target| count.saturating_add(target.runner_count));
+        .fold(0u32, |count, target| {
+            count.saturating_add(target.runner_count)
+        });
     let floor_growth_requested = matches!(
         kitty_decision.status,
         gitrun_smart_scheduler::DecisionStatus::AppliedWarmPoolFloor

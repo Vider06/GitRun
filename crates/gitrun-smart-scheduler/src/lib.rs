@@ -1330,7 +1330,8 @@ impl KittyRuntime {
             let raised_floor = matches!(
                 decision.status,
                 DecisionStatus::AppliedWarmPoolFloor | DecisionStatus::WarmPoolHold
-            ) && decision.effective_min_runners > decision.configured_min_runners;
+            ) && decision.effective_min_runners
+                > decision.configured_min_runners;
             let authorized_workload_prewarm = !decision.workload_prewarms.is_empty()
                 && decision
                     .confidence_score

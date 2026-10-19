@@ -74,6 +74,10 @@ pub struct ReconcileInput {
     pub queued_job_run_ids: Vec<u64>,
     /// Unique GitHub Actions job IDs aligned with queued_job_names/run IDs.
     pub queued_job_ids: Vec<u64>,
+    /// Number of non-exited, non-busy runner slots already carrying each
+    /// stable workload-family routing identity. Existing warmups satisfy queued
+    /// demand in the same family and must not trigger duplicate runner creation.
+    pub routed_workload_capacity: Vec<(String, u32)>,
     /// Recurrence-based workload prewarm targets, already authorized by GSR
     /// and filtered against target/period-tagged containers in the live inventory.
     pub workload_prewarms: Vec<gitrun_smart_scheduler::WorkloadPrewarm>,
@@ -271,6 +275,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // containers reserved by the GitDockRun lifecycle: the
     // count-based formula assumes runners are interchangeable, which is not
     // true when jobs require a particular backend/image or isolated target.
+    let mut routed_family_ordinals = std::collections::HashMap::<String, u32>::new();
     let specialized_jobs: Vec<(Option<String>, Option<u64>, Option<u64>, Vec<String>)> = input
         .queued_job_labels
         .iter()
@@ -280,8 +285,32 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             let job_run_id = input.queued_job_run_ids.get(index).copied();
             let job_id = input.queued_job_ids.get(index).copied();
             let specialized = job_needs_dedicated_runner(input, index, labels);
+            if !specialized {
+                return None;
+            }
 
-            specialized.then_some((job_name, job_run_id, job_id, labels.clone()))
+            if gitrun_smart_scheduler::has_workload_routing_marker(labels) {
+                if let Some(workload_id) =
+                    gitrun_smart_scheduler::workload_id_from_routing_labels(labels)
+                {
+                    let ordinal = routed_family_ordinals.entry(workload_id.clone()).or_default();
+                    *ordinal = ordinal.saturating_add(1);
+                    let already_available = input
+                        .routed_workload_capacity
+                        .iter()
+                        .find(|(existing_id, _)| existing_id == &workload_id)
+                        .map(|(_, count)| *count)
+                        .unwrap_or(0);
+                    // An idle/starting managed runner already carrying this
+                    // family label can accept the job via normal GitHub dispatch.
+                    // Create only the deficit for this workload family.
+                    if *ordinal <= already_available {
+                        return None;
+                    }
+                }
+            }
+
+            Some((job_name, job_run_id, job_id, labels.clone()))
         })
         .collect();
 
@@ -429,6 +458,7 @@ mod tests {
             queued_job_names: Vec::new(),
             queued_job_run_ids: Vec::new(),
             queued_job_ids: Vec::new(),
+            routed_workload_capacity: Vec::new(),
             workload_prewarms: Vec::new(),
             dock_target_jobs: Vec::new(),
             logic_rules: Vec::new(),

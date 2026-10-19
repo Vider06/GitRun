@@ -3932,7 +3932,7 @@ mod tests {
             workload_code: workload_code.clone(),
             issued_at_bucket: issued,
             target_epoch: target,
-            predicted_occurrences: 2,
+            predicted_occurrences: 3,
             observed_occurrences: 0,
             actual_occurrences: None,
         });

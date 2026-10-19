@@ -5971,16 +5971,23 @@ fn docker_container_has_marker(container: &str) -> Result<bool, ExecutionError> 
 }
 
 fn restore_runner(container: &str) -> Result<(), ExecutionError> {
-    // Remove the marker through the host-owned control volume. The container
-    // sees this mount read-only, so even container-root helpers cannot forge or
-    // suppress lifecycle state.
-    docker::set_dock_only_marker(container, false).map_err(|error| failed(error.to_string()))?;
     match docker::container_status(container).map_err(|error| failed(error.to_string()))? {
         Some(status) if status == "running" => {
+            // Stop first: never expose a live runner after clearing its trusted
+            // dock-only marker. If marker removal fails, the container stays
+            // stopped and therefore cannot be scheduled as an ordinary runner.
             docker::stop_container(container).map_err(|error| failed(error.to_string()))?;
+            docker::set_dock_only_marker(container, false)
+                .map_err(|error| failed(error.to_string()))?;
             docker::start_container(container).map_err(|error| failed(error.to_string()))?;
         }
-        Some(_) => docker::start_container(container).map_err(|error| failed(error.to_string()))?,
+        Some(_) => {
+            // An already-stopped runner cannot race ordinary scheduling while
+            // its host-owned marker is cleared.
+            docker::set_dock_only_marker(container, false)
+                .map_err(|error| failed(error.to_string()))?;
+            docker::start_container(container).map_err(|error| failed(error.to_string()))?;
+        }
         None => return Err(failed("runner container disappeared during restore")),
     }
     Ok(())

@@ -569,8 +569,14 @@ fn maybe_fast_stop_workflow(
     if threshold < 300 || threshold > 604_800 || !settings.smart_fast_stop_enabled {
         return Ok(false);
     }
-    if !config.repositories.iter().any(|configured| configured.eq_ignore_ascii_case(repo))
-        || !settings.automation_allowed_repositories.iter().any(|allowed| allowed.eq_ignore_ascii_case(repo))
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured.eq_ignore_ascii_case(repo))
+        || !settings
+            .automation_allowed_repositories
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(repo))
     {
         return Ok(false);
     }
@@ -621,13 +627,17 @@ fn maybe_fast_stop_workflow(
             ),
         };
         let audit_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
-        let permit = match gitrun_gsr::automation_gate::authorize_action(&policy, intent, &audit_path) {
-            Ok(permit) => permit,
-            Err(error) => {
-                eprintln!("gitrun-autoscaler: GSR denied Kitty Fast Stop for {repo} run {}: {error}", run.id);
-                return Ok(false);
-            }
-        };
+        let permit =
+            match gitrun_gsr::automation_gate::authorize_action(&policy, intent, &audit_path) {
+                Ok(permit) => permit,
+                Err(error) => {
+                    eprintln!(
+                        "gitrun-autoscaler: GSR denied Kitty Fast Stop for {repo} run {}: {error}",
+                        run.id
+                    );
+                    return Ok(false);
+                }
+            };
         match client.force_cancel_workflow_run(repo, run.id) {
             Ok(()) => {
                 if let Err(error) = permit.record_outcome(
@@ -643,7 +653,9 @@ fn maybe_fast_stop_workflow(
                 return Ok(true);
             }
             Err(error) => {
-                if let Err(audit_error) = permit.record_outcome(false, &format!("GitHub force-cancel failed: {error}")) {
+                if let Err(audit_error) =
+                    permit.record_outcome(false, &format!("GitHub force-cancel failed: {error}"))
+                {
                     eprintln!("gitrun-autoscaler: GSR outcome audit also failed for {repo} run {}: {audit_error}", run.id);
                 }
                 return Err(error.into());
@@ -794,9 +806,10 @@ fn reconcile_repo(
         if settings.enabled
             && settings.automation_mode
             && settings.smart_fast_stop_enabled
-            && settings.automation_allowed_repositories.iter().any(|allowed| {
-                allowed.eq_ignore_ascii_case(repo)
-            })
+            && settings
+                .automation_allowed_repositories
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(repo))
         {
             match maybe_fast_stop_workflow(client, config, state_dir, repo, &settings) {
                 Ok(true) => {
@@ -1103,8 +1116,7 @@ fn reconcile_repo(
                     &reason,
                 ) {
                     eprintln!("gitrun-autoscaler: failed to persist GSR denial in Kitty audit for {repo}: {persist_error}");
-                    kitty_decision.status =
-                        gitrun_smart_scheduler::DecisionStatus::SafeFallback;
+                    kitty_decision.status = gitrun_smart_scheduler::DecisionStatus::SafeFallback;
                     kitty_decision.effective_min_runners =
                         config.min_runners.min(config.max_runners);
                     kitty_decision.reason = format!(
@@ -1187,7 +1199,10 @@ fn reconcile_repo(
 
     if let Some(permit) = kitty_automation_permit {
         let outcome = if action_execution_succeeded {
-            format!("scheduler completed {} planned actions", planned_action_count)
+            format!(
+                "scheduler completed {} planned actions",
+                planned_action_count
+            )
         } else {
             "scheduler stopped after an action error; next reconcile will re-snapshot".into()
         };

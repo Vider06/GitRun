@@ -1487,7 +1487,10 @@ impl ApiExecutionBackend {
             "gitrun-install",
             spec.as_str(),
         ];
-        run_docker_command(&self.caller_container_id, &args)
+        // Package installation is a separately authorized privileged
+        // operation: it intentionally uses the image's root user. All ordinary
+        // filesystem/execute helpers above and below this method use runner.
+        docker_exec_checked_as_container_root(&self.caller_container_id, &args)
     }
 
     fn read(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
@@ -5476,6 +5479,18 @@ fn docker_exec_checked_as_runner(
 ) -> Result<ExecutionResult, ExecutionError> {
     let output = docker::exec_container_as_runner(container, args)
         .map_err(|error| failed(error.to_string()))?;
+    command_output(output)
+}
+
+/// Intentionally privileged container execution, reserved for the separately
+/// authorized GitInstallRun operation. Callers must never use this for paths,
+/// workflow commands or ordinary runner I/O.
+fn docker_exec_checked_as_container_root(
+    container: &str,
+    args: &[&str],
+) -> Result<ExecutionResult, ExecutionError> {
+    let output =
+        docker::exec_container(container, args).map_err(|error| failed(error.to_string()))?;
     command_output(output)
 }
 

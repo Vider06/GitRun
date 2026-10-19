@@ -3,7 +3,7 @@
 **Status:** Mixed — Fast Stop implementation added to PR #83; Smart Scheduler remains a design proposal  
 **Target:** Fast Stop is being integrated into the v1.5.0 refactor branch; Smart Scheduler release placement remains TBD  
 **Scope:** Workflow-run force cancellation, workflow telemetry, predictive workflow models, and bounded adaptive scheduling  
-**Verification:** CI intentionally not used as a gate for this work; source and tests still require execution before release
+**Verification:** PR #83 CI is a gate for the committed source and test suite. Passing CI does not by itself validate every live cancellation race or qualify the Smart Scheduler proposal for release.
 
 ## Goals
 
@@ -198,3 +198,8 @@ Keep Fast Stop independent of Smart Scheduler so either feature can ship, be tes
 - Claiming that GitRun can force an internal GitHub Actions runner condition evaluation without a supported mechanism.
 - Guaranteeing a fixed cancellation latency independent of GitHub API/network behavior or workload signal handling.
 - Allowing predictive logic to override hard limits or security controls.
+
+
+## v1.5.0 review boundary
+
+Fast Stop implementation and its included tests are evaluated by the current PR checks; any behavior not exercised by those tests remains unverified rather than implicitly accepted. The Experimental Smart Scheduler remains a proposal and must not be represented as a shipped, production-ready scheduling capability unless separately implemented, tested and approved. See the [refactor status tracker](v1.5.0-refactor-status.md).

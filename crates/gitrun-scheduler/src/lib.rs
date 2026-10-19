@@ -576,9 +576,17 @@ fn reconcile_repo(
     };
     api_service::reconcile_dock_bindings(client, state_dir, repo).map_err(std::io::Error::other)?;
 
-    if config.gsr_workflow_validation_enabled {
-        validate_repo_workflows_best_effort(client, config, repo);
-    }
+    // GitDockRun target metadata is required for correct scheduling even when
+    // the advisory workflow scanner is disabled. Refresh it on every reconcile
+    // and fail this repository's cycle if GitHub cannot be read or metadata
+    // cannot be durably persisted; never route using stale/missing metadata.
+    validate_repo_workflows_best_effort(
+        client,
+        config,
+        repo,
+        config.gsr_workflow_validation_enabled,
+    )
+    .map_err(std::io::Error::other)?;
 
     let containers = docker::managed_containers(repo)?;
     // GitDockRun requirements are routing/security metadata: if the file
@@ -1259,10 +1267,16 @@ fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String
     labels.join(",")
 }
 
-/// Best-effort workflow pre-flight validation. Findings and unavailable
-/// checks are reported to the GSR event queue; this advisory scan does not
-/// replace command enforcement in the runner.
-fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, repo: &str) {
+/// Refreshes required GitDockRun routing metadata and optionally performs
+/// advisory workflow scans. Fetch/persist failures are fatal to this repo's
+/// reconcile cycle; advisory findings and optional zizmor failures remain
+/// warnings and do not replace command enforcement in the runner.
+fn validate_repo_workflows_best_effort(
+    client: &GitHubClient,
+    config: &Config,
+    repo: &str,
+    advisory_scan_enabled: bool,
+) -> Result<(), String> {
     let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let files = match client.workflow_files(repo) {
         Ok(files) => files,
@@ -1270,16 +1284,22 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
             emit_workflow_validation_warning(
                 &events_path,
                 repo,
-                &format!("could not fetch workflow files; built-in and zizmor scans were skipped: {error}"),
+                &format!("could not fetch workflow files; GitDockRun routing metadata is unavailable and reconciliation must stop: {error}"),
             );
-            return;
+            return Err(format!(
+                "required GitDockRun workflow metadata could not be refreshed: {error}"
+            ));
         }
     };
 
     let mut findings = Vec::new();
     let mut dock_requests = Vec::new();
     for (name, content) in &files {
-        findings.extend(gitrun_core::scan(name, content));
+        if advisory_scan_enabled {
+            findings.extend(gitrun_core::scan(name, content));
+        }
+        // This is routing/security metadata, not an advisory scan result.
+        // Always parse and refresh it, even when workflow validation is disabled.
         dock_requests.extend(gitrun_core::scan_dock_requests(name, content));
     }
 
@@ -1287,11 +1307,14 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
         emit_workflow_validation_warning(
             &events_path,
             repo,
-            &format!("could not persist GitDockRun requirements: {error}"),
+            &format!("could not persist required GitDockRun routing metadata: {error}"),
         );
+        return Err(format!(
+            "required GitDockRun routing metadata could not be persisted: {error}"
+        ));
     }
 
-    if config.gsr_zizmor_enabled {
+    if advisory_scan_enabled && config.gsr_zizmor_enabled {
         let invocation = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -1352,6 +1375,7 @@ fn validate_repo_workflows_best_effort(client: &GitHubClient, config: &Config, r
             );
         }
     }
+    Ok(())
 }
 
 fn emit_workflow_validation_warning(events_path: &std::path::Path, repo: &str, detail: &str) {

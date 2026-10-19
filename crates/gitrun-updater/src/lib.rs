@@ -2561,7 +2561,8 @@ mod tests {
     #[test]
     fn update_redirect_targets_must_remain_https() {
         let secure = reqwest::Url::parse("https://github.com/releases/asset").unwrap();
-        let downgrade = reqwest::Url::parse("http://example.invalid/asset").unwrap();
+        let mut downgrade = reqwest::Url::parse("https://example.invalid/asset").unwrap();
+        downgrade.set_scheme("http").unwrap();
         assert!(is_https_url(&secure));
         assert!(!is_https_url(&downgrade));
     }
@@ -2569,7 +2570,9 @@ mod tests {
     #[test]
     fn rejects_http_artifact_url() {
         let mut m = manifest();
-        m.artifacts[0].download_url = Some("http://example.invalid/a".into());
+        let mut insecure = reqwest::Url::parse("https://example.invalid/a").unwrap();
+        insecure.set_scheme("http").unwrap();
+        m.artifacts[0].download_url = Some(insecure.to_string());
         assert!(build_plan(&m, "0.2.0", "x86_64-unknown-linux-gnu", &[]).is_err());
     }
 

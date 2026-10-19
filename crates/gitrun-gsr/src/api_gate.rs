@@ -686,6 +686,7 @@ mod tests {
             Some("cache"),
             BTreeMap::from([(
                 "command".into(),
+                // DevSkim: ignore DS137138 — deliberate HTTP fixture for the link-local metadata SSRF denial test.
                 "curl http://169.254.169.254/latest/meta-data/".into(),
             )]),
             Some(&policy),

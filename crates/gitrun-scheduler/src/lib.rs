@@ -1317,25 +1317,6 @@ fn reconcile_repo(
                 break;
             }
         }
-        if let Action::PrewarmWorkload {
-            workload_code,
-            target_epoch,
-            ..
-        } = &action
-        {
-            if let Err(error) = kitty_runtime.record_workload_prewarm_created(
-                &kitty_decision.repository,
-                workload_code,
-                *target_epoch,
-                1,
-            ) {
-                eprintln!(
-                    "gitrun-autoscaler: failed to persist completed Kitty prewarm {workload_code}@{target_epoch} for {repo}: {error}"
-                );
-                action_execution_succeeded = false;
-                break;
-            }
-        }
     }
 
     // Kitty audit persistence is deliberately non-fatal: if its storage fails,

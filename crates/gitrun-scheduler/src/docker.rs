@@ -1689,12 +1689,14 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         format!("RUNNER_DISABLE_UPDATE={}", spec.disable_update),
         "-e".into(),
         "GITRUN_API_SOCKET=/run/gitrun/api.sock".into(),
-        spec.image.to_owned(),
     ]);
     if spec.no_default_labels {
         args.extend(["-e".into(), "GITRUN_RUNNER_NO_DEFAULT_LABELS=true".into()]);
     }
 
+    // Docker requires the image to be the final option boundary; arguments
+    // after it become the container command, not Docker environment flags.
+    args.push(spec.image.to_owned());
     // Docker accepts "-e NAME" and reads NAME from the CLI process
     // environment. Keep registration tokens and Vault plaintext out of argv;
     // only variable names are visible in the process listing.

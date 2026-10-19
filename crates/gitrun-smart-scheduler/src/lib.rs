@@ -1965,6 +1965,12 @@ mod tests {
         settings.minimum_quality_score = 0.85;
         settings.history_buckets = MAX_HISTORY_BUCKETS + 1;
         assert!(settings.validate().is_err());
+        settings.history_buckets = 48;
+        settings.warm_pool_min_hold_seconds = 299;
+        assert!(settings.validate().is_err());
+        settings.warm_pool_min_hold_seconds = 900;
+        settings.minimum_quality_score = 0.49;
+        assert!(settings.validate().is_err());
     }
 
     #[test]

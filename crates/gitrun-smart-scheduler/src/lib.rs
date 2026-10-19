@@ -3490,6 +3490,10 @@ fn compute_forecast(
     now_epoch: u64,
     poll_interval_seconds: u64,
 ) -> Option<Forecast> {
+    // Polls can arrive at any second within a five-minute bucket. Persist the
+    // forecast timestamp at the bucket boundary so the stored forecast obeys
+    // the same canonical timestamp contract as its observation history.
+    let now_epoch = now_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
     let history = &model.history;
     if history.len() < settings.minimum_samples {
         return None;
@@ -3558,7 +3562,7 @@ fn compute_forecast(
     // The scheduler samples several times per five-minute bucket. Derive
     // scheduled targets from the aligned bucket, so a 300-second lead maps
     // 15:55 -> exactly 16:00 and does not slide forward on every poll.
-    let bucket_epoch = now_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
+    let bucket_epoch = now_epoch;
     let seasonal_target_epoch = upcoming_schedule_target(
         bucket_epoch,
         settings.warm_pool_lead_seconds,
@@ -4132,9 +4136,10 @@ mod tests {
             status.repositories[0].workload_patterns[0].job_name,
             "build-linux"
         );
+        let recent_occurrence = &status.repositories[0].recent_job_occurrences[0];
         assert_eq!(
-            status.repositories[0].recent_job_occurrences[0].occurrence_code,
-            "run-41-job-410"
+            recent_occurrence.occurrence_code,
+            provider_occurrence_key(&recent_occurrence.workload_id, 41, 410)
         );
 
         let _ = fs::remove_dir_all(dir);

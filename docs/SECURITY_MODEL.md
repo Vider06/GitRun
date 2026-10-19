@@ -28,8 +28,6 @@ remain reserved and inactive until they have reliable workload-level evidence
 and their own verified safety contracts.
 
 
-This document states plainly what GitRun's design trusts, and what an operator is implicitly granting when they run it. It documents the security properties that exist today and the important limits that remain.
-
 ## Docker socket access is host-level privilege
 
 Direct Docker-socket access for workflow runners is **disabled by default**. It is a repository-specific compatibility opt-in controlled by `DockerPolicy::direct_socket_enabled`.
@@ -65,7 +63,7 @@ A successful request therefore requires authenticated transport identity **and**
 
 GitDockRun's `mount` and `unmount` operations are a separate, privileged capability and are implemented only for a local Linux Docker daemon. A mount is accepted only if the global GitDockRun API policy, repository container allowlist, target Logic Container's `mountable` capability and repository host-source `MountPolicy` all allow it. The host source is canonicalized and opened before the namespace operation; explicit matching deny rules win. The default CLI mode is read-only, and a policy marked `read_only: true` cannot be used for a writable mount.
 
-The runtime pins the target using the immutable Docker container ID, checks the host PID against the container cgroup, validates a restricted existing target path, and performs bind/remount/unmount inside that container's mount namespace. Host sources are staged in an isolated private mount namespace, checked against the pinned source inode, cloned into a detached mount tree and attached by descriptor. The containing target mount is isolated from peer propagation without recursively changing the whole container mount tree. Read-only attributes are applied to the detached tree before attachment; unmount rechecks the expected kernel mount ID inside the target namespace. Before live operations, the helper inspects CapEff, CapPrm, CapInh, CapAmb and CapBnd for every visible thread in the bound container cgroup and fails closed if inspection is incomplete or CAP_SYS_ADMIN is present. Mount leases are stored in a private, cross-process-locked registry before the privileged side effect, then updated with the observed kernel mount ID; registry updates are atomically renamed and the directory is synced. Unmount requires the lease ID to match repository, run, job, requester and container identity. A previous full CI run passed the live read-only directory and read-write file bind/unmount smoke test; later adversarial follow-ups remain unverified as recorded in the refactor tracker.
+The runtime pins the target using the immutable Docker container ID, checks the host PID against the container cgroup, validates a restricted existing target path, and performs bind/remount/unmount inside that container's mount namespace. Host sources are staged in an isolated private mount namespace, checked against the pinned source inode, cloned into a detached mount tree and attached by descriptor. The containing target mount is isolated from peer propagation without recursively changing the whole container mount tree. Read-only attributes are applied to the detached tree before attachment; unmount rechecks the expected kernel mount ID inside the target namespace. Before live operations, the helper inspects CapEff, CapPrm, CapInh, CapAmb and CapBnd for every visible thread in the bound container cgroup and fails closed if inspection is incomplete or CAP_SYS_ADMIN is present. Mount leases are stored in a private, cross-process-locked registry before the privileged side effect, then updated with the observed kernel mount ID; registry updates are atomically renamed and the directory is synced. Unmount requires the lease ID to match repository, run, job, requester and container identity. The PR #83 source HEAD passed the live privileged Docker namespace cleanup regression and the broader CI security suite. The test invokes the cleanup helper in the namespace; it does not send a real client request through the complete authorized disconnect endpoint.
 
 This is not a blanket filesystem sandbox: host paths are highly sensitive, write mounts permit host-file modification, and a runner with direct Docker socket access can exercise separate host-level authority. The helper requires host privileges and must be validated on the deployment's Linux kernel/runtime. Windows, macOS, and remote/VM Docker daemons are not supported by this live-mount implementation and must fail closed. Mount target paths must exist before the request; directory targets must be empty to avoid hiding existing content. If reconciliation preserves a lease, treat it as a recovery journal: inspect the lease ID, immutable container ID, recorded target, source device/inode and kernel mount ID against the live container's mount table before taking action. A `preparing` lease with no kernel ID proves the attach worker was not entered; an `attaching` or later lease without a uniquely verified mount is ambiguous. Do not delete such a registry entry or unmount by pathname alone. Preserve the record and escalate for host-level recovery if the exact original mount cannot be proven; remove the lease only after the exact mount is confirmed absent or safely unmounted.
 
@@ -165,17 +163,17 @@ Untrusted input: workflow code, workflow-visible environment variables, requeste
 A successful privileged request therefore requires both authenticated transport identity and authoritative workload binding; policy alone is never treated as proof of identity.
 
 
-## v1.5.0 Phase 7 verification note — 2026-10-19
+## Verification status — v1.5.0
 
-PR #83 adds regression coverage for updater signature verification and rollback, privileged dashboard executable trust resolution, VM configuration/resolution, and GitDockRun mount cleanup in a privileged Docker namespace. The current CI source baseline passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. Consult the [refactor status tracker](v1.5.0-refactor-status.md) for exact commit/run evidence; documentation-only changes made during Phase 7 need a final-head verification run.
+PR [#83](https://github.com/Vider06/GitRun/pull/83) merged on 2026-10-19. Its source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance.
 
-The following are **not** claimed as verified by those automated checks:
+The following deployment checks remain outstanding:
 
-- A live desktop `pkexec` authorization dialog and real install/uninstall/reinstall privilege transitions.
-- Full KVM/libvirt and VirtualBox provisioning/recovery on actual hypervisor hosts.
-- Disconnect cleanup initiated through the complete authorized API endpoint (the live namespace test exercises the cleanup helper).
-- Upgrade/migration behavior for every pre-existing or operator-customized runner image and control volume.
-- Serialization of direct privileged policy edits that intentionally bypass GitRun's advisory-lock protocol.
-- Zero open alerts in GitHub's Security tab; successful CodeQL workflow execution proves the scan ran, not the state of all alerts.
+- Actual desktop `pkexec` authorization prompts and install/uninstall/reinstall privilege transitions.
+- VM provisioning and recovery on real KVM/libvirt and VirtualBox hosts.
+- A full authorized API request that drives GitDockRun disconnect cleanup end to end; CI exercises the cleanup helper in a privileged namespace.
+- Migration of all pre-existing and operator-customized runner images/control volumes.
+- Direct root/admin policy edits that bypass the sidecar-lock protocol; supported GitRun writers are serialized, but deliberate bypasses are not.
+- The count of open GitHub Security alerts. Successful CodeQL execution does not report that count.
 
-These are deployment/evidence limits, not assurances that the behaviors are safe in every environment. Before production release, validate the relevant environment-specific paths or explicitly accept each residual risk with a named scope and rationale.
+See the [status report](v1.5.0-refactor-status.md) for the verification record.

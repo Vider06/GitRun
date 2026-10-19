@@ -79,6 +79,6 @@ The socket does not make an untrusted process privileged. The host-side authoriz
 The Docker socket remains a separate host-level trust boundary on Linux.
 
 
-## Verification boundary (v1.5.0)
+## Verification status
 
-The protocol and runtime-contract tests in PR #83 cover configured request, authentication and execution-boundary regressions. A green test run is not equivalent to an end-to-end adversarial test of every API operation across a real runner disconnect, container replacement and cross-process race. Consult the [contract inventory](v1.5.0-contract-inventory.md) and [refactor status](v1.5.0-refactor-status.md) for current evidence and remaining deployment-specific checks.
+The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. These tests cover configured protocol and runtime contracts; they do not constitute an end-to-end adversarial test of every API operation across real runner disconnects, container replacement and cross-process races. See the [contract inventory](v1.5.0-contract-inventory.md) and [status report](v1.5.0-refactor-status.md) for exact scope.

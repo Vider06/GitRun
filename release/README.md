@@ -1,9 +1,7 @@
-# `release`
+# Release metadata
 
-Release metadata for GitRun releases, including the **1.5.0** refactor target.
+This directory contains machine-readable release manifests and schemas used to describe GitRun artifacts and validate manifest structure. The source version is maintained in the root `version.txt`; individual Cargo crates keep their own SemVer versions.
 
-This directory contains machine-readable release manifests and schemas. Release tooling uses these files to describe artifacts and validate manifest structure.
+Official release manifests are signed by the release workflow. Signature verification is required for official releases. Unsigned custom manifests need an explicit compatibility/unsafe opt-out.
 
-Official release manifests are signed during the release workflow. Verification is mandatory for official releases; unsigned custom manifests require an explicit compatibility/unsafe opt-out.
-
-The v1.5.0 refactor is tracked by [PR #83](https://github.com/Vider06/GitRun/pull/83). A branch version target is not itself a published release. Only treat a release as ready after the current-head verification and residual-risk disposition in [the status tracker](../docs/v1.5.0-refactor-status.md) are complete.
+PR [#83](https://github.com/Vider06/GitRun/pull/83) merged the GitRun 1.5.0 source refactor to `main` on 2026-10-19. A merged PR and source version are not proof that a release tag or binary has been published; check [GitHub Releases](https://github.com/Vider06/GitRun/releases) for published artifacts.

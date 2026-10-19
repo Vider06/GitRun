@@ -183,6 +183,7 @@ gitrun cat
 ```
 
 `gitrun cat` is the terminal easter egg and uses one JSON animation source with adaptive terminal rendering.
+`gitrun fast-stop <owner/repo> <workflow-run-id> --yes` requests GitHub force-cancellation for the selected workflow run. It cancels the run, not a single job, and does not itself prove that runner processes have exited.
 
 ## Repository map
 
@@ -221,4 +222,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [SUPPORT.
 GitRun is distributed under the Apache License 2.0.
 
 
-> **v1.5.0 refactor note:** PR #83 is under final documentation and implementation review. A green CI run is evidence for the checks executed on its commit, not a claim that desktop privilege transitions, real KVM/VirtualBox lifecycle runs, full API-driven disconnect cleanup, or every custom runner-image migration have been exercised. See the status tracker before using this branch as a release candidate.
+## Version and verification
+
+The source tree version is **1.5.0**. PR [#83](https://github.com/Vider06/GitRun/pull/83) was merged to `main` on 2026-10-19. Its source HEAD, [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c), passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. Those checks do not replace environment-specific validation of desktop privilege prompts, real KVM/VirtualBox lifecycles, the complete authorized disconnect endpoint, or migration of every customized runner image. Current evidence and limits are tracked in [the v1.5.0 status report](docs/v1.5.0-refactor-status.md).

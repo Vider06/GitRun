@@ -1292,27 +1292,18 @@ fn validate_repo_workflows_best_effort(
         }
     };
 
-    let mut findings = Vec::new();
-    let mut dock_requests = Vec::new();
-    for (name, content) in &files {
-        if advisory_scan_enabled {
-            findings.extend(gitrun_core::scan(name, content));
+    let mut findings = match process_workflow_files(
+        &config.state_dir,
+        repo,
+        &files,
+        advisory_scan_enabled,
+    ) {
+        Ok(findings) => findings,
+        Err(error) => {
+            emit_workflow_validation_warning(&events_path, repo, &error);
+            return Err(error);
         }
-        // This is routing/security metadata, not an advisory scan result.
-        // Always parse and refresh it, even when workflow validation is disabled.
-        dock_requests.extend(gitrun_core::scan_dock_requests(name, content));
-    }
-
-    if let Err(error) = save_workflow_dock_requirements(&config.state_dir, repo, &dock_requests) {
-        emit_workflow_validation_warning(
-            &events_path,
-            repo,
-            &format!("could not persist required GitDockRun routing metadata: {error}"),
-        );
-        return Err(format!(
-            "required GitDockRun routing metadata could not be persisted: {error}"
-        ));
-    }
+    };
 
     if advisory_scan_enabled && config.gsr_zizmor_enabled {
         let invocation = std::time::SystemTime::now()
@@ -1376,6 +1367,30 @@ fn validate_repo_workflows_best_effort(
         }
     }
     Ok(())
+}
+
+fn process_workflow_files(
+    state_dir: &str,
+    repo: &str,
+    files: &[(String, String)],
+    advisory_scan_enabled: bool,
+) -> Result<Vec<gitrun_core::Finding>, String> {
+    let mut findings = Vec::new();
+    let mut dock_requests = Vec::new();
+
+    for (name, content) in files {
+        if advisory_scan_enabled {
+            findings.extend(gitrun_core::scan(name, content));
+        }
+        // This metadata protects scheduler routing and is refreshed regardless
+        // of whether the advisory scanner is enabled.
+        dock_requests.extend(gitrun_core::scan_dock_requests(name, content));
+    }
+
+    save_workflow_dock_requirements(state_dir, repo, &dock_requests).map_err(|error| {
+        format!("required GitDockRun routing metadata could not be persisted: {error}")
+    })?;
+    Ok(findings)
 }
 
 fn emit_workflow_validation_warning(events_path: &std::path::Path, repo: &str, detail: &str) {
@@ -2076,6 +2091,61 @@ mod tests {
         assert_eq!(stored, vec![request]);
         save_workflow_dock_requirements(base.to_str().unwrap(), repo, &[]).unwrap();
         assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn dock_routing_metadata_refreshes_when_advisory_validation_is_disabled() {
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-dock-requirements-disabled-scan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repo = "owner/repo";
+        let files = vec![(
+            "ci.yml".to_owned(),
+            "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n".to_owned(),
+        )];
+
+        let findings = process_workflow_files(base.to_str().unwrap(), repo, &files, false)
+            .expect("required routing metadata should be stored");
+        assert!(findings.is_empty());
+        assert_eq!(
+            load_dock_target_jobs(&base, repo).unwrap(),
+            vec!["build-cache".to_owned()]
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workflow_routing_metadata_persistence_failure_is_propagated() {
+        use std::os::unix::fs::symlink;
+
+        let base = std::env::temp_dir().join(format!(
+            "gitrun-dock-requirements-untrusted-state-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let real_state = base.join("real-state");
+        std::fs::create_dir(&real_state).unwrap();
+        let state_link = base.join("state-link");
+        symlink(&real_state, &state_link).unwrap();
+        let files = vec![(
+            "ci.yml".to_owned(),
+            "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n".to_owned(),
+        )];
+
+        let result =
+            process_workflow_files(state_link.to_str().unwrap(), "owner/repo", &files, false);
+        assert!(matches!(result, Err(error) if error.contains("could not be persisted")));
         let _ = std::fs::remove_dir_all(base);
     }
 

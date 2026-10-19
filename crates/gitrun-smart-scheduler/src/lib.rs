@@ -2292,6 +2292,8 @@ fn workload_fingerprint(job: &QueuedJobOccurrence) -> String {
 fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
     job.run_id > 0
         && job.job_id > 0
+        && job.workflow_id > 0
+        && !job.workflow_path.trim().is_empty()
         && !job.name.trim().is_empty()
         && job.name.len() <= 256
         && job.workflow_path.len() <= 512
@@ -2400,6 +2402,21 @@ fn record_queued_job_occurrences(
             }
         }
 
+        // Count each authoritative run/job only once toward a workload
+        // prediction, even if the API continues reporting it queued on later
+        // scheduler polls.
+        for prediction in &mut model.workload_predictions {
+            if prediction.workload_code == workload_code
+                && prediction.actual_occurrences.is_none()
+                && observed_at_epoch >= prediction.target_epoch
+                && observed_at_epoch < prediction.target_epoch.saturating_add(3_600)
+            {
+                prediction.observed_occurrences =
+                    prediction.observed_occurrences.saturating_add(1);
+                changed = true;
+            }
+        }
+
         model.recent_job_occurrences.push(RecentJobOccurrence {
             occurrence_code,
             workload_code,
@@ -2413,7 +2430,39 @@ fn record_queued_job_occurrences(
         }
         changed = true;
     }
+
+    // A missed occurrence means zero jobs matched the workload during its
+    // predicted hour. Close records only after the full observation window.
+    for prediction in &mut model.workload_predictions {
+        if prediction.actual_occurrences.is_none()
+            && observed_at_epoch >= prediction.target_epoch.saturating_add(3_600)
+        {
+            prediction.actual_occurrences = Some(prediction.observed_occurrences);
+            changed = true;
+        }
+    }
+    if model.workload_predictions.len() > MAX_WORKLOAD_PREDICTIONS {
+        let excess = model.workload_predictions.len() - MAX_WORKLOAD_PREDICTIONS;
+        model.workload_predictions.drain(0..excess);
+        changed = true;
+    }
     changed
+}
+
+fn workload_prediction_bias(model: &WorkflowModel, workload_code: &str) -> Option<f64> {
+    let residuals: Vec<f64> = model
+        .workload_predictions
+        .iter()
+        .rev()
+        .filter(|record| record.workload_code == workload_code)
+        .filter_map(|record| {
+            record.actual_occurrences.map(|actual| {
+                f64::from(actual) - f64::from(record.predicted_occurrences)
+            })
+        })
+        .take(48)
+        .collect();
+    (residuals.len() >= 4).then(|| mean(&residuals))
 }
 
 fn upcoming_schedule_target(bucket_epoch: u64, lead_seconds: u64) -> Option<u64> {

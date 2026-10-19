@@ -1953,6 +1953,36 @@ mod tests {
     }
 
     #[test]
+    fn saved_settings_flow_through_runtime_into_dashboard_status() {
+        let dir = temp_dir("settings-runtime-dashboard-flow");
+        let mut settings = enabled_settings();
+        settings.predictive_warm_pool_enabled = true;
+        settings.shadow_mode = false;
+        save_settings_for_local_state_dir(&dir, &settings).unwrap();
+
+        let mut runtime = KittyRuntime::new(&dir);
+        let decision = runtime.observe(input(1_800, 2, 1), 2, 4, true).unwrap();
+        assert_ne!(decision.status, DecisionStatus::SafeFallback);
+        runtime.finish_cycle(&decision, 0, true).unwrap();
+
+        let reloaded_settings = load_settings_for_dashboard(&dir).unwrap();
+        assert_eq!(reloaded_settings, settings);
+
+        let status = load_dashboard_status(&dir).unwrap();
+        assert!(status.enabled);
+        assert!(status.telemetry_enabled);
+        assert!(status.predictive_analytics_enabled);
+        assert!(status.predictive_warm_pool_enabled);
+        assert!(!status.shadow_mode);
+        assert_eq!(status.repositories.len(), 1);
+        assert_eq!(status.repositories[0].repository, "owner/repo");
+        assert_eq!(status.repositories[0].sample_count, 1);
+        assert_eq!(status.repositories[0].latest_observation_epoch, Some(1_800));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn repository_model_cache_evicts_oldest_without_losing_persisted_history() {
         let dir = temp_dir("model-cache-eviction");
         let settings = enabled_settings();

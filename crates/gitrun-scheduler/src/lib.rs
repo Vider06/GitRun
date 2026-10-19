@@ -1084,6 +1084,10 @@ fn reconcile_repo(
             observed_at_epoch,
             queued_job_occurrences: job_occurrences.clone(),
             started_job_occurrences,
+            // recent_self_hosted_job_starts inspects a bounded set of runs; its
+            // empty response cannot prove that no job started in an hour.
+            started_job_history_complete: false,
+            poll_interval_seconds: config.poll_interval,
             queued_jobs: kitty_counts.queued_jobs,
             busy_runners: kitty_counts.busy_runners,
             online_runners: kitty_counts.online_runners,

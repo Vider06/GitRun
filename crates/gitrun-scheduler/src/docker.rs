@@ -335,7 +335,7 @@ pub fn sanitize(value: &str, replacement: char) -> String {
 /// Collision-resistant, URL-safe repository prefix for runner container names.
 /// The short readable prefix is cosmetic; the full unpadded Base64URL encoding
 /// makes distinct repository identifiers map to distinct prefixes.
-fn valid_prewarm_gitrun_job_id(code: &str) -> bool {
+fn valid_prewarm_workload_id(code: &str) -> bool {
     let Some(digest) = code.strip_prefix("wk-") else {
         return false;
     };
@@ -366,7 +366,7 @@ pub struct ManagedContainer {
     pub workflow_run_id: Option<u64>,
     pub workflow_job_id: Option<u64>,
     /// Predicted recurring workload attached to a time-bounded warmup, if any.
-    pub prewarm_gitrun_job_id: Option<String>,
+    pub prewarm_workload_id: Option<String>,
     pub prewarm_target_epoch: Option<u64>,
     pub prewarm_hold_until_epoch: Option<u64>,
 }
@@ -523,7 +523,7 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
         let raw_prewarm_code = container_label_on(host, &id, "gitrun.prewarm_workload_code")?;
         let raw_prewarm_target = container_label_on(host, &id, "gitrun.prewarm_target_epoch")?;
         let raw_prewarm_hold = container_label_on(host, &id, "gitrun.prewarm_hold_until_epoch")?;
-        let (prewarm_gitrun_job_id, prewarm_target_epoch, prewarm_hold_until_epoch) =
+        let (prewarm_workload_id, prewarm_target_epoch, prewarm_hold_until_epoch) =
             match (raw_prewarm_code, raw_prewarm_target, raw_prewarm_hold) {
                 (None, None, None) => (None, None, None),
                 (Some(code), Some(target), Some(hold)) => {
@@ -537,7 +537,7 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
                             "managed runner {name} has an invalid Kitty prewarm hold label"
                         ))
                     })?;
-                    if !valid_prewarm_gitrun_job_id(&code)
+                    if !valid_prewarm_workload_id(&code)
                         || target == 0
                         || !target.is_multiple_of(3_600)
                         || hold < target
@@ -571,7 +571,7 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             workflow_job,
             workflow_run_id,
             workflow_job_id,
-            prewarm_gitrun_job_id,
+            prewarm_workload_id,
             prewarm_target_epoch,
             prewarm_hold_until_epoch,
         });
@@ -1122,7 +1122,7 @@ pub struct RunnerSpec<'a> {
     pub workflow_job_id: Option<u64>,
     /// Metadata for one recurring-workload prewarm. These labels are for
     /// deduplication/retention only; GitHub dispatch still uses runner labels.
-    pub prewarm_gitrun_job_id: Option<&'a str>,
+    pub prewarm_workload_id: Option<&'a str>,
     pub prewarm_target_epoch: Option<u64>,
     pub prewarm_hold_until_epoch: Option<u64>,
     /// Whether this container is a GitDockRun target that must survive the
@@ -1364,13 +1364,13 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
 
     match (
-        spec.prewarm_gitrun_job_id,
+        spec.prewarm_workload_id,
         spec.prewarm_target_epoch,
         spec.prewarm_hold_until_epoch,
     ) {
         (None, None, None) => {}
         (Some(code), Some(target), Some(hold))
-            if valid_prewarm_gitrun_job_id(code)
+            if valid_prewarm_workload_id(code)
                 && target > 0
                 && target.is_multiple_of(3_600)
                 && hold >= target => {}
@@ -1435,7 +1435,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.extend(["--label".into(), format!("gitrun.workflow_job_id={job_id}")]);
     }
     if let (Some(code), Some(target), Some(hold)) = (
-        spec.prewarm_gitrun_job_id,
+        spec.prewarm_workload_id,
         spec.prewarm_target_epoch,
         spec.prewarm_hold_until_epoch,
     ) {

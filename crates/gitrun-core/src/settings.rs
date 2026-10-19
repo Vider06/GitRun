@@ -52,7 +52,7 @@ impl SettingsPolicyLock {
             fs::create_dir_all(parent)?;
             #[cfg(unix)]
             {
-                use std::os::unix::fs::MetadataExt;
+                use std::os::unix::fs::{MetadataExt, PermissionsExt};
                 let metadata = fs::symlink_metadata(parent)?;
                 if !metadata.is_dir()
                     || metadata.uid() != unsafe { libc::geteuid() }

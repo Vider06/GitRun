@@ -1492,8 +1492,11 @@ mod linux {
 
             let worker = loop {
                 let mut status = 0;
+                // Wait only for the tracee that reports PTRACE_EVENT_CLONE. A
+                // process-wide waitpid(-1) can reap children owned by other
+                // concurrently running Rust tests and make their results flaky.
                 let waited =
-                    unsafe { libc::waitpid(-1, &mut status, libc::WUNTRACED | libc::__WALL) };
+                    unsafe { libc::waitpid(child, &mut status, libc::WUNTRACED | libc::__WALL) };
                 assert!(waited > 0, "waiting for test worker clone failed");
                 if waited == child
                     && is_stopped(status)
@@ -1616,17 +1619,21 @@ mod linux {
                 if tracees.is_empty() {
                     return;
                 }
-                unsafe { libc::kill(*tracees.iter().next().unwrap(), libc::SIGKILL) };
-                let mut status = 0;
-                let waited =
-                    unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG | libc::__WALL) };
-                if waited > 0 {
-                    if is_exited(status) || is_signaled(status) {
-                        tracees.remove(&waited);
-                    } else if is_stopped(status) {
-                        let _ = unsafe { libc::ptrace(PTRACE_CONT, waited, 0, libc::SIGKILL) };
+                let pending: Vec<_> = tracees.iter().copied().collect();
+                for pid in pending {
+                    unsafe { libc::kill(pid, libc::SIGKILL) };
+                    let mut status = 0;
+                    let waited =
+                        unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG | libc::__WALL) };
+                    if waited == pid {
+                        if is_exited(status) || is_signaled(status) {
+                            tracees.remove(&pid);
+                        } else if is_stopped(status) {
+                            let _ = unsafe { libc::ptrace(PTRACE_CONT, pid, 0, libc::SIGKILL) };
+                        }
                     }
-                } else {
+                }
+                if !tracees.is_empty() {
                     unsafe { libc::usleep(1000) };
                 }
             }

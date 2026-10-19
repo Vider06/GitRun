@@ -3096,6 +3096,10 @@ mod reconcile_identity_pin_tests {
             dock_target: false,
             workflow_job: None,
             workflow_run_id: None,
+            workflow_job_id: None,
+            prewarm_workload_code: None,
+            prewarm_target_epoch: None,
+            prewarm_hold_until_epoch: None,
         }];
         assert!(expected_container_id(&inventory, "runner").is_err());
     }

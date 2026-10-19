@@ -359,9 +359,8 @@ mod tests {
         assert!(RUNNER_ENTRYPOINT.contains("RUNNER_NO_DEFAULT_LABELS"));
         assert!(RUNNER_ENTRYPOINT.contains("--no-default-labels"));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-job-wk-"));
-        assert!(RUNNER_ENTRYPOINT.contains(
-            "exclusive runner requires one canonical GitRun workload-family label"
-        ));
+        assert!(RUNNER_ENTRYPOINT
+            .contains("exclusive runner requires one canonical GitRun workload-family label"));
         assert_eq!(
             SYSTEMD_SERVICE,
             include_str!("../../../systemd/gitrun.service")

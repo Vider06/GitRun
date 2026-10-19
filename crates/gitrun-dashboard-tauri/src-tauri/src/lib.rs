@@ -3123,6 +3123,39 @@ mod tests {
         assert!(parse_setup_progress_line("[GitRun setup] [5/8] invalid").is_none());
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn trusted_privileged_binary_accepts_system_cli_and_rejects_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let system_cli = std::path::Path::new("/usr/bin/env");
+        assert!(
+            system_cli.is_file(),
+            "Ubuntu CI runner must provide the system env executable"
+        );
+        assert!(
+            trusted_privileged_binary(system_cli).is_some(),
+            "root-owned system executable under a protected path should be accepted"
+        );
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "gitrun-dashboard-privileged-path-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let link = directory.join("gitrun");
+        symlink(system_cli, &link).unwrap();
+        assert!(
+            trusted_privileged_binary(&link).is_none(),
+            "symlink executable must not be used for a privileged transition"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
     #[test]
     fn trusted_executable_mode_accepts_setuid_root_binary_with_owner_write() {
         assert!(trusted_executable_mode(0o4755));

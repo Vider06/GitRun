@@ -2829,6 +2829,66 @@ fn save_gitrun_settings_root_command(_input_path: &str) -> Result<(), Box<dyn st
 }
 
 #[cfg(target_os = "linux")]
+fn promote_staged_kitty_settings(
+    staged: &Path,
+    destination: &Path,
+    expected_owner: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if staged.parent() != destination.parent() {
+        return Err("staged Kitty settings must share the destination directory".into());
+    }
+    let staged_metadata = std::fs::symlink_metadata(staged)?;
+    if staged_metadata.file_type().is_symlink()
+        || !staged_metadata.is_file()
+        || staged_metadata.uid() != expected_owner
+        || staged_metadata.nlink() != 1
+        || staged_metadata.permissions().mode() & 0o777 != 0o640
+    {
+        return Err(
+            "staged Kitty settings failed its ownership/permission postcondition".into(),
+        );
+    }
+
+    match std::fs::symlink_metadata(destination) {
+        Ok(metadata)
+            if !metadata.file_type().is_symlink()
+                && metadata.is_file()
+                && metadata.uid() == expected_owner
+                && metadata.nlink() == 1
+                && metadata.permissions().mode() & 0o022 == 0 => {}
+        Ok(_) => {
+            return Err(
+                "existing Kitty settings path has unsafe type, owner, or permissions".into(),
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let parent = destination
+        .parent()
+        .ok_or("Kitty settings destination has no parent directory")?;
+    std::fs::rename(staged, destination)?;
+    std::fs::File::open(parent)?.sync_all()?;
+
+    let final_metadata = std::fs::symlink_metadata(destination)?;
+    if final_metadata.file_type().is_symlink()
+        || !final_metadata.is_file()
+        || final_metadata.uid() != expected_owner
+        || final_metadata.gid() != staged_metadata.gid()
+        || final_metadata.nlink() != 1
+        || final_metadata.permissions().mode() & 0o777 != 0o640
+    {
+        return Err(
+            "saved Kitty settings failed final ownership/permission verification".into(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("saving Kitty settings requires administrator privileges".into());
@@ -2899,49 +2959,7 @@ fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std:
         // This performs the existing root:desktop-primary-group chown + 0640
         // update and validates the postconditions before the active file moves.
         gitrun_setup::secure_system_settings_file(&staged, Some(requester_uid))?;
-        let staged_metadata = std::fs::symlink_metadata(&staged)?;
-        if staged_metadata.file_type().is_symlink()
-            || !staged_metadata.is_file()
-            || staged_metadata.uid() != 0
-            || staged_metadata.nlink() != 1
-            || staged_metadata.permissions().mode() & 0o777 != 0o640
-        {
-            return Err(
-                "staged Kitty settings failed its ownership/permission postcondition".into(),
-            );
-        }
-
-        match std::fs::symlink_metadata(&destination) {
-            Ok(metadata)
-                if !metadata.file_type().is_symlink()
-                    && metadata.is_file()
-                    && metadata.uid() == 0
-                    && metadata.nlink() == 1
-                    && metadata.permissions().mode() & 0o022 == 0 => {}
-            Ok(_) => {
-                return Err(
-                    "existing Kitty settings path has unsafe type, owner, or permissions".into(),
-                );
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-
-        std::fs::rename(&staged, &destination)?;
-        std::fs::File::open(parent)?.sync_all()?;
-
-        let final_metadata = std::fs::symlink_metadata(&destination)?;
-        if final_metadata.file_type().is_symlink()
-            || !final_metadata.is_file()
-            || final_metadata.uid() != 0
-            || final_metadata.gid() != staged_metadata.gid()
-            || final_metadata.nlink() != 1
-            || final_metadata.permissions().mode() & 0o777 != 0o640
-        {
-            return Err(
-                "saved Kitty settings failed final ownership/permission verification".into(),
-            );
-        }
+        promote_staged_kitty_settings(&staged, &destination, 0)?;
         Ok(())
     })();
 
@@ -2957,6 +2975,84 @@ fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std:
 #[cfg(not(target_os = "linux"))]
 fn save_kitty_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Err("system Kitty settings persistence through the privileged helper is Linux-only".into())
+}
+
+
+#[cfg(all(test, target_os = "linux"))]
+mod kitty_settings_promotion_tests {
+    use super::promote_staged_kitty_settings;
+    use std::{
+        fs,
+        os::unix::fs::{MetadataExt, PermissionsExt},
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after UNIX epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-kitty-promotion-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&dir).expect("test temp directory should be created");
+        dir
+    }
+
+    fn set_mode(path: &std::path::Path, mode: u32) {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+            .expect("test file permissions should be set");
+    }
+
+    #[test]
+    fn staged_settings_atomically_replace_a_safe_existing_file() {
+        let dir = temp_dir("replace");
+        let destination = dir.join("kitty.json");
+        let staged = dir.join(".kitty-settings-pending.tmp");
+        fs::write(&destination, b"old-settings").unwrap();
+        fs::write(&staged, b"new-settings").unwrap();
+        set_mode(&destination, 0o640);
+        set_mode(&staged, 0o640);
+        let owner = fs::metadata(&staged).unwrap().uid();
+
+        promote_staged_kitty_settings(&staged, &destination, owner).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"new-settings");
+        assert!(!staged.exists());
+        let metadata = fs::symlink_metadata(&destination).unwrap();
+        assert_eq!(metadata.uid(), owner);
+        assert_eq!(metadata.nlink(), 1);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn staged_settings_refuse_a_symlink_destination_and_preserve_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_dir("symlink-destination");
+        let outside = dir.join("outside.json");
+        let destination = dir.join("kitty.json");
+        let staged = dir.join(".kitty-settings-pending.tmp");
+        fs::write(&outside, b"outside-settings").unwrap();
+        fs::write(&staged, b"new-settings").unwrap();
+        set_mode(&staged, 0o640);
+        symlink(&outside, &destination).unwrap();
+        let owner = fs::metadata(&staged).unwrap().uid();
+
+        assert!(promote_staged_kitty_settings(&staged, &destination, owner).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"outside-settings");
+        assert!(fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(staged.is_file());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 fn run_reinstall_root(token_path: &str) -> i32 {

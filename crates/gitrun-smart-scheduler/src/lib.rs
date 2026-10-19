@@ -3652,7 +3652,8 @@ fn compute_forecast(
                 && record.actual_demand.is_some()
                 && !record.skipped_missing_observation
                 && seasonal_target_epoch > 0
-                && weekday_hour_slot(record.target_bucket) == weekday_hour_slot(seasonal_target_epoch)
+                && weekday_hour_slot(record.target_bucket)
+                    == weekday_hour_slot(seasonal_target_epoch)
         })
         .rev()
         .take(48)
@@ -3676,9 +3677,8 @@ fn compute_forecast(
                 .collect::<Vec<_>>(),
         );
         let accuracy = (1.0 - mean(&errors) / actual_mean.max(1.0)).clamp(0.0, 1.0);
-        let evaluation_factor = (seasonal_evaluated.len() as f64
-            / MIN_SEASONAL_OCCURRENCES.max(4.0))
-            .clamp(0.0, 1.0);
+        let evaluation_factor =
+            (seasonal_evaluated.len() as f64 / MIN_SEASONAL_OCCURRENCES.max(4.0)).clamp(0.0, 1.0);
         Some((sample_factor * evaluation_factor * accuracy * freshness_factor).clamp(0.0, 1.0))
     } else {
         None
@@ -4983,7 +4983,10 @@ mod tests {
     #[test]
     fn gitrun_job_id_parser_rejects_noncanonical_sequence_encodings() {
         let valid = generate_occurrence_id("owner/repo", 1).unwrap();
-        assert!(valid_generated_gitrun_job_id_for_repository(&valid, "owner/repo"));
+        assert!(valid_generated_gitrun_job_id_for_repository(
+            &valid,
+            "owner/repo"
+        ));
         let hash = repository_identity_hash("owner/repo").unwrap();
         assert!(generated_gitrun_job_sequence(&format!("grj-{hash}-1")).is_none());
         assert!(generated_gitrun_job_sequence(&format!("grj-{hash}-000000000000000A")).is_none());

@@ -1,7 +1,7 @@
 # Fast Stop and Experimental Smart Scheduler
 
-**Status:** Mixed — Fast Stop implementation added to PR #83; Smart Scheduler remains a design proposal  
-**Target:** Fast Stop is being integrated into the v1.5.0 refactor branch; Smart Scheduler release placement remains TBD  
+**Status:** Fast Stop implementation and tests are included in PR #83; Experimental Smart Scheduler remains a design proposal  
+**Target:** Fast Stop is reviewed as part of v1.5.0; Smart Scheduler release placement remains TBD  
 **Scope:** Workflow-run force cancellation, workflow telemetry, predictive workflow models, and bounded adaptive scheduling  
 **Verification:** PR #83 CI is a gate for the committed source and test suite. Passing CI does not by itself validate every live cancellation race or qualify the Smart Scheduler proposal for release.
 

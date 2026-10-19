@@ -2403,6 +2403,104 @@ mod tests {
     }
 
     #[test]
+    fn settings_reload_restricts_existing_warm_pool_and_shadow_mode_without_restart() {
+        let dir = temp_dir("settings-reload-limits");
+        let mut settings = enabled_settings();
+        settings.predictive_warm_pool_enabled = true;
+        settings.shadow_mode = false;
+        settings.minimum_quality_score = 0.5;
+        settings.warm_pool_min_hold_seconds = 1_800;
+        settings.max_additional_warm_runners = 4;
+        write_settings(&dir, &settings);
+
+        let mut runtime = KittyRuntime::new(&dir);
+        let stamp = 10_000 / BUCKET_SECONDS * BUCKET_SECONDS;
+        let first = runtime.observe(input(stamp, 1, 3), 2, 8, true).unwrap();
+        runtime.finish_cycle(&first, 0, true).unwrap();
+
+        let key = repository_key("owner/repo");
+        {
+            let model = runtime
+                .models
+                .get_mut(&key)
+                .expect("the first observation must create a repository model");
+            model.decision_audit.push(DecisionAudit {
+                bucket_epoch: stamp,
+                model_version: MODEL_VERSION,
+                source_window_start: Some(stamp.saturating_sub(BUCKET_SECONDS)),
+                source_window_end: Some(stamp),
+                status: DecisionStatus::AppliedWarmPoolFloor,
+                reason: "seed a previously approved floor for the reload regression".into(),
+                configured_min_runners: 2,
+                proposed_min_runners: 6,
+                effective_min_runners: 6,
+                predicted_peak_concurrency: Some(6),
+                confidence_score: Some(0.95),
+                sample_count: 24,
+                planned_action_count: Some(1),
+                execution_outcome: Some("plan_executed".into()),
+            });
+        }
+        runtime.persist_model(&key).unwrap();
+
+        // Tightening the operator cap while the process is live must clamp an
+        // already-approved floor; it must not keep the old, larger value.
+        let mut restricted = settings.clone();
+        restricted.max_additional_warm_runners = 1;
+        write_settings(&dir, &restricted);
+        runtime.last_settings_reload =
+            Some(Instant::now() - SETTINGS_RELOAD_INTERVAL - Duration::from_secs(1));
+
+        let bounded = runtime
+            .observe(input(stamp + BUCKET_SECONDS, 1, 3), 2, 8, true)
+            .unwrap();
+        assert_eq!(runtime.settings.max_additional_warm_runners, 1);
+        assert_eq!(bounded.status, DecisionStatus::WarmPoolHold);
+        assert_eq!(bounded.effective_min_runners, 3);
+        runtime.finish_cycle(&bounded, 0, true).unwrap();
+
+        // Switching back to shadow mode at runtime must remove the retained
+        // active floor, not merely stop raising it on the next forecast.
+        let mut shadow = settings.clone();
+        shadow.shadow_mode = true;
+        write_settings(&dir, &shadow);
+        runtime.last_settings_reload =
+            Some(Instant::now() - SETTINGS_RELOAD_INTERVAL - Duration::from_secs(1));
+
+        let shadow_decision = runtime
+            .observe(input(stamp + 2 * BUCKET_SECONDS, 1, 3), 2, 8, true)
+            .unwrap();
+        assert!(runtime.settings.shadow_mode);
+        assert_eq!(shadow_decision.effective_min_runners, 2);
+        assert_ne!(shadow_decision.status, DecisionStatus::WarmPoolHold);
+        runtime.finish_cycle(&shadow_decision, 0, true).unwrap();
+
+        // A corrupt replacement must fail closed on hot reload too, while
+        // leaving the deterministic scheduler's configured floor untouched.
+        let settings_path = KittyRuntime::settings_path(&dir);
+        fs::write(
+            &settings_path,
+            br#"{"schema_version":1,"enabled":true,"surprise":true}"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&settings_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        runtime.last_settings_reload =
+            Some(Instant::now() - SETTINGS_RELOAD_INTERVAL - Duration::from_secs(1));
+
+        let corrupt = runtime
+            .observe(input(stamp + 3 * BUCKET_SECONDS, 1, 3), 2, 8, true)
+            .unwrap();
+        assert_eq!(corrupt.status, DecisionStatus::SafeFallback);
+        assert_eq!(corrupt.effective_min_runners, 2);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn warm_pool_hold_is_expired_when_limits_change_or_window_passes() {
         let mut model = WorkflowModel::empty("owner/repo");
         model.decision_audit.push(DecisionAudit {

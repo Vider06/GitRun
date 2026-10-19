@@ -4392,28 +4392,30 @@ mod tests {
             prewarm_runners_created: 0,
         });
 
-        // A job already queued before the target window must not inflate this
-        // target-hour forecast, even if it remains visible through later polls.
+        // A job already queued before the target window should count once if it
+        // remains queued after the predicted hour opens, not once per poll.
         let mut early_job = job.clone();
         early_job.job_id = 409;
         record_queued_job_occurrences(&mut model, std::slice::from_ref(&early_job), issued + 30);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
         record_queued_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 30);
-        assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
+        record_queued_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 60);
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
 
-        // A distinct job first observed inside the target window counts once.
+        // A distinct job first observed inside the target window also counts once.
         assert!(record_queued_job_occurrences(
             &mut model,
             std::slice::from_ref(&job),
             target + 30,
         ));
-        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 2);
         record_queued_job_occurrences(&mut model, std::slice::from_ref(&job), target + 60);
-        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 2);
 
-        // When the target hour completes, the observed occurrence count is finalized.
+        // When the target hour completes, both unique jobs are finalized.
         record_queued_job_occurrences(&mut model, &[], target + 3_600);
-        assert_eq!(model.workload_predictions[0].actual_occurrences, Some(1));
+        assert_eq!(model.workload_predictions[0].actual_occurrences, Some(2));
         assert_eq!(
             workload_prediction_bias(&model, &workload_code),
             None,
@@ -4432,7 +4434,7 @@ mod tests {
         }
         assert_eq!(
             workload_prediction_bias(&model, &workload_code),
-            Some(-2.0),
+            Some(-1.75),
             "repeated over-prediction should lower the next warm-up request"
         );
     }

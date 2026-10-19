@@ -527,6 +527,7 @@ mod tests {
             job_labels: vec!["self-hosted".into(), "Linux".into()],
             job_name: None,
             job_run_id: None,
+            job_id: None,
         }));
     }
 
@@ -551,12 +552,14 @@ mod tests {
             job_labels: vec!["self-hosted".into(), "Linux".into()],
             job_name: Some("deploy-production".into()),
             job_run_id: Some(42),
+            job_id: Some(420),
         }));
         assert!(actions.contains(&Action::CreateRunner {
             permanent: false,
             job_labels: vec!["self-hosted".into(), "Linux".into()],
             job_name: Some("build-docs".into()),
             job_run_id: Some(43),
+            job_id: Some(430),
         }));
         assert_eq!(
             actions

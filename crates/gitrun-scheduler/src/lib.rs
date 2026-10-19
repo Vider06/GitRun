@@ -1277,6 +1277,31 @@ fn reconcile_repo(
         config.min_runners
     };
 
+    let mut routed_workload_capacity = std::collections::HashMap::<String, u32>::new();
+    for container in containers.iter().filter(|container| {
+        !container.status.eq_ignore_ascii_case("exited")
+            && !container.permanent
+            && !container.dock_target
+    }) {
+        let Some(workload_id) = container.workload_routing_id.as_ref() else {
+            continue;
+        };
+        let registered_runner = planner_runners
+            .iter()
+            .find(|runner| runner.name == container.name);
+        let unavailable = registered_runner.is_some_and(|runner| {
+            runner.busy || (container.status.eq_ignore_ascii_case("running") && !runner.online)
+        });
+        if !unavailable {
+            let count = routed_workload_capacity
+                .entry(workload_id.clone())
+                .or_default();
+            *count = count.saturating_add(1);
+        }
+    }
+    let routed_workload_capacity: Vec<(String, u32)> =
+        routed_workload_capacity.into_iter().collect();
+
     let input = ReconcileInput {
         min_runners: effective_min_runners,
         max_runners: config.max_runners,
@@ -1296,6 +1321,7 @@ fn reconcile_repo(
         queued_job_names,
         queued_job_run_ids,
         queued_job_ids,
+        routed_workload_capacity,
         workload_prewarms: if kitty_automation_permit.is_some() {
             std::mem::take(&mut pending_workload_prewarms)
         } else {

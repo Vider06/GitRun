@@ -1292,18 +1292,14 @@ fn validate_repo_workflows_best_effort(
         }
     };
 
-    let mut findings = match process_workflow_files(
-        &config.state_dir,
-        repo,
-        &files,
-        advisory_scan_enabled,
-    ) {
-        Ok(findings) => findings,
-        Err(error) => {
-            emit_workflow_validation_warning(&events_path, repo, &error);
-            return Err(error);
-        }
-    };
+    let mut findings =
+        match process_workflow_files(&config.state_dir, repo, &files, advisory_scan_enabled) {
+            Ok(findings) => findings,
+            Err(error) => {
+                emit_workflow_validation_warning(&events_path, repo, &error);
+                return Err(error);
+            }
+        };
 
     if advisory_scan_enabled && config.gsr_zizmor_enabled {
         let invocation = std::time::SystemTime::now()
@@ -2107,7 +2103,8 @@ mod tests {
         let repo = "owner/repo";
         let files = vec![(
             "ci.yml".to_owned(),
-            "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n".to_owned(),
+            "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n"
+                .to_owned(),
         )];
 
         let findings = process_workflow_files(base.to_str().unwrap(), repo, &files, false)
@@ -2140,7 +2137,8 @@ mod tests {
         symlink(&real_state, &state_link).unwrap();
         let files = vec![(
             "ci.yml".to_owned(),
-            "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n".to_owned(),
+            "jobs:\n  build:\n    steps:\n      - run: GitDockRun --job build-cache --connect\n"
+                .to_owned(),
         )];
 
         let result =

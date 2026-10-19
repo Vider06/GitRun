@@ -3946,11 +3946,7 @@ mod tests {
 
         // Repeated queue polling for the same exact run/job ID is not a second
         // workload occurrence.
-        record_queued_job_occurrences(
-            &mut model,
-            std::slice::from_ref(&job),
-            issued + 60,
-        );
+        record_queued_job_occurrences(&mut model, std::slice::from_ref(&job), issued + 60);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
 
         // When the target hour completes with no further job occurrence, the

@@ -1,6 +1,6 @@
 # Fast Stop and Experimental Smart Scheduler
 
-**Status:** Fast Stop implementation and tests are included in PR #83; Experimental Smart Scheduler remains a design proposal  
+**Status:** Fast Stop implementation and tests are included in PR #83. Kitty, the optional Smart Scheduler core, is now implemented as a disabled-by-default statistical workload model with shadow recommendations and guarded Predictive Warm Pool support. Adaptive Resource Management and Smart Fast Stop triggers remain inactive pending reliable telemetry and separate safety verification.  
 **Target:** Fast Stop is reviewed as part of v1.5.0; Smart Scheduler release placement remains TBD  
 **Scope:** Workflow-run force cancellation, workflow telemetry, predictive workflow models, and bounded adaptive scheduling  
 **Verification:** PR #83 CI is a gate for the committed source and test suite. Passing CI does not by itself validate every live cancellation race or qualify the Smart Scheduler proposal for release.
@@ -58,6 +58,16 @@ The exact source of the delay must be verified with timestamped logs. Possible c
 - No cancellation shortcut may bypass GitRun authorization or Docker/GitDockRun ownership checks.
 
 ## 2. Experimental Smart Scheduler
+
+### Kitty implementation status
+
+The first Kitty implementation lives in the separate `gitrun-smart-scheduler` crate and integrates as an optional policy hint to the existing deterministic scheduler. It is not an LLM, does not execute actions, and cannot replace the baseline planner. Missing settings mean off. The installed default remains shadow mode, and the baseline path is used when Kitty fails.
+
+The current Workflow Model stores bounded five-minute aggregates for queued jobs, busy/online/managed runners and optional host-wide resource readings. It produces a one-hour concurrency-demand forecast and evaluates previous forecasts against subsequently observed demand. It deliberately does not claim workload-specific runtime or queue-wait predictions because this integration does not yet collect reliable per-job timing histories. The current model's readiness score is a heuristic, not a calibrated probability.
+
+Predictive Warm Pool is the sole active automation capability: it can only raise the configured runner floor, after explicit enablement, shadow mode is disabled, data are fresh and sufficient, forecast quality meets the configured threshold, and the change remains within both a configured additional-runner cap and the global maximum. Resource-pressure backpressure always wins. The model cannot lower the configured floor or bypass GSR, Docker ownership, authorization, or other existing policies.
+
+Adaptive Resource Management and Smart Fast Stop triggers remain reserved, disabled capabilities. They are not considered implemented until job/container-attributed resource measurements and active-job cancellation outcomes are reliable enough to support them. Settings and storage formats are documented in `crates/gitrun-smart-scheduler/README.md`.
 
 ### Objective
 

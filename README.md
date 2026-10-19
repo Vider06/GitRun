@@ -57,6 +57,7 @@ See:
 - Dedicated GitRun Docker networking with rejection of ordinary `bridge`, `host` and `container:*` network modes.
 - VM endpoint health verification, Windows Docker TLS validation and operator-controlled snapshot rollback primitives.
 - Host resource-pressure backpressure for CPU, memory and configurable critical filesystems.
+- Optional Kitty statistical Smart Scheduler: bounded workload history, evaluated demand forecasts, and explicitly gated Predictive Warm Pool; disabled by default and subordinate to deterministic reconciliation.
 - Tauri 2 operator dashboard for configuration, health, runner pools, VM definitions, Logic Containers and security controls.
 - Versioned updater with checksum verification, signed-manifest verification and rollback.
 

@@ -10,9 +10,10 @@ GitRun is a Rust-native control plane. The workspace separates policy, execution
 |---|---|
 | `gitrun-core` | Shared configuration, policy, authentication, state and domain models |
 | `gitrun-cli` | Operator CLI and terminal utilities |
-| `gitrun-scheduler` | GitHub polling, reconciliation, autoscaling, runner lifecycle, Docker and VM backends |
+| `gitrun-scheduler` | GitHub polling, deterministic reconciliation, autoscaling, runner lifecycle, Docker and VM backends |
 | `gitrun-exe` | Internal authorized execution model and IPC/authentication primitives |
 | `gitrun-gsr` | Security enforcement, watchdog, workflow API authorization and API launcher |
+| `gitrun-smart-scheduler` | Optional bounded statistical workload model, forecast quality evaluation, and a guarded runner-floor recommendation | No execution authority; disabled by default, with the deterministic scheduler as fallback |
 | `gitrun-vault` | AES-256-GCM encrypted secret storage |
 | `gitrun-setup` | First-run preflight and installation preparation |
 | `gitrun-updater` | Release update, verification and rollback |

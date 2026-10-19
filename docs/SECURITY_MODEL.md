@@ -1,5 +1,33 @@
 # Security model — GitRun 1.5.0
 
+## Optional Kitty Smart Scheduler
+
+Kitty is a separate, optional statistics-based add-on. A missing Kitty settings
+file means disabled. Invalid configuration, unsafe/corrupt model state, stale
+observations, insufficient history, or persistence failure must not block the
+ordinary scheduler and must never increase its configured runner floor. The
+deterministic reconciler remains the default and the fallback.
+
+Kitty stores only bounded, aggregated per-repository observations: queued-job
+counts, counts of busy/online/managed runners, and optional host-wide CPU,
+memory, and disk percentages. It does not collect secrets, tokens, environment
+values, workflow contents, command strings, or per-job payloads. The historical
+model and decision audit are size-bounded and written via an owner-checked
+private directory and atomic replacement.
+
+The only automated action implemented in this version is an opt-in increase of
+the minimum runner floor. It requires the master switch, the separate predictive
+warm-pool switch, shadow mode disabled, fresh data, sufficient history, forecast
+quality above the operator threshold, and room under the configured global
+maximum. The increase is also capped by an explicit additional-runner bound.
+Existing resource-pressure backpressure suppresses predictive growth. Kitty
+cannot lower the configured minimum, change security policy, authorize an API,
+execute commands, call Docker, read Vault secrets, force-cancel workflows, or
+terminate processes. Adaptive resource management and Smart Fast Stop triggers
+remain reserved and inactive until they have reliable workload-level evidence
+and their own verified safety contracts.
+
+
 This document states plainly what GitRun's design trusts, and what an operator is implicitly granting when they run it. It documents the security properties that exist today and the important limits that remain.
 
 ## Docker socket access is host-level privilege

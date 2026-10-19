@@ -100,6 +100,10 @@ pub fn run() {
     let state_dir = PathBuf::from(&config.state_dir);
     let rate_limits = RateLimitTracker::new();
     let vm_registry = vm_resolution::new_registry();
+    // Kitty is an optional statistical add-on. Its runtime can recommend only
+    // a bounded minimum-runner floor; the deterministic planner and execution
+    // path remain the authority and are used unchanged on any Kitty failure.
+    let mut kitty_runtime = gitrun_smart_scheduler::KittyRuntime::new(&state_dir);
 
     // Logic Containers' VM backend: the registry (non-blocking hypervisor
     // resolution state) is shared across the process lifetime, but the VM
@@ -171,13 +175,16 @@ pub fn run() {
         // to stop all lifecycle work. Keep safe cleanup and recovery running,
         // but fail closed for any action that would create/recreate a runner.
         let mut allow_new_runner_creation = true;
+        let mut host_resources = None;
         if config.resource_pressure_enabled {
             match resource_pressure::sample(&config) {
-                Ok(snapshot) if snapshot.is_pressured(&config) => {
-                    eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), deferring runner creation while continuing safe cleanup/recovery", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
-                    allow_new_runner_creation = false;
+                Ok(snapshot) => {
+                    host_resources = Some(snapshot);
+                    if snapshot.is_pressured(&config) {
+                        eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), deferring runner creation while continuing safe cleanup/recovery", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
+                        allow_new_runner_creation = false;
+                    }
                 }
-                Ok(_) => {}
                 Err(error @ resource_pressure::ResourcePressureError::Disk { .. }) => {
                     eprintln!("gitrun-autoscaler: critical filesystem pressure check failed: {error}; deferring runner creation while continuing safe cleanup/recovery");
                     allow_new_runner_creation = false;
@@ -206,8 +213,10 @@ pub fn run() {
                 &config,
                 &state_dir,
                 &vm_registry,
+                &mut kitty_runtime,
                 repo,
                 allow_new_runner_creation,
+                host_resources,
             ) {
                 if let Some(GitHubError::RateLimited { retry_after }) =
                     error.downcast_ref::<GitHubError>()
@@ -560,8 +569,10 @@ fn reconcile_repo(
     config: &Config,
     state_dir: &std::path::Path,
     vm_registry: &VmResolutionRegistry,
+    kitty_runtime: &mut gitrun_smart_scheduler::KittyRuntime,
     repo: &str,
     allow_new_runner_creation: bool,
+    host_resources: Option<resource_pressure::ResourceSnapshot>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // GTUU replaces permanent runners. Hold its process-shared lifecycle lock
     // across the complete snapshot/plan/execute cycle so an update cannot
@@ -749,8 +760,59 @@ fn reconcile_repo(
 
     let recovery_age = state.recovery_ages();
 
+    let observed_at_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let kitty_decision = match kitty_runtime.observe(
+        gitrun_smart_scheduler::ObservationInput {
+            repository: repo.to_owned(),
+            observed_at_epoch,
+            queued_jobs,
+            busy_runners: planner_runners
+                .iter()
+                .filter(|runner| runner.busy)
+                .count()
+                .min(u32::MAX as usize) as u32,
+            online_runners: planner_runners
+                .iter()
+                .filter(|runner| runner.online)
+                .count()
+                .min(u32::MAX as usize) as u32,
+            managed_runners: containers
+                .iter()
+                .filter(|container| !container.status.eq_ignore_ascii_case("exited"))
+                .count()
+                .min(u32::MAX as usize) as u32,
+            host_cpu_percent: host_resources.map(|snapshot| f64::from(snapshot.cpu_percent)),
+            host_memory_percent: host_resources.map(|snapshot| f64::from(snapshot.memory_percent)),
+            host_disk_percent: host_resources.map(|snapshot| f64::from(snapshot.disk_percent)),
+        },
+        config.min_runners,
+        config.max_runners,
+        allow_new_runner_creation,
+    ) {
+        Ok(decision) => decision,
+        Err(error) => {
+            eprintln!("gitrun-autoscaler: Kitty unavailable for {repo}; deterministic minimum retained: {error}");
+            gitrun_smart_scheduler::KittyDecision::fallback(
+                repo,
+                config.min_runners,
+                format!("Kitty observation/model failed: {error}"),
+            )
+        }
+    };
+    let effective_min_runners = if config.min_runners <= config.max_runners {
+        kitty_decision
+            .effective_min_runners
+            .max(config.min_runners)
+            .min(config.max_runners)
+    } else {
+        config.min_runners
+    };
+
     let input = ReconcileInput {
-        min_runners: config.min_runners,
+        min_runners: effective_min_runners,
         max_runners: config.max_runners,
         reserved_runners: preserved_docks
             .iter()
@@ -785,6 +847,8 @@ fn reconcile_repo(
         vm_registry,
         repo,
     };
+    let planned_action_count = actions.len();
+    let mut action_execution_succeeded = true;
     for action in actions {
         // The plan is ordered and later actions may rely on earlier removals
         // or creations having succeeded (for example, RemoveExited followed
@@ -793,8 +857,19 @@ fn reconcile_repo(
         // the next tick; continuing can exceed capacity or act on stale state.
         if let Err(error) = execute(&execution_context, &containers, &action, &mut state) {
             eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}; aborting remaining planned actions until next reconcile: {error}");
+            action_execution_succeeded = false;
             break;
         }
+    }
+
+    // Kitty audit persistence is deliberately non-fatal: if its storage fails,
+    // the next cycle retains the deterministic scheduler path and configured floor.
+    if let Err(error) = kitty_runtime.finish_cycle(
+        &kitty_decision,
+        planned_action_count,
+        action_execution_succeeded,
+    ) {
+        eprintln!("gitrun-autoscaler: Kitty audit persistence failed for {repo}; scheduler remains deterministic next cycle: {error}");
     }
 
     state.save()?;

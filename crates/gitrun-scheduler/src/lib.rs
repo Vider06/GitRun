@@ -611,6 +611,7 @@ fn maybe_fast_stop_workflow(
             repository: repo.to_owned(),
             run_id: Some(run.id),
             job_id: None,
+            runner_id: None,
             runner_name: None,
             readiness_score: None,
             retaining_previously_authorized_floor: false,
@@ -1071,6 +1072,7 @@ fn reconcile_repo(
             repository: repo.to_owned(),
             run_id: None,
             job_id: None,
+            runner_id: None,
             runner_name: None,
             readiness_score: kitty_decision.confidence_score,
             retaining_previously_authorized_floor: kitty_decision.status
@@ -1333,6 +1335,75 @@ fn execute(
             ensure_not_dock_bound(state_dir, repo, name, "remove idle runner")?;
             let expected_id = expected_container_id(inventory, name)?;
             ensure_current_container_identity(name, expected_id)?;
+
+            // In Automation mode, an idle-runner stop in an allowlisted repo
+            // requires a fresh GitHub runner snapshot and a GSR permit before
+            // destructive work. The normal deterministic idle cleanup remains
+            // unchanged outside this explicit automation scope.
+            let kitty_settings =
+                gitrun_smart_scheduler::load_settings_for_dashboard(state_dir).ok();
+            let automation_scope = kitty_settings.as_ref().is_some_and(|settings| {
+                settings.automation_mode
+                    && settings.automation_allowed_repositories.iter().any(|allowed| {
+                        allowed.eq_ignore_ascii_case(repo)
+                    })
+            });
+            if automation_scope {
+                let registered_runner = client
+                    .list_runners(repo)?
+                    .into_iter()
+                    .find(|runner| runner.name == *name);
+                if let Some(runner) = registered_runner.filter(|runner| {
+                    runner.is_online() && !runner.busy
+                }) {
+                    let settings = kitty_settings.as_ref().expect("automation scope checked");
+                    let policy = kitty_automation_policy(config, settings);
+                    let intent = gitrun_gsr::automation_gate::AutomationIntent {
+                        action: gitrun_gsr::automation_gate::AutomationAction::StopIdleRunner,
+                        repository: repo.to_owned(),
+                        run_id: None,
+                        job_id: None,
+                        runner_id: Some(runner.id),
+                        runner_name: Some(name.clone()),
+                        readiness_score: None,
+                        retaining_previously_authorized_floor: false,
+                        configured_min_runners: None,
+                        proposed_min_runners: None,
+                        max_runners: None,
+                        runner_is_verified_idle: true,
+                        runner_is_dock_bound: false,
+                        workflow_run_is_verified_active: false,
+                        run_age_seconds: None,
+                        reason: format!(
+                            "deterministic planner selected online idle runner {name} for scale-down"
+                        ),
+                    };
+                    let audit_path =
+                        gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
+                    let permit = gitrun_gsr::automation_gate::authorize_action(
+                        &policy,
+                        intent,
+                        &audit_path,
+                    )
+                    .map_err(|error| std::io::Error::other(error.to_string()))?;
+                    let removed = remove_if_still_idle(client, repo, name, expected_id)?;
+                    if let Err(error) = permit.record_outcome(
+                        removed,
+                        if removed {
+                            "verified idle runner deregistered and container removed"
+                        } else {
+                            "runner state changed before deletion; container preserved"
+                        },
+                    ) {
+                        eprintln!(
+                            "gitrun-autoscaler: GSR could not persist Stop outcome for {repo}/{name}: {error}"
+                        );
+                    }
+                    state.clear_idle(name);
+                    return Ok(());
+                }
+            }
+
             let _ = remove_if_still_idle(client, repo, name, expected_id)?;
             state.clear_idle(name);
         }

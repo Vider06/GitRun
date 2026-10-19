@@ -3309,7 +3309,32 @@ mod tests {
         save_settings_for_local_state_dir(&dir, &settings).unwrap();
 
         let mut runtime = KittyRuntime::new(&dir);
-        let decision = runtime.observe(input(1_800, 2, 1), 2, 4, true).unwrap();
+        let decision = runtime
+            .observe(
+                ObservationInput {
+                    repository: "owner/repo".into(),
+                    observed_at_epoch: 1_800,
+                    job_occurrences: vec![QueuedJobOccurrence {
+                        run_id: 41,
+                        job_id: 410,
+                        workflow_id: 9,
+                        workflow_path: ".github/workflows/build.yml".into(),
+                        name: "build-linux".into(),
+                        labels: vec!["self-hosted".into(), "linux".into()],
+                    }],
+                    queued_jobs: 2,
+                    busy_runners: 1,
+                    online_runners: 2,
+                    managed_runners: 3,
+                    host_cpu_percent: Some(12.0),
+                    host_memory_percent: Some(30.0),
+                    host_disk_percent: Some(20.0),
+                },
+                2,
+                4,
+                true,
+            )
+            .unwrap();
         assert_ne!(decision.status, DecisionStatus::SafeFallback);
         runtime.finish_cycle(&decision, 0, true).unwrap();
 
@@ -3326,6 +3351,15 @@ mod tests {
         assert_eq!(status.repositories[0].repository, "owner/repo");
         assert_eq!(status.repositories[0].sample_count, 1);
         assert_eq!(status.repositories[0].latest_observation_epoch, Some(1_800));
+        assert_eq!(status.repositories[0].workload_patterns.len(), 1);
+        assert_eq!(
+            status.repositories[0].workload_patterns[0].job_name,
+            "build-linux"
+        );
+        assert_eq!(
+            status.repositories[0].recent_job_occurrences[0].occurrence_code,
+            "run-41-job-410"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }

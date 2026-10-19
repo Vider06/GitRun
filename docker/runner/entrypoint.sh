@@ -42,8 +42,23 @@ fi
 : "${RUNNER_NAME:?RUNNER_NAME is required}"
 
 RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,Linux,X64,gitrun,gitrun-ci}"
-if [[ ",${RUNNER_LABELS}," != *,gitrun-ci,* ]]; then
-  RUNNER_LABELS="${RUNNER_LABELS},gitrun-ci"
+RUNNER_NO_DEFAULT_LABELS="${GITRUN_RUNNER_NO_DEFAULT_LABELS:-false}"
+if [[ "$RUNNER_NO_DEFAULT_LABELS" != "true" && "$RUNNER_NO_DEFAULT_LABELS" != "false" ]]; then
+  echo "gitrun-runner: invalid no-default-labels toggle" >&2
+  exit 1
+fi
+if [[ "$RUNNER_NO_DEFAULT_LABELS" == "true" ]]; then
+  # Exclusive family runners must expose exactly their opaque routing label.
+  # Do not append gitrun-ci or platform labels: those would let unrelated jobs
+  # match this runner as a subset of their runs-on requirements.
+  if [[ ! "$RUNNER_LABELS" =~ ^gitrun-job-wk-[0-9a-f]{16}$ ]]; then
+    echo "gitrun-runner: exclusive runner requires one canonical GitRun workload-family label" >&2
+    exit 1
+  fi
+else
+  if [[ ",${RUNNER_LABELS}," != *,gitrun-ci,* ]]; then
+    RUNNER_LABELS="${RUNNER_LABELS},gitrun-ci"
+  fi
 fi
 RUNNER_EPHEMERAL="${RUNNER_EPHEMERAL:-false}"
 RUNNER_DISABLE_UPDATE="${RUNNER_DISABLE_UPDATE:-false}"
@@ -173,12 +188,14 @@ fi
 
 if [[ ! -f .runner ]]; then
   args=(--url "$RUNNER_URL" --token "$RUNNER_TOKEN" --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" --unattended --replace)
+  [[ "$RUNNER_NO_DEFAULT_LABELS" == "true" ]] && args+=(--no-default-labels)
   [[ "$RUNNER_EPHEMERAL" == "true" ]] && args+=(--ephemeral)
   [[ "$RUNNER_DISABLE_UPDATE" == "true" ]] && args+=(--disableupdate)
   sudo -P -u runner -E ./config.sh "${args[@]}"
 fi
 
 unset RUNNER_TOKEN
+unset GITRUN_RUNNER_NO_DEFAULT_LABELS
 unset GITRUN_GSR_ALLOW_UNSAFE_RUNNER
 unset GITRUN_GSR_COMMAND_POLICY_ENABLED
 unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED

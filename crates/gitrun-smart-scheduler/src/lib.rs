@@ -4134,6 +4134,79 @@ mod tests {
     }
 
     #[test]
+    fn completed_workload_prewarms_persist_and_cannot_exceed_the_forecast_budget() {
+        let dir = temp_dir("prewarm-fulfilled-slots");
+        let mut settings = enabled_settings();
+        settings.predictive_warm_pool_enabled = true;
+        settings.shadow_mode = false;
+        settings.max_additional_warm_runners = 2;
+        write_settings(&dir, &settings);
+
+        let mut runtime = KittyRuntime::new(&dir);
+        let decision = runtime.observe(input(1_800, 0, 0), 2, 4, true).unwrap();
+        runtime.finish_cycle(&decision, 0, true).unwrap();
+
+        let key = repository_key("owner/repo");
+        let target_epoch = 7_200;
+        let workload_code = "wk-0123456789abcdef";
+        {
+            let model = runtime.models.get_mut(&key).unwrap();
+            let mut pattern = WorkloadPattern {
+                workload_code: workload_code.into(),
+                workflow_id: 9,
+                workflow_path: ".github/workflows/build.yml".into(),
+                job_name: "build-linux".into(),
+                labels: vec!["self-hosted".into(), "linux".into()],
+                first_seen_epoch: 1_800,
+                last_seen_epoch: 1_800,
+                occurrence_count: 1,
+                slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+                slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            };
+            let slot = weekday_hour_slot(target_epoch);
+            pattern.slots[slot] = TemporalDemandSlot(1, 1, 1, 1);
+            model.workload_patterns.push(pattern);
+            model.workload_predictions.push(WorkloadPredictionRecord {
+                workload_code: workload_code.into(),
+                issued_at_bucket: target_epoch - BUCKET_SECONDS,
+                target_epoch,
+                predicted_occurrences: 2,
+                observed_occurrences: 0,
+                actual_occurrences: None,
+                prewarm_runners_created: 0,
+            });
+        }
+        runtime.dirty_models.insert(key.clone());
+        runtime.persist_model(&key).unwrap();
+        runtime.dirty_models.remove(&key);
+
+        runtime
+            .record_workload_prewarm_created("owner/repo", workload_code, target_epoch, 1)
+            .unwrap();
+        assert_eq!(
+            runtime.models[&key].workload_predictions[0].prewarm_runners_created,
+            1
+        );
+        runtime
+            .record_workload_prewarm_created("owner/repo", workload_code, target_epoch, 1)
+            .unwrap();
+        assert_eq!(
+            runtime.models[&key].workload_predictions[0].prewarm_runners_created,
+            2
+        );
+        assert!(runtime
+            .record_workload_prewarm_created("owner/repo", workload_code, target_epoch, 1)
+            .is_err());
+        assert_eq!(
+            runtime.models[&key].workload_predictions[0].prewarm_runners_created,
+            2,
+            "the same target cannot claim more fulfilled slots than its predicted count"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn workload_predictions_learn_from_unique_jobs_and_close_empty_windows() {
         let mut model = WorkflowModel::empty("owner/repo");
         let target = 80_000 / 3_600 * 3_600;

@@ -657,16 +657,30 @@ fn default_next_gitrun_job_sequence() -> u64 {
 
 /// A per-repository monotonic sequence keeps each occurrence ID unique while
 /// avoiding GitHub's run_id/job_id in the GitRun identifier itself.
-fn generate_occurrence_id(repository: &str, sequence: u64) -> Option<String> {
-    if !valid_repository(repository) || sequence == 0 {
-        return None;
-    }
+fn repository_identity_hash(repository: &str) -> Option<String> {
+    if !valid_repository(repository) { return None; }
     let mut hash = 0xcbf29ce484222325u64;
     for byte in repository.trim().to_ascii_lowercase().bytes() {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    Some(format!("grj-{hash:016x}-{sequence:016x}"))
+    Some(format!("{hash:016x}"))
+}
+
+fn generate_occurrence_id(repository: &str, sequence: u64) -> Option<String> {
+    // Keep room for the persisted next-sequence value; never wrap on overflow.
+    if sequence == 0 || sequence == u64::MAX { return None; }
+    Some(format!("grj-{}-{sequence:016x}", repository_identity_hash(repository)?))
+}
+
+fn generated_gitrun_job_sequence_for_repository(code: &str, repository: &str) -> Option<u64> {
+    let repo_hash = code.strip_prefix("grj-")?.split_once('-')?.0;
+    if repository_identity_hash(repository)?.as_str() != repo_hash { return None; }
+    generated_gitrun_job_sequence(code)
+}
+
+fn valid_generated_gitrun_job_id_for_repository(code: &str, repository: &str) -> bool {
+    generated_gitrun_job_sequence_for_repository(code, repository).is_some()
 }
 
 fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
@@ -698,7 +712,9 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
             occurrence.workload_id = std::mem::take(&mut occurrence.gitrun_job_id);
             changed = true;
         }
-        if let Some(sequence) = generated_gitrun_job_sequence(&occurrence.gitrun_job_id) {
+        if let Some(sequence) = generated_gitrun_job_sequence_for_repository(
+            &occurrence.gitrun_job_id, &model.repository,
+        ) {
             if let Some(next) = sequence.checked_add(1) {
                 model.next_gitrun_job_sequence = model.next_gitrun_job_sequence.max(next);
             } else {
@@ -707,7 +723,9 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
         }
     }
     for occurrence in &mut model.recent_job_occurrences {
-        if !valid_generated_gitrun_job_id(&occurrence.gitrun_job_id) {
+        if !valid_generated_gitrun_job_id_for_repository(
+            &occurrence.gitrun_job_id, &model.repository,
+        ) {
             if let Some(id) =
                 generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
             {
@@ -778,6 +796,7 @@ impl WorkflowModel {
             ));
         }
         if self.next_gitrun_job_sequence == 0
+            || self.next_gitrun_job_sequence == u64::MAX
             || self.history.len() > history_limit
             || self.workload_patterns.len() > MAX_JOB_PATTERNS
             || self.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES
@@ -845,7 +864,12 @@ impl WorkflowModel {
         let mut occurrence_codes = HashSet::new();
         let mut generated_job_ids = HashSet::new();
         for occurrence in &self.recent_job_occurrences {
-            if !valid_generated_gitrun_job_id(&occurrence.gitrun_job_id)
+            if !valid_generated_gitrun_job_id_for_repository(
+                &occurrence.gitrun_job_id, repository,
+            )
+                || generated_gitrun_job_sequence_for_repository(
+                    &occurrence.gitrun_job_id, repository,
+                ).map(|sequence| sequence >= self.next_gitrun_job_sequence).unwrap_or(true)
                 || !generated_job_ids.insert(occurrence.gitrun_job_id.as_str())
                 || occurrence.run_id == 0
                 || occurrence.job_id == 0
@@ -1029,6 +1053,10 @@ pub struct ObservationInput {
     pub queued_job_occurrences: Vec<QueuedJobOccurrence>,
     /// Bounded history sample with authoritative started_at timestamps.
     pub started_job_occurrences: Vec<QueuedJobOccurrence>,
+    /// True only when the source guarantees complete coverage of a matured hour.
+    pub started_job_history_complete: bool,
+    /// Scheduler poll cadence used for bounded target catch-up.
+    pub poll_interval_seconds: u64,
     pub queued_jobs: u32,
     pub busy_runners: u32,
     pub online_runners: u32,
@@ -1256,10 +1284,9 @@ impl KittyRuntime {
         ) {
             self.dirty_models.insert(key.clone());
         }
-        if record_started_job_occurrences(
-            model,
-            &input.started_job_occurrences,
-            input.observed_at_epoch,
+        if record_started_job_occurrences_with_coverage(
+            model, &input.started_job_occurrences, input.observed_at_epoch,
+            input.started_job_history_complete,
         ) {
             self.dirty_models.insert(key.clone());
         }
@@ -1309,8 +1336,9 @@ impl KittyRuntime {
                 self.dirty_models.insert(key.clone());
             }
             if self.settings.predictive_analytics_enabled {
-                model.latest_forecast =
-                    compute_forecast(model, &self.settings, input.observed_at_epoch);
+                model.latest_forecast = compute_forecast(
+                    model, &self.settings, input.observed_at_epoch, input.poll_interval_seconds,
+                );
                 if let Some(forecast) = &model.latest_forecast {
                     model.predictions.push(PredictionRecord {
                         issued_at_bucket: bucket,
@@ -1404,7 +1432,9 @@ impl KittyRuntime {
                 f.confidence_score >= self.settings.minimum_quality_score
                     && sample_count >= self.settings.minimum_samples
             }) {
-            forecast_workload_prewarms(model, bucket, &self.settings)
+            forecast_workload_prewarms(
+                model, bucket, &self.settings, input.poll_interval_seconds,
+            )
         } else {
             Vec::new()
         };
@@ -2784,7 +2814,9 @@ fn record_queued_job_occurrences(
                 continue;
             }
             if existing.gitrun_job_id.is_empty()
-                || !valid_generated_gitrun_job_id(&existing.gitrun_job_id)
+                || !valid_generated_gitrun_job_id_for_repository(
+                    &existing.gitrun_job_id, &model.repository,
+                )
             {
                 let Some(id) =
                     generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
@@ -2892,6 +2924,15 @@ fn record_started_job_occurrences(
     jobs: &[QueuedJobOccurrence],
     observed_at_epoch: u64,
 ) -> bool {
+    record_started_job_occurrences_with_coverage(model, jobs, observed_at_epoch, true)
+}
+
+fn record_started_job_occurrences_with_coverage(
+    model: &mut WorkflowModel,
+    jobs: &[QueuedJobOccurrence],
+    observed_at_epoch: u64,
+    history_complete: bool,
+) -> bool {
     let mut changed = false;
     let mut jobs_seen_this_poll = HashSet::new();
 
@@ -2925,9 +2966,15 @@ fn record_started_job_occurrences(
             .recent_job_occurrences
             .iter()
             .position(|entry| entry.run_id == job.run_id && entry.job_id == job.job_id);
+        if existing_index.is_some_and(|index| {
+            model.recent_job_occurrences[index].workload_id != workload_id
+        }) {
+            // Reject a changed workload identity before allocating or mutating a GitRun ID.
+            continue;
+        }
         let gitrun_job_id = if let Some(index) = existing_index {
             let existing_id = model.recent_job_occurrences[index].gitrun_job_id.clone();
-            if valid_generated_gitrun_job_id(&existing_id) {
+            if valid_generated_gitrun_job_id_for_repository(&existing_id, &model.repository) {
                 existing_id
             } else {
                 let Some(id) =
@@ -3084,14 +3131,17 @@ fn record_started_job_occurrences(
         changed = true;
     }
 
-    // A missed occurrence means zero actual job starts in the target hour. Close
-    // the target only after that full hour has elapsed.
-    for prediction in &mut model.workload_predictions {
-        if prediction.actual_occurrences.is_none()
-            && observed_at_epoch >= prediction.target_epoch.saturating_add(3_600)
-        {
-            prediction.actual_occurrences = Some(prediction.observed_occurrences);
-            changed = true;
+    // The sampler is rate-bounded and may omit older/concurrent runs. An empty
+    // response is therefore not evidence of zero starts. Only complete sources
+    // may finalize negative outcomes and train the per-workload bias correction.
+    if history_complete {
+        for prediction in &mut model.workload_predictions {
+            if prediction.actual_occurrences.is_none()
+                && observed_at_epoch >= prediction.target_epoch.saturating_add(3_600)
+            {
+                prediction.actual_occurrences = Some(prediction.observed_occurrences);
+                changed = true;
+            }
         }
     }
     if model.workload_predictions.len() > MAX_WORKLOAD_PREDICTIONS {
@@ -3118,21 +3168,31 @@ fn workload_prediction_bias(model: &WorkflowModel, workload_id: &str) -> Option<
     (residuals.len() >= 4).then(|| mean(&residuals))
 }
 
-fn upcoming_schedule_target(bucket_epoch: u64, lead_seconds: u64) -> Option<u64> {
-    let target = bucket_epoch.saturating_add(lead_seconds);
-    (target > bucket_epoch && target % 3_600 == 0).then_some(target)
+fn upcoming_schedule_target(
+    bucket_epoch: u64, lead_seconds: u64, poll_interval_seconds: u64,
+) -> Option<u64> {
+    let candidate = bucket_epoch.checked_add(lead_seconds)?;
+    if candidate <= bucket_epoch { return None; }
+    if candidate % 3_600 == 0 { return Some(candidate); }
+    // Fast polling must honor the requested lead exactly. Slow polling may
+    // catch the next boundary only when it falls within one poll interval.
+    if poll_interval_seconds <= BUCKET_SECONDS { return None; }
+    let target = candidate.checked_add(3_600 - candidate % 3_600)?;
+    (target > bucket_epoch && target.saturating_sub(candidate) <= poll_interval_seconds)
+        .then_some(target)
 }
 
 fn forecast_workload_prewarms(
     model: &WorkflowModel,
     bucket_epoch: u64,
     settings: &KittySettings,
+    poll_interval_seconds: u64,
 ) -> Vec<WorkloadPrewarm> {
     if !settings.predictive_warm_pool_enabled || settings.max_additional_warm_runners == 0 {
         return Vec::new();
     }
     let Some(target_epoch) =
-        upcoming_schedule_target(bucket_epoch, settings.warm_pool_lead_seconds)
+        upcoming_schedule_target(bucket_epoch, settings.warm_pool_lead_seconds, poll_interval_seconds)
     else {
         return Vec::new();
     };
@@ -3292,6 +3352,7 @@ fn compute_forecast(
     model: &WorkflowModel,
     settings: &KittySettings,
     now_epoch: u64,
+    poll_interval_seconds: u64,
 ) -> Option<Forecast> {
     let history = &model.history;
     if history.len() < settings.minimum_samples {
@@ -3362,7 +3423,9 @@ fn compute_forecast(
     // 15:55 -> exactly 16:00 and does not slide forward on every poll.
     let bucket_epoch = now_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
     let seasonal_target_epoch =
-        upcoming_schedule_target(bucket_epoch, settings.warm_pool_lead_seconds).unwrap_or(0);
+        upcoming_schedule_target(
+            bucket_epoch, settings.warm_pool_lead_seconds, poll_interval_seconds,
+        ).unwrap_or(0);
     let seasonal_prediction = if seasonal_target_epoch > 0 {
         let seasonal_slot = weekday_hour_slot(seasonal_target_epoch);
         let seasonal_stats = seasonal_slot_stats(model, seasonal_slot, now_epoch);

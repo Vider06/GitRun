@@ -122,7 +122,7 @@ pub enum Action {
     /// A time-targeted capacity reservation based on a recurring workload
     /// profile. The workload code is metadata, not a GitHub job-pinning API.
     PrewarmWorkload {
-        gitrun_job_id: String,
+        workload_id: String,
         target_epoch: u64,
         hold_until_epoch: u64,
         job_name: String,
@@ -343,7 +343,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                 break;
             }
             actions.push(Action::PrewarmWorkload {
-                gitrun_job_id: workload.gitrun_job_id.clone(),
+                workload_id: workload.workload_id.clone(),
                 target_epoch: workload.target_epoch,
                 hold_until_epoch: workload.hold_until_epoch,
                 job_name: workload.job_name.clone(),
@@ -1178,7 +1178,7 @@ mod tests {
         input.max_runners = 3;
         input.queued_jobs = 0;
         input.workload_prewarms = vec![gitrun_smart_scheduler::WorkloadPrewarm {
-            gitrun_job_id: "wk-0123456789abcdef".into(),
+            workload_id: "wk-0123456789abcdef".into(),
             workflow_id: 9,
             workflow_path: ".github/workflows/build.yml".into(),
             job_name: "build-linux".into(),
@@ -1196,13 +1196,13 @@ mod tests {
             .iter()
             .filter_map(|action| match action {
                 Action::PrewarmWorkload {
-                    gitrun_job_id,
+                    workload_id,
                     target_epoch,
                     hold_until_epoch,
                     job_name,
                     job_labels,
                 } => Some((
-                    gitrun_job_id,
+                    workload_id,
                     *target_epoch,
                     *hold_until_epoch,
                     job_name,

@@ -72,7 +72,7 @@ export async function renderAppSettings() {
   }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);
   const kittyPanel = '<div class="section">' + panel("Kitty Smart Scheduler",
     '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. It is disabled by default; recommendations never authorize themselves.</p>' +
-    (kittyLoadError ? '<div class="notice warn"><div><strong>Kitty settings could not be loaded</strong><p>' + esc(kittyLoadError) + '</p><p>Saving valid settings may repair malformed configuration. Unsafe ownership, permissions or trusted-path failures require administrator repair.</p></div></div>' : '') +
+    (kittyLoadError ? '<div class="notice warn"><div><strong>Kitty settings could not be loaded</strong><p>' + esc(kittyLoadError) + '</p><p>The visible fields use safe defaults and may not reflect saved values. Saving will replace the current settings with the values shown. Unsafe ownership, permissions or trusted-path failures require administrator repair.</p></div></div>' : '') +
     (kittyStatusError ? '<div class="notice warn"><div><strong>Workflow Model status is unavailable</strong><p>' + esc(kittyStatusError) + '</p><p>Kitty settings are still available, but the status snapshot was rejected. Inspect the status file ownership and permissions before retrying.</p></div></div>' : '') +
     '<label class="checkbox-row"><input id="kitty-enabled" type="checkbox" ' + (kittySettings.enabled ? "checked" : "") + '><span><strong>Enable Kitty</strong>Enable the optional observer and its statistical model. This does not enable automatic scaling.</span></label>' +
     '<label class="checkbox-row"><input id="kitty-telemetry-enabled" type="checkbox" ' + (kittySettings.telemetry_enabled ? "checked" : "") + '><span><strong>Collect aggregate telemetry</strong>Queue and runner counts plus optional host resource measurements. No job payloads, environment values, tokens or secrets.</span></label>' +
@@ -163,6 +163,15 @@ export async function renderAppSettings() {
       toast("Kitty settings are outside the supported bounds.", "error");
       return;
     }
+    if (kittyLoadError) {
+      const confirmed = await confirmModal(
+        "Replace Kitty settings that could not be loaded?",
+        "GitRun could not read the saved settings. The visible fields use safe defaults, not verified saved values. Saving will overwrite the current settings with the values shown and may reset existing options. Continue only if you intend to repair or replace them.",
+        "Replace Kitty settings",
+        true
+      );
+      if (!confirmed) return;
+    }
     const warmPoolRiskChanged = updated.enabled && updated.telemetry_enabled &&
       updated.predictive_analytics_enabled && updated.predictive_warm_pool_enabled && !updated.shadow_mode &&
       (!kittySettings.enabled || !kittySettings.telemetry_enabled ||
@@ -171,12 +180,12 @@ export async function renderAppSettings() {
         updated.max_additional_warm_runners > kittySettings.max_additional_warm_runners ||
         updated.minimum_quality_score < kittySettings.minimum_quality_score ||
         updated.minimum_samples < kittySettings.minimum_samples ||
-        updated.warm_pool_min_hold_seconds < kittySettings.warm_pool_min_hold_seconds);
+        updated.warm_pool_min_hold_seconds > kittySettings.warm_pool_min_hold_seconds);
     if (warmPoolRiskChanged) {
       const confirmed = await confirmModal(
         "Enable or relax predictive runner prewarming?",
         "Kitty may raise the minimum runner pool by at most " + updated.max_additional_warm_runners +
-          " runners, only after enough recent observations and evaluated forecasts meet the quality threshold. This change may make predictive prewarming more permissive. The existing global runner maximum and resource-pressure gate remain in force. Kitty will not terminate runners or change security policy.",
+          " runners, only after enough recent observations and evaluated forecasts meet the quality threshold. A lower quality/sample threshold or a longer hold can keep extra runners active more readily or for longer. The existing runner maximum and resource-pressure gate remain in force. Kitty will not terminate runners or change security policy.",
         "Confirm Predictive Warm Pool",
         true
       );

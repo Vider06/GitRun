@@ -3392,7 +3392,8 @@ mod tests {
         ObservationInput {
             repository: "owner/repo".into(),
             observed_at_epoch: bucket,
-            job_occurrences: Vec::new(),
+            queued_job_occurrences: Vec::new(),
+            started_job_occurrences: Vec::new(),
             queued_jobs: queue,
             busy_runners: busy,
             online_runners: 2,
@@ -3463,13 +3464,15 @@ mod tests {
                 ObservationInput {
                     repository: "owner/repo".into(),
                     observed_at_epoch: 1_800,
-                    job_occurrences: vec![QueuedJobOccurrence {
+                    queued_job_occurrences: Vec::new(),
+                    started_job_occurrences: vec![QueuedJobOccurrence {
                         run_id: 41,
                         job_id: 410,
                         workflow_id: 9,
                         workflow_path: ".github/workflows/build.yml".into(),
                         name: "build-linux".into(),
                         labels: vec!["self-hosted".into(), "linux".into()],
+                        started_at_epoch: Some(1_800),
                     }],
                     queued_jobs: 2,
                     busy_runners: 1,
@@ -3529,7 +3532,8 @@ mod tests {
                     ObservationInput {
                         repository: repository.clone(),
                         observed_at_epoch: stamp,
-                        job_occurrences: Vec::new(),
+                        queued_job_occurrences: Vec::new(),
+                        started_job_occurrences: Vec::new(),
                         queued_jobs: 0,
                         busy_runners: 1,
                         online_runners: 1,
@@ -4181,7 +4185,7 @@ mod tests {
         };
         let mut runtime = KittyRuntime::new(&dir);
         let mut first = input(1_800, 2, 1);
-        first.job_occurrences = vec![job(100, 1000), job(101, 1001)];
+        first.started_job_occurrences = vec![job(100, 1000), job(101, 1001)];
         let first_decision = runtime.observe(first, 2, 8, true).unwrap();
         runtime.finish_cycle(&first_decision, 0, true).unwrap();
 
@@ -4200,7 +4204,7 @@ mod tests {
         // A still-queued job appears in every poll, but its run/job code is
         // counted as a single workload occurrence.
         let mut repeat = input(1_860, 2, 1);
-        repeat.job_occurrences = vec![job(100, 1000), job(101, 1001)];
+        repeat.started_job_occurrences = vec![job(100, 1000), job(101, 1001)];
         let repeat_decision = runtime.observe(repeat, 2, 8, true).unwrap();
         runtime.finish_cycle(&repeat_decision, 0, true).unwrap();
         let repeated_model: WorkflowModel =
@@ -4474,7 +4478,7 @@ mod tests {
         let mut model = WorkflowModel::empty("owner/repo");
         model.workload_patterns.push(pattern);
 
-        assert!(record_queued_job_occurrences(
+        assert!(record_started_job_occurrences(
             &mut model,
             std::slice::from_ref(&job),
             now,
@@ -4609,25 +4613,25 @@ mod tests {
         // remains queued after the predicted hour opens, not once per poll.
         let mut early_job = job.clone();
         early_job.job_id = 409;
-        record_queued_job_occurrences(&mut model, std::slice::from_ref(&early_job), issued + 30);
+        record_started_job_occurrences(&mut model, std::slice::from_ref(&early_job), issued + 30);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
-        record_queued_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 30);
+        record_started_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 30);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
-        record_queued_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 60);
+        record_started_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 60);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
 
         // A distinct job first observed inside the target window also counts once.
-        assert!(record_queued_job_occurrences(
+        assert!(record_started_job_occurrences(
             &mut model,
             std::slice::from_ref(&job),
             target + 30,
         ));
         assert_eq!(model.workload_predictions[0].observed_occurrences, 2);
-        record_queued_job_occurrences(&mut model, std::slice::from_ref(&job), target + 60);
+        record_started_job_occurrences(&mut model, std::slice::from_ref(&job), target + 60);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 2);
 
         // When the target hour completes, both unique jobs are finalized.
-        record_queued_job_occurrences(&mut model, &[], target + 3_600);
+        record_started_job_occurrences(&mut model, &[], target + 3_600);
         assert_eq!(model.workload_predictions[0].actual_occurrences, Some(2));
         assert_eq!(
             workload_prediction_bias(&model, &gitrun_job_id),

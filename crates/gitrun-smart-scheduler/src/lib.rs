@@ -503,11 +503,12 @@ impl WorkflowModel {
                 || forecast
                     .mean_absolute_error
                     .is_some_and(|value| !value.is_finite() || value < 0.0)
-                || forecast.seasonal_target_epoch < forecast.generated_at_epoch
-                || forecast.seasonal_target_epoch
-                    > forecast
-                        .generated_at_epoch
-                        .saturating_add(FORECAST_HORIZON_SECONDS)
+                || (forecast.seasonal_target_epoch != 0
+                    && (forecast.seasonal_target_epoch < forecast.generated_at_epoch
+                        || forecast.seasonal_target_epoch
+                            > forecast
+                                .generated_at_epoch
+                                .saturating_add(FORECAST_HORIZON_SECONDS)))
                 || forecast
                     .bias_correction
                     .is_some_and(|value| !value.is_finite())
@@ -1736,9 +1737,9 @@ fn weekday_hour_slot(epoch: u64) -> usize {
 }
 
 fn weekly_period_start(epoch: u64) -> u64 {
-    let days = epoch / 86_400;
-    let weekday = (days + 3) % 7; // Monday-aligned UTC week.
-    days.saturating_sub(weekday).saturating_mul(86_400)
+    // Epoch-aligned week starts keep period keys divisible by the fixed
+    // seven-day duration; weekday/hour slots are tracked separately.
+    epoch / WEEK_SECONDS * WEEK_SECONDS
 }
 
 fn compact_model_history(model: &mut WorkflowModel, now_epoch: u64, history_limit: usize) -> bool {

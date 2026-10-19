@@ -154,7 +154,9 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
     // so it must receive a dynamic runner even if its labels happen to match
     // the default warm pool. GitDockRun targets likewise need isolated
     // per-job capacity regardless of label coverage or routing rules.
-    is_dock_target || crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
+    is_dock_target
+        || gitrun_smart_scheduler::has_workload_routing_marker(labels)
+        || crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
 }
 
 /// Computes the desired runner count: enough to cover currently busy runners
@@ -697,6 +699,32 @@ mod tests {
                 .count(),
             8
         );
+    }
+
+    #[test]
+    fn explicit_workload_family_label_gets_dedicated_runner_capacity() {
+        let mut input = base_input();
+        input.min_runners = 0;
+        input.max_runners = 3;
+        input.queued_jobs = 1;
+        input.queued_job_labels = vec![vec![
+            "gitrun-job-wk-0123456789abcdef".into(),
+        ]];
+        input.queued_job_names = vec!["build".into()];
+        input.queued_job_run_ids = vec![42];
+        input.queued_job_ids = vec![420];
+
+        let actions = plan(&input);
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            &actions[0],
+            Action::CreateRunner {
+                permanent: false,
+                job_id: Some(420),
+                job_labels,
+                ..
+            } if job_labels == &vec!["gitrun-job-wk-0123456789abcdef".to_owned()]
+        ));
     }
 
     #[test]

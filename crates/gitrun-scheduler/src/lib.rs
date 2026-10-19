@@ -1295,10 +1295,27 @@ fn reconcile_repo(
         // by CreateRunner assumes the exited container was actually removed).
         // Stop this repo's plan at the first failure and re-snapshot/replan on
         // the next tick; continuing can exceed capacity or act on stale state.
-        if let Err(error) = execute(&execution_context, &containers, &action, &mut state) {
-            eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}; aborting remaining planned actions until next reconcile: {error}");
-            action_execution_succeeded = false;
-            break;
+        match execute(&execution_context, &containers, &action, &mut state) {
+            Ok(Some((workload_code, target_epoch))) => {
+                if let Err(error) = kitty_runtime.record_workload_prewarm_created(
+                    repo,
+                    &workload_code,
+                    target_epoch,
+                    1,
+                ) {
+                    eprintln!(
+                        "gitrun-autoscaler: prewarm runner was created for {repo}/{workload_code}, but its durable completion record failed: {error}"
+                    );
+                    action_execution_succeeded = false;
+                    break;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}; aborting remaining planned actions until next reconcile: {error}");
+                action_execution_succeeded = false;
+                break;
+            }
         }
         if let Action::PrewarmWorkload {
             workload_code,
@@ -1378,7 +1395,7 @@ fn execute(
     inventory: &[docker::ManagedContainer],
     action: &Action,
     state: &mut SchedulerState,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Option<(String, u64)>, Box<dyn std::error::Error>> {
     let ExecuteContext {
         client,
         config,
@@ -1473,6 +1490,7 @@ fn execute(
                 "gitrun-autoscaler: prewarmed workload {} ({}) for {} at target epoch {}",
                 workload_code, job_name, repo, target_epoch
             );
+            return Ok(Some((workload_code.clone(), *target_epoch)));
         }
         Action::RecreateOrphaned { name, permanent } => {
             ensure_not_dock_bound(state_dir, repo, name, "recreate orphaned runner")?;
@@ -1535,7 +1553,7 @@ fn execute(
                     eprintln!(
                             "gitrun-autoscaler: preserving idle runner {name} for {repo}; Kitty settings could not be verified before removal: {error}"
                         );
-                    return Ok(());
+                    return Ok(None);
                 }
             };
             let automation_scope = kitty_settings.automation_mode
@@ -1592,7 +1610,7 @@ fn execute(
                         );
                     }
                     state.clear_idle(name);
-                    return Ok(());
+                    return Ok(None);
                 } else {
                     // Once Automation is opted in for this repository, missing,
                     // offline, or busy GitHub state must not fall through to the
@@ -1601,7 +1619,7 @@ fn execute(
                         "gitrun-autoscaler: Kitty Stop withheld for {repo}/{name}: runner was not freshly verified online and idle by GitHub"
                     );
                     state.clear_idle(name);
-                    return Ok(());
+                    return Ok(None);
                 }
             }
 
@@ -1609,7 +1627,7 @@ fn execute(
             state.clear_idle(name);
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// A bound GitDockRun target is owned by the active dock lifecycle, not

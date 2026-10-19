@@ -129,6 +129,8 @@ struct WorkflowRun {
     status: String,
     #[serde(default)]
     conclusion: Option<String>,
+    #[serde(default)]
+    run_started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -190,6 +192,103 @@ pub struct WorkflowJobInfo {
 pub struct WorkflowRunInfo {
     pub id: u64,
     pub name: String,
+    pub started_at_epoch: Option<u64>,
+}
+
+/// Parse GitHub's RFC3339 run_started_at timestamp into Unix seconds without
+/// accepting partial dates, invalid calendar values, or unbounded numeric fields.
+fn parse_github_timestamp_epoch(raw: &str) -> Option<u64> {
+    let (date, time) = raw.trim().split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i64>().ok()?;
+    let month = date_parts.next()?.parse::<i64>().ok()?;
+    let day = date_parts.next()?.parse::<i64>().ok()?;
+    if date_parts.next().is_some() || !(1..=12).contains(&month) {
+        return None;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if !(1..=month_days).contains(&day) {
+        return None;
+    }
+
+    let core_end = time.find(['Z', 'z', '+', '-']).unwrap_or(time.len());
+    let core = time.get(..core_end)?;
+    let mut time_parts = core.split(':');
+    let hour = time_parts.next()?.parse::<i64>().ok()?;
+    let minute = time_parts.next()?.parse::<i64>().ok()?;
+    let second = time_parts.next()?.split('.').next()?.parse::<i64>().ok()?;
+    if time_parts.next().is_some()
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second)
+    {
+        return None;
+    }
+
+    let suffix = &time[core_end..];
+    let offset_seconds = if suffix.is_empty() || suffix.eq_ignore_ascii_case("z") {
+        0
+    } else {
+        let sign = match suffix.as_bytes().first().copied()? {
+            b'+' => 1_i64,
+            b'-' => -1_i64,
+            _ => return None,
+        };
+        let (offset_hour, offset_minute) = suffix[1..].split_once(':')?;
+        let offset_hour = offset_hour.parse::<i64>().ok()?;
+        let offset_minute = offset_minute.parse::<i64>().ok()?;
+        if !(0..=23).contains(&offset_hour) || !(0..=59).contains(&offset_minute) {
+            return None;
+        }
+        sign * (offset_hour * 3600 + offset_minute * 60)
+    };
+
+    // Howard Hinnant's civil-date conversion, Gregorian calendar.
+    let adjusted_year = year - i64::from(month <= 2);
+    let era = if adjusted_year >= 0 {
+        adjusted_year
+    } else {
+        adjusted_year - 399
+    } / 400;
+    let year_of_era = adjusted_year - era * 400;
+    let adjusted_month = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * adjusted_month + 2) / 5 + day - 1;
+    let day_of_era =
+        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let seconds = days
+        .checked_mul(86_400)?
+        .checked_add(hour * 3_600 + minute * 60 + second)?
+        .checked_sub(offset_seconds)?;
+    u64::try_from(seconds).ok()
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::parse_github_timestamp_epoch;
+
+    #[test]
+    fn parses_github_utc_and_offset_timestamps() {
+        assert_eq!(
+            parse_github_timestamp_epoch("1970-01-01T00:00:00Z"),
+            Some(0)
+        );
+        assert_eq!(
+            parse_github_timestamp_epoch("1970-01-01T01:00:00+01:00"),
+            Some(0)
+        );
+        assert_eq!(
+            parse_github_timestamp_epoch("2024-02-30T12:00:00Z"),
+            None
+        );
+    }
 }
 
 /// Splits "owner/repo" into its two parts, validating the shape up front so
@@ -528,6 +627,10 @@ impl GitHubClient {
                     .map(|run| WorkflowRunInfo {
                         id: run.id,
                         name: run.name,
+                        started_at_epoch: run
+                            .run_started_at
+                            .as_deref()
+                            .and_then(parse_github_timestamp_epoch),
                     }),
             );
             match next_url {
@@ -672,6 +775,10 @@ impl GitHubClient {
                 Ok(Some(WorkflowRunInfo {
                     id: run_id,
                     name: run.name,
+                    started_at_epoch: run
+                        .run_started_at
+                        .as_deref()
+                        .and_then(parse_github_timestamp_epoch),
                 }))
             }
             Err(GitHubError::Api { status: 404, .. }) => Ok(None),

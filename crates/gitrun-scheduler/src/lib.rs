@@ -2080,9 +2080,7 @@ fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String
 /// Adds the stable workload-family routing label to predictive prewarm runners.
 /// Workflows must explicitly request this label in `runs-on` to prefer the
 /// family. It does not and cannot hard-pin a future GitHub run/job ID.
-fn explicit_workload_routing_id(
-    job_labels: &[String],
-) -> Result<Option<String>, std::io::Error> {
+fn explicit_workload_routing_id(job_labels: &[String]) -> Result<Option<String>, std::io::Error> {
     if !gitrun_smart_scheduler::has_workload_routing_marker(job_labels) {
         return Ok(None);
     }
@@ -2128,17 +2126,21 @@ mod workload_routing_label_tests {
             "gitrun-job-wk-0123456789abcdef"
         );
         assert!(exclusive_workload_routing_label("wk-../../bad").is_err());
-        assert!(explicit_workload_routing_id(&[
-            "gitrun-job-wk-0123456789abcdef".into()
-        ]).unwrap().is_some());
+        assert!(
+            explicit_workload_routing_id(&["gitrun-job-wk-0123456789abcdef".into()])
+                .unwrap()
+                .is_some()
+        );
         assert!(explicit_workload_routing_id(&[
             "self-hosted".into(),
             "gitrun-job-wk-0123456789abcdef".into()
-        ]).is_err());
+        ])
+        .is_err());
         assert!(explicit_workload_routing_id(&[
             "gitrun-job-wk-0123456789abcdef".into(),
             "gitrun-job-wk-fedcba9876543210".into()
-        ]).is_err());
+        ])
+        .is_err());
     }
 }
 

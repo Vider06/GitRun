@@ -18,7 +18,7 @@ export async function renderAppSettings() {
     workflow_model_visible:true, predictive_warm_pool_enabled:false,
     adaptive_resource_management_enabled:false, smart_fast_stop_enabled:false, shadow_mode:true,
     minimum_samples:576, history_buckets:2016, max_additional_warm_runners:2,
-    warm_pool_min_hold_seconds:900, minimum_quality_score:0.85
+    warm_pool_min_hold_seconds:900, warm_pool_lead_seconds:300, minimum_quality_score:0.85
   };
   const kittyStatus = kittyData?.status || {repositories:[]};
   const kittyStatusError = kittyData?.status_error || null;
@@ -46,7 +46,10 @@ export async function renderAppSettings() {
     const quality = forecast && Number.isFinite(forecast.quality_score)
       ? (forecast.quality_score * 100).toFixed(1) + "%"
       : "Not evaluated";
-    const predicted = forecast ? String(forecast.predicted_peak_concurrency) : "Not ready";
+    const basePredicted = forecast ? String(forecast.predicted_peak_concurrency) : "Not ready";
+    const predicted = forecast
+      ? String(forecast.seasonal_predicted_peak_concurrency ?? forecast.predicted_peak_concurrency)
+      : "Not ready";
     const error = forecast && Number.isFinite(forecast.mean_absolute_error)
       ? forecast.mean_absolute_error.toFixed(2)
       : "Not enough evaluated forecasts";
@@ -60,8 +63,12 @@ export async function renderAppSettings() {
       ? String(decision.execution_outcome).replaceAll("_", " ")
       : "Pending reconciliation";
     return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>' +
-      esc(String(entry.sample_count)) + ' samples · last observation ' + esc(formatEpoch(entry.latest_observation_epoch)) +
-      '</small><small>Predicted concurrency: ' + esc(predicted) + ' · readiness: ' + esc(readiness) +
+      esc(String(entry.sample_count)) + ' recent five-minute samples · last observation ' + esc(formatEpoch(entry.latest_observation_epoch)) +
+      '</small><small>Predicted concurrency: ' + esc(predicted) +
+      (forecast && forecast.seasonal_predicted_peak_concurrency != null
+        ? ' for target slot ' + esc(formatEpoch(forecast.seasonal_target_epoch)) +
+          ' · one-hour baseline ' + esc(basePredicted)
+        : '') + ' · readiness: ' + esc(readiness) +
       ' · forecast quality: ' + esc(quality) + ' · MAE: ' + esc(error) + '</small>' +
       (forecast ? '<small>Forecast generated ' + esc(formatEpoch(forecast.generated_at_epoch)) +
         ' · horizon target ' + esc(formatEpoch(forecast.target_epoch)) + '</small>' : '') +
@@ -87,6 +94,7 @@ export async function renderAppSettings() {
       '<div class="field"><label for="kitty-history-buckets">History buckets (maximum 2016)</label><input id="kitty-history-buckets" type="number" min="24" max="2016" value="' + esc(String(kittySettings.history_buckets)) + '"><small class="field-hint">Five-minute buckets, at most seven days of history.</small></div>' +
       '<div class="field"><label for="kitty-max-additional">Maximum extra warm runners</label><input id="kitty-max-additional" type="number" min="0" max="100" value="' + esc(String(kittySettings.max_additional_warm_runners)) + '"><small class="field-hint">Additional capacity Kitty may request above the configured minimum.</small></div>' +
       '<div class="field"><label for="kitty-hold-seconds">Warm-pool minimum hold (seconds)</label><input id="kitty-hold-seconds" type="number" min="300" max="3600" step="300" value="' + esc(String(kittySettings.warm_pool_min_hold_seconds)) + '"><small class="field-hint">300–3600 seconds to avoid rapid scale-up/scale-down oscillation.</small></div>' +
+      '<div class="field"><label for="kitty-warmup-lead">Predictive warm-up lead (seconds)</label><input id="kitty-warmup-lead" type="number" min="300" max="3600" step="300" value="' + esc(String(kittySettings.warm_pool_lead_seconds ?? 300)) + '"><small class="field-hint">Default 300 seconds: prepare for a recurring weekday/hour demand pattern five minutes before its target slot.</small></div>' +
       '<div class="field"><label for="kitty-min-quality">Minimum forecast readiness (0.5–1)</label><input id="kitty-min-quality" type="number" min="0.5" max="1" step="0.01" value="' + esc(String(kittySettings.minimum_quality_score)) + '"><small class="field-hint">A heuristic readiness score, not a calibrated probability.</small></div>' +
     '</div>' +
     '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management and Smart Fast Stop triggers are not configurable in this version and cannot be enabled through the settings file. Warm-pool actions remain subordinate to the deterministic scheduler and its global limits.</p></div></div>' +
@@ -149,6 +157,7 @@ export async function renderAppSettings() {
       history_buckets: Number(document.getElementById("kitty-history-buckets").value),
       max_additional_warm_runners: Number(document.getElementById("kitty-max-additional").value),
       warm_pool_min_hold_seconds: Number(document.getElementById("kitty-hold-seconds").value),
+      warm_pool_lead_seconds: Number(document.getElementById("kitty-warmup-lead").value),
       minimum_quality_score: Number(document.getElementById("kitty-min-quality").value)
     };
     if (!Number.isInteger(updated.minimum_samples) || !Number.isInteger(updated.history_buckets) ||
@@ -158,6 +167,9 @@ export async function renderAppSettings() {
         !Number.isInteger(updated.warm_pool_min_hold_seconds) ||
         updated.warm_pool_min_hold_seconds < 300 || updated.warm_pool_min_hold_seconds > 3600 ||
         updated.warm_pool_min_hold_seconds % 300 !== 0 ||
+        !Number.isInteger(updated.warm_pool_lead_seconds) ||
+        updated.warm_pool_lead_seconds < 300 || updated.warm_pool_lead_seconds > 3600 ||
+        updated.warm_pool_lead_seconds % 300 !== 0 ||
         !Number.isFinite(updated.minimum_quality_score) || updated.minimum_quality_score < 0.5 ||
         updated.minimum_quality_score > 1) {
       toast("Kitty settings are outside the supported bounds.", "error");
@@ -180,12 +192,13 @@ export async function renderAppSettings() {
         updated.max_additional_warm_runners > kittySettings.max_additional_warm_runners ||
         updated.minimum_quality_score < kittySettings.minimum_quality_score ||
         updated.minimum_samples < kittySettings.minimum_samples ||
-        updated.warm_pool_min_hold_seconds > kittySettings.warm_pool_min_hold_seconds);
+        updated.warm_pool_min_hold_seconds > kittySettings.warm_pool_min_hold_seconds ||
+        updated.warm_pool_lead_seconds > (kittySettings.warm_pool_lead_seconds ?? 300));
     if (warmPoolRiskChanged) {
       const confirmed = await confirmModal(
         "Enable or relax predictive runner prewarming?",
         "Kitty may raise the minimum runner pool by at most " + updated.max_additional_warm_runners +
-          " runners, only after enough recent observations and evaluated forecasts meet the quality threshold. A lower quality/sample threshold or a longer hold can keep extra runners active more readily or for longer. The existing runner maximum and resource-pressure gate remain in force. Kitty will not terminate runners or change security policy.",
+          " runners, only after enough recent observations and evaluated forecasts meet the quality threshold. A lower quality/sample threshold, a longer hold or a longer warm-up lead can keep extra runners active more readily or for longer. The existing runner maximum and resource-pressure gate remain in force. Kitty will not terminate runners or change security policy.",
         "Confirm Predictive Warm Pool",
         true
       );

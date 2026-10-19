@@ -84,7 +84,7 @@ export async function renderAppSettings() {
         ' actual job starts · last seen ' + esc(formatEpoch(workload.last_seen_epoch)) +
         '</small><small>Exclusive family route (managed Linux): ' +
         esc('gitrun-job-' + String(workload.workload_id)) +
-        ' · set this as the only value in runs-on; omit self-hosted/Linux/X64 labels so unrelated jobs cannot take this runner</small><small>GitHub dispatch chooses any idle runner in this family, not an exact container ID or one future run/job</small><small>Observed runner labels: '
+        ' · set this as the only value in runs-on; omit self-hosted/Linux/X64 labels so unrelated jobs cannot take this runner</small><small>GitHub dispatch chooses any idle runner in this family, not an exact container ID or one future run/job</small><small>Observed runner labels: ' +
         esc((workload.labels || []).slice(0, 8).join(', ')) +
         ((workload.labels || []).length > 8 ? ' …' : '') +
         '</small><small>Recurring: ' + esc(recurring) +

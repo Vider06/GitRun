@@ -1,5 +1,6 @@
 use clap::Parser;
 use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, GitRunSettings, Runner};
+use gitrun_smart_scheduler::KittySettings;
 use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, BootstrapAuth};
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
@@ -1461,6 +1462,15 @@ fn main() {
                 }
             }
         }
+        Command::SaveKittySettingsRoot { input_path } => {
+            match save_kitty_settings_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun Kitty settings save: FAIL — {error}");
+                    1
+                }
+            }
+        }
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -1504,7 +1514,8 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::ReinstallLatestRoot
         | Command::ReinstallExistingRoot
         | Command::SaveConfigRoot { .. }
-        | Command::SaveGitRunSettingsRoot { .. } => ValidationState::Recovering,
+        | Command::SaveGitRunSettingsRoot { .. }
+        | Command::SaveKittySettingsRoot { .. } => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1631,6 +1642,12 @@ enum Command {
     #[command(name = "--save-gitrun-settings-root", hide = true)]
     SaveGitRunSettingsRoot {
         /// Private JSON file containing a GitRunSettings object.
+        input_path: String,
+    },
+    /// Internal privileged command to persist validated optional Kitty settings.
+    #[command(name = "--save-kitty-settings-root", hide = true)]
+    SaveKittySettingsRoot {
+        /// Private JSON file containing a KittySettings object.
         input_path: String,
     },
 
@@ -2811,6 +2828,55 @@ fn save_gitrun_settings_root_command(_input_path: &str) -> Result<(), Box<dyn st
     Err("system security-settings persistence through the privileged helper is Linux-only".into())
 }
 
+#[cfg(target_os = "linux")]
+fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("saving Kitty settings requires administrator privileges".into());
+    }
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("Kitty settings helper requires a verified requesting user UID")?;
+    let bytes = read_privileged_user_payload(Path::new(input_path), requester_uid, "kitty-settings")?;
+    let settings: KittySettings = serde_json::from_slice(&bytes)?;
+    settings.validate()?;
+
+    let config_path = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
+    let config_metadata = std::fs::symlink_metadata(config_path)?;
+    let config_parent = config_path
+        .parent()
+        .ok_or("trusted system config has no parent directory")?;
+    let parent_metadata = std::fs::symlink_metadata(config_parent)?;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    if config_metadata.file_type().is_symlink()
+        || !config_metadata.is_file()
+        || config_metadata.uid() != 0
+        || config_metadata.permissions().mode() & 0o022 != 0
+        || !parent_metadata.is_dir()
+        || parent_metadata.uid() != 0
+        || parent_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("trusted system GitRun configuration is missing or unsafe".into());
+    }
+
+    let config = Config::from_env_file(config_path)?;
+    config.validate()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    gitrun_setup::validate_system_state_directory(&state_dir)?;
+    gitrun_smart_scheduler::save_settings_as_root(&state_dir, &settings)?;
+    let destination = gitrun_smart_scheduler::KittyRuntime::settings_path(&state_dir);
+    gitrun_setup::secure_system_settings_file(&destination, Some(requester_uid))?;
+    std::fs::File::open(config_parent)?.sync_all()?;
+    println!("Kitty settings saved successfully.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn save_kitty_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system Kitty settings persistence through the privileged helper is Linux-only".into())
+}
+
 fn run_reinstall_root(token_path: &str) -> i32 {
     match reinstall_root_command(token_path) {
         Ok(()) => 0,
@@ -3052,6 +3118,16 @@ mod internal_lifecycle_command_tests {
             ]),
             Command::SaveGitRunSettingsRoot { input_path }
                 if input_path == "/tmp/private-security-settings.json"
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--save-kitty-settings-root",
+                "/tmp/private-kitty-settings.json"
+            ]),
+            Command::SaveKittySettingsRoot { input_path }
+                if input_path == "/tmp/private-kitty-settings.json"
         ));
         assert!(matches!(
             parse_internal_command(&[

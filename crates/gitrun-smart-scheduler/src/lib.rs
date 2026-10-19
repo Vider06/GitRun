@@ -27,7 +27,6 @@ const MAX_MODELS: usize = 64;
 const MAX_AUDIT_RECORDS: usize = 128;
 const MAX_EVALUATED_FORECASTS: usize = 2016;
 const FORECAST_HORIZON_SECONDS: u64 = 3600;
-const FORECAST_HORIZON_BUCKETS: u64 = FORECAST_HORIZON_SECONDS / BUCKET_SECONDS;
 const SETTINGS_RELOAD_INTERVAL: Duration = Duration::from_secs(30);
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -57,6 +56,7 @@ pub struct KittySettings {
     pub enabled: bool,
     pub telemetry_enabled: bool,
     pub predictive_analytics_enabled: bool,
+    pub workflow_model_visible: bool,
     pub predictive_warm_pool_enabled: bool,
     /// Reserved until reliable per-job resource measurements and bounded
     /// runner profiles are available. It never authorizes a resource change.
@@ -72,6 +72,8 @@ pub struct KittySettings {
     pub history_buckets: usize,
     /// Upper bound on how far Kitty may raise the deterministic minimum.
     pub max_additional_warm_runners: u32,
+    /// Keep an applied predictive floor briefly to reduce capacity oscillation.
+    pub warm_pool_min_hold_seconds: u64,
     /// Readiness threshold; a quality/readiness score, not a probability.
     pub minimum_quality_score: f64,
 }
@@ -83,6 +85,7 @@ impl Default for KittySettings {
             enabled: false,
             telemetry_enabled: true,
             predictive_analytics_enabled: true,
+            workflow_model_visible: true,
             predictive_warm_pool_enabled: false,
             adaptive_resource_management_enabled: false,
             smart_fast_stop_enabled: false,
@@ -90,6 +93,7 @@ impl Default for KittySettings {
             minimum_samples: 576,
             history_buckets: MAX_HISTORY_BUCKETS,
             max_additional_warm_runners: 2,
+            warm_pool_min_hold_seconds: 900,
             minimum_quality_score: 0.85,
         }
     }
@@ -115,11 +119,21 @@ impl KittySettings {
                 "max_additional_warm_runners must not exceed 100".into(),
             ));
         }
+        if self.adaptive_resource_management_enabled || self.smart_fast_stop_enabled {
+            return Err(KittyError::Invalid(
+                "Adaptive Resource Management and Smart Fast Stop automation are reserved and not supported by this version".into(),
+            ));
+        }
+        if !(300..=3600).contains(&self.warm_pool_min_hold_seconds) {
+            return Err(KittyError::Invalid(
+                "warm_pool_min_hold_seconds must be between 300 and 3600".into(),
+            ));
+        }
         if !self.minimum_quality_score.is_finite()
-            || !(0.0..=1.0).contains(&self.minimum_quality_score)
+            || !(0.5..=1.0).contains(&self.minimum_quality_score)
         {
             return Err(KittyError::Invalid(
-                "minimum_quality_score must be a finite number between 0 and 1".into(),
+                "minimum_quality_score must be a finite number between 0.5 and 1".into(),
             ));
         }
         Ok(())
@@ -175,9 +189,12 @@ impl Observation {
     }
 
     fn merge_snapshot(&mut self, next: &Self) {
-        // Preserve short queue/busy bursts instead of averaging them away.
-        self.queued_jobs = self.queued_jobs.max(next.queued_jobs);
-        self.busy_runners = self.busy_runners.max(next.busy_runners);
+        // Preserve the peak combined demand from one observed snapshot. Taking
+        // queue and busy maxima independently could fabricate concurrency.
+        if next.demand() > self.demand() {
+            self.queued_jobs = next.queued_jobs;
+            self.busy_runners = next.busy_runners;
+        }
         self.online_runners = next.online_runners;
         self.managed_runners = next.managed_runners;
         self.host_cpu_percent = next.host_cpu_percent;
@@ -240,6 +257,7 @@ pub enum DecisionStatus {
     ShadowRecommendation,
     RecommendationOnly,
     AppliedWarmPoolFloor,
+    WarmPoolHold,
     ResourcePressureHold,
     SafeFallback,
 }
@@ -380,8 +398,26 @@ impl KittyRuntime {
         }
     }
 
+    /// System installs expose only non-secret settings through /etc/gitrun;
+    /// model history remains private under the configured state directory.
+    pub fn uses_system_settings_path(state_dir: &Path) -> bool {
+        trusted_system_state_dir().as_deref() == Some(state_dir)
+    }
+
     pub fn settings_path(state_dir: &Path) -> PathBuf {
-        state_dir.join(SETTINGS_RELATIVE_PATH)
+        if Self::uses_system_settings_path(state_dir) {
+            PathBuf::from("/etc/gitrun/kitty.json")
+        } else {
+            state_dir.join(SETTINGS_RELATIVE_PATH)
+        }
+    }
+
+    pub fn dashboard_status_path(state_dir: &Path) -> PathBuf {
+        if Self::uses_system_settings_path(state_dir) {
+            PathBuf::from("/etc/gitrun/kitty-status.json")
+        } else {
+            state_dir.join("kitty/status.json")
+        }
     }
 
     pub fn settings(&self) -> &KittySettings {
@@ -570,6 +606,24 @@ impl KittyRuntime {
             })
             .unwrap_or(configured_min_runners.min(max_runners));
 
+        let held_floor = forecast
+            .filter(|f| {
+                self.settings.predictive_warm_pool_enabled
+                    && !self.settings.shadow_mode
+                    && f.confidence_score >= self.settings.minimum_quality_score
+                    && sample_count >= self.settings.minimum_samples
+                    && capacity_growth_allowed
+            })
+            .and_then(|_| {
+                retained_warm_pool_floor(
+                    model,
+                    bucket,
+                    configured_min_runners,
+                    max_runners,
+                    self.settings.warm_pool_min_hold_seconds,
+                )
+            });
+
         let capability_note = if self.settings.adaptive_resource_management_enabled
             || self.settings.smart_fast_stop_enabled
         {
@@ -606,14 +660,12 @@ impl KittyRuntime {
                         f.confidence_score, self.settings.minimum_quality_score
                     ),
                 )
-            } else if !self.settings.predictive_warm_pool_enabled
-                || proposed_min <= configured_min_runners
-            {
+            } else if !self.settings.predictive_warm_pool_enabled {
                 (
                     DecisionStatus::RecommendationOnly,
                     configured_min_runners,
                     format!(
-                        "Forecast demand is {}; capacity automation is disabled or the forecast does not exceed the deterministic floor.",
+                        "Forecast demand is {}; capacity automation is disabled.",
                         f.predicted_peak_concurrency
                     ),
                 )
@@ -633,17 +685,40 @@ impl KittyRuntime {
                     "Forecast prewarming withheld by existing scheduler resource-pressure backpressure.".to_owned(),
                 )
             } else {
-                (
-                    DecisionStatus::AppliedWarmPoolFloor,
-                    proposed_min,
-                    format!(
-                        "Predictive warm-pool floor raised within explicit bounds: {} to {} (forecast {}, readiness {:.3}).",
+                let held = held_floor.unwrap_or(configured_min_runners.min(max_runners));
+                let target = proposed_min.max(held).min(max_runners);
+                if target > proposed_min && proposed_min <= configured_min_runners {
+                    (
+                        DecisionStatus::WarmPoolHold,
+                        target,
+                        format!(
+                            "Retaining the previously applied warm-pool floor at {} for up to {} seconds to reduce oscillation; current observed forecast no longer requires the higher floor.",
+                            target, self.settings.warm_pool_min_hold_seconds
+                        ),
+                    )
+                } else if target > configured_min_runners {
+                    (
+                        DecisionStatus::AppliedWarmPoolFloor,
+                        target,
+                        format!(
+                            "Predictive warm-pool floor raised/retained within explicit bounds: {} to {} (forecast {}, readiness {:.3}, hold {}s).",
+                            configured_min_runners,
+                            target,
+                            f.predicted_peak_concurrency,
+                            f.confidence_score,
+                            self.settings.warm_pool_min_hold_seconds
+                        ),
+                    )
+                } else {
+                    (
+                        DecisionStatus::RecommendationOnly,
                         configured_min_runners,
-                        proposed_min,
-                        f.predicted_peak_concurrency,
-                        f.confidence_score
-                    ),
-                )
+                        format!(
+                            "Forecast demand is {}; no prewarm is required above the deterministic floor.",
+                            f.predicted_peak_concurrency
+                        ),
+                    )
+                }
             }
         };
 
@@ -748,6 +823,19 @@ impl KittyRuntime {
             self.dirty_models.remove(&key);
         }
 
+        // Persist model, forecast and decision audit before the scheduler is
+        // allowed to act on a raised floor. Persistence failure fails closed
+        // for this recommendation, not for the deterministic reconcile cycle.
+        if decision.status == DecisionStatus::AppliedWarmPoolFloor
+            && self.dirty_models.contains(&key)
+        {
+            if let Err(error) = self.persist_model(&key) {
+                self.disabled_models.insert(key.clone());
+                return Err(error);
+            }
+            self.dirty_models.remove(&key);
+        }
+
         Ok(decision)
     }
 
@@ -788,6 +876,13 @@ impl KittyRuntime {
             if let Err(error) = self.persist_model(&key) {
                 self.disabled_models.insert(key.clone());
                 return Err(error);
+            }
+            // Dashboard status is an informational, best-effort projection;
+            // failure to refresh it must never disable deterministic scheduling.
+            if let Err(error) = self.persist_dashboard_snapshot() {
+                eprintln!(
+                    "gitrun-smart-scheduler: dashboard status persistence failed: {error}"
+                );
             }
         }
         Ok(())
@@ -849,6 +944,11 @@ impl KittyRuntime {
             None => Ok(WorkflowModel::empty(repository)),
             Some(bytes) => {
                 let mut model: WorkflowModel = serde_json::from_slice(&bytes)?;
+                if model.history.len() > self.settings.history_buckets {
+                    let excess = model.history.len() - self.settings.history_buckets;
+                    model.history.drain(0..excess);
+                    model.latest_forecast = None;
+                }
                 model.validate_for(repository, self.settings.history_buckets)?;
                 model.history.shrink_to_fit();
                 model.predictions.shrink_to_fit();
@@ -876,9 +976,187 @@ impl KittyRuntime {
         atomic_write_private(&path, &json)?;
         Ok(())
     }
+
+    fn dashboard_snapshot(&self) -> KittyDashboardStatus {
+        let mut repositories: Vec<_> = self
+            .models
+            .values()
+            .map(|model| KittyRepositoryStatus {
+                repository: model.repository.clone(),
+                sample_count: model.history.len(),
+                first_observation_epoch: model.history.first().map(|entry| entry.bucket_epoch),
+                latest_observation_epoch: model.history.last().map(|entry| entry.bucket_epoch),
+                latest_forecast: model.latest_forecast.clone(),
+                latest_decision: model.decision_audit.last().cloned(),
+            })
+            .collect();
+        repositories.sort_by(|left, right| left.repository.cmp(&right.repository));
+        KittyDashboardStatus {
+            schema_version: SETTINGS_SCHEMA_VERSION,
+            generated_at_epoch: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            enabled: self.settings.enabled,
+            telemetry_enabled: self.settings.telemetry_enabled,
+            predictive_analytics_enabled: self.settings.predictive_analytics_enabled,
+            workflow_model_visible: self.settings.workflow_model_visible,
+            predictive_warm_pool_enabled: self.settings.predictive_warm_pool_enabled,
+            shadow_mode: self.settings.shadow_mode,
+            repositories,
+        }
+    }
+
+    fn persist_dashboard_snapshot(&self) -> Result<()> {
+        let status = self.dashboard_snapshot();
+        let bytes = serde_json::to_vec(&status)?;
+        if bytes.len() as u64 > MAX_MODEL_BYTES {
+            return Err(KittyError::Invalid(
+                "dashboard status snapshot exceeded the size limit".into(),
+            ));
+        }
+        let path = Self::dashboard_status_path(&self.state_dir);
+        if Self::uses_system_settings_path(&self.state_dir) {
+            let group = system_settings_group(&Self::settings_path(&self.state_dir))?;
+            atomic_write_system_readable(&path, &bytes, group)?;
+        } else {
+            atomic_write_private(&path, &bytes)?;
+        }
+        Ok(())
+    }
+}
+
+
+/// Privacy-minimized model status suitable for the operator dashboard. Raw
+/// five-minute history and per-forecast records never leave the private files.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct KittyRepositoryStatus {
+    pub repository: String,
+    pub sample_count: usize,
+    pub first_observation_epoch: Option<u64>,
+    pub latest_observation_epoch: Option<u64>,
+    pub latest_forecast: Option<Forecast>,
+    pub latest_decision: Option<DecisionAudit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct KittyDashboardStatus {
+    pub schema_version: u32,
+    pub generated_at_epoch: u64,
+    pub enabled: bool,
+    pub telemetry_enabled: bool,
+    pub predictive_analytics_enabled: bool,
+    pub workflow_model_visible: bool,
+    pub predictive_warm_pool_enabled: bool,
+    pub shadow_mode: bool,
+    pub repositories: Vec<KittyRepositoryStatus>,
+}
+
+impl KittyDashboardStatus {
+    fn empty(settings: &KittySettings) -> Self {
+        Self {
+            schema_version: SETTINGS_SCHEMA_VERSION,
+            generated_at_epoch: 0,
+            enabled: settings.enabled,
+            telemetry_enabled: settings.telemetry_enabled,
+            predictive_analytics_enabled: settings.predictive_analytics_enabled,
+            workflow_model_visible: settings.workflow_model_visible,
+            predictive_warm_pool_enabled: settings.predictive_warm_pool_enabled,
+            shadow_mode: settings.shadow_mode,
+            repositories: Vec::new(),
+        }
+    }
+}
+
+pub fn load_settings_for_dashboard(state_dir: &Path) -> Result<KittySettings> {
+    let path = KittyRuntime::settings_path(state_dir);
+    if KittyRuntime::uses_system_settings_path(state_dir) {
+        let settings = read_system_json::<KittySettings>(&path, MAX_SETTINGS_BYTES)?
+            .unwrap_or_default();
+        settings.validate()?;
+        Ok(settings)
+    } else {
+        read_settings(&path)
+    }
+}
+
+pub fn save_settings_for_local_state_dir(
+    state_dir: &Path,
+    settings: &KittySettings,
+) -> Result<()> {
+    settings.validate()?;
+    if KittyRuntime::uses_system_settings_path(state_dir) {
+        return Err(KittyError::Invalid(
+            "system settings must be saved through the privileged GitRun helper".into(),
+        ));
+    }
+    let bytes = serde_json::to_vec(settings)?;
+    if bytes.len() as u64 > MAX_SETTINGS_BYTES {
+        return Err(KittyError::Invalid("Kitty settings exceed the size limit".into()));
+    }
+    atomic_write_private(&KittyRuntime::settings_path(state_dir), &bytes)
+}
+
+/// Root-only writer called by the authenticated internal CLI command. The CLI
+/// then grants the desktop user's primary group read-only access.
+pub fn save_settings_as_root(state_dir: &Path, settings: &KittySettings) -> Result<()> {
+    settings.validate()?;
+    #[cfg(unix)]
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(KittyError::Invalid(
+            "system Kitty settings require root privileges".into(),
+        ));
+    }
+    if !KittyRuntime::uses_system_settings_path(state_dir) {
+        return Err(KittyError::Invalid(
+            "trusted system GitRun installation was not detected".into(),
+        ));
+    }
+    let bytes = serde_json::to_vec(settings)?;
+    if bytes.len() as u64 > MAX_SETTINGS_BYTES {
+        return Err(KittyError::Invalid("Kitty settings exceed the size limit".into()));
+    }
+    atomic_write_system_private(&KittyRuntime::settings_path(state_dir), &bytes)
+}
+
+pub fn load_dashboard_status(state_dir: &Path) -> Result<KittyDashboardStatus> {
+    let settings = load_settings_for_dashboard(state_dir)?;
+    let path = KittyRuntime::dashboard_status_path(state_dir);
+    let stored = if KittyRuntime::uses_system_settings_path(state_dir) {
+        read_system_json::<KittyDashboardStatus>(&path, MAX_MODEL_BYTES)?
+    } else {
+        let parent = path
+            .parent()
+            .ok_or_else(|| KittyError::Invalid("status path has no parent directory".into()))?;
+        if !validate_read_data_dir(parent)? {
+            None
+        } else {
+            read_checked(&path, MAX_MODEL_BYTES)?
+                .map(|bytes| serde_json::from_slice(&bytes))
+                .transpose()?
+        }
+    };
+    let mut status = stored.unwrap_or_else(|| KittyDashboardStatus::empty(&settings));
+    status.enabled = settings.enabled;
+    status.telemetry_enabled = settings.telemetry_enabled;
+    status.predictive_analytics_enabled = settings.predictive_analytics_enabled;
+    status.workflow_model_visible = settings.workflow_model_visible;
+    status.predictive_warm_pool_enabled = settings.predictive_warm_pool_enabled;
+    status.shadow_mode = settings.shadow_mode;
+    if !settings.workflow_model_visible {
+        status.repositories.clear();
+    }
+    Ok(status)
 }
 
 fn read_settings(path: &Path) -> Result<KittySettings> {
+    if is_system_settings_path(path) {
+        let settings = read_system_json::<KittySettings>(path, MAX_SETTINGS_BYTES)?
+            .unwrap_or_default();
+        settings.validate()?;
+        return Ok(settings);
+    }
+
     let parent = path
         .parent()
         .ok_or_else(|| KittyError::Invalid("settings path has no parent".into()))?;
@@ -892,6 +1170,283 @@ fn read_settings(path: &Path) -> Result<KittySettings> {
     } else {
         Ok(KittySettings::default())
     }
+}
+
+fn is_system_settings_path(path: &Path) -> bool {
+    path == Path::new("/etc/gitrun/kitty.json")
+}
+
+fn trusted_system_state_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let parent = Path::new("/etc/gitrun");
+        let config_path = parent.join("gitrun.env");
+        let parent_meta = fs::symlink_metadata(parent).ok()?;
+        let config_meta = fs::symlink_metadata(&config_path).ok()?;
+        if parent_meta.file_type().is_symlink()
+            || !parent_meta.is_dir()
+            || parent_meta.uid() != 0
+            || parent_meta.mode() & 0o022 != 0
+            || config_meta.file_type().is_symlink()
+            || !config_meta.is_file()
+            || config_meta.uid() != 0
+            || config_meta.mode() & 0o022 != 0
+            || config_meta.len() > 1024 * 1024
+        {
+            return None;
+        }
+        let content = fs::read_to_string(config_path).ok()?;
+        let mut state_dir = PathBuf::from("/var/lib/gitrun");
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("GITRUN_STATE_DIR=") {
+                let value = value.trim().trim_matches('"').trim_matches('\'');
+                if value.is_empty() {
+                    return None;
+                }
+                state_dir = PathBuf::from(value);
+            }
+        }
+        Some(state_dir)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn system_settings_group(path: &Path) -> Result<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(fs::metadata(path)?.gid())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(KittyError::Invalid(
+            "system Kitty settings are supported only on Unix".into(),
+        ))
+    }
+}
+
+fn validate_system_parent(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let parent = path
+            .parent()
+            .ok_or_else(|| KittyError::Invalid("system Kitty file has no parent".into()))?;
+        if parent != Path::new("/etc/gitrun") {
+            return Err(KittyError::Invalid(
+                "system Kitty files must live directly under /etc/gitrun".into(),
+            ));
+        }
+        for directory in [Path::new("/etc"), parent] {
+            let metadata = fs::symlink_metadata(directory)?;
+            if metadata.file_type().is_symlink()
+                || !metadata.is_dir()
+                || metadata.uid() != 0
+                || metadata.mode() & 0o022 != 0
+            {
+                return Err(KittyError::Invalid(format!(
+                    "{} is not a trusted root-owned directory",
+                    directory.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(KittyError::Invalid(
+            "system Kitty settings are supported only on Unix".into(),
+        ))
+    }
+}
+
+fn read_system_json<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+    max_bytes: u64,
+) -> Result<Option<T>> {
+    let Some(bytes) = read_system_checked(path, max_bytes)? else {
+        return Ok(None);
+    };
+    Ok(Some(serde_json::from_slice(&bytes)?))
+}
+
+#[cfg(unix)]
+fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    validate_system_parent(path)?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.uid() != 0
+        || metadata.nlink() != 1
+        || metadata.mode() & 0o022 != 0
+        || metadata.len() > max_bytes
+    {
+        return Err(KittyError::Invalid(format!(
+            "{} must be a bounded, root-owned regular file with no links or group/world writes",
+            path.display()
+        )));
+    }
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)?;
+    let opened = file.metadata()?;
+    if !opened.is_file()
+        || opened.uid() != 0
+        || opened.nlink() != 1
+        || opened.mode() & 0o022 != 0
+        || opened.len() > max_bytes
+    {
+        return Err(KittyError::Invalid(format!(
+            "{} changed during system-file validation",
+            path.display()
+        )));
+    }
+    let mut bytes = Vec::with_capacity(opened.len().min(max_bytes) as usize);
+    file.take(max_bytes.saturating_add(1)).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(KittyError::Invalid(format!(
+            "{} exceeded its read-size bound",
+            path.display()
+        )));
+    }
+    Ok(Some(bytes))
+}
+
+#[cfg(not(unix))]
+fn read_system_checked(_path: &Path, _max_bytes: u64) -> Result<Option<Vec<u8>>> {
+    Err(KittyError::Invalid(
+        "system Kitty settings are supported only on Unix".into(),
+    ))
+}
+
+#[cfg(unix)]
+fn atomic_write_system_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(KittyError::Invalid(
+            "system Kitty settings require root privileges".into(),
+        ));
+    }
+    validate_system_parent(path)?;
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.uid() != 0
+            || metadata.nlink() != 1
+            || metadata.mode() & 0o022 != 0
+        {
+            return Err(KittyError::Invalid(format!(
+                "{} is an unsafe existing settings file",
+                path.display()
+            )));
+        }
+    }
+    let parent = path.parent().expect("validated parent");
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".kitty-settings-tmp-{}-{sequence}",
+        std::process::id()
+    ));
+    let result = (|| -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, path)?;
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(not(unix))]
+fn atomic_write_system_private(_path: &Path, _bytes: &[u8]) -> Result<()> {
+    Err(KittyError::Invalid(
+        "system Kitty settings are supported only on Unix".into(),
+    ))
+}
+
+#[cfg(unix)]
+fn atomic_write_system_readable(path: &Path, bytes: &[u8], group: u32) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(KittyError::Invalid(
+            "system Kitty status persistence requires root privileges".into(),
+        ));
+    }
+    validate_system_parent(path)?;
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.uid() != 0
+            || metadata.nlink() != 1
+            || metadata.mode() & 0o022 != 0
+        {
+            return Err(KittyError::Invalid(format!(
+                "{} is an unsafe existing status file",
+                path.display()
+            )));
+        }
+    }
+    let parent = path.parent().expect("validated parent");
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".kitty-status-tmp-{}-{sequence}",
+        std::process::id()
+    ));
+    let result = (|| -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)?;
+        if unsafe { libc::fchown(file.as_raw_fd(), 0, group) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        file.set_permissions(fs::Permissions::from_mode(0o640))?;
+        file.write_all(bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, path)?;
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(not(unix))]
+fn atomic_write_system_readable(_path: &Path, _bytes: &[u8], _group: u32) -> Result<()> {
+    Err(KittyError::Invalid(
+        "system Kitty status persistence is supported only on Unix".into(),
+    ))
 }
 
 fn compute_forecast(
@@ -931,11 +1486,18 @@ fn compute_forecast(
     let recent_mean = mean(recent);
     let previous_mean = mean(previous);
     let trend = recent_mean - previous_mean;
+    let recent_p90 = percentile(recent, 0.90);
     let mut ewma = recent[0];
     for value in recent.iter().skip(1) {
         ewma = 0.35 * value + 0.65 * ewma;
     }
-    let predicted = (ewma + trend).max(recent_mean).max(0.0).ceil();
+    // Keep the forecast peak-sensitive without allowing one outlier to dominate:
+    // the recent 90th percentile is a floor, combined with EWMA and short trend.
+    let predicted = (ewma + trend)
+        .max(recent_mean)
+        .max(recent_p90)
+        .max(0.0)
+        .ceil();
     let predicted_peak_concurrency = predicted.min(u32::MAX as f64) as u32;
 
     let evaluated: Vec<&PredictionRecord> = model
@@ -987,6 +1549,28 @@ fn compute_forecast(
     })
 }
 
+fn retained_warm_pool_floor(
+    model: &WorkflowModel,
+    current_bucket: u64,
+    configured_min_runners: u32,
+    max_runners: u32,
+    hold_seconds: u64,
+) -> Option<u32> {
+    let latest = model.decision_audit.iter().rev().find(|audit| {
+        audit.status == DecisionStatus::AppliedWarmPoolFloor
+            && audit.effective_min_runners > audit.configured_min_runners
+    })?;
+    if latest.model_version != model.model_version
+        || latest.configured_min_runners != configured_min_runners
+        || current_bucket < latest.bucket_epoch
+        || current_bucket.saturating_sub(latest.bucket_epoch) > hold_seconds
+    {
+        return None;
+    }
+    let previous = latest.effective_min_runners.min(max_runners);
+    (previous > configured_min_runners).then_some(previous)
+}
+
 fn evaluate_matured_predictions(model: &mut WorkflowModel, current_bucket: u64) {
     let actuals: HashMap<u64, u32> = model
         .history
@@ -1003,6 +1587,17 @@ fn evaluate_matured_predictions(model: &mut WorkflowModel, current_bucket: u64) 
             prediction.skipped_missing_observation = true;
         }
     }
+}
+
+fn percentile(values: &[f64], quantile: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let bounded = quantile.clamp(0.0, 1.0);
+    let index = ((sorted.len() - 1) as f64 * bounded).ceil() as usize;
+    sorted[index.min(sorted.len() - 1)]
 }
 
 fn mean(values: &[f64]) -> f64 {
@@ -1080,9 +1675,12 @@ fn read_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if metadata.nlink() != 1 || metadata.uid() != unsafe { libc::geteuid() } {
+        if metadata.nlink() != 1
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o022 != 0
+        {
             return Err(KittyError::Invalid(format!(
-                "{} has an unsafe owner or hard-link count",
+                "{} has an unsafe owner, hard-link count, or write permission",
                 path.display()
             )));
         }
@@ -1105,9 +1703,12 @@ fn read_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if opened.nlink() != 1 || opened.uid() != unsafe { libc::geteuid() } {
+        if opened.nlink() != 1
+            || opened.uid() != unsafe { libc::geteuid() }
+            || opened.mode() & 0o022 != 0
+        {
             return Err(KittyError::Invalid(format!(
-                "{} has an unsafe opened-file owner or hard-link count",
+                "{} has an unsafe opened-file owner, hard-link count, or write permission",
                 path.display()
             )));
         }
@@ -1269,12 +1870,52 @@ mod tests {
     }
 
     #[test]
+    fn local_settings_and_dashboard_status_round_trip_without_privileged_paths() {
+        let dir = temp_dir("settings-round-trip");
+        let mut settings = enabled_settings();
+        settings.predictive_warm_pool_enabled = true;
+        settings.shadow_mode = true;
+
+        save_settings_for_local_state_dir(&dir, &settings).unwrap();
+        assert_eq!(load_settings_for_dashboard(&dir).unwrap(), settings);
+
+        let status = load_dashboard_status(&dir).unwrap();
+        assert!(status.enabled);
+        assert!(status.predictive_warm_pool_enabled);
+        assert!(status.shadow_mode);
+        assert!(status.repositories.is_empty());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn dashboard_status_reports_off_when_settings_are_missing() {
+        let dir = temp_dir("status-default-off");
+        let status = load_dashboard_status(&dir).unwrap();
+        assert!(!status.enabled);
+        assert!(status.shadow_mode);
+        assert!(status.repositories.is_empty());
+        assert!(!dir.join("kitty").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn settings_reject_out_of_range_or_non_finite_thresholds() {
         let mut settings = enabled_settings();
         settings.minimum_quality_score = f64::NAN;
         assert!(settings.validate().is_err());
         settings.minimum_quality_score = 0.85;
         settings.history_buckets = MAX_HISTORY_BUCKETS + 1;
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn reserved_automation_capabilities_cannot_be_enabled() {
+        let mut settings = enabled_settings();
+        settings.adaptive_resource_management_enabled = true;
+        assert!(settings.validate().is_err());
+        settings.adaptive_resource_management_enabled = false;
+        settings.smart_fast_stop_enabled = true;
         assert!(settings.validate().is_err());
     }
 
@@ -1362,6 +2003,62 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_merging_never_fabricates_combined_peak_demand() {
+        let mut sample = Observation {
+            bucket_epoch: 1_800,
+            queued_jobs: 10,
+            busy_runners: 0,
+            online_runners: 2,
+            managed_runners: 3,
+            host_cpu_percent: Some(20.0),
+            host_memory_percent: None,
+            host_disk_percent: None,
+            snapshots_in_bucket: 1,
+        };
+        let next = Observation {
+            bucket_epoch: 1_800,
+            queued_jobs: 0,
+            busy_runners: 5,
+            online_runners: 1,
+            managed_runners: 3,
+            host_cpu_percent: Some(50.0),
+            host_memory_percent: Some(40.0),
+            host_disk_percent: None,
+            snapshots_in_bucket: 1,
+        };
+        sample.merge_snapshot(&next);
+        assert_eq!(sample.demand(), 10);
+        assert_eq!(sample.queued_jobs, 10);
+        assert_eq!(sample.busy_runners, 0);
+        assert_eq!(sample.snapshots_in_bucket, 2);
+    }
+
+    #[test]
+    fn warm_pool_hold_is_expired_when_limits_change_or_window_passes() {
+        let mut model = WorkflowModel::empty("owner/repo");
+        model.decision_audit.push(DecisionAudit {
+            bucket_epoch: 10_000,
+            model_version: MODEL_VERSION,
+            source_window_start: Some(1_000),
+            source_window_end: Some(10_000),
+            status: DecisionStatus::AppliedWarmPoolFloor,
+            reason: "test".into(),
+            configured_min_runners: 2,
+            proposed_min_runners: 4,
+            effective_min_runners: 4,
+            predicted_peak_concurrency: Some(4),
+            confidence_score: Some(0.9),
+            sample_count: 100,
+            planned_action_count: Some(1),
+            execution_outcome: Some("plan_executed".into()),
+        });
+        assert_eq!(retained_warm_pool_floor(&model, 10_600, 2, 5, 900), Some(4));
+        assert_eq!(retained_warm_pool_floor(&model, 10_600, 3, 5, 900), None);
+        assert_eq!(retained_warm_pool_floor(&model, 11_000, 2, 5, 900), None);
+        assert_eq!(retained_warm_pool_floor(&model, 10_600, 2, 3, 900), Some(3));
+    }
+
+    #[test]
     fn observations_aggregate_bursts_and_remain_bounded() {
         let mut sample = Observation {
             bucket_epoch: 1_800,
@@ -1400,6 +2097,14 @@ mod tests {
         assert!(!valid_repository("../outside"));
         assert!(!valid_repository("owner/repo/extra"));
         assert!(!valid_repository("owner/../secret"));
+    }
+
+    #[test]
+    fn percentile_preserves_recent_high_demand_without_using_the_absolute_max() {
+        let values = [0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 4.0, 8.0, 20.0];
+        assert_eq!(percentile(&values, 0.0), 0.0);
+        assert_eq!(percentile(&values, 0.9), 20.0);
+        assert_eq!(percentile(&values, 0.5), 2.0);
     }
 
     #[test]

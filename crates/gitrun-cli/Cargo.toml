@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 gitrun-scheduler = { path = "../gitrun-scheduler" }
+gitrun-smart-scheduler = { path = "../gitrun-smart-scheduler" }
 gitrun-core = { path = "../gitrun-core" }
 gitrun-gsr = { path = "../gitrun-gsr" }
 gitrun-setup = { path = "../gitrun-setup" }

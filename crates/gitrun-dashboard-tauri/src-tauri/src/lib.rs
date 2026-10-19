@@ -11,6 +11,7 @@
 
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
 use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
+use gitrun_smart_scheduler::{KittyDashboardStatus, KittyRuntime, KittySettings};
 use gitrun_setup::BootstrapAuth;
 use gitrun_vault::{Scope, Vault};
 use serde::{Deserialize, Serialize};
@@ -211,6 +212,67 @@ fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), Stri
 #[cfg(not(target_os = "linux"))]
 fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), String> {
     Err("administrator-authorized security-settings persistence is Linux-only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let pkexec = pkexec_path().ok_or(
+        "Saving Kitty settings requires administrator authorization, but trusted pkexec was not found.",
+    )?;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; Kitty settings cannot be saved safely.",
+    )?;
+    let payload = serde_json::to_vec(settings).map_err(|error| error.to_string())?;
+    if payload.len() > 64 * 1024 {
+        return Err("Kitty settings exceed the 64 KiB safety limit".into());
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-save-kitty-settings-{}-{unique}.json",
+        std::process::id()
+    ));
+
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        drop(file);
+
+        let status = std::process::Command::new(&pkexec)
+            .arg(&cli)
+            .arg("--no-cat")
+            .arg("--save-kitty-settings-root")
+            .arg(&path)
+            .status()
+            .map_err(|error| format!("unable to request administrator authorization: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "administrator-authorized Kitty settings save failed with status {status}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[cfg(not(target_os = "linux"))]
+fn persist_kitty_settings_as_root(_settings: &KittySettings) -> Result<(), String> {
+    Err("administrator-authorized Kitty settings persistence is Linux-only".into())
 }
 
 /// Persist security policy through the privileged helper for system installs.
@@ -2192,6 +2254,43 @@ pub struct DockRequirementSummary {
     pub operation: String,
 }
 
+#[derive(Debug, Serialize)]
+struct KittyDashboardData {
+    settings: KittySettings,
+    status: KittyDashboardStatus,
+}
+
+#[tauri::command]
+fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
+    let config = load_config()?;
+    let state_dir = Path::new(&config.state_dir);
+    let settings =
+        gitrun_smart_scheduler::load_settings_for_dashboard(state_dir).map_err(|e| e.to_string())?;
+    let status =
+        gitrun_smart_scheduler::load_dashboard_status(state_dir).map_err(|e| e.to_string())?;
+    Ok(KittyDashboardData { settings, status })
+}
+
+#[tauri::command]
+fn save_kitty_settings(settings: KittySettings) -> Result<(), String> {
+    let _write_guard = dashboard_settings_write_guard()?;
+    settings.validate().map_err(|error| error.to_string())?;
+    let config = load_config()?;
+    let state_dir = Path::new(&config.state_dir);
+    if KittyRuntime::uses_system_settings_path(state_dir) {
+        if trusted_system_cli_path().is_none() {
+            return Err(
+                "Trusted system GitRun CLI was not found; Kitty settings cannot be saved safely."
+                    .into(),
+            );
+        }
+        persist_kitty_settings_as_root(&settings)
+    } else {
+        gitrun_smart_scheduler::save_settings_for_local_state_dir(state_dir, &settings)
+            .map_err(|error| error.to_string())
+    }
+}
+
 fn gitrun_settings_path(config: &Config) -> PathBuf {
     GitRunSettings::path_for_state_dir(&config.state_dir)
 }
@@ -3017,6 +3116,8 @@ pub fn run() {
             get_config,
             get_security_runtime_summary,
             get_dashboard_health,
+            get_kitty_dashboard_data,
+            save_kitty_settings,
             control_gitrun_service,
             check_gitrun_updates,
             update_permanent_runners,

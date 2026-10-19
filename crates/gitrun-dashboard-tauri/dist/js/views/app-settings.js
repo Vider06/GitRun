@@ -9,12 +9,70 @@ export async function renderAppSettings() {
   let serviceState = {service_installed:false,service_active:false,checks:[]};
   let serviceLoadError = null;
   try { serviceState = await invoke("get_dashboard_health"); } catch (error) { serviceLoadError = String(error); }
+  let kittyData = null;
+  let kittyLoadError = null;
+  try { kittyData = await invoke("get_kitty_dashboard_data"); } catch (error) { kittyLoadError = String(error); }
   if (generation !== window.__gitrunNavigationGeneration) return;
+  const kittySettings = kittyData?.settings || {
+    schema_version:1, enabled:false, telemetry_enabled:true, predictive_analytics_enabled:true,
+    workflow_model_visible:true, predictive_warm_pool_enabled:false,
+    adaptive_resource_management_enabled:false, smart_fast_stop_enabled:false, shadow_mode:true,
+    minimum_samples:576, history_buckets:2016, max_additional_warm_runners:2,
+    warm_pool_min_hold_seconds:900, minimum_quality_score:0.85
+  };
+  const kittyStatus = kittyData?.status || {repositories:[]};
+  const formatEpoch = (value) => value ? new Date(value * 1000).toLocaleString() : "Not recorded";
+  const kittyRows = (kittyStatus.repositories || []).map((entry) => {
+    const forecast = entry.latest_forecast;
+    const decision = entry.latest_decision;
+    const readiness = forecast && Number.isFinite(forecast.confidence_score)
+      ? (forecast.confidence_score * 100).toFixed(1) + "%"
+      : "Not ready";
+    const quality = forecast && Number.isFinite(forecast.quality_score)
+      ? (forecast.quality_score * 100).toFixed(1) + "%"
+      : "Not evaluated";
+    const predicted = forecast ? String(forecast.predicted_peak_concurrency) : "Not ready";
+    const error = forecast && Number.isFinite(forecast.mean_absolute_error)
+      ? forecast.mean_absolute_error.toFixed(2)
+      : "Not enough evaluated forecasts";
+    const decisionText = decision ? String(decision.status).replaceAll("_", " ") : "No decision recorded";
+    const explanation = decision ? String(decision.reason || "") : "No decision recorded yet.";
+    return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>' +
+      esc(String(entry.sample_count)) + ' samples · last observation ' + esc(formatEpoch(entry.latest_observation_epoch)) +
+      '</small><small>Predicted concurrency: ' + esc(predicted) + ' · readiness: ' + esc(readiness) +
+      ' · forecast quality: ' + esc(quality) + ' · MAE: ' + esc(error) + '</small><small>' +
+      esc(decisionText) + ': ' + esc(explanation) + '</small></div>' +
+      pill(forecast ? "Forecast" : "Learning", forecast ? "good" : "info") + '</div>';
+  }).join("") || '<div class="notice"><div><strong>No Workflow Model history yet</strong><p>Kitty is off by default. After enabling telemetry, aggregated observations are collected in five-minute buckets. Forecasts require sufficient history and evaluated outcomes.</p></div></div>';
+  const kittyPanel = '<div class="section">' + panel("Kitty Smart Scheduler",
+    '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. It is disabled by default; recommendations never authorize themselves.</p>' +
+    (kittyLoadError ? '<div class="notice warn"><div><strong>Kitty settings could not be loaded</strong><p>' + esc(kittyLoadError) + '</p><p>Saving below can repair a malformed or inaccessible settings file.</p></div></div>' : '') +
+    '<label class="checkbox-row"><input id="kitty-enabled" type="checkbox" ' + (kittySettings.enabled ? "checked" : "") + '><span><strong>Enable Kitty</strong>Enable the optional observer and its statistical model. This does not enable automatic scaling.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-telemetry-enabled" type="checkbox" ' + (kittySettings.telemetry_enabled ? "checked" : "") + '><span><strong>Collect aggregate telemetry</strong>Queue and runner counts plus optional host resource measurements. No job payloads, environment values, tokens or secrets.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-analytics-enabled" type="checkbox" ' + (kittySettings.predictive_analytics_enabled ? "checked" : "") + '><span><strong>Predictive analytics</strong>Forecast aggregate busy-plus-queued demand and evaluate forecasts against later observations.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-model-visible" type="checkbox" ' + (kittySettings.workflow_model_visible ? "checked" : "") + '><span><strong>Show Workflow Model details</strong>Show the summarized forecast, sample count and latest decision in this dashboard.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-shadow-mode" type="checkbox" ' + (kittySettings.shadow_mode ? "checked" : "") + '><span><strong>Shadow mode</strong>Keep recommendations observational. This should stay on until forecasts have been reviewed against real workloads.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-warm-pool-enabled" type="checkbox" ' + (kittySettings.predictive_warm_pool_enabled ? "checked" : "") + '><span><strong>Predictive Warm Pool</strong>Separately opt in to raising the minimum runner floor after the forecast meets the configured quality threshold. It never lowers the configured floor or exceeds the global maximum.</span></label>' +
+    '<label class="checkbox-row"><input type="checkbox" disabled><span><strong>Adaptive Resource Management</strong>Unavailable in this version; reliable per-job resource attribution and bounded profiles are not ready.</span></label>' +
+    '<label class="checkbox-row"><input type="checkbox" disabled><span><strong>Smart Fast Stop triggers</strong>Unavailable in this version; Kitty cannot cancel workflows automatically.</span></label>' +
+    '<div class="two-col mt-12">' +
+      '<div class="field"><label for="kitty-min-samples">Minimum five-minute samples</label><input id="kitty-min-samples" type="number" min="24" max="2016" value="' + esc(String(kittySettings.minimum_samples)) + '"><small class="field-hint">Default 576 samples (48 hours); forecast quality needs later outcomes too.</small></div>' +
+      '<div class="field"><label for="kitty-history-buckets">History buckets (maximum 2016)</label><input id="kitty-history-buckets" type="number" min="24" max="2016" value="' + esc(String(kittySettings.history_buckets)) + '"><small class="field-hint">Five-minute buckets, at most seven days of history.</small></div>' +
+      '<div class="field"><label for="kitty-max-additional">Maximum extra warm runners</label><input id="kitty-max-additional" type="number" min="0" max="100" value="' + esc(String(kittySettings.max_additional_warm_runners)) + '"><small class="field-hint">Additional capacity Kitty may request above the configured minimum.</small></div>' +
+      '<div class="field"><label for="kitty-hold-seconds">Warm-pool minimum hold (seconds)</label><input id="kitty-hold-seconds" type="number" min="300" max="3600" step="300" value="' + esc(String(kittySettings.warm_pool_min_hold_seconds)) + '"><small class="field-hint">300–3600 seconds to avoid rapid scale-up/scale-down oscillation.</small></div>' +
+      '<div class="field"><label for="kitty-min-quality">Minimum forecast readiness (0.5–1)</label><input id="kitty-min-quality" type="number" min="0.5" max="1" step="0.01" value="' + esc(String(kittySettings.minimum_quality_score)) + '"><small class="field-hint">A heuristic readiness score, not a calibrated probability.</small></div>' +
+    '</div>' +
+    '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management and Smart Fast Stop triggers are not configurable in this version and cannot be enabled through the settings file. Warm-pool actions remain subordinate to the deterministic scheduler and its global limits.</p></div></div>' +
+    '<div class="toolbar"><span class="field-hint">System installs request administrator authorization to save Kitty settings. Changes are read by the scheduler within 30 seconds.</span><button class="btn btn-primary" id="save-kitty-settings">Save Kitty settings</button></div>' +
+    '<div class="section-heading mt-12"><h3>Workflow Model status</h3>' + pill(kittySettings.enabled ? (kittySettings.shadow_mode ? "Shadow mode" : "Enabled") : "Disabled", kittySettings.enabled ? (kittySettings.shadow_mode ? "info" : "warn") : "neutral") + '</div>' +
+    '<div class="card-list mt-10">' + kittyRows + '</div>'
+  ) + '</div>';
   content.innerHTML = heading("APPLICATION","App settings","Preferences for the dashboard itself. Runner and security configuration lives elsewhere.") +
     '<div class="two-col">' +
       panel("Appearance", '<div class="field"><label for="theme-select">Color theme</label><select id="theme-select"><option value="dark" ' + (savedTheme === "dark" ? "selected" : "") + '>Dark · GitRun default</option><option value="light" ' + (savedTheme === "light" ? "selected" : "") + '>Light</option><option value="system" ' + (savedTheme === "system" ? "selected" : "") + '>Follow system preference</option></select></div><label class="checkbox-row"><input id="compact-mode" type="checkbox" ' + (compact ? "checked" : "") + '><span><strong>Compact data density</strong>Reduce padding in tables and cards for information-heavy screens.</span></label><div class="toolbar"><span class="field-hint">Theme is stored locally on this device.</span><button class="btn btn-primary" id="save-appearance">Save appearance</button></div>') +
       panel("GitRun cat", '<div class="mascot-inline"><div class="mascot-face"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 19 7 5l13 8a19 19 0 0 1 8 0l13-8-2 14c3 4 4 8 3 13-2 8-9 12-18 12S8 40 6 32c-1-5 0-9 3-13Z" fill="currentColor"/><path d="M15 26h.1M33 26h.1" stroke="#11151d" stroke-width="5" stroke-linecap="round"/><path d="M20 33q4 4 8 0" fill="none" stroke="#11151d" stroke-width="2.5" stroke-linecap="round"/></svg></div><div class="mascot-copy"><strong>GitRun companion</strong><p>A guide to setup, status and recovery — not a substitute for actual telemetry.</p></div></div><label class="checkbox-row"><input id="cat-enabled" type="checkbox" ' + (catEnabled ? "checked" : "") + '><span><strong>Show the cat companion</strong>Show the mascot in the dashboard and onboarding.</span></label><div class="toolbar"><span class="field-hint">Expression states will be tied to verified app status.</span><button class="btn" id="save-cat">Save mascot preference</button></div>') +
     '</div>' +
+    kittyPanel +
     '<div class="section">' + panel("Guided tour", '<div class="list-row"><div class="list-row-main"><strong>Dashboard introduction</strong><small>' + (tutorialSeen ? "You have completed the current tour." : "The tour has not been completed on this device.") + '</small></div>' + pill(tutorialSeen ? "Completed" : "Not completed", tutorialSeen ? "good" : "info") + '</div><p class="section-description mt-12">The guided tour introduces Overview, repository policies, security boundaries, GitVault and Recovery. You can restart it at any time.</p><button class="btn btn-primary" id="restart-tour">Start guided tour</button>') + '</div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>GitRun startup and stop</h2>' + pill(serviceLoadError ? "Status unavailable" : serviceState.service_active ? "Service active" : serviceState.service_installed ? "Service stopped" : "Unit not found", serviceLoadError ? "bad" : serviceState.service_active ? "good" : "warn") + '</div><p class="section-description">These controls affect the host-level systemd service and scheduler, not just this dashboard window. Stopping or restarting it may interrupt runner reconciliation; existing workflow containers may need separate recovery.</p><div class="toolbar"><span class="field-hint">' + (serviceLoadError ? "Could not inspect service status: " + esc(serviceLoadError) : serviceState.service_installed ? "Unit is installed." : "No GitRun systemd unit was found.") + '</span><div class="heading-actions"><button class="btn btn-primary" id="service-start" ' + (serviceLoadError || !serviceState.service_installed || serviceState.service_active ? "disabled" : "") + '>Start service</button><button class="btn" id="service-restart" ' + (serviceLoadError || !serviceState.service_installed ? "disabled" : "") + '>Restart service</button><button class="btn btn-danger" id="service-stop" ' + (serviceLoadError || !serviceState.service_installed || !serviceState.service_active ? "disabled" : "") + '>Stop service</button></div></div><div id="service-operation-status" class="field-hint mt-10" role="status" aria-live="polite"></div></div>' +
     '<div class="section panel panel-pad"><div class="section-heading"><h2>Recommended security preset check</h2><span class="pill info">Read-only</span></div><p class="section-description">Checks whether the saved configuration aligns with GitRun’s recommended baseline. It does not change settings and does not prove runtime enforcement.</p><button class="btn btn-primary" id="run-security-preset-check">Run baseline check</button><div id="app-preset-results" class="mt-12"></div></div>' +
@@ -33,6 +91,60 @@ export async function renderAppSettings() {
     localStorage.setItem("gitrun-cat-enabled", enabled ? "true" : "false");
     document.body.classList.toggle("cat-hidden", !enabled);
     toast("Mascot preference saved.");
+  });
+  document.getElementById("save-kitty-settings").addEventListener("click", async () => {
+    const button = document.getElementById("save-kitty-settings");
+    if (button.disabled) return;
+    const updated = {
+      ...kittySettings,
+      enabled: document.getElementById("kitty-enabled").checked,
+      telemetry_enabled: document.getElementById("kitty-telemetry-enabled").checked,
+      predictive_analytics_enabled: document.getElementById("kitty-analytics-enabled").checked,
+      workflow_model_visible: document.getElementById("kitty-model-visible").checked,
+      shadow_mode: document.getElementById("kitty-shadow-mode").checked,
+      predictive_warm_pool_enabled: document.getElementById("kitty-warm-pool-enabled").checked,
+      adaptive_resource_management_enabled: false,
+      smart_fast_stop_enabled: false,
+      minimum_samples: Number(document.getElementById("kitty-min-samples").value),
+      history_buckets: Number(document.getElementById("kitty-history-buckets").value),
+      max_additional_warm_runners: Number(document.getElementById("kitty-max-additional").value),
+      warm_pool_min_hold_seconds: Number(document.getElementById("kitty-hold-seconds").value),
+      minimum_quality_score: Number(document.getElementById("kitty-min-quality").value)
+    };
+    if (!Number.isInteger(updated.minimum_samples) || !Number.isInteger(updated.history_buckets) ||
+        !Number.isInteger(updated.max_additional_warm_runners) || updated.minimum_samples < 24 ||
+        updated.history_buckets < updated.minimum_samples || updated.history_buckets > 2016 ||
+        updated.max_additional_warm_runners < 0 || updated.max_additional_warm_runners > 100 ||
+        !Number.isInteger(updated.warm_pool_min_hold_seconds) ||
+        updated.warm_pool_min_hold_seconds < 300 || updated.warm_pool_min_hold_seconds > 3600 ||
+        updated.warm_pool_min_hold_seconds % 300 !== 0 ||
+        !Number.isFinite(updated.minimum_quality_score) || updated.minimum_quality_score < 0.5 ||
+        updated.minimum_quality_score > 1) {
+      toast("Kitty settings are outside the supported bounds.", "error");
+      return;
+    }
+    if (updated.enabled && updated.telemetry_enabled && updated.predictive_analytics_enabled &&
+        updated.predictive_warm_pool_enabled && !updated.shadow_mode &&
+        (!kittySettings.predictive_warm_pool_enabled || kittySettings.shadow_mode)) {
+      const confirmed = await confirmModal(
+        "Enable predictive runner prewarming?",
+        "Kitty may raise the minimum runner pool by at most " + updated.max_additional_warm_runners +
+          " runners, only after enough recent observations and evaluated forecasts meet the quality threshold. The existing global runner maximum and resource-pressure gate remain in force. Kitty will not terminate runners or change security policy.",
+        "Enable Predictive Warm Pool",
+        true
+      );
+      if (!confirmed) return;
+    }
+    button.disabled = true;
+    try {
+      await invoke("save_kitty_settings", { settings: updated });
+      toast("Kitty settings saved. The scheduler will reload them shortly.");
+      await renderAppSettings();
+    } catch (error) {
+      toast("Kitty settings save failed: " + error, "error");
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
   });
   document.getElementById("restart-tour").addEventListener("click", async () => {
     const steps = [

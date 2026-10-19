@@ -137,8 +137,78 @@ fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
     Ok(Some(serde_json::from_str(&raw)?))
 }
 
+fn valid_repository_identity(repository: &str) -> bool {
+    let Some((owner, name)) = repository.trim().split_once('/') else {
+        return false;
+    };
+    !owner.is_empty()
+        && !name.is_empty()
+        && owner.len() <= 100
+        && name.len() <= 100
+        && !repository.chars().any(char::is_control)
+        && !repository.chars().any(char::is_whitespace)
+}
+
+fn repository_identity_hash(repository: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in repository.trim().to_ascii_lowercase().bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn make_gitrun_job_id(repository: &str, sequence: u64) -> Option<String> {
+    if !valid_repository_identity(repository) || sequence == 0 {
+        return None;
+    }
+    Some(format!(
+        "grj-{:016x}-{sequence:016x}",
+        repository_identity_hash(repository)
+    ))
+}
+
+fn valid_gitrun_job_id(code: &str, repository: &str) -> bool {
+    let Some((hash, sequence)) = code.strip_prefix("grj-").and_then(|part| part.split_once('-')) else {
+        return false;
+    };
+    let Ok(sequence) = u64::from_str_radix(sequence, 16) else {
+        return false;
+    };
+    hash.len() == 16
+        && hash == format!("{:016x}", repository_identity_hash(repository))
+        && sequence > 0
+        && code.len() == 3 + 16 + 1 + 16
+}
+
+fn job_identity_key(repository: &str, run_id: u64, job_id: u64) -> String {
+    format!("{}|{run_id}|{job_id}", repository.trim().to_ascii_lowercase())
+}
+
 fn validate_state(data: &StateFile) -> Result<(), StateError> {
     let now = SchedulerState::now();
+
+    if data.job_identities.len() > MAX_JOB_IDENTITIES || data.next_job_identity_sequence == 0 {
+        return Err(StateError::Invalid(
+            "GitRun job identity registry exceeds its bound or has an invalid sequence".into(),
+        ));
+    }
+    let mut seen_gitrun_ids = std::collections::HashSet::new();
+    for (key, identity) in &data.job_identities {
+        if !valid_repository_identity(&identity.repository)
+            || identity.run_id == 0
+            || identity.job_id == 0
+            || identity.last_seen_epoch == 0
+            || identity.last_seen_epoch > now
+            || key != &job_identity_key(&identity.repository, identity.run_id, identity.job_id)
+            || !valid_gitrun_job_id(&identity.gitrun_job_id, &identity.repository)
+            || !seen_gitrun_ids.insert(identity.gitrun_job_id.as_str())
+        {
+            return Err(StateError::Invalid(
+                "persisted GitRun job identity has invalid fields or duplicate IDs".into(),
+            ));
+        }
+    }
 
     for (kind, entries) in [
         ("idle_since", &data.idle_since),
@@ -175,7 +245,10 @@ impl SchedulerState {
             }
             Err(error) => return Err(error.into()),
         }
-        let data = read_state_file(&path)?.unwrap_or_default();
+        let mut data = read_state_file(&path)?.unwrap_or_default();
+        if data.next_job_identity_sequence == 0 {
+            data.next_job_identity_sequence = 1;
+        }
         validate_state(&data)?;
         Ok(Self { path, data })
     }

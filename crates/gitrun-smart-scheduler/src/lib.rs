@@ -5574,8 +5574,14 @@ mod tests {
     #[test]
     fn slow_poll_catches_a_nearby_hour_boundary_without_shifting_fast_polling() {
         let target = 200 * WEEK_SECONDS + 16 * 3_600;
-        assert_eq!(upcoming_schedule_target(target - 300, 300, 300), Some(target));
-        assert_eq!(upcoming_schedule_target(target - 600, 300, 600), Some(target));
+        assert_eq!(
+            upcoming_schedule_target(target - 300, 300, 300),
+            Some(target)
+        );
+        assert_eq!(
+            upcoming_schedule_target(target - 600, 300, 600),
+            Some(target)
+        );
         assert_eq!(upcoming_schedule_target(target - 600, 300, 300), None);
     }
 

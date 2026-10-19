@@ -727,12 +727,16 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
 
     // Only sequence values in this repository's namespace count toward the
     // high-water mark. A foreign ID must never poison this repository's counter.
-    let max_sequence = model.recent_job_occurrences.iter().filter_map(|occurrence| {
-        generated_gitrun_job_sequence_for_repository(
-            &occurrence.gitrun_job_id,
-            &model.repository,
-        )
-    }).max();
+    let max_sequence = model
+        .recent_job_occurrences
+        .iter()
+        .filter_map(|occurrence| {
+            generated_gitrun_job_sequence_for_repository(
+                &occurrence.gitrun_job_id,
+                &model.repository,
+            )
+        })
+        .max();
     if let Some(sequence) = max_sequence {
         let next = sequence.checked_add(1).unwrap_or(u64::MAX);
         if model.next_gitrun_job_sequence < next {
@@ -754,8 +758,12 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
         }
         while model.next_gitrun_job_sequence < u64::MAX {
             let sequence = model.next_gitrun_job_sequence;
-            let Some(next) = sequence.checked_add(1) else { break };
-            let Some(candidate) = generate_occurrence_id(&model.repository, sequence) else { break };
+            let Some(next) = sequence.checked_add(1) else {
+                break;
+            };
+            let Some(candidate) = generate_occurrence_id(&model.repository, sequence) else {
+                break;
+            };
             model.next_gitrun_job_sequence = next;
             if seen_ids.insert(candidate.clone()) {
                 model.recent_job_occurrences[index].gitrun_job_id = candidate;

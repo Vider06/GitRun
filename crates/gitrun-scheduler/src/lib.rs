@@ -684,6 +684,7 @@ fn actions_for_resource_pressure(
             !matches!(
                 action,
                 reconcile::Action::CreateRunner { .. }
+                    | reconcile::Action::PrewarmWorkload { .. }
                     | reconcile::Action::RecreateOrphaned { .. }
                     | reconcile::Action::RemoveIdle { .. }
             )
@@ -1166,6 +1167,7 @@ fn reconcile_repo(
                 combined.chars().take(800).collect()
             },
         };
+        let authorization_reason = intent.reason.clone();
         let audit_path = gitrun_gsr::events::default_queue_path(&state_dir.to_string_lossy());
         match gitrun_gsr::automation_gate::authorize_action(&policy, intent, &audit_path) {
             Ok(permit) => {
@@ -1173,7 +1175,7 @@ fn reconcile_repo(
                     &mut kitty_decision,
                     true,
                     config.min_runners.min(config.max_runners),
-                    "GSR durably authorized the predictive warm-pool floor",
+                    &authorization_reason,
                 ) {
                     Ok(()) => kitty_automation_permit = Some(permit),
                     Err(error) => {

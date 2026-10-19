@@ -504,11 +504,13 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             .and_then(|value| value.parse::<u64>().ok());
         let workflow_job_id = match container_label_on(host, &id, "gitrun.workflow_job_id")? {
             None => None,
-            Some(value) => Some(value.parse::<u64>().ok().filter(|id| *id > 0).ok_or_else(|| {
-                DockerError::Command(format!(
-                    "managed runner {name} has an invalid authoritative workflow job ID label"
-                ))
-            })?),
+            Some(value) => Some(value.parse::<u64>().ok().filter(|id| *id > 0).ok_or_else(
+                || {
+                    DockerError::Command(format!(
+                        "managed runner {name} has an invalid authoritative workflow job ID label"
+                    ))
+                },
+            )?),
         };
         if workflow_job_id.is_some() && (workflow_run_id.is_none() || workflow_job.is_none()) {
             return Err(DockerError::Command(format!(
@@ -2073,8 +2075,7 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
         || resolved_id != container_id
         || name.is_empty()
         || repository.is_empty()
-        || (workflow_job_id.is_some()
-            && (workflow_job.is_empty() || workflow_run_id.is_none()))
+        || (workflow_job_id.is_some() && (workflow_job.is_empty() || workflow_run_id.is_none()))
     {
         return Ok(None);
     }

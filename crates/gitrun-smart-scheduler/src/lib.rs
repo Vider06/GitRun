@@ -4949,6 +4949,23 @@ mod tests {
         model
             .validate_for("owner/repo", MAX_HISTORY_BUCKETS)
             .unwrap();
+
+        // One GitHub run/job pair cannot represent two logical workloads,
+        // even if their per-workload correlation keys and GitRun IDs differ.
+        let mut conflicting = model.clone();
+        let second_workload = "wk-fedcba9876543210";
+        let mut second_pattern = conflicting.workload_patterns[0].clone();
+        second_pattern.workload_id = second_workload.into();
+        conflicting.workload_patterns.push(second_pattern);
+        let first = conflicting.recent_job_occurrences[0].clone();
+        conflicting.recent_job_occurrences[1].run_id = first.run_id;
+        conflicting.recent_job_occurrences[1].job_id = first.job_id;
+        conflicting.recent_job_occurrences[1].workload_id = second_workload.into();
+        conflicting.recent_job_occurrences[1].occurrence_code =
+            provider_occurrence_key(second_workload, first.run_id, first.job_id);
+        assert!(conflicting
+            .validate_for("owner/repo", MAX_HISTORY_BUCKETS)
+            .is_err());
     }
 
     #[test]

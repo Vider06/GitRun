@@ -17,7 +17,7 @@ export async function renderAppSettings() {
     schema_version:1, enabled:false, telemetry_enabled:true, predictive_analytics_enabled:true,
     workflow_model_visible:true, predictive_warm_pool_enabled:false,
     adaptive_resource_management_enabled:false, smart_fast_stop_enabled:false, automation_mode:false,
-    automation_allowed_repositories:[], shadow_mode:true,
+    automation_allowed_repositories:[], fast_stop_max_runtime_seconds:0, shadow_mode:true,
     minimum_samples:576, history_buckets:2016, max_additional_warm_runners:2,
     warm_pool_min_hold_seconds:900, warm_pool_lead_seconds:300, minimum_quality_score:0.85
   };
@@ -90,7 +90,8 @@ export async function renderAppSettings() {
     '<label class="checkbox-row"><input id="kitty-warm-pool-enabled" type="checkbox" ' + (kittySettings.predictive_warm_pool_enabled ? "checked" : "") + '><span><strong>Predictive Warm Pool</strong>Separately opt in to raising the minimum runner floor after the forecast meets the configured quality threshold. It never lowers the configured floor or exceeds the global maximum.</span></label>' +
     '<label class="checkbox-row"><input id="kitty-automation-mode" type="checkbox" ' + (kittySettings.automation_mode ? "checked" : "") + '><span><strong>Automation mode</strong>Permit explicitly allowlisted Stop/Fast Stop actions without per-action prompts. Every action must still pass the GSR authorization gate and durable audit; this is not a security-policy bypass.</span></label>' +
     '<div class="field mt-12"><label for="kitty-automation-repositories">Automation repository allowlist</label><textarea id="kitty-automation-repositories" rows="3" placeholder="owner/repo, one per line">' + esc((kittySettings.automation_allowed_repositories || []).join("\n")) + '</textarea><small class="field-hint">Automation remains disabled for repositories not listed here. Only repositories configured in GitRun can be acted on.</small></div>' +
-    '<label class="checkbox-row"><input id="kitty-fast-stop-enabled" type="checkbox" ' + (kittySettings.smart_fast_stop_enabled ? "checked" : "") + ' ' + (!kittySettings.automation_mode || !(kittySettings.automation_allowed_repositories || []).length ? "disabled" : "") + '><span><strong>Smart Fast Stop</strong>Reserved for a validated run-level trigger. GitHub cancellation stops the whole workflow run, not an individual job.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-fast-stop-enabled" type="checkbox" ' + (kittySettings.smart_fast_stop_enabled ? "checked" : "") + '><span><strong>Smart Fast Stop</strong>Cancel an overlong workflow run only after its configured deadline, allowlist check and GSR audit. Cancellation affects the entire run, not a single job.</span></label>' +
+    '<div class="field mt-10"><label for="kitty-fast-stop-runtime">Fast Stop deadline (seconds)</label><input id="kitty-fast-stop-runtime" type="number" min="300" max="604800" step="300" value="' + esc(String(kittySettings.fast_stop_max_runtime_seconds || 14400)) + '"><small class="field-hint">Default proposal: 14400 seconds (4 hours). The deadline is inactive unless Smart Fast Stop is enabled; runs with unknown start time are never cancelled.</small></div>' +
     '<label class="checkbox-row"><input type="checkbox" disabled><span><strong>Adaptive Resource Management</strong>Unavailable in this version; reliable per-job resource attribution and bounded profiles are not ready.</span></label>' +
     '<div class="two-col mt-12">' +
       '<div class="field"><label for="kitty-min-samples">Minimum five-minute samples</label><input id="kitty-min-samples" type="number" min="24" max="2016" value="' + esc(String(kittySettings.minimum_samples)) + '"><small class="field-hint">Default 576 samples (48 hours); forecast quality needs later outcomes too.</small></div>' +
@@ -100,7 +101,7 @@ export async function renderAppSettings() {
       '<div class="field"><label for="kitty-warmup-lead">Predictive warm-up lead (seconds)</label><input id="kitty-warmup-lead" type="number" min="300" max="3600" step="300" value="' + esc(String(kittySettings.warm_pool_lead_seconds ?? 300)) + '"><small class="field-hint">Default 300 seconds: prepare for a recurring weekday/hour demand pattern five minutes before its target slot.</small></div>' +
       '<div class="field"><label for="kitty-min-quality">Minimum forecast readiness (0.5–1)</label><input id="kitty-min-quality" type="number" min="0.5" max="1" step="0.01" value="' + esc(String(kittySettings.minimum_quality_score)) + '"><small class="field-hint">A heuristic readiness score, not a calibrated probability.</small></div>' +
     '</div>' +
-    '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management and Smart Fast Stop triggers are not configurable in this version and cannot be enabled through the settings file. Warm-pool actions remain subordinate to the deterministic scheduler and its global limits.</p></div></div>' +
+    '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management remains unavailable. Smart Fast Stop only cancels an allowlisted workflow run after its configured maximum runtime and GSR authorization; GitHub run cancellation also affects every job in that run.</p></div></div>' +
     '<div class="toolbar"><span class="field-hint">System installs request administrator authorization to save Kitty settings. Changes are read by the scheduler within 30 seconds.</span><div class="heading-actions"><button class="btn" id="refresh-kitty-status">Refresh model status</button><button class="btn btn-primary" id="save-kitty-settings">Save Kitty settings</button></div></div>' +
     '<div class="section-heading mt-12"><h3>Workflow Model status</h3>' + pill(kittySettings.enabled ? (kittySettings.shadow_mode ? "Shadow mode" : "Enabled") : "Disabled", kittySettings.enabled ? (kittySettings.shadow_mode ? "info" : "warn") : "neutral") + '</div>' +
     '<div class="card-list mt-10">' + kittyRows + '</div>'
@@ -159,6 +160,8 @@ export async function renderAppSettings() {
       automation_allowed_repositories: [...new Set(document.getElementById("kitty-automation-repositories").value
         .split(/[\n,;]/).map((repo) => repo.trim()).filter(Boolean))],
       smart_fast_stop_enabled: document.getElementById("kitty-fast-stop-enabled").checked,
+      fast_stop_max_runtime_seconds: document.getElementById("kitty-fast-stop-enabled").checked
+        ? Number(document.getElementById("kitty-fast-stop-runtime").value) : 0,
       minimum_samples: Number(document.getElementById("kitty-min-samples").value),
       history_buckets: Number(document.getElementById("kitty-history-buckets").value),
       max_additional_warm_runners: Number(document.getElementById("kitty-max-additional").value),
@@ -181,7 +184,11 @@ export async function renderAppSettings() {
         updated.automation_allowed_repositories.length > 64 ||
         updated.automation_allowed_repositories.some((repo) => !/^[A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/.test(repo)) ||
         (updated.automation_mode && updated.automation_allowed_repositories.length === 0) ||
-        (updated.smart_fast_stop_enabled && !updated.automation_mode)) {
+        (updated.smart_fast_stop_enabled && (!updated.automation_mode ||
+          updated.automation_allowed_repositories.length === 0 ||
+          !Number.isInteger(updated.fast_stop_max_runtime_seconds) ||
+          updated.fast_stop_max_runtime_seconds < 300 || updated.fast_stop_max_runtime_seconds > 604800)) ||
+        (!updated.smart_fast_stop_enabled && updated.fast_stop_max_runtime_seconds !== 0)) {
       toast("Kitty settings are outside the supported bounds.", "error");
       return;
     }
@@ -197,7 +204,9 @@ export async function renderAppSettings() {
     const automationRiskChanged = updated.automation_mode && (
       !kittySettings.automation_mode ||
       JSON.stringify(updated.automation_allowed_repositories) !== JSON.stringify(kittySettings.automation_allowed_repositories || []) ||
-      (updated.smart_fast_stop_enabled && !kittySettings.smart_fast_stop_enabled)
+      (updated.smart_fast_stop_enabled && !kittySettings.smart_fast_stop_enabled) ||
+      (updated.fast_stop_max_runtime_seconds > 0 &&
+        updated.fast_stop_max_runtime_seconds !== (kittySettings.fast_stop_max_runtime_seconds || 0))
     );
     if (automationRiskChanged) {
       const confirmed = await confirmModal(

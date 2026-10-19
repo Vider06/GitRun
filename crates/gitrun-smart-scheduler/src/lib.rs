@@ -2796,6 +2796,38 @@ fn record_started_job_occurrences(
             .recent_job_occurrences
             .iter()
             .position(|entry| entry.run_id == job.run_id && entry.job_id == job.job_id);
+        let gitrun_job_id = if let Some(index) = existing_index {
+            let existing_id = model.recent_job_occurrences[index].gitrun_job_id.clone();
+            if valid_generated_gitrun_job_id(&existing_id) {
+                existing_id
+            } else {
+                let Some(id) = generate_occurrence_id(
+                    &model.repository,
+                    model.next_gitrun_job_sequence,
+                ) else {
+                    continue;
+                };
+                let Some(next) = model.next_gitrun_job_sequence.checked_add(1) else {
+                    continue;
+                };
+                model.next_gitrun_job_sequence = next;
+                model.recent_job_occurrences[index].gitrun_job_id = id.clone();
+                changed = true;
+                id
+            }
+        } else {
+            let Some(id) = generate_occurrence_id(
+                &model.repository,
+                model.next_gitrun_job_sequence,
+            ) else {
+                continue;
+            };
+            let Some(next) = model.next_gitrun_job_sequence.checked_add(1) else {
+                continue;
+            };
+            model.next_gitrun_job_sequence = next;
+            id
+        };
         let was_legacy_queue_record = if let Some(index) = existing_index {
             let existing = &mut model.recent_job_occurrences[index];
             if existing.workload_id != workload_id {
@@ -2869,9 +2901,9 @@ fn record_started_job_occurrences(
         {
             pattern.first_seen_epoch = pattern.first_seen_epoch.min(started_at_epoch);
             pattern.last_seen_epoch = pattern.last_seen_epoch.max(started_at_epoch);
-            if !was_legacy_queue_record || !profile_exists_before {
-                pattern.occurrence_count = pattern.occurrence_count.saturating_add(1);
-            }
+            // This branch is reached only for a first authoritative start:
+            // repeats are skipped above, while queue-only records have no start.
+            pattern.occurrence_count = pattern.occurrence_count.saturating_add(1);
             let slot_index = weekday_hour_slot(started_at_epoch);
             let week = weekly_period_start(started_at_epoch);
             let last_week = pattern.slot_last_week[slot_index];
@@ -2912,6 +2944,7 @@ fn record_started_job_occurrences(
                 counted_prediction_target_epoch;
         } else {
             model.recent_job_occurrences.push(RecentJobOccurrence {
+                gitrun_job_id,
                 occurrence_code,
                 workload_id,
                 run_id: job.run_id,

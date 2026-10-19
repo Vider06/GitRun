@@ -120,6 +120,10 @@ struct WorkflowRunsResponse {
 struct WorkflowRun {
     id: u64,
     #[serde(default)]
+    workflow_id: u64,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
     name: String,
     #[serde(default)]
     status: String,
@@ -141,6 +145,8 @@ pub struct WorkflowRunSummary {
 pub struct QueuedJobInfo {
     pub run_id: u64,
     pub job_id: u64,
+    pub workflow_id: u64,
+    pub workflow_path: String,
     pub name: String,
     pub labels: Vec<String>,
 }
@@ -830,7 +836,13 @@ impl GitHubClient {
             let parsed: WorkflowRunsResponse = response.json()?;
 
             for run in parsed.workflow_runs {
-                jobs.extend(self.queued_self_hosted_job_info_for_run(owner, name, run.id)?);
+                jobs.extend(self.queued_self_hosted_job_info_for_run(
+                    owner,
+                    name,
+                    run.id,
+                    run.workflow_id,
+                    &run.path,
+                )?);
             }
 
             match next_url {
@@ -847,6 +859,8 @@ impl GitHubClient {
         owner: &str,
         name: &str,
         run_id: u64,
+        workflow_id: u64,
+        workflow_path: &str,
     ) -> Result<Vec<QueuedJobInfo>> {
         let mut jobs = Vec::new();
         let mut url = format!(
@@ -876,6 +890,8 @@ impl GitHubClient {
                     .map(|job| QueuedJobInfo {
                         run_id,
                         job_id: job.id,
+                        workflow_id,
+                        workflow_path: workflow_path.to_owned(),
                         name: job.name,
                         labels: job.labels,
                     }),

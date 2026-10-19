@@ -4341,7 +4341,10 @@ mod tests {
             &["self-hosted".into(), "linux".into()],
         )
         .unwrap();
-        assert_eq!(internal_id, gitrun_job_id_for("owner/repo", &first).unwrap());
+        assert_eq!(
+            internal_id,
+            gitrun_job_id_for("owner/repo", &first).unwrap()
+        );
         assert_eq!(
             gitrun_job_id_for("owner/repo", &first).unwrap(),
             gitrun_job_id_for("owner/repo", &later).unwrap()

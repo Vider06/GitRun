@@ -5330,7 +5330,9 @@ mod tests {
             workload_id_from_routing_labels(std::slice::from_ref(&family_label)),
             Some(workload_id),
         );
-        assert!(has_workload_routing_marker(std::slice::from_ref(&family_label)));
+        assert!(has_workload_routing_marker(std::slice::from_ref(
+            &family_label
+        )));
         assert_eq!(
             workload_id_from_routing_labels(&[
                 family_label,

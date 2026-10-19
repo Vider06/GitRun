@@ -72,6 +72,8 @@ pub struct ReconcileInput {
     pub queued_job_names: Vec<String>,
     /// GitHub workflow run IDs aligned with queued_job_names.
     pub queued_job_run_ids: Vec<u64>,
+    /// Unique GitHub Actions job IDs aligned with queued_job_names/run IDs.
+    pub queued_job_ids: Vec<u64>,
     /// Logical workflow jobs that the static validator marked as GitDockRun
     /// targets. A matching queued job gets dedicated dynamic capacity even
     /// when the default runner labels would otherwise satisfy it.
@@ -110,6 +112,9 @@ pub enum Action {
         job_labels: Vec<String>,
         job_name: Option<String>,
         job_run_id: Option<u64>,
+        /// Exact queued job occurrence; this labels the runner for audit, but
+        /// GitHub still assigns jobs through the workflow's runs-on labels.
+        job_id: Option<u64>,
     },
     /// Runner is online in Docker but GitHub doesn't know about it anymore:
     /// remove and recreate, preserving its permanent/dynamic role.
@@ -240,6 +245,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             job_labels: Vec::new(),
             job_name: None,
             job_run_id: None,
+            job_id: None,
         });
         current += 1;
         permanent_count += 1;
@@ -251,27 +257,29 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     // containers reserved by the GitDockRun lifecycle: the
     // count-based formula assumes runners are interchangeable, which is not
     // true when jobs require a particular backend/image or isolated target.
-    let specialized_jobs: Vec<(Option<String>, Option<u64>, Vec<String>)> = input
+    let specialized_jobs: Vec<(Option<String>, Option<u64>, Option<u64>, Vec<String>)> = input
         .queued_job_labels
         .iter()
         .enumerate()
         .filter_map(|(index, labels)| {
             let job_name = input.queued_job_names.get(index).cloned();
             let job_run_id = input.queued_job_run_ids.get(index).copied();
+            let job_id = input.queued_job_ids.get(index).copied();
             let specialized = job_needs_dedicated_runner(input, index, labels);
 
-            specialized.then_some((job_name, job_run_id, labels.clone()))
+            specialized.then_some((job_name, job_run_id, job_id, labels.clone()))
         })
         .collect();
 
     let mut specialized_index = 0usize;
     while current < input.max_runners && specialized_index < specialized_jobs.len() {
-        let (job_name, job_run_id, job_labels) = &specialized_jobs[specialized_index];
+        let (job_name, job_run_id, job_id, job_labels) = &specialized_jobs[specialized_index];
         actions.push(Action::CreateRunner {
             permanent: false,
             job_labels: job_labels.clone(),
             job_name: job_name.clone(),
             job_run_id: *job_run_id,
+            job_id: *job_id,
         });
         specialized_index += 1;
         current += 1;
@@ -296,16 +304,18 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                 (
                     input.queued_job_names.get(index).cloned(),
                     input.queued_job_run_ids.get(index).copied(),
+                    input.queued_job_ids.get(index).copied(),
                     labels.clone(),
                 )
             })
-            .unwrap_or((None, None, Vec::new()));
+            .unwrap_or((None, None, None, Vec::new()));
 
         actions.push(Action::CreateRunner {
             permanent: false,
             job_labels,
             job_name,
             job_run_id,
+            job_id,
         });
         dynamic_index += 1;
         current += 1;
@@ -377,6 +387,7 @@ mod tests {
             queued_job_labels: Vec::new(),
             queued_job_names: Vec::new(),
             queued_job_run_ids: Vec::new(),
+            queued_job_ids: Vec::new(),
             dock_target_jobs: Vec::new(),
             logic_rules: Vec::new(),
             idle: Vec::new(),

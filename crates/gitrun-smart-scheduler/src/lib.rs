@@ -4182,6 +4182,7 @@ mod tests {
             workflow_path: ".github/workflows/build.yml".into(),
             name: "build-linux".into(),
             labels: vec!["self-hosted".into(), "Linux".into()],
+            started_at_epoch: Some(1_800),
         };
         let mut runtime = KittyRuntime::new(&dir);
         let mut first = input(1_800, 2, 1);
@@ -4348,6 +4349,7 @@ mod tests {
             workflow_path: ".github/workflows/build.yml".into(),
             name: "build-linux".into(),
             labels: vec!["linux".into(), "self-hosted".into()],
+            started_at_epoch: None,
         };
         let mut later = first.clone();
         later.run_id = 99;
@@ -4458,6 +4460,7 @@ mod tests {
             workflow_path: ".github/workflows/build.yml".into(),
             name: "build-linux".into(),
             labels: vec!["self-hosted".into(), "linux".into()],
+            started_at_epoch: Some(now),
         };
         let gitrun_job_id = gitrun_job_id_for("owner/repo", &job).unwrap();
         let slot_index = weekday_hour_slot(now);
@@ -4582,6 +4585,7 @@ mod tests {
             workflow_path: ".github/workflows/build.yml".into(),
             name: "build-linux".into(),
             labels: vec!["self-hosted".into(), "linux".into()],
+            started_at_epoch: Some(target + 30),
         };
         let gitrun_job_id = gitrun_job_id_for("owner/repo", &job).unwrap();
         let mut pattern = WorkflowPattern {
@@ -4609,30 +4613,31 @@ mod tests {
             prewarm_runners_created: 0,
         });
 
-        // A job already queued before the target window should count once if it
-        // remains queued after the predicted hour opens, not once per poll.
+        // A job that actually started before the target hour must not count
+        // towards the forecast for the later hour.
         let mut early_job = job.clone();
         early_job.job_id = 409;
+        early_job.started_at_epoch = Some(issued + 30);
         record_started_job_occurrences(&mut model, std::slice::from_ref(&early_job), issued + 30);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
         record_started_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 30);
-        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
         record_started_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 60);
-        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
 
-        // A distinct job first observed inside the target window also counts once.
+        // A distinct job that actually started inside the target window counts once.
         assert!(record_started_job_occurrences(
             &mut model,
             std::slice::from_ref(&job),
             target + 30,
         ));
-        assert_eq!(model.workload_predictions[0].observed_occurrences, 2);
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
         record_started_job_occurrences(&mut model, std::slice::from_ref(&job), target + 60);
-        assert_eq!(model.workload_predictions[0].observed_occurrences, 2);
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
 
-        // When the target hour completes, both unique jobs are finalized.
+        // When the target hour completes, only the unique in-window start counts.
         record_started_job_occurrences(&mut model, &[], target + 3_600);
-        assert_eq!(model.workload_predictions[0].actual_occurrences, Some(2));
+        assert_eq!(model.workload_predictions[0].actual_occurrences, Some(1));
         assert_eq!(
             workload_prediction_bias(&model, &gitrun_job_id),
             None,

@@ -82,7 +82,9 @@ export async function renderAppSettings() {
         '<small>' + esc(String(workload.workflow_path)) + ' · workload ' +
         esc(String(workload.gitrun_job_id)) + ' · ' + esc(String(workload.occurrence_count)) +
         ' actual job starts · last seen ' + esc(formatEpoch(workload.last_seen_epoch)) +
-        '</small><small>Observed runner labels: ' +
+        '</small><small>Optional workflow runs-on family label: ' +
+        esc('gitrun-job-' + String(workload.gitrun_job_id)) +
+        ' · this targets the workload family, not a future run/job ID</small><small>Observed runner labels: '
         esc((workload.labels || []).slice(0, 8).join(', ')) +
         ((workload.labels || []).length > 8 ? ' …' : '') +
         '</small><small>Recurring: ' + esc(recurring) +
@@ -135,7 +137,7 @@ export async function renderAppSettings() {
       '<div class="field"><label for="kitty-warmup-lead">Predictive warm-up lead (seconds)</label><input id="kitty-warmup-lead" type="number" min="300" max="3600" step="300" value="' + esc(String(kittySettings.warm_pool_lead_seconds ?? 300)) + '"><small class="field-hint">Default 300 seconds: prepare for a recurring weekday/hour demand pattern five minutes before its target slot.</small></div>' +
       '<div class="field"><label for="kitty-min-quality">Minimum forecast readiness (0.5–1)</label><input id="kitty-min-quality" type="number" min="0.5" max="1" step="0.01" value="' + esc(String(kittySettings.minimum_quality_score)) + '"><small class="field-hint">A heuristic readiness score, not a calibrated probability.</small></div>' +
     '</div>' +
-    '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management remains unavailable. Smart Fast Stop only cancels an allowlisted workflow run after its configured maximum runtime and GSR authorization; GitHub run cancellation also affects every job in that run. Workload run/job IDs are recorded for identity and audit, but GitHub Actions dispatch remains based on workflow runner labels: Kitty cannot promise that a particular queued job is hard-pinned to one container unless the workflow routing contract requests matching labels.</p></div></div>' +
+    '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management remains unavailable. Smart Fast Stop only cancels an allowlisted workflow run after its configured maximum runtime and GSR authorization; GitHub run cancellation also affects every job in that run. Workload run/job IDs are recorded for identity and audit, but GitHub Actions dispatch remains based on workflow runner labels: Kitty adds an optional gitrun-job-<GitRun job ID> family label to predictive prewarms, but the workflow must include it in runs-on to prefer that family. This still does not hard-pin a future run/job ID to one unique container.</p></div></div>' +
     '<div class="toolbar"><span class="field-hint">System installs request administrator authorization to save Kitty settings. Changes are read by the scheduler within 30 seconds.</span><div class="heading-actions"><button class="btn" id="refresh-kitty-status">Refresh model status</button><button class="btn btn-primary" id="save-kitty-settings">Save Kitty settings</button></div></div>' +
     '<div class="section-heading mt-12"><h3>Workflow Model status</h3>' + pill(kittySettings.enabled ? (kittySettings.shadow_mode ? "Shadow mode" : "Enabled") : "Disabled", kittySettings.enabled ? (kittySettings.shadow_mode ? "info" : "warn") : "neutral") + '</div>' +
     '<div class="card-list mt-10">' + kittyRows + '</div>'

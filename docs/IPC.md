@@ -1,4 +1,4 @@
-# GitRun IPC and socket architecture — 1.4.6
+# GitRun IPC and socket architecture — 1.5.0
 
 GitRun has two distinct communication concepts: the workflow-facing API socket and the internal GSR/executor authentication protocol.
 
@@ -77,3 +77,8 @@ This prevents a historical job on the same runner, a reused container name, or a
 The socket does not make an untrusted process privileged. The host-side authorization layer must establish runner/workflow identity and apply the repository policy before an operation reaches `gitrun-exe`.
 
 The Docker socket remains a separate host-level trust boundary on Linux.
+
+
+## Verification boundary (v1.5.0)
+
+The protocol and runtime-contract tests in PR #83 cover configured request, authentication and execution-boundary regressions. A green test run is not equivalent to an end-to-end adversarial test of every API operation across a real runner disconnect, container replacement and cross-process race. Consult the [contract inventory](v1.5.0-contract-inventory.md) and [refactor status](v1.5.0-refactor-status.md) for current evidence and remaining deployment-specific checks.

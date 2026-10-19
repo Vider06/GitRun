@@ -899,6 +899,16 @@ fn handle_stream_with_identity_provider(
         )?;
         return Ok(());
     };
+    if identity
+        .workflow_job_id
+        .is_some_and(|bound_job_id| bound_job_id != current_job.id)
+    {
+        send_error(
+            &mut stream,
+            "authoritative GitHub job ID does not match the runner's exact queued-job binding",
+        )?;
+        return Ok(());
+    }
     if !workflow_job_is_active_on_runner(
         current_job.runner_name.as_deref(),
         &current_job.status,
@@ -6388,6 +6398,7 @@ mod api_identity_validation_tests {
             container_id: "a".repeat(64),
             workflow_job: None,
             workflow_run_id: None,
+            workflow_job_id: None,
         }
     }
 
@@ -6860,6 +6871,7 @@ mod api_socket_identity_integration_tests {
                 container_id: "a".repeat(64),
                 workflow_job: Some("build".into()),
                 workflow_run_id: Some(42),
+                workflow_job_id: Some(101),
             }),
             active_job: None,
             job: Some(WorkflowJobInfo {

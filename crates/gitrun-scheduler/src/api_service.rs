@@ -5456,15 +5456,6 @@ fn command_output(output: std::process::Output) -> Result<ExecutionResult, Execu
     })
 }
 
-fn docker_exec_checked_as_runner(
-    container: &str,
-    args: &[&str],
-) -> Result<ExecutionResult, ExecutionError> {
-    let output = docker::exec_container_as_runner(container, args)
-        .map_err(|error| failed(error.to_string()))?;
-    command_output(output)
-}
-
 /// Intentionally privileged container execution, reserved for the separately
 /// authorized GitInstallRun operation. Callers must never use this for paths,
 /// workflow commands or ordinary runner I/O.

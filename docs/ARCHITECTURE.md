@@ -1,6 +1,6 @@
 # GitRun architecture — v1.5.0 refactor (draft)
 
-> This is a high-level architecture overview, not a completed contract audit. The crate-by-crate evidence map and remaining test obligations are tracked in [v1.5.0-contract-inventory.md](v1.5.0-contract-inventory.md) and [v1.5.0-refactor-status.md](v1.5.0-refactor-status.md).
+> This is a high-level architecture overview. The contract inventory and refactor tracker carry the detailed source/test audit and current verification state. The crate-by-crate evidence map and remaining test obligations are tracked in [v1.5.0-contract-inventory.md](v1.5.0-contract-inventory.md) and [v1.5.0-refactor-status.md](v1.5.0-refactor-status.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 
@@ -71,3 +71,8 @@ The major trust boundaries are:
 Runner caches default to per-runner isolation. Repository/global scopes are explicit broader trust decisions. Managed Linux runners use a dedicated GitRun Docker network; the network itself is a segregation point for deployment firewall/proxy policy, not an egress firewall.
 
 The Docker socket remains a host-level privilege boundary on Linux. See [SECURITY_MODEL.md](SECURITY_MODEL.md).
+
+
+## v1.5.0 verification status
+
+PR #83's current head is checked by the GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance workflows. Treat each green result as evidence for the checks actually run, not as proof of complete production-environment coverage. In particular, desktop privilege dialogs and install transitions, real KVM/VirtualBox lifecycle runs, full disconnect-through-API cleanup, and migration of arbitrary pre-existing runner images require separate evidence. The [status tracker](v1.5.0-refactor-status.md) is authoritative for the current commit and release decision.

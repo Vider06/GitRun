@@ -77,6 +77,11 @@ pub struct KittySettings {
     /// Reserved until reliable active-job duration and cancellation outcomes
     /// are modeled. It never submits a cancellation request in this version.
     pub smart_fast_stop_enabled: bool,
+    /// Allows pre-authorized Stop/Fast Stop actions without per-action UI
+    /// prompts. GSR's policy gate and durable audit remain mandatory.
+    pub automation_mode: bool,
+    /// Operator-controlled repository allowlist for automatic Stop/Fast Stop.
+    pub automation_allowed_repositories: Vec<String>,
     pub shadow_mode: bool,
     /// Five-minute buckets required before a forecast can be considered.
     /// The default requires two days of observed history.
@@ -105,6 +110,8 @@ impl Default for KittySettings {
             predictive_warm_pool_enabled: false,
             adaptive_resource_management_enabled: false,
             smart_fast_stop_enabled: false,
+            automation_mode: false,
+            automation_allowed_repositories: Vec::new(),
             shadow_mode: true,
             minimum_samples: 576,
             history_buckets: MAX_HISTORY_BUCKETS,
@@ -136,9 +143,40 @@ impl KittySettings {
                 "max_additional_warm_runners must not exceed 100".into(),
             ));
         }
-        if self.adaptive_resource_management_enabled || self.smart_fast_stop_enabled {
+        if self.adaptive_resource_management_enabled {
             return Err(KittyError::Invalid(
-                "Adaptive Resource Management and Smart Fast Stop automation are reserved and not supported by this version".into(),
+                "Adaptive Resource Management is reserved and not supported by this version".into(),
+            ));
+        }
+        if self.automation_allowed_repositories.len() > MAX_DASHBOARD_REPOSITORIES
+            || self.automation_allowed_repositories.iter().any(|repo| !valid_repository(repo))
+        {
+            return Err(KittyError::Invalid(
+                "automation_allowed_repositories must contain at most 64 valid owner/repo entries"
+                    .into(),
+            ));
+        }
+        let mut allowed = HashSet::new();
+        if self
+            .automation_allowed_repositories
+            .iter()
+            .any(|repo| !allowed.insert(repo.to_ascii_lowercase()))
+        {
+            return Err(KittyError::Invalid(
+                "automation_allowed_repositories contains duplicate repositories".into(),
+            ));
+        }
+        if self.automation_mode && self.automation_allowed_repositories.is_empty() {
+            return Err(KittyError::Invalid(
+                "Automation mode requires an explicit repository allowlist".into(),
+            ));
+        }
+        if self.smart_fast_stop_enabled
+            && (!self.automation_mode || self.automation_allowed_repositories.is_empty())
+        {
+            return Err(KittyError::Invalid(
+                "Smart Fast Stop requires Automation mode and an explicit repository allowlist"
+                    .into(),
             ));
         }
         if !(300..=3600).contains(&self.warm_pool_min_hold_seconds)

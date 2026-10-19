@@ -2745,7 +2745,10 @@ mod tests {
             b"previous-version"
         );
         assert!(!install.join("new-only.txt").exists());
-        assert!(!install_backup.exists(), "trusted backup should be renamed into place");
+        assert!(
+            !install_backup.exists(),
+            "trusted backup should be renamed into place"
+        );
         assert_eq!(
             fs::read(state.join("preserve.txt")).unwrap(),
             b"state-is-not-being-restored"

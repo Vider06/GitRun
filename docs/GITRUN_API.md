@@ -165,3 +165,8 @@ The public workflow API does not expose this channel key.
 ## Security note
 
 The API is an authorization boundary, not a replacement for host isolation. A Linux runner that already has Docker socket access retains host-level Docker authority. See [SECURITY_MODEL.md](SECURITY_MODEL.md).
+
+
+## v1.5.0 verification boundary
+
+PR #83 CI exercises the configured API/runtime-contract and security regression suites. The live GitDockRun mount test exercises cleanup in a privileged Docker namespace, but it is not the same as driving the full authorized disconnect endpoint end-to-end with a real client lifecycle. Treat that complete API path as unverified until separate evidence is recorded. Current-head results and all remaining limitations are tracked in [v1.5.0-refactor-status.md](v1.5.0-refactor-status.md).

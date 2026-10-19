@@ -449,6 +449,16 @@ fn authorize_dock(
                 let policy = command_policy.ok_or(ApiGateError::PolicyDenied {
                     reason: "GSR command policy is required for docked execute".into(),
                 })?;
+                // Docker exec starts outside the long-lived runner's GSR
+                // supervisor tree. A blacklist-only policy is therefore not
+                // sufficient for this API: require the administrator to
+                // explicitly enumerate permitted executables before allowing
+                // direct Execute operations.
+                if !policy.user_whitelist.enabled {
+                    return Err(ApiGateError::PolicyDenied {
+                        reason: "GitDockRun Execute requires an enabled command whitelist".into(),
+                    });
+                }
                 if let Decision::Denied { reason } = policy.evaluate(command) {
                     return Err(ApiGateError::CommandDenied { reason });
                 }
@@ -591,6 +601,34 @@ mod tests {
     }
 
     #[test]
+    fn dock_execute_fails_closed_when_command_whitelist_is_disabled() {
+        let settings = settings_for_dock();
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let policy = CommandPolicy {
+            baseline_blacklist: gitrun_core::PatternList::new(
+                true,
+                gitrun_core::baseline_patterns(),
+            ),
+            user_blacklist: Default::default(),
+            user_whitelist: Default::default(),
+        };
+        let result = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Execute,
+            Some("cache"),
+            BTreeMap::from([("command".into(), "cargo test".into())]),
+            Some(&policy),
+        );
+        assert!(matches!(
+            result,
+            Err(ApiGateError::PolicyDenied { reason })
+                if reason.contains("enabled command whitelist")
+        ));
+    }
+
+    #[test]
     fn dock_execute_rejects_shell_operators_even_when_whitelist_matches() {
         let settings = settings_for_dock();
         let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
@@ -638,7 +676,7 @@ mod tests {
                 gitrun_core::baseline_patterns(),
             ),
             user_blacklist: Default::default(),
-            user_whitelist: Default::default(),
+            user_whitelist: gitrun_core::PatternList::new(true, vec!["curl".into()]),
         };
         let result = authorize(
             &settings,
@@ -646,7 +684,10 @@ mod tests {
             GitRunApi::GitDockRun,
             GitRunOperation::Execute,
             Some("cache"),
-            BTreeMap::from([("command".into(), "sudo id".into())]),
+            BTreeMap::from([(
+                "command".into(),
+                "curl http://169.254.169.254/latest/meta-data/".into(),
+            )]),
             Some(&policy),
         );
         assert!(matches!(result, Err(ApiGateError::CommandDenied { .. })));

@@ -75,8 +75,8 @@ pub struct KittySettings {
     /// Reserved until reliable per-job resource measurements and bounded
     /// runner profiles are available. It never authorizes a resource change.
     pub adaptive_resource_management_enabled: bool,
-    /// Reserved until reliable active-job duration and cancellation outcomes
-    /// are modeled. It never submits a cancellation request in this version.
+    /// Allows GSR-gated Fast Stop for verified active workflow runs that exceed
+    /// the operator's age threshold. GitHub's force-cancel endpoint is run-scoped.
     pub smart_fast_stop_enabled: bool,
     /// Allows pre-authorized Stop/Fast Stop actions without per-action UI
     /// prompts. GSR's policy gate and durable audit remain mandatory.
@@ -1145,7 +1145,17 @@ impl KittyRuntime {
                 record.workload_code == target.workload_code
                     && record.target_epoch == target.target_epoch
             });
-            if !exists && model.workload_predictions.len() < MAX_WORKLOAD_PREDICTIONS {
+            if !exists {
+                if model.workload_predictions.len() >= MAX_WORKLOAD_PREDICTIONS {
+                    if let Some((index, _)) = model
+                        .workload_predictions
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, record)| record.issued_at_bucket)
+                    {
+                        model.workload_predictions.remove(index);
+                    }
+                }
                 model.workload_predictions.push(WorkloadPredictionRecord {
                     workload_code: target.workload_code.clone(),
                     issued_at_bucket: bucket,
@@ -2369,15 +2379,21 @@ fn record_queued_job_occurrences(
                 // One authoritative run/job ID must never change workload identity.
                 continue;
             }
-            existing.observed_at_epoch = observed_at_epoch;
-            if let Some(pattern) = model
-                .workload_patterns
-                .iter_mut()
-                .find(|pattern| pattern.workload_code == workload_code)
+            let heartbeat_bucket =
+                observed_at_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
+            if existing.observed_at_epoch / BUCKET_SECONDS
+                < heartbeat_bucket / BUCKET_SECONDS
             {
-                pattern.last_seen_epoch = observed_at_epoch;
+                existing.observed_at_epoch = heartbeat_bucket;
+                if let Some(pattern) = model
+                    .workload_patterns
+                    .iter_mut()
+                    .find(|pattern| pattern.workload_code == workload_code)
+                {
+                    pattern.last_seen_epoch = heartbeat_bucket;
+                }
+                changed = true;
             }
-            changed = true;
             continue;
         }
 

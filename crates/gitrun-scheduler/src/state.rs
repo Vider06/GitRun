@@ -171,19 +171,20 @@ fn make_gitrun_job_id(repository: &str, sequence: u64) -> Option<String> {
 }
 
 fn valid_gitrun_job_id(code: &str, repository: &str) -> bool {
-    let Some((hash, sequence)) = code
+    let Some((hash, sequence_hex)) = code
         .strip_prefix("grj-")
         .and_then(|part| part.split_once('-'))
     else {
         return false;
     };
-    let Ok(sequence) = u64::from_str_radix(sequence, 16) else {
+    let Ok(sequence) = u64::from_str_radix(sequence_hex, 16) else {
         return false;
     };
     hash.len() == 16
         && hash == format!("{:016x}", repository_identity_hash(repository))
+        && sequence_hex == format!("{sequence:016x}")
         && sequence > 0
-        && code.len() == 3 + 16 + 1 + 16
+        && code.len() == 4 + 16 + 1 + 16
 }
 
 fn job_identity_key(repository: &str, run_id: u64, job_id: u64) -> String {

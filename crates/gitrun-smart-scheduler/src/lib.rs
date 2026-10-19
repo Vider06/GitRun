@@ -26,8 +26,17 @@ const MAX_HISTORY_BUCKETS: usize = 2016; // Seven days, sampled every five minut
 const MAX_MODELS: usize = 64;
 const MAX_DASHBOARD_REPOSITORIES: usize = 64;
 const MAX_AUDIT_RECORDS: usize = 128;
-const MAX_EVALUATED_FORECASTS: usize = 2016;
+const MAX_EVALUATED_FORECASTS: usize = 4032;
 const FORECAST_HORIZON_SECONDS: u64 = 3600;
+const WEEK_SECONDS: u64 = 7 * 24 * 60 * 60;
+const COMPACT_MONTH_SECONDS: u64 = WEEK_SECONDS * 4;
+const COMPACT_YEAR_SECONDS: u64 = COMPACT_MONTH_SECONDS * 12;
+const MAX_WEEKLY_SUMMARIES: usize = 4;
+const MAX_MONTHLY_SUMMARIES: usize = 12;
+const MAX_YEARLY_SUMMARIES: usize = 64;
+const TEMPORAL_SLOT_COUNT: usize = 7 * 24;
+const MIN_SEASONAL_OCCURRENCES: f64 = 4.0;
+const DEFAULT_WARM_POOL_LEAD_SECONDS: u64 = 300;
 const SETTINGS_RELOAD_INTERVAL: Duration = Duration::from_secs(30);
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -75,6 +84,9 @@ pub struct KittySettings {
     pub max_additional_warm_runners: u32,
     /// Keep an applied predictive floor briefly to reduce capacity oscillation.
     pub warm_pool_min_hold_seconds: u64,
+    /// Prepare predicted schedule-specific capacity this long before its target
+    /// time. This is a lead time, not the hold duration.
+    pub warm_pool_lead_seconds: u64,
     /// Readiness threshold; a quality/readiness score, not a probability.
     pub minimum_quality_score: f64,
 }
@@ -95,6 +107,7 @@ impl Default for KittySettings {
             history_buckets: MAX_HISTORY_BUCKETS,
             max_additional_warm_runners: 2,
             warm_pool_min_hold_seconds: 900,
+            warm_pool_lead_seconds: DEFAULT_WARM_POOL_LEAD_SECONDS,
             minimum_quality_score: 0.85,
         }
     }
@@ -130,6 +143,14 @@ impl KittySettings {
         {
             return Err(KittyError::Invalid(
                 "warm_pool_min_hold_seconds must be between 300 and 3600".into(),
+            ));
+        }
+        if !(300..=3600).contains(&self.warm_pool_lead_seconds)
+            || !self.warm_pool_lead_seconds.is_multiple_of(300)
+        {
+            return Err(KittyError::Invalid(
+                "warm_pool_lead_seconds must be between 300 and 3600 and be a multiple of 300"
+                    .into(),
             ));
         }
         if !self.minimum_quality_score.is_finite()
@@ -207,6 +228,77 @@ impl Observation {
     }
 }
 
+/// One compact demand aggregate for a recurring weekday/hour slot.
+/// Tuple serialization keeps old-history JSON substantially smaller.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TemporalDemandSlot(
+    pub u64, // five-minute observations
+    pub u64, // sum of observed demand
+    pub u32, // peak demand observed in this slot
+    pub u32, // distinct weekly periods in which this slot was observed
+);
+
+/// Summary for one fixed-duration retention period. The 168 slots correspond
+/// to Monday 00:00 through Sunday 23:00 in the scheduler host's local time.
+/// Periods themselves use stable epoch-aligned 7-day, 4-week and 48-week spans.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeriodSummary {
+    pub period_start_epoch: u64,
+    pub period_end_epoch: u64,
+    pub observation_count: u64,
+    pub demand_sum: u64,
+    pub peak_demand: u32,
+    #[serde(default)]
+    pub slots: Vec<TemporalDemandSlot>,
+}
+
+impl PeriodSummary {
+    fn new(period_start_epoch: u64, period_seconds: u64) -> Self {
+        Self {
+            period_start_epoch,
+            period_end_epoch: period_start_epoch.saturating_add(period_seconds),
+            observation_count: 0,
+            demand_sum: 0,
+            peak_demand: 0,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+        }
+    }
+
+    fn record(&mut self, observation: &Observation) {
+        let demand = observation.demand();
+        self.observation_count = self.observation_count.saturating_add(1);
+        self.demand_sum = self.demand_sum.saturating_add(u64::from(demand));
+        self.peak_demand = self.peak_demand.max(demand);
+        let slot = &mut self.slots[weekday_hour_slot(observation.bucket_epoch)];
+        if slot.0 == 0 {
+            slot.3 = slot.3.saturating_add(1);
+        }
+        slot.0 = slot.0.saturating_add(1);
+        slot.1 = slot.1.saturating_add(u64::from(demand));
+        slot.2 = slot.2.max(demand);
+    }
+
+    /// Merge aggregate values without changing this summary's period bounds.
+    fn merge_values(&mut self, other: &Self) {
+        self.observation_count = self.observation_count.saturating_add(other.observation_count);
+        self.demand_sum = self.demand_sum.saturating_add(other.demand_sum);
+        self.peak_demand = self.peak_demand.max(other.peak_demand);
+        if self.slots.len() != TEMPORAL_SLOT_COUNT {
+            self.slots.resize(TEMPORAL_SLOT_COUNT, TemporalDemandSlot::default());
+        }
+        for (slot, other_slot) in self.slots.iter_mut().zip(&other.slots) {
+            slot.0 = slot.0.saturating_add(other_slot.0);
+            slot.1 = slot.1.saturating_add(other_slot.1);
+            slot.2 = slot.2.max(other_slot.2);
+            slot.3 = slot.3.saturating_add(other_slot.3);
+        }
+    }
+}
+
+fn default_forecast_horizon_seconds() -> u64 {
+    FORECAST_HORIZON_SECONDS
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Forecast {
     pub model_version: u32,
@@ -216,6 +308,17 @@ pub struct Forecast {
     pub sample_count: usize,
     pub evaluated_forecasts: usize,
     pub predicted_peak_concurrency: u32,
+    /// Seasonality-aware estimate for the same weekday/hour as the next
+    /// configured warm-pool lead time. None means the repeated pattern is not
+    /// sufficiently represented in retained history.
+    #[serde(default)]
+    pub seasonal_target_epoch: u64,
+    #[serde(default)]
+    pub seasonal_predicted_peak_concurrency: Option<u32>,
+    #[serde(default)]
+    pub bias_correction: Option<f64>,
+    #[serde(default)]
+    pub seasonal_bias_correction: Option<f64>,
     pub mean_absolute_error: Option<f64>,
     pub quality_score: f64,
     /// Readiness score combines data volume, forecast quality and freshness.
@@ -227,6 +330,8 @@ pub struct Forecast {
 pub struct PredictionRecord {
     pub issued_at_bucket: u64,
     pub target_bucket: u64,
+    #[serde(default = "default_forecast_horizon_seconds")]
+    pub horizon_seconds: u64,
     pub predicted_demand: u32,
     pub actual_demand: Option<u32>,
     pub skipped_missing_observation: bool,
@@ -272,6 +377,18 @@ pub struct WorkflowModel {
     pub repository: String,
     pub generated_at_epoch: u64,
     pub history: Vec<Observation>,
+    /// Bounded four-week view after raw five-minute samples expire.
+    #[serde(default)]
+    pub weekly_summaries: Vec<PeriodSummary>,
+    /// Four-week (28-day) compact periods retained for up to twelve periods.
+    #[serde(default)]
+    pub monthly_summaries: Vec<PeriodSummary>,
+    /// Twelve compact periods (336 days) retained for up to 64 years.
+    #[serde(default)]
+    pub yearly_summaries: Vec<PeriodSummary>,
+    /// Bounded aggregate for older years so storage remains capped indefinitely.
+    #[serde(default)]
+    pub lifetime_summary: Option<PeriodSummary>,
     pub predictions: Vec<PredictionRecord>,
     pub latest_forecast: Option<Forecast>,
     pub decision_audit: Vec<DecisionAudit>,
@@ -285,6 +402,10 @@ impl WorkflowModel {
             repository: repository.to_owned(),
             generated_at_epoch: 0,
             history: Vec::new(),
+            weekly_summaries: Vec::new(),
+            monthly_summaries: Vec::new(),
+            yearly_summaries: Vec::new(),
+            lifetime_summary: None,
             predictions: Vec::new(),
             latest_forecast: None,
             decision_audit: Vec::new(),
@@ -307,12 +428,34 @@ impl WorkflowModel {
             ));
         }
         if self.history.len() > history_limit
+            || self.weekly_summaries.len() > MAX_WEEKLY_SUMMARIES
+            || self.monthly_summaries.len() > MAX_MONTHLY_SUMMARIES
+            || self.yearly_summaries.len() > MAX_YEARLY_SUMMARIES
             || self.predictions.len() > MAX_EVALUATED_FORECASTS
             || self.decision_audit.len() > MAX_AUDIT_RECORDS
         {
             return Err(KittyError::Invalid(
                 "stored model exceeds its bounded history limits".into(),
             ));
+        }
+        for (summaries, period_seconds) in [
+            (&self.weekly_summaries, WEEK_SECONDS),
+            (&self.monthly_summaries, COMPACT_MONTH_SECONDS),
+            (&self.yearly_summaries, COMPACT_YEAR_SECONDS),
+        ] {
+            let mut previous_start = None;
+            for summary in summaries {
+                validate_period_summary(summary, Some(period_seconds))?;
+                if previous_start.is_some_and(|start| start >= summary.period_start_epoch) {
+                    return Err(KittyError::Invalid(
+                        "stored retention summaries are not strictly chronological".into(),
+                    ));
+                }
+                previous_start = Some(summary.period_start_epoch);
+            }
+        }
+        if let Some(summary) = &self.lifetime_summary {
+            validate_period_summary(summary, None)?;
         }
         let mut previous = None;
         for item in &self.history {
@@ -326,10 +469,13 @@ impl WorkflowModel {
         }
         for prediction in &self.predictions {
             if prediction.issued_at_bucket % BUCKET_SECONDS != 0
+                || !(BUCKET_SECONDS..=FORECAST_HORIZON_SECONDS)
+                    .contains(&prediction.horizon_seconds)
+                || !prediction.horizon_seconds.is_multiple_of(BUCKET_SECONDS)
                 || prediction.target_bucket
                     != prediction
                         .issued_at_bucket
-                        .saturating_add(FORECAST_HORIZON_SECONDS)
+                        .saturating_add(prediction.horizon_seconds)
                 || prediction.target_bucket % BUCKET_SECONDS != 0
                 || (prediction.skipped_missing_observation && prediction.actual_demand.is_some())
             {
@@ -354,6 +500,15 @@ impl WorkflowModel {
                 || forecast
                     .mean_absolute_error
                     .is_some_and(|value| !value.is_finite() || value < 0.0)
+                || forecast.seasonal_target_epoch < forecast.generated_at_epoch
+                || forecast.seasonal_target_epoch
+                    > forecast.generated_at_epoch.saturating_add(FORECAST_HORIZON_SECONDS)
+                || forecast
+                    .bias_correction
+                    .is_some_and(|value| !value.is_finite())
+                || forecast
+                    .seasonal_bias_correction
+                    .is_some_and(|value| !value.is_finite())
             {
                 return Err(KittyError::Invalid(
                     "stored forecast record is outside supported bounds".into(),
@@ -587,9 +742,11 @@ impl KittyRuntime {
         let model = self.models.get_mut(&key).ok_or_else(|| {
             KittyError::Invalid("model disappeared during a single-threaded update".into())
         })?;
-        if model.history.len() > self.settings.history_buckets {
-            let excess = model.history.len() - self.settings.history_buckets;
-            model.history.drain(0..excess);
+        if compact_model_history(
+            model,
+            input.observed_at_epoch,
+            self.settings.history_buckets,
+        ) {
             model.latest_forecast = None;
             self.dirty_models.insert(key.clone());
         }
@@ -621,11 +778,15 @@ impl KittyRuntime {
             (last.demand() > old_peak, false)
         } else {
             model.history.push(observation);
-            if model.history.len() > self.settings.history_buckets {
-                let excess = model.history.len() - self.settings.history_buckets;
-                model.history.drain(0..excess);
-            }
             evaluate_matured_predictions(model, bucket);
+            if compact_model_history(
+                model,
+                input.observed_at_epoch,
+                self.settings.history_buckets,
+            ) {
+                model.latest_forecast = None;
+                self.dirty_models.insert(key.clone());
+            }
             if self.settings.predictive_analytics_enabled {
                 model.latest_forecast =
                     compute_forecast(model, &self.settings, input.observed_at_epoch);
@@ -633,10 +794,24 @@ impl KittyRuntime {
                     model.predictions.push(PredictionRecord {
                         issued_at_bucket: bucket,
                         target_bucket: bucket.saturating_add(FORECAST_HORIZON_SECONDS),
+                        horizon_seconds: FORECAST_HORIZON_SECONDS,
                         predicted_demand: forecast.predicted_peak_concurrency,
                         actual_demand: None,
                         skipped_missing_observation: false,
                     });
+                    if let Some(seasonal_prediction) =
+                        forecast.seasonal_predicted_peak_concurrency
+                    {
+                        model.predictions.push(PredictionRecord {
+                            issued_at_bucket: bucket,
+                            target_bucket: bucket
+                                .saturating_add(self.settings.warm_pool_lead_seconds),
+                            horizon_seconds: self.settings.warm_pool_lead_seconds,
+                            predicted_demand: seasonal_prediction,
+                            actual_demand: None,
+                            skipped_missing_observation: false,
+                        });
+                    }
                 }
             } else {
                 model.latest_forecast = None;
@@ -665,13 +840,18 @@ impl KittyRuntime {
             None
         };
         let sample_count = model.history.len();
+        let forecast_demand = forecast.map(|f| {
+            f.seasonal_predicted_peak_concurrency
+                .unwrap_or(f.predicted_peak_concurrency)
+        });
         let proposed_min = forecast
             .filter(|f| {
                 self.settings.predictive_warm_pool_enabled
                     && f.confidence_score >= self.settings.minimum_quality_score
             })
             .map(|f| {
-                let desired = f.predicted_peak_concurrency;
+                let desired = f.seasonal_predicted_peak_concurrency
+                    .unwrap_or(f.predicted_peak_concurrency);
                 let additional = desired
                     .saturating_sub(configured_min_runners)
                     .min(self.settings.max_additional_warm_runners);
@@ -762,7 +942,8 @@ impl KittyRuntime {
                     configured_min_runners,
                     format!(
                         "Forecast demand is {}; capacity automation is disabled.",
-                        f.predicted_peak_concurrency
+                        f.seasonal_predicted_peak_concurrency
+                            .unwrap_or(f.predicted_peak_concurrency)
                     ),
                 )
             } else if self.settings.shadow_mode {
@@ -771,7 +952,8 @@ impl KittyRuntime {
                     configured_min_runners,
                     format!(
                         "Shadow recommendation: raise the runner floor from {} to {} for the one-hour demand forecast. No capacity change applied.",
-                        configured_min_runners, proposed_min
+                        configured_min_runners,
+                        proposed_min
                     ),
                 )
             } else if !capacity_growth_allowed {
@@ -800,7 +982,8 @@ impl KittyRuntime {
                             "Predictive warm-pool floor raised/retained within explicit bounds: {} to {} (forecast {}, readiness {:.3}, hold {}s).",
                             configured_min_runners,
                             target,
-                            f.predicted_peak_concurrency,
+                            f.seasonal_predicted_peak_concurrency
+                                .unwrap_or(f.predicted_peak_concurrency),
                             f.confidence_score,
                             self.settings.warm_pool_min_hold_seconds
                         ),
@@ -825,7 +1008,7 @@ impl KittyRuntime {
             configured_min_runners,
             proposed_min_runners: proposed_min,
             effective_min_runners: effective_min,
-            predicted_peak_concurrency: forecast.map(|f| f.predicted_peak_concurrency),
+            predicted_peak_concurrency: forecast_demand,
             confidence_score: forecast.map(|f| f.confidence_score),
             sample_count,
             shadow_mode: self.settings.shadow_mode,
@@ -1503,6 +1686,238 @@ fn atomic_write_system_readable(_path: &Path, _bytes: &[u8], _group: u32) -> Res
     ))
 }
 
+fn validate_period_summary(
+    summary: &PeriodSummary,
+    expected_period_seconds: Option<u64>,
+) -> Result<()> {
+    if summary.period_end_epoch <= summary.period_start_epoch
+        || summary.slots.len() != TEMPORAL_SLOT_COUNT
+        || expected_period_seconds.is_some_and(|seconds| {
+            summary.period_end_epoch.saturating_sub(summary.period_start_epoch) != seconds
+                || summary.period_start_epoch % seconds != 0
+        })
+    {
+        return Err(KittyError::Invalid(
+            "stored retention summary has invalid period bounds or time-slot count".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn utc_weekday_hour_slot(epoch: u64) -> usize {
+    let days = epoch / 86_400;
+    let weekday = ((days + 3) % 7) as usize; // Monday = 0; 1970-01-01 was Thursday.
+    let hour = ((epoch % 86_400) / 3_600) as usize;
+    weekday * 24 + hour
+}
+
+fn weekday_hour_slot(epoch: u64) -> usize {
+    #[cfg(unix)]
+    {
+        let Ok(timestamp) = libc::time_t::try_from(epoch) else {
+            return utc_weekday_hour_slot(epoch);
+        };
+        let mut local = unsafe { std::mem::zeroed::<libc::tm>() };
+        let result = unsafe { libc::localtime_r(&timestamp, &mut local) };
+        if !result.is_null() && (0..24).contains(&local.tm_hour) {
+            let weekday = (local.tm_wday + 6).rem_euclid(7) as usize;
+            return weekday * 24 + local.tm_hour as usize;
+        }
+    }
+    utc_weekday_hour_slot(epoch)
+}
+
+fn weekly_period_start(epoch: u64) -> u64 {
+    let days = epoch / 86_400;
+    let weekday = (days + 3) % 7; // Monday-aligned UTC week.
+    days.saturating_sub(weekday).saturating_mul(86_400)
+}
+
+fn compact_model_history(
+    model: &mut WorkflowModel,
+    now_epoch: u64,
+    history_limit: usize,
+) -> bool {
+    let history_limit = history_limit.clamp(24, MAX_HISTORY_BUCKETS);
+    let raw_window_seconds = (history_limit as u64).saturating_mul(BUCKET_SECONDS);
+    let cutoff = now_epoch.saturating_sub(raw_window_seconds);
+    let expired = model
+        .history
+        .iter()
+        .take_while(|sample| sample.bucket_epoch < cutoff)
+        .count();
+    let excess = model.history.len().saturating_sub(history_limit);
+    let remove_count = expired.max(excess);
+    let mut changed = false;
+
+    if remove_count > 0 {
+        let removed: Vec<_> = model.history.drain(0..remove_count).collect();
+        for sample in removed {
+            let start = weekly_period_start(sample.bucket_epoch);
+            let summary = if let Some(index) = model
+                .weekly_summaries
+                .iter()
+                .position(|entry| entry.period_start_epoch == start)
+            {
+                &mut model.weekly_summaries[index]
+            } else {
+                model.weekly_summaries.push(PeriodSummary::new(start, WEEK_SECONDS));
+                model.weekly_summaries
+                    .sort_by_key(|entry| entry.period_start_epoch);
+                let index = model
+                    .weekly_summaries
+                    .iter()
+                    .position(|entry| entry.period_start_epoch == start)
+                    .expect("new weekly summary was inserted");
+                &mut model.weekly_summaries[index]
+            };
+            summary.record(&sample);
+        }
+        changed = true;
+    }
+
+    // A complete rolling 4-week period is folded only after its end has left
+    // the configured high-resolution window. This avoids double-counting a
+    // period whose most recent observations are still in raw history.
+    let month_starts: HashSet<u64> = model
+        .weekly_summaries
+        .iter()
+        .map(|entry| entry.period_start_epoch / COMPACT_MONTH_SECONDS * COMPACT_MONTH_SECONDS)
+        .filter(|start| start.saturating_add(COMPACT_MONTH_SECONDS) <= cutoff)
+        .collect();
+    for start in month_starts {
+        let end = start.saturating_add(COMPACT_MONTH_SECONDS);
+        let mut summary = PeriodSummary::new(start, COMPACT_MONTH_SECONDS);
+        let mut retained = Vec::with_capacity(model.weekly_summaries.len());
+        let mut found = false;
+        for entry in model.weekly_summaries.drain(..) {
+            if entry.period_start_epoch >= start && entry.period_start_epoch < end {
+                summary.merge_values(&entry);
+                found = true;
+            } else {
+                retained.push(entry);
+            }
+        }
+        model.weekly_summaries = retained;
+        if found {
+            if let Some(existing) = model
+                .monthly_summaries
+                .iter_mut()
+                .find(|entry| entry.period_start_epoch == start)
+            {
+                existing.merge_values(&summary);
+            } else {
+                model.monthly_summaries.push(summary);
+            }
+            model.monthly_summaries
+                .sort_by_key(|entry| entry.period_start_epoch);
+            changed = true;
+        }
+    }
+
+    // A rolling 48-week year is folded only when its full retention period is
+    // past the cutoff; the newest year therefore remains represented by up to
+    // twelve monthly summaries rather than an ever-growing five-minute log.
+    let year_starts: HashSet<u64> = model
+        .monthly_summaries
+        .iter()
+        .map(|entry| entry.period_start_epoch / COMPACT_YEAR_SECONDS * COMPACT_YEAR_SECONDS)
+        .filter(|start| start.saturating_add(COMPACT_YEAR_SECONDS) <= cutoff)
+        .collect();
+    for start in year_starts {
+        let end = start.saturating_add(COMPACT_YEAR_SECONDS);
+        let mut summary = PeriodSummary::new(start, COMPACT_YEAR_SECONDS);
+        let mut retained = Vec::with_capacity(model.monthly_summaries.len());
+        let mut found = false;
+        for entry in model.monthly_summaries.drain(..) {
+            if entry.period_start_epoch >= start && entry.period_start_epoch < end {
+                summary.merge_values(&entry);
+                found = true;
+            } else {
+                retained.push(entry);
+            }
+        }
+        model.monthly_summaries = retained;
+        if found {
+            model.yearly_summaries.push(summary);
+            model.yearly_summaries
+                .sort_by_key(|entry| entry.period_start_epoch);
+            changed = true;
+        }
+    }
+
+    // Keep the last 64 annual summaries and fold still older years into one
+    // lifetime profile. Storage therefore remains bounded for arbitrarily old
+    // installations while retaining long-term weekday/hour statistics.
+    while model.yearly_summaries.len() > MAX_YEARLY_SUMMARIES {
+        let oldest = model.yearly_summaries.remove(0);
+        if let Some(lifetime) = model.lifetime_summary.as_mut() {
+            lifetime.period_start_epoch =
+                lifetime.period_start_epoch.min(oldest.period_start_epoch);
+            lifetime.period_end_epoch = lifetime.period_end_epoch.max(oldest.period_end_epoch);
+            lifetime.merge_values(&oldest);
+        } else {
+            model.lifetime_summary = Some(oldest);
+        }
+        changed = true;
+    }
+
+    changed
+}
+
+#[derive(Default)]
+struct SeasonalSlotStats {
+    weighted_samples: f64,
+    weighted_demand_sum: f64,
+    occurrences: f64,
+}
+
+fn seasonal_slot_stats(
+    model: &WorkflowModel,
+    slot_index: usize,
+    now_epoch: u64,
+) -> SeasonalSlotStats {
+    let mut stats = SeasonalSlotStats::default();
+    let mut observed_weeks = HashSet::new();
+
+    for observation in &model.history {
+        if weekday_hour_slot(observation.bucket_epoch) == slot_index {
+            stats.weighted_samples += 1.0;
+            stats.weighted_demand_sum += f64::from(observation.demand());
+            observed_weeks.insert(weekly_period_start(observation.bucket_epoch));
+        }
+    }
+    stats.occurrences += observed_weeks.len() as f64;
+
+    let mut add_summary = |summary: &PeriodSummary, half_life_seconds: f64| {
+        if let Some(slot) = summary.slots.get(slot_index) {
+            if slot.0 == 0 {
+                return;
+            }
+            let age = now_epoch.saturating_sub(summary.period_end_epoch) as f64;
+            let weight = 2.0_f64.powf(-age / half_life_seconds.max(1.0));
+            stats.weighted_samples += slot.0 as f64 * weight;
+            stats.weighted_demand_sum += slot.1 as f64 * weight;
+            stats.occurrences += slot.3 as f64 * weight;
+        }
+    };
+
+    for summary in &model.weekly_summaries {
+        add_summary(summary, (30 * 86_400) as f64);
+    }
+    for summary in &model.monthly_summaries {
+        add_summary(summary, (180 * 86_400) as f64);
+    }
+    for summary in &model.yearly_summaries {
+        add_summary(summary, (3 * 365 * 86_400) as f64);
+    }
+    if let Some(summary) = &model.lifetime_summary {
+        add_summary(summary, (10 * 365 * 86_400) as f64);
+    }
+
+    stats
+}
+
 fn compute_forecast(
     model: &WorkflowModel,
     settings: &KittySettings,
@@ -1547,20 +1962,72 @@ fn compute_forecast(
     }
     // Keep the forecast peak-sensitive without allowing one outlier to dominate:
     // the recent 90th percentile is a floor, combined with EWMA and short trend.
-    let predicted = (ewma + trend)
+    let corrected = ewma + trend + bias_correction.unwrap_or(0.0);
+    let predicted = corrected
         .max(recent_mean)
         .max(recent_p90)
         .max(0.0)
         .ceil();
     let predicted_peak_concurrency = predicted.min(u32::MAX as f64) as u32;
 
+    let seasonal_target_epoch = now_epoch.saturating_add(settings.warm_pool_lead_seconds);
+    let seasonal_slot = weekday_hour_slot(seasonal_target_epoch);
+    let seasonal_stats = seasonal_slot_stats(model, seasonal_slot, now_epoch);
+    let seasonal_occurrences = seasonal_stats.occurrences;
+    let seasonal_prediction = if seasonal_occurrences >= MIN_SEASONAL_OCCURRENCES
+        && seasonal_stats.weighted_samples > 0.0
+    {
+        let seasonal_mean =
+            seasonal_stats.weighted_demand_sum / seasonal_stats.weighted_samples;
+        let schedule_correction = model
+            .predictions
+            .iter()
+            .filter(|record| {
+                record.horizon_seconds == settings.warm_pool_lead_seconds
+                    && record.actual_demand.is_some()
+                    && !record.skipped_missing_observation
+            })
+            .rev()
+            .take(48)
+            .filter_map(|record| {
+                record
+                    .actual_demand
+                    .map(|actual| f64::from(actual) - f64::from(record.predicted_demand))
+            })
+            .collect::<Vec<_>>();
+        let seasonal_bias_correction = (schedule_correction.len() >= 4)
+            .then(|| mean(&schedule_correction));
+        let corrected = (seasonal_mean + seasonal_bias_correction.unwrap_or(0.0))
+            .max(0.0)
+            .ceil()
+            .min(u32::MAX as f64) as u32;
+        Some((corrected, seasonal_bias_correction))
+    } else {
+        None
+    };
+
     let evaluated: Vec<&PredictionRecord> = model
         .predictions
         .iter()
-        .filter(|record| record.actual_demand.is_some() && !record.skipped_missing_observation)
+        .filter(|record| {
+            record.horizon_seconds == FORECAST_HORIZON_SECONDS
+                && record.actual_demand.is_some()
+                && !record.skipped_missing_observation
+        })
         .rev()
         .take(288)
         .collect();
+    let correction_samples: Vec<f64> = evaluated
+        .iter()
+        .take(48)
+        .filter_map(|record| {
+            record
+                .actual_demand
+                .map(|actual| f64::from(actual) - f64::from(record.predicted_demand))
+        })
+        .collect();
+    let bias_correction = (correction_samples.len() >= 8)
+        .then(|| mean(&correction_samples));
     let (mae, quality_score) = if evaluated.len() >= 24 {
         let errors: Vec<f64> = evaluated
             .iter()
@@ -1589,6 +2056,9 @@ fn compute_forecast(
     let confidence_score =
         (sample_factor * evaluation_factor * quality_score * freshness_factor).clamp(0.0, 1.0);
 
+    let (seasonal_predicted_peak_concurrency, seasonal_bias_correction) = seasonal_prediction
+        .map(|(prediction, correction)| (Some(prediction), correction))
+        .unwrap_or((None, None));
     Some(Forecast {
         model_version: MODEL_VERSION,
         generated_at_epoch: now_epoch,
@@ -1597,6 +2067,10 @@ fn compute_forecast(
         sample_count: history.len(),
         evaluated_forecasts: evaluated.len(),
         predicted_peak_concurrency,
+        seasonal_target_epoch,
+        seasonal_predicted_peak_concurrency,
+        bias_correction,
+        seasonal_bias_correction,
         mean_absolute_error: mae,
         quality_score,
         confidence_score,
@@ -2394,6 +2868,7 @@ mod tests {
         model.predictions.push(PredictionRecord {
             issued_at_bucket: start,
             target_bucket: start + 2 * BUCKET_SECONDS,
+            horizon_seconds: 2 * BUCKET_SECONDS,
             predicted_demand: 3,
             actual_demand: None,
             skipped_missing_observation: false,

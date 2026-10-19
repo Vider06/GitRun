@@ -1487,18 +1487,19 @@ fn execute(
             // requires a fresh GitHub runner snapshot and a GSR permit before
             // destructive work. The normal deterministic idle cleanup remains
             // unchanged outside this explicit automation scope.
-            let kitty_settings =
-                match gitrun_smart_scheduler::load_settings_for_dashboard(state_dir) {
-                    Ok(settings) => settings,
-                    Err(error) => {
-                        // A malformed/untrusted policy must not silently turn
-                        // an automatic destructive path into the legacy path.
-                        eprintln!(
+            let kitty_settings = match gitrun_smart_scheduler::load_settings_for_dashboard(
+                state_dir,
+            ) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    // A malformed/untrusted policy must not silently turn
+                    // an automatic destructive path into the legacy path.
+                    eprintln!(
                             "gitrun-autoscaler: preserving idle runner {name} for {repo}; Kitty settings could not be verified before removal: {error}"
                         );
-                        return Ok(());
-                    }
-                };
+                    return Ok(());
+                }
+            };
             let automation_scope = kitty_settings.automation_mode
                 && kitty_settings
                     .automation_allowed_repositories

@@ -74,6 +74,9 @@ pub struct ReconcileInput {
     pub queued_job_run_ids: Vec<u64>,
     /// Unique GitHub Actions job IDs aligned with queued_job_names/run IDs.
     pub queued_job_ids: Vec<u64>,
+    /// Recurrence-based workload prewarm targets, already authorized by GSR
+    /// and filtered against target/period-tagged containers in the live inventory.
+    pub workload_prewarms: Vec<gitrun_smart_scheduler::WorkloadPrewarm>,
     /// Logical workflow jobs that the static validator marked as GitDockRun
     /// targets. A matching queued job gets dedicated dynamic capacity even
     /// when the default runner labels would otherwise satisfy it.
@@ -115,6 +118,15 @@ pub enum Action {
         /// Exact queued job occurrence; this labels the runner for audit, but
         /// GitHub still assigns jobs through the workflow's runs-on labels.
         job_id: Option<u64>,
+    },
+    /// A time-targeted capacity reservation based on a recurring workload
+    /// profile. The workload code is metadata, not a GitHub job-pinning API.
+    PrewarmWorkload {
+        workload_code: String,
+        target_epoch: u64,
+        hold_until_epoch: u64,
+        job_name: String,
+        job_labels: Vec<String>,
     },
     /// Runner is online in Docker but GitHub doesn't know about it anymore:
     /// remove and recreate, preserving its permanent/dynamic role.
@@ -321,12 +333,39 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
         current += 1;
     }
 
+    // Recurrence-based warmups are considered only after real queued jobs and
+    // Logic Containers targets have consumed capacity. GSR authorization and
+    // inventory-based duplicate suppression happen before this pure planner.
+    let mut scheduled_prewarm_count = 0u32;
+    for workload in &input.workload_prewarms {
+        for _ in 0..workload.runner_count {
+            if current >= input.max_runners {
+                break;
+            }
+            actions.push(Action::PrewarmWorkload {
+                workload_code: workload.workload_code.clone(),
+                target_epoch: workload.target_epoch,
+                hold_until_epoch: workload.hold_until_epoch,
+                job_name: workload.job_name.clone(),
+                job_labels: workload.labels.clone(),
+            });
+            current = current.saturating_add(1);
+            scheduled_prewarm_count = scheduled_prewarm_count.saturating_add(1);
+        }
+        if current >= input.max_runners {
+            break;
+        }
+    }
+
     // 4. Scale down idle containers beyond the minimum, oldest-idle first,
     // preferring to keep permanents (same tie-break as the Python version:
     // sort by (is_permanent, -age) so dynamic+oldest goes first).
     // Reserved Dock containers count against the global maximum, but they
     // must not reduce the ordinary runner pool's minimum guarantee.
-    let minimum_total = input.min_runners.saturating_add(input.reserved_runners);
+    let minimum_total = input
+        .min_runners
+        .saturating_add(input.reserved_runners)
+        .saturating_add(scheduled_prewarm_count);
     if !input.ephemeral && current > minimum_total {
         let removable = current - minimum_total;
         let mut candidates: Vec<&IdleInfo> = input
@@ -388,6 +427,7 @@ mod tests {
             queued_job_names: Vec::new(),
             queued_job_run_ids: Vec::new(),
             queued_job_ids: Vec::new(),
+            workload_prewarms: Vec::new(),
             dock_target_jobs: Vec::new(),
             logic_rules: Vec::new(),
             idle: Vec::new(),

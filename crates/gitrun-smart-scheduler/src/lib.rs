@@ -2516,7 +2516,6 @@ fn record_queued_job_occurrences(
         if !jobs_seen_this_poll.insert(occurrence_code.clone()) {
             continue;
         }
-        let gitrun_job_id = gitrun_job_id_for(job);
 
         if let Some(existing_index) = model
             .recent_job_occurrences
@@ -4285,6 +4284,39 @@ mod tests {
             "completion counts must never exceed the predicted runner count"
         );
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn generated_gitrun_job_id_is_stable_across_github_occurrences() {
+        let first = QueuedJobOccurrence {
+            run_id: 41,
+            job_id: 410,
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            name: "build-linux".into(),
+            labels: vec!["linux".into(), "self-hosted".into()],
+        };
+        let mut later = first.clone();
+        later.run_id = 99;
+        later.job_id = 990;
+        later.labels.reverse();
+
+        assert_eq!(gitrun_job_id_for(&first), gitrun_job_id_for(&later));
+
+        // This is a GitRun-generated logical-job identity. GitHub occurrence
+        // IDs distinguish executions, but cannot change the recurring profile.
+        assert_ne!(
+            generated_occurrence_id(
+                &gitrun_job_id_for(&first),
+                first.run_id,
+                first.job_id
+            ),
+            generated_occurrence_id(
+                &gitrun_job_id_for(&later),
+                later.run_id,
+                later.job_id
+            )
+        );
     }
 
     #[test]

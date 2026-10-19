@@ -1303,7 +1303,6 @@ impl ApiExecutionBackend {
                     .ok_or_else(|| failed("GitSaveRun source has no safe file name"))?;
                 ensure_safe_file_name(name)?;
 
-                let size = docker_file_size(runner, source)?;
                 let policy = GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(
                     &self.state_dir,
                 ))
@@ -1311,50 +1310,36 @@ impl ApiExecutionBackend {
                 .effective_for_repository(&request.repository)
                 .storage;
 
+                // Validate the initial size for a fast rejection, then enforce the
+                // same cap while copying from an already-open source descriptor.
+                // The helper rejects symlink components and publishes atomically,
+                // so a workflow cannot swap the source between stat and copy.
+                let size = docker_file_size(runner, source)?;
                 if size > policy.max_file_size_bytes {
                     return Err(failed("GitSaveRun file exceeds repository storage limit"));
                 }
 
-                docker_exec_checked_as_runner(
-                    runner,
-                    &["mkdir", "-p", "/var/lib/gitrun/shared/files"],
-                )?;
                 let destination = format!("/var/lib/gitrun/shared/files/{name}");
-                docker_exec_checked_as_runner(runner, &["cp", "--", source, destination.as_str()])?;
-
-                // The source is mutable by the workflow between the initial stat
-                // and cp. Check the copied artifact too, and remove it rather than
-                // publishing a file that exceeds the repository's configured cap.
-                let copied_size = match docker_file_size(runner, &destination) {
-                    Ok(size) => size,
-                    Err(error) => {
-                        let cleanup = docker_exec_checked_as_runner(
-                            runner,
-                            &["rm", "-f", "--", destination.as_str()],
-                        );
-                        return Err(match cleanup {
-                            Ok(_) => failed(format!(
-                                "GitSaveRun could not verify copied file size: {error}"
-                            )),
-                            Err(cleanup_error) => failed(format!(
-                                "GitSaveRun could not verify copied file size ({error}) or remove the unverified artifact ({cleanup_error})"
-                            )),
-                        });
-                    }
-                };
-                if copied_size > policy.max_file_size_bytes {
-                    docker_exec_checked_as_runner(
-                        runner,
-                        &["rm", "-f", "--", destination.as_str()],
-                    )
-                    .map_err(|error| {
-                        failed(format!(
-                            "GitSaveRun copied file exceeds repository storage limit and cleanup failed: {error}"
-                        ))
-                    })?;
-                    return Err(failed(
-                        "GitSaveRun copied file exceeds repository storage limit; artifact removed",
-                    ));
+                let directory = docker_secure_file_operation_as_runner(
+                    runner,
+                    &["mkdir", "/var/lib/gitrun/shared/files"],
+                )?;
+                if !directory.status.success() {
+                    return Err(failed(format!(
+                        "GitSaveRun could not safely prepare shared storage: {}",
+                        String::from_utf8_lossy(&directory.stderr).trim()
+                    )));
+                }
+                let limit = policy.max_file_size_bytes.to_string();
+                let copied = docker_secure_file_operation_as_runner(
+                    runner,
+                    &["copy", source, destination.as_str(), limit.as_str()],
+                )?;
+                if !copied.status.success() {
+                    return Err(failed(format!(
+                        "GitSaveRun could not safely copy the file: {}",
+                        String::from_utf8_lossy(&copied.stderr).trim()
+                    )));
                 }
 
                 Ok(success(format!(
@@ -1380,20 +1365,21 @@ impl ApiExecutionBackend {
                     return Err(failed("GitSaveRun logs exceed repository storage limit"));
                 }
 
-                let output = docker::exec_container_with_stdin_as_runner(
+                let directory = docker_secure_file_operation_as_runner(
                     runner,
-                    &[
-                        "sh",
-                        "-c",
-                        "mkdir -p /var/lib/gitrun/shared/logs && cat > \"$1\"",
-                        "gitrun-save-logs",
-                        &format!("/var/lib/gitrun/shared/logs/{name}"),
-                    ],
+                    &["mkdir", "/var/lib/gitrun/shared/logs"],
+                )?;
+                if !directory.status.success() {
+                    return Err(failed("unable to safely prepare GitRun log storage"));
+                }
+                let destination = format!("/var/lib/gitrun/shared/logs/{name}");
+                let output = docker_secure_file_operation_with_stdin_as_runner(
+                    runner,
+                    &["write", destination.as_str()],
                     logs.as_bytes(),
-                )
-                .map_err(|error| failed(error.to_string()))?;
+                )?;
                 if !output.status.success() {
-                    return Err(failed("unable to save GitRun logs into shared storage"));
+                    return Err(failed("unable to safely save GitRun logs into shared storage"));
                 }
 
                 Ok(success(format!(
@@ -1497,9 +1483,10 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output =
-            docker::exec_container_as_runner(&self.caller_container_id, &["cat", "--", path])
-                .map_err(|error| failed(error.to_string()))?;
+        let output = docker_secure_file_operation_as_runner(
+            &self.caller_container_id,
+            &["read", path],
+        )?;
         command_output(output)
     }
 
@@ -1508,12 +1495,11 @@ impl ApiExecutionBackend {
         let value = arg(request, "value")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container_with_stdin_as_runner(
+        let output = docker_secure_file_operation_with_stdin_as_runner(
             &self.caller_container_id,
-            &["sh", "-c", "cat > \"$1\"", "gitrun-write", path],
+            &["write", path],
             value.as_bytes(),
-        )
-        .map_err(|error| failed(error.to_string()))?;
+        )?;
         command_output(output)
     }
 
@@ -1521,9 +1507,10 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output =
-            docker::exec_container_as_runner(&self.caller_container_id, &["sha256sum", "--", path])
-                .map_err(|error| failed(error.to_string()))?;
+        let output = docker_secure_file_operation_as_runner(
+            &self.caller_container_id,
+            &["sha256", path],
+        )?;
         command_output(output)
     }
 
@@ -1807,8 +1794,10 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container_as_runner(container.as_str(), &["cat", "--", path])
-            .map_err(|error| failed(error.to_string()))?;
+        let output = docker_secure_file_operation_as_runner(
+            container.as_str(),
+            &["read", path],
+        )?;
         command_output(output)
     }
 
@@ -1818,12 +1807,11 @@ impl ApiExecutionBackend {
         let value = arg(request, "value")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker::exec_container_with_stdin_as_runner(
+        let output = docker_secure_file_operation_with_stdin_as_runner(
             container.as_str(),
-            &["sh", "-c", "cat > \"$1\"", "gitrun-dock-write", path],
+            &["write", path],
             value.as_bytes(),
-        )
-        .map_err(|error| failed(error.to_string()))?;
+        )?;
         command_output(output)
     }
 
@@ -5494,16 +5482,286 @@ fn docker_exec_checked_as_container_root(
     command_output(output)
 }
 
+const GITRUN_SAFE_FILE_HELPER: &str = r#"import hashlib
+import os
+import secrets
+import stat
+import sys
+
+MAX_READ_BYTES = 16 * 1024 * 1024
+MAX_INPUT_BYTES = 16 * 1024 * 1024
+MAX_HASH_BYTES = 1024 * 1024 * 1024
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+FILE_FLAGS = os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+ROOTS = (
+    ("home", "runner", "actions-runner", "_work"),
+    ("tmp",),
+    ("var", "lib", "gitrun", "shared"),
+    ("workspace",),
+)
+
+def checked_parts(path):
+    if not path.startswith("/") or path.startswith("//") or path.endswith("/") or "\x00" in path:
+        raise ValueError("path must be a clean absolute file path")
+    parts = path[1:].split("/")
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise ValueError("path has an empty or traversal component")
+    return parts
+
+def open_directory(parts):
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for part in parts:
+            next_fd = os.open(part, DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+def matching_root(parts, allow_root=False):
+    for root in ROOTS:
+        if parts[:len(root)] == root and (len(parts) > len(root) or (allow_root and len(parts) == len(root))):
+            return root
+    raise PermissionError("path is outside the GitRun workflow filesystem allowlist")
+
+def open_parent(path, create_parents=False):
+    parts = checked_parts(path)
+    root = matching_root(parts)
+    fd = open_directory(root)
+    try:
+        for part in parts[len(root):-1]:
+            try:
+                next_fd = os.open(part, DIR_FLAGS, dir_fd=fd)
+            except FileNotFoundError:
+                if not create_parents:
+                    raise
+                try:
+                    os.mkdir(part, 0o755, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                next_fd = os.open(part, DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd, parts[-1]
+    except Exception:
+        os.close(fd)
+        raise
+
+def open_regular(path, flags, mode=0o666):
+    parent_fd, name = open_parent(path)
+    try:
+        fd = os.open(name, flags | FILE_FLAGS, mode, dir_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError("target must be a regular file without hard links")
+        return fd, metadata
+    except Exception:
+        os.close(fd)
+        raise
+
+def make_directories(path):
+    parts = checked_parts(path)
+    root = matching_root(parts, allow_root=True)
+    fd = open_directory(root)
+    try:
+        for part in parts[len(root):]:
+            try:
+                next_fd = os.open(part, DIR_FLAGS, dir_fd=fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, 0o755, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                next_fd = os.open(part, DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+    finally:
+        os.close(fd)
+
+def write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError("short write")
+        view = view[written:]
+
+def safe_read(path):
+    fd, metadata = open_regular(path, os.O_RDONLY)
+    try:
+        if metadata.st_size > MAX_READ_BYTES:
+            raise ValueError("file exceeds the 16 MiB GitRun read limit")
+        data = bytearray()
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) > MAX_READ_BYTES:
+                raise ValueError("file grew beyond the 16 MiB GitRun read limit")
+        sys.stdout.buffer.write(data)
+    finally:
+        os.close(fd)
+
+def safe_write(path):
+    data = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+    if len(data) > MAX_INPUT_BYTES:
+        raise ValueError("input exceeds the 16 MiB GitRun write limit")
+    fd, _ = open_regular(path, os.O_WRONLY | os.O_CREAT)
+    try:
+        os.ftruncate(fd, 0)
+        write_all(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+def safe_size(path):
+    fd, metadata = open_regular(path, os.O_RDONLY)
+    try:
+        print(metadata.st_size)
+    finally:
+        os.close(fd)
+
+def safe_sha256(path):
+    fd, metadata = open_regular(path, os.O_RDONLY)
+    try:
+        if metadata.st_size > MAX_HASH_BYTES:
+            raise ValueError("file exceeds the 1 GiB GitRun verification limit")
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_HASH_BYTES:
+                raise ValueError("file grew beyond the 1 GiB GitRun verification limit")
+            digest.update(chunk)
+        print(digest.hexdigest() + "  " + path)
+    finally:
+        os.close(fd)
+
+def safe_copy(source, destination, limit):
+    limit = int(limit)
+    if limit < 0:
+        raise ValueError("copy size limit must not be negative")
+    source_fd, source_metadata = open_regular(source, os.O_RDONLY)
+    destination_fd = None
+    destination_parent = None
+    temporary_name = None
+    try:
+        if source_metadata.st_size > limit:
+            raise ValueError("GitSaveRun file exceeds repository storage limit")
+        destination_parent_path = destination.rsplit("/", 1)[0]
+        make_directories(destination_parent_path)
+        destination_parent, destination_name = open_parent(destination)
+        temporary_name = ".gitrun-copy-" + str(os.getpid()) + "-" + secrets.token_hex(8)
+        destination_fd = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | FILE_FLAGS,
+            0o600,
+            dir_fd=destination_parent,
+        )
+        total = 0
+        while True:
+            chunk = os.read(source_fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise ValueError("GitSaveRun source grew beyond repository storage limit")
+            write_all(destination_fd, chunk)
+        os.fchmod(destination_fd, source_metadata.st_mode & 0o777 & ~0o022)
+        os.fsync(destination_fd)
+        os.close(destination_fd)
+        destination_fd = None
+        os.rename(
+            temporary_name,
+            destination_name,
+            src_dir_fd=destination_parent,
+            dst_dir_fd=destination_parent,
+        )
+        temporary_name = None
+        os.fsync(destination_parent)
+        print(total)
+    finally:
+        os.close(source_fd)
+        if destination_fd is not None:
+            os.close(destination_fd)
+        if destination_parent is not None:
+            if temporary_name is not None:
+                try:
+                    os.unlink(temporary_name, dir_fd=destination_parent)
+                except FileNotFoundError:
+                    pass
+            os.close(destination_parent)
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        raise ValueError("missing operation")
+    operation = args[0]
+    if operation in ("read", "write", "size", "sha256", "mkdir") and len(args) == 2:
+        path = args[1]
+        if operation == "read":
+            safe_read(path)
+        elif operation == "write":
+            safe_write(path)
+        elif operation == "size":
+            safe_size(path)
+        elif operation == "sha256":
+            safe_sha256(path)
+        else:
+            make_directories(path)
+    elif operation == "copy" and len(args) == 4:
+        safe_copy(args[1], args[2], args[3])
+    else:
+        raise ValueError("invalid GitRun file operation arguments")
+
+try:
+    main()
+except Exception as error:
+    print("gitrun-file: " + str(error), file=sys.stderr)
+    sys.exit(2)"#;
+
+fn docker_secure_file_operation_as_runner(
+    container: &str,
+    operation_args: &[&str],
+) -> Result<std::process::Output, ExecutionError> {
+    let mut args = vec!["python3", "-I", "-S", "-c", GITRUN_SAFE_FILE_HELPER];
+    args.extend_from_slice(operation_args);
+    docker::exec_container_as_runner(container, &args)
+        .map_err(|error| failed(error.to_string()))
+}
+
+fn docker_secure_file_operation_with_stdin_as_runner(
+    container: &str,
+    operation_args: &[&str],
+    input: &[u8],
+) -> Result<std::process::Output, ExecutionError> {
+    let mut args = vec!["python3", "-I", "-S", "-c", GITRUN_SAFE_FILE_HELPER];
+    args.extend_from_slice(operation_args);
+    docker::exec_container_with_stdin_as_runner(container, &args, input)
+        .map_err(|error| failed(error.to_string()))
+}
+
 fn docker_file_size(container: &str, path: &str) -> Result<u64, ExecutionError> {
-    let output = docker::exec_container_as_runner(container, &["stat", "-c", "%s", "--", path])
-        .map_err(|error| failed(error.to_string()))?;
+    let output = docker_secure_file_operation_as_runner(container, &["size", path])?;
     if !output.status.success() {
-        return Err(failed("GitSaveRun could not stat source file"));
+        return Err(failed(format!(
+            "GitRun could not safely inspect source file size: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
     }
     String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse()
-        .map_err(|_| failed("GitSaveRun source file size was invalid"))
+        .map_err(|_| failed("GitRun source file size was invalid"))
 }
 
 fn ensure_safe_runner_path(path: &str) -> Result<(), ExecutionError> {
@@ -5516,8 +5774,12 @@ fn ensure_safe_runner_path(path: &str) -> Result<(), ExecutionError> {
         return Err(failed("path is not safe for a GitRun filesystem operation"));
     }
 
+    // Workflow file APIs need the checkout, temp files and explicitly shared
+    // data, not the Action runner's registration credentials under its parent
+    // directory. The secure in-container helper enforces this again while
+    // traversing every path component with O_NOFOLLOW and directory FDs.
     let allowed = [
-        "/home/runner/",
+        "/home/runner/actions-runner/_work/",
         "/tmp/",
         "/var/lib/gitrun/shared/",
         "/workspace/",
@@ -5528,6 +5790,89 @@ fn ensure_safe_runner_path(path: &str) -> Result<(), ExecutionError> {
         ));
     }
     Ok(())
+}
+
+
+
+#[cfg(target_os = "linux")]
+#[cfg(test)]
+mod secure_runner_file_helper_tests {
+    use super::{ensure_safe_runner_path, GITRUN_SAFE_FILE_HELPER};
+    use std::io::Write;
+    use std::process::{Command, Output, Stdio};
+
+    fn invoke(operation: &str, args: &[&str], input: &[u8]) -> Output {
+        let mut command = Command::new("python3");
+        command
+            .args(["-I", "-S", "-c", GITRUN_SAFE_FILE_HELPER, operation])
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().expect("python3 should be installed in the Linux CI environment");
+        child
+            .stdin
+            .take()
+            .expect("stdin is piped")
+            .write_all(input)
+            .expect("write helper input");
+        child.wait_with_output().expect("wait for secure file helper")
+    }
+
+    #[test]
+    fn path_allowlist_excludes_runner_registration_state() {
+        assert!(ensure_safe_runner_path("/home/runner/actions-runner/_work/repo/file.txt").is_ok());
+        assert!(ensure_safe_runner_path("/tmp/build.log").is_ok());
+        assert!(ensure_safe_runner_path("/var/lib/gitrun/shared/files/artifact").is_ok());
+        assert!(ensure_safe_runner_path("/home/runner/actions-runner/.credentials").is_err());
+        assert!(ensure_safe_runner_path("/home/runner/actions-runner/.runner").is_err());
+        assert!(ensure_safe_runner_path("/etc/passwd").is_err());
+        assert!(ensure_safe_runner_path("/tmp/../home/runner/actions-runner/.credentials").is_err());
+    }
+
+    #[test]
+    fn secure_file_helper_rejects_symlink_components_and_out_of_scope_paths() {
+        use std::os::unix::fs::symlink;
+
+        let directory = std::env::temp_dir().join(format!(
+            "gitrun-secure-file-helper-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).expect("create test directory");
+        let result = (|| {
+            let file = directory.join("safe.txt");
+            let file_arg = file.to_str().expect("UTF-8 test path");
+            let written = invoke("write", &[file_arg], b"safe contents");
+            assert!(written.status.success(), "write failed: {}", String::from_utf8_lossy(&written.stderr));
+            let read = invoke("read", &[file_arg], b"");
+            assert!(read.status.success(), "read failed: {}", String::from_utf8_lossy(&read.stderr));
+            assert_eq!(read.stdout, b"safe contents");
+
+            let file_link = directory.join("file-link");
+            symlink("/etc/passwd", &file_link).expect("create file symlink");
+            let linked = invoke("read", &[file_link.to_str().unwrap()], b"");
+            assert!(!linked.status.success(), "final symlink unexpectedly accepted");
+            assert!(linked.stdout.is_empty(), "rejected read returned file data");
+
+            let directory_link = directory.join("directory-link");
+            symlink("/etc", &directory_link).expect("create directory symlink");
+            let nested = directory_link.join("passwd");
+            let linked_parent = invoke("read", &[nested.to_str().unwrap()], b"");
+            assert!(!linked_parent.status.success(), "parent symlink unexpectedly accepted");
+            assert!(linked_parent.stdout.is_empty(), "rejected read returned file data");
+
+            let out_of_scope = invoke("read", &["/etc/passwd"], b"");
+            assert!(!out_of_scope.status.success(), "out-of-scope path unexpectedly accepted");
+            assert!(out_of_scope.stdout.is_empty(), "rejected read returned file data");
+            Ok::<(), String>(())
+        })();
+        let _ = std::fs::remove_dir_all(&directory);
+        result.expect("secure file helper regression checks");
+    }
 }
 
 fn ensure_safe_file_name(name: &str) -> Result<(), ExecutionError> {

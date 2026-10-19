@@ -2542,11 +2542,7 @@ mod tests {
         archive.into_inner().unwrap().finish().unwrap();
 
         let destination = root.join("destination");
-        let result = extract_archive(
-            &archive_path,
-            "x86_64-unknown-linux-gnu",
-            &destination,
-        );
+        let result = extract_archive(&archive_path, "x86_64-unknown-linux-gnu", &destination);
         assert!(matches!(result, Err(UpdateError::InvalidManifest(message))
             if message.contains("escapes the update staging directory")));
         assert!(!root.join("outside.txt").exists());

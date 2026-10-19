@@ -2517,12 +2517,8 @@ mod reconcile_identity_pin_tests {
             },
         ];
         let ordinary_managed = vec!["ordinary-busy".into(), "ordinary-idle".into()];
-        let counts = kitty_observation_counts(
-            &queue,
-            &dock_targets,
-            &runner_views,
-            &ordinary_managed,
-        );
+        let counts =
+            kitty_observation_counts(&queue, &dock_targets, &runner_views, &ordinary_managed);
         assert_eq!(
             counts,
             KittyObservationCounts {
@@ -2544,12 +2540,8 @@ mod reconcile_identity_pin_tests {
             busy: true,
         }];
         let ordinary_managed = vec!["ordinary-orphan".into()];
-        let counts = kitty_observation_counts(
-            &queue,
-            &dock_targets,
-            &runner_views,
-            &ordinary_managed,
-        );
+        let counts =
+            kitty_observation_counts(&queue, &dock_targets, &runner_views, &ordinary_managed);
         assert_eq!(counts.busy_runners, 1);
         assert_eq!(counts.online_runners, 0);
         assert_eq!(counts.managed_runners, 1);

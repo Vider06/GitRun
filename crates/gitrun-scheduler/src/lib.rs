@@ -1095,6 +1095,21 @@ fn reconcile_repo(
     } else {
         Vec::new()
     };
+    // The operator's extra-runner cap applies to the combined predictive
+    // floor and per-workload prewarm count, not to each feature separately.
+    let configured_floor = config.min_runners.min(config.max_runners);
+    let floor_extra = kitty_decision
+        .effective_min_runners
+        .saturating_sub(configured_floor);
+    let mut remaining_prewarm_budget = kitty_settings_snapshot
+        .max_additional_warm_runners
+        .saturating_sub(floor_extra);
+    for target in &mut pending_workload_prewarms {
+        target.runner_count = target.runner_count.min(remaining_prewarm_budget);
+        remaining_prewarm_budget =
+            remaining_prewarm_budget.saturating_sub(target.runner_count);
+    }
+    pending_workload_prewarms.retain(|target| target.runner_count > 0);
     let prewarm_runner_count = pending_workload_prewarms
         .iter()
         .fold(0u32, |count, target| {

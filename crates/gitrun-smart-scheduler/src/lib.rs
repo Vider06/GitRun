@@ -4499,6 +4499,94 @@ mod tests {
     }
 
     #[test]
+    fn queued_job_gets_a_gitrun_id_before_start_and_keeps_it_on_transition() {
+        let mut model = WorkflowModel::empty("owner/repo");
+        let queued = QueuedJobOccurrence {
+            run_id: 41,
+            job_id: 410,
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            started_at_epoch: None,
+        };
+
+        assert!(record_queued_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&queued),
+            1_800,
+        ));
+        assert_eq!(model.recent_job_occurrences.len(), 1);
+        let gitrun_id = model.recent_job_occurrences[0].gitrun_job_id.clone();
+        assert!(valid_generated_gitrun_job_id(&gitrun_id));
+        assert_eq!(model.workload_patterns[0].occurrence_count, 0);
+
+        // Repeated queue snapshots retain the same GitRun ID and don't allocate
+        // another sequence number for the same provider occurrence.
+        assert!(!record_queued_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&queued),
+            1_860,
+        ));
+        assert_eq!(model.recent_job_occurrences.len(), 1);
+        assert_eq!(model.recent_job_occurrences[0].gitrun_job_id, gitrun_id);
+        assert_eq!(model.next_gitrun_job_sequence, 2);
+
+        let mut started = queued;
+        started.started_at_epoch = Some(1_920);
+        assert!(record_started_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&started),
+            2_000,
+        ));
+        assert_eq!(model.recent_job_occurrences[0].gitrun_job_id, gitrun_id);
+        assert_eq!(model.recent_job_occurrences[0].started_at_epoch, Some(1_920));
+        assert_eq!(model.workload_patterns[0].occurrence_count, 1);
+        model.validate_for("owner/repo", MAX_HISTORY_BUCKETS).unwrap();
+    }
+
+    #[test]
+    fn legacy_profile_ids_migrate_to_unique_gitrun_occurrence_ids() {
+        let mut model = WorkflowModel::empty("owner/repo");
+        let workload_id = "wk-0123456789abcdef".to_owned();
+        model.workload_patterns.push(WorkloadPattern {
+            workload_id: workload_id.clone(),
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            job_name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            first_seen_epoch: 1_800,
+            last_seen_epoch: 1_800,
+            occurrence_count: 1,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+            slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+        });
+        // This is the shape written by earlier in-branch builds: gitrun_job_id
+        // still held the stable wk-* profile key, not a unique job occurrence ID.
+        model.recent_job_occurrences.push(RecentJobOccurrence {
+            gitrun_job_id: workload_id.clone(),
+            workload_id: String::new(),
+            occurrence_code: "run-41-job-410".into(),
+            run_id: 41,
+            job_id: 410,
+            observed_at_epoch: 1_800,
+            started_at_epoch: Some(1_800),
+            counted_prediction_target_epoch: None,
+        });
+
+        assert!(migrate_job_identity(&mut model));
+        assert_eq!(model.recent_job_occurrences[0].workload_id, workload_id);
+        assert!(valid_generated_gitrun_job_id(
+            &model.recent_job_occurrences[0].gitrun_job_id
+        ));
+        assert_eq!(
+            model.recent_job_occurrences[0].occurrence_code,
+            provider_occurrence_key(&workload_id, 41, 410)
+        );
+        model.validate_for("owner/repo", MAX_HISTORY_BUCKETS).unwrap();
+    }
+
+    #[test]
     fn started_job_occurrences_receive_stable_codes_and_are_counted_once() {
         let dir = temp_dir("job-identity");
         let mut settings = enabled_settings();

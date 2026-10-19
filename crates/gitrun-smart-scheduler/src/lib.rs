@@ -1102,15 +1102,14 @@ impl KittyRuntime {
                 repositories.insert(entry.repository.clone(), entry);
             }
             let now = status.generated_at_epoch;
-            let cutoff = now.saturating_sub(
-                (MAX_HISTORY_BUCKETS as u64).saturating_mul(BUCKET_SECONDS),
-            );
+            let cutoff =
+                now.saturating_sub((MAX_HISTORY_BUCKETS as u64).saturating_mul(BUCKET_SECONDS));
             let mut recent: Vec<_> = repositories
                 .into_values()
                 .filter(|entry| {
-                    entry.latest_observation_epoch.is_some_and(|stamp| {
-                        stamp <= now && stamp >= cutoff
-                    })
+                    entry
+                        .latest_observation_epoch
+                        .is_some_and(|stamp| stamp <= now && stamp >= cutoff)
                 })
                 .collect();
             recent.sort_by_key(|entry| {

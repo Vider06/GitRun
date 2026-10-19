@@ -2594,6 +2594,18 @@ fn record_queued_job_occurrences(
             pattern.occurrence_count = pattern.occurrence_count.saturating_add(1);
             let slot_index = weekday_hour_slot(observed_at_epoch);
             let week = weekly_period_start(observed_at_epoch);
+            let last_week = pattern.slot_last_week[slot_index];
+
+            // Preserve the lifetime job count, but restart this weekday/hour
+            // estimator after a long hiatus. A workflow that moved schedules
+            // must not keep prewarming its old hour indefinitely.
+            if pattern.slots[slot_index].0 > 0
+                && week.saturating_sub(last_week) > 90 * 86_400
+            {
+                pattern.slots[slot_index] = TemporalDemandSlot::default();
+                pattern.slot_last_week[slot_index] = 0;
+            }
+
             let slot = &mut pattern.slots[slot_index];
             slot.0 = slot.0.saturating_add(1);
             slot.1 = slot.1.saturating_add(1);
@@ -2699,6 +2711,10 @@ fn forecast_workload_prewarms(
                 return None;
             }
             let slot = pattern.slots.get(slot_index)?;
+            let last_slot_week = *pattern.slot_last_week.get(slot_index)?;
+            if last_slot_week < weekly_period_start(recent_cutoff) {
+                return None;
+            }
             let distinct_weeks = u64::from(slot.3);
             if distinct_weeks < MIN_SEASONAL_OCCURRENCES as u64 || slot.0 == 0 {
                 return None;
@@ -2776,6 +2792,7 @@ fn forecast_workload_prewarms(
 }
 
 fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> {
+    let recent_slot_cutoff = weekly_period_start(model.generated_at_epoch.saturating_sub(90 * 86_400));
     let mut patterns: Vec<_> = model
         .workload_patterns
         .iter()
@@ -2784,7 +2801,11 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                 .slots
                 .iter()
                 .enumerate()
-                .filter(|(_, slot)| slot.0 > 0 && slot.3 > 0)
+                .filter(|(index, slot)| {
+                    slot.0 > 0
+                        && slot.3 > 0
+                        && pattern.slot_last_week[*index] >= recent_slot_cutoff
+                })
                 .map(|(index, slot)| WorkloadSlotSummary {
                     weekday: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index / 24]
                         .to_owned(),

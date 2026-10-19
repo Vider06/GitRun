@@ -174,24 +174,26 @@ pub fn run() {
         // Pressure is a backpressure signal for capacity growth, not a reason
         // to stop all lifecycle work. Keep safe cleanup and recovery running,
         // but fail closed for any action that would create/recreate a runner.
-        let mut allow_new_runner_creation = true;
-        let mut host_resources = None;
+        let mut resource_context = ResourcePressureContext {
+            allow_new_runner_creation: true,
+            snapshot: None,
+        };
         if config.resource_pressure_enabled {
             match resource_pressure::sample(&config) {
                 Ok(snapshot) => {
-                    host_resources = Some(snapshot);
+                    resource_context.snapshot = Some(snapshot);
                     if snapshot.is_pressured(&config) {
                         eprintln!("gitrun-autoscaler: host resource pressure high (cpu={:.1}% memory={:.1}% disk={:.1}%), deferring runner creation while continuing safe cleanup/recovery", snapshot.cpu_percent, snapshot.memory_percent, snapshot.disk_percent);
-                        allow_new_runner_creation = false;
+                        resource_context.allow_new_runner_creation = false;
                     }
                 }
                 Err(error @ resource_pressure::ResourcePressureError::Disk { .. }) => {
                     eprintln!("gitrun-autoscaler: critical filesystem pressure check failed: {error}; deferring runner creation while continuing safe cleanup/recovery");
-                    allow_new_runner_creation = false;
+                    resource_context.allow_new_runner_creation = false;
                 }
                 Err(error) => {
                     eprintln!("gitrun-autoscaler: host resource pressure check unavailable: {error}; deferring runner creation while continuing safe cleanup/recovery");
-                    allow_new_runner_creation = false;
+                    resource_context.allow_new_runner_creation = false;
                 }
             }
         }
@@ -215,8 +217,7 @@ pub fn run() {
                 &vm_registry,
                 &mut kitty_runtime,
                 repo,
-                allow_new_runner_creation,
-                host_resources,
+                resource_context,
             ) {
                 if let Some(GitHubError::RateLimited { retry_after }) =
                     error.downcast_ref::<GitHubError>()
@@ -628,6 +629,12 @@ fn kitty_observation_counts(
     }
 }
 
+#[derive(Clone, Copy)]
+struct ResourcePressureContext {
+    allow_new_runner_creation: bool,
+    snapshot: Option<resource_pressure::ResourceSnapshot>,
+}
+
 fn reconcile_repo(
     client: &GitHubClient,
     config: &Config,
@@ -635,9 +642,13 @@ fn reconcile_repo(
     vm_registry: &VmResolutionRegistry,
     kitty_runtime: &mut gitrun_smart_scheduler::KittyRuntime,
     repo: &str,
-    allow_new_runner_creation: bool,
-    host_resources: Option<resource_pressure::ResourceSnapshot>,
+    resource_context: ResourcePressureContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let ResourcePressureContext {
+        allow_new_runner_creation,
+        snapshot: host_resources,
+    } = resource_context;
+
     // GTUU replaces permanent runners. Hold its process-shared lifecycle lock
     // across the complete snapshot/plan/execute cycle so an update cannot
     // replace a container between inventory and a destructive scheduler action.

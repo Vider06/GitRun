@@ -100,7 +100,7 @@ Refresh windows are defaults, not a reason to poll on every component render. Vi
 - The scheduler reloads local GTUU schedule settings every tick, so changing automatic-update enablement, time or timezone in the dashboard does not require a service restart.
 - The Tauri backend has explicit service start/stop/restart commands, a bounded read-only host health report, coordinated config/settings persistence with rollback, and cached runner/workflow/repository/resource snapshots.
 
-These implementation notes describe code that has been authored on this branch; CI and runtime testing are still required before the PR can be considered ready.
+These notes describe the implementation on PR #83. Phase 7 is reviewing documentation and current-head CI evidence; the remaining desktop privilege-dialog and install-transition checks are explicitly environment-dependent and must not be described as passed until run on a supported desktop.
 
 
 ## v1.5.0 verification note

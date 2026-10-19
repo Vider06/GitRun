@@ -566,7 +566,7 @@ fn maybe_fast_stop_workflow(
     settings: &gitrun_smart_scheduler::KittySettings,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let threshold = settings.fast_stop_max_runtime_seconds;
-    if threshold < 300 || threshold > 604_800 || !settings.smart_fast_stop_enabled {
+    if !(300..=604_800).contains(&threshold) || !settings.smart_fast_stop_enabled {
         return Ok(false);
     }
     if !config

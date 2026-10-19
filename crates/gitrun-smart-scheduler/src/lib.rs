@@ -27,6 +27,7 @@ const MAX_MODELS: usize = 64;
 const MAX_DASHBOARD_REPOSITORIES: usize = 64;
 const MAX_JOB_PATTERNS: usize = 24;
 const MAX_JOB_OCCURRENCES: usize = 512;
+const MAX_WORKLOAD_PREDICTIONS: usize = 512;
 const MAX_DASHBOARD_JOB_OCCURRENCES: usize = 32;
 const MAX_AUDIT_RECORDS: usize = 128;
 const MAX_EVALUATED_FORECASTS: usize = 4032;
@@ -429,6 +430,20 @@ pub struct RecentJobOccurrence {
     pub observed_at_epoch: u64,
 }
 
+/// Per-workload prediction made before a recurring weekday/hour slot. It is
+/// evaluated against unique queued job occurrences in the following hour.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkloadPredictionRecord {
+    pub workload_code: String,
+    pub issued_at_bucket: u64,
+    pub target_epoch: u64,
+    pub predicted_occurrences: u32,
+    #[serde(default)]
+    pub observed_occurrences: u32,
+    #[serde(default)]
+    pub actual_occurrences: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkloadSlotSummary {
     pub weekday: String,
@@ -517,6 +532,8 @@ pub struct WorkflowModel {
     pub workload_patterns: Vec<WorkloadPattern>,
     #[serde(default)]
     pub recent_job_occurrences: Vec<RecentJobOccurrence>,
+    #[serde(default)]
+    pub workload_predictions: Vec<WorkloadPredictionRecord>,
     /// Bounded four-week view after raw five-minute samples expire.
     #[serde(default)]
     pub weekly_summaries: Vec<PeriodSummary>,
@@ -544,6 +561,7 @@ impl WorkflowModel {
             history: Vec::new(),
             workload_patterns: Vec::new(),
             recent_job_occurrences: Vec::new(),
+            workload_predictions: Vec::new(),
             weekly_summaries: Vec::new(),
             monthly_summaries: Vec::new(),
             yearly_summaries: Vec::new(),
@@ -572,6 +590,7 @@ impl WorkflowModel {
         if self.history.len() > history_limit
             || self.workload_patterns.len() > MAX_JOB_PATTERNS
             || self.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES
+            || self.workload_predictions.len() > MAX_WORKLOAD_PREDICTIONS
             || self.weekly_summaries.len() > MAX_WEEKLY_SUMMARIES
             || self.monthly_summaries.len() > MAX_MONTHLY_SUMMARIES
             || self.yearly_summaries.len() > MAX_YEARLY_SUMMARIES
@@ -599,6 +618,28 @@ impl WorkflowModel {
             {
                 return Err(KittyError::Invalid(
                     "stored workload pattern is malformed or exceeds bounds".into(),
+                ));
+            }
+        }
+        let mut workload_prediction_keys = HashSet::new();
+        for prediction in &self.workload_predictions {
+            if prediction.workload_code.len() != 19
+                || !workload_codes.contains(prediction.workload_code.as_str())
+                || prediction.issued_at_bucket % BUCKET_SECONDS != 0
+                || prediction.target_epoch % 3_600 != 0
+                || prediction.target_epoch <= prediction.issued_at_bucket
+                || prediction.target_epoch
+                    > prediction.issued_at_bucket.saturating_add(FORECAST_HORIZON_SECONDS)
+                || prediction.predicted_occurrences == 0
+                || prediction.actual_occurrences
+                    .is_some_and(|actual| actual != prediction.observed_occurrences)
+                || !workload_prediction_keys.insert((
+                    prediction.workload_code.as_str(),
+                    prediction.target_epoch,
+                ))
+            {
+                return Err(KittyError::Invalid(
+                    "stored workload prediction is malformed or duplicated".into(),
                 ));
             }
         }

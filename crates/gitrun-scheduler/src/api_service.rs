@@ -1916,9 +1916,16 @@ impl ApiExecutionBackend {
             _ => return Err(failed("read_only must be true or false")),
         };
 
-        let settings =
-            GitRunSettings::load_or_default(GitRunSettings::path_for_state_dir(&self.state_dir))
-                .map_err(|error| failed(error.to_string()))?;
+        let settings_path = GitRunSettings::path_for_state_dir(&self.state_dir);
+        // Hold the same cross-process policy lock used by GitRunSettings::save
+        // from the first policy read until attach, read-only enforcement and
+        // mount-ID verification are complete. A concurrent dashboard/CLI policy
+        // replacement therefore cannot slip between the final authorization
+        // check and the privileged namespace operation.
+        let _policy_guard = gitrun_core::settings::SettingsPolicyLock::acquire(&settings_path)
+            .map_err(|error| failed(format!("lock GitDockRun policy during MOUNT: {error}")))?;
+        let settings = GitRunSettings::load_or_default(&settings_path)
+            .map_err(|error| failed(error.to_string()))?;
         let resource = request
             .resource
             .as_deref()

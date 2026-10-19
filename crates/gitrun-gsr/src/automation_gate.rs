@@ -93,7 +93,11 @@ impl AuthorizedAutomationAction {
     /// misreported as a successful action.
     pub fn record_outcome(&self, success: bool, outcome: &str) -> Result<()> {
         let bounded: String = outcome.chars().take(256).collect();
-        let severity = if success { Severity::Info } else { Severity::Warning };
+        let severity = if success {
+            Severity::Info
+        } else {
+            Severity::Warning
+        };
         let event = SecurityEvent::new(
             "kitty-automation-outcome",
             severity,
@@ -101,8 +105,14 @@ impl AuthorizedAutomationAction {
                 "action={} repository={} run_id={} job_id={} runner={} success={} outcome={}",
                 self.intent.action.as_str(),
                 self.intent.repository,
-                self.intent.run_id.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
-                self.intent.job_id.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
+                self.intent
+                    .run_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                self.intent
+                    .job_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".into()),
                 self.intent.runner_name.as_deref().unwrap_or("-"),
                 success,
                 bounded
@@ -128,8 +138,14 @@ pub fn authorize_action(
                 "action={} repository={} run_id={} job_id={} denied={}",
                 intent.action.as_str(),
                 intent.repository,
-                intent.run_id.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
-                intent.job_id.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
+                intent
+                    .run_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                intent
+                    .job_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".into()),
                 reason
             ),
         );
@@ -146,8 +162,14 @@ pub fn authorize_action(
             "action={} repository={} run_id={} job_id={} runner={} readiness={:?} reason={}",
             intent.action.as_str(),
             intent.repository,
-            intent.run_id.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
-            intent.job_id.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
+            intent
+                .run_id
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".into()),
+            intent
+                .job_id
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".into()),
             intent.runner_name.as_deref().unwrap_or("-"),
             intent.readiness_score,
             intent.reason.chars().take(256).collect::<String>()
@@ -173,13 +195,16 @@ fn valid_repository(repository: &str) -> bool {
             && part.len() <= 100
             && part != "."
             && part != ".."
-            && part.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-            })
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     })
 }
 
-fn validate(policy: &AutomationPolicy, intent: &AutomationIntent) -> std::result::Result<(), String> {
+fn validate(
+    policy: &AutomationPolicy,
+    intent: &AutomationIntent,
+) -> std::result::Result<(), String> {
     if !valid_repository(&intent.repository) {
         return Err("invalid repository identity".into());
     }
@@ -331,7 +356,12 @@ mod tests {
     #[test]
     fn active_warm_pool_requires_explicit_bounds_and_readiness() {
         let (dir, path) = audit_path();
-        let permit = authorize_action(&policy(), intent(AutomationAction::PredictiveWarmPool), &path).unwrap();
+        let permit = authorize_action(
+            &policy(),
+            intent(AutomationAction::PredictiveWarmPool),
+            &path,
+        )
+        .unwrap();
         assert_eq!(permit.action(), AutomationAction::PredictiveWarmPool);
         drop(permit);
         let _ = std::fs::remove_dir_all(dir);
@@ -340,7 +370,12 @@ mod tests {
     #[test]
     fn fast_stop_requires_a_whitelisted_verified_run_and_expired_threshold() {
         let (dir, path) = audit_path();
-        let permit = authorize_action(&policy(), intent(AutomationAction::FastStopWorkflowRun), &path).unwrap();
+        let permit = authorize_action(
+            &policy(),
+            intent(AutomationAction::FastStopWorkflowRun),
+            &path,
+        )
+        .unwrap();
         assert_eq!(permit.intent().run_id, Some(42));
         let mut denied = intent(AutomationAction::FastStopWorkflowRun);
         denied.job_id = Some(7);

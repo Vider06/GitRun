@@ -79,7 +79,7 @@ Refresh windows are defaults, not a reason to poll on every component render. Vi
 - Build the Tauri application and standalone Recovery target.
 - Exercise first-run and reinstall flows, GitHub API errors/rate limits, Docker-unavailable states, Vault metadata/scopes, empty and partial runner inventories, stale caches, denied policy operations and rollback failures.
 - Inspect the final diff for accidental changes to unrelated files or generated artifacts.
-- Keep the pull request draft until validation failures found by CI are resolved. Never merge to \`main\` as part of this task.
+- PR #83 was merged after all PR checks passed. Re-run relevant checks whenever dashboard code, scheduler APIs or recovery behavior changes.
 
 ## Acceptance criteria
 
@@ -96,10 +96,10 @@ Refresh windows are defaults, not a reason to poll on every component render. Vi
 
 ## Latest implementation notes
 
-- \`gitrun update --check\` now has a read-only CLI path: it verifies the signed release manifest, reports whether a GitRun release is newer, checks the runner image digest, and does not download or install anything.
-- A separate, confirmed runner-only action invokes the trusted privileged CLI. It verifies the release's runner image digest, pins the image in configuration, and reconciles permanent runners without replacing GitRun itself. GTUU skips busy runners and lets a later run reconcile them.
-- The scheduler reloads local GTUU schedule settings every tick, so changing automatic-update enablement, time or timezone in the dashboard does not require a service restart.
-- The Tauri backend has explicit service start/stop/restart commands, a bounded read-only host health report, coordinated config/settings persistence with rollback, and cached runner/workflow/repository/resource snapshots.
+- `gitrun update --check` is read-only: it verifies the signed release manifest, reports whether a newer GitRun release is available, and checks the runner image digest without downloading or installing anything.
+- A separate, confirmed runner-only action calls the trusted privileged CLI, verifies the runner image digest, pins the image in configuration and reconciles permanent runners without replacing GitRun. GTUU skips busy runners and retries them on a later run.
+- The scheduler reloads GTUU schedule settings each tick, so changes to automatic-update enablement, time or timezone do not require a service restart.
+- The Tauri backend exposes service start/stop/restart commands, a bounded read-only host health report, coordinated config/settings persistence with rollback, and cached runner/workflow/repository/resource snapshots.
 
 PR #83 is merged. Dashboard features listed here describe the v1.5.0 source; desktop-only authorization and install transitions still require checks on a supported desktop.
 

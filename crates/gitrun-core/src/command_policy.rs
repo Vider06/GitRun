@@ -153,6 +153,7 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
         "perl",
         "ruby",
         "node",
+        "nodejs",
         "deno",
         "bun",
         "php",
@@ -161,6 +162,17 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
         "gawk",
         "mawk",
         "busybox",
+        "tclsh",
+        "wish",
+        "julia",
+        "rscript",
+        "qjs",
+        "quickjs",
+        "jshell",
+        "jsc",
+        "wasmtime",
+        "wasmer",
+        "dotnet-script",
         "xargs",
         "find",
         "timeout",
@@ -180,7 +192,32 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
         "unshare",
         "chroot",
     ];
-    BLOCKED.contains(&name.to_ascii_lowercase().as_str())
+    let normalized = name.to_ascii_lowercase();
+    if BLOCKED.contains(&normalized.as_str()) {
+        return true;
+    }
+
+    // Runtime packages often ship versioned executable names (python3.11,
+    // perl5.38, ruby3.3, nodejs, php8.2). Exact-name blocking alone lets those
+    // launch arbitrary workflow-controlled scripts outside the GSR tracee
+    // process tree. Restrict prefixes only for interpreter families, avoiding
+    // broad matching for ordinary utilities.
+    const BLOCKED_VERSIONED_PREFIXES: &[&str] = &[
+        "python",
+        "pypy",
+        "perl",
+        "ruby",
+        "node",
+        "php",
+        "powershell",
+        "pwsh",
+        "busybox",
+        "tclsh",
+        "wish",
+    ];
+    BLOCKED_VERSIONED_PREFIXES
+        .iter()
+        .any(|prefix| normalized.starts_with(prefix))
 }
 
 pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> {
@@ -527,8 +564,14 @@ mod tests {
             "bash -c id",
             "dash /tmp/payload.sh",
             "python3 /tmp/payload.py",
+            "python3.11 /tmp/payload.py",
+            "perl5.38 /tmp/payload.pl",
+            "ruby3.3 /tmp/payload.rb",
             "node -e console.log",
+            "nodejs /tmp/payload.js",
+            "php8.2 /tmp/payload.php",
             "pwsh -File /tmp/payload.ps1",
+            "busybox.static sh -c id",
             "env bash -c id",
             "busybox sh -c id",
             "xargs sh -c id",

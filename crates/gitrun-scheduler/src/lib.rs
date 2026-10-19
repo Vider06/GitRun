@@ -959,14 +959,26 @@ fn reconcile_repo(
         }
     }
 
+    let wall_clock_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let idle: Vec<IdleInfo> = live_names
         .iter()
         .filter(|name| {
-            runners
+            // A predictive reservation is not eligible for idle cleanup before
+            // its target plus bounded hold; clear its idle timer until then.
+            let prewarm_hold_active = containers
                 .iter()
-                .find(|r| &r.name == *name)
-                .map(|r| r.is_online() && !r.busy)
-                .unwrap_or(false)
+                .find(|container| &container.name == *name)
+                .and_then(|container| container.prewarm_hold_until_epoch)
+                .is_some_and(|hold_until| wall_clock_epoch < hold_until);
+            !prewarm_hold_active
+                && runners
+                    .iter()
+                    .find(|r| &r.name == *name)
+                    .map(|r| r.is_online() && !r.busy)
+                    .unwrap_or(false)
         })
         .map(|name| IdleInfo {
             name: name.clone(),
@@ -1015,10 +1027,7 @@ fn reconcile_repo(
         &managed_pool_runner_names,
     );
 
-    let observed_at_epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let observed_at_epoch = wall_clock_epoch;
     let mut kitty_decision = match kitty_runtime.observe(
         gitrun_smart_scheduler::ObservationInput {
             repository: repo.to_owned(),
@@ -1294,8 +1303,43 @@ fn execute(
                     job_run_id: *job_run_id,
                     job_id: *job_id,
                     job_labels,
+                    prewarm_workload_code: None,
+                    prewarm_target_epoch: None,
+                    prewarm_hold_until_epoch: None,
                 },
             )?;
+        }
+        Action::PrewarmWorkload {
+            workload_code,
+            target_epoch,
+            hold_until_epoch,
+            job_name,
+            job_labels,
+        } => {
+            create_runner(
+                client,
+                config,
+                state_dir,
+                vm_registry,
+                repo,
+                RunnerCreateContext {
+                    permanent: false,
+                    // Do not turn a predictive profile into a GitDockRun
+                    // lifecycle binding. Labels select the backend/image;
+                    // these fields only annotate this prewarm reservation.
+                    job_name: None,
+                    job_run_id: None,
+                    job_id: None,
+                    job_labels,
+                    prewarm_workload_code: Some(workload_code),
+                    prewarm_target_epoch: Some(*target_epoch),
+                    prewarm_hold_until_epoch: Some(*hold_until_epoch),
+                },
+            )?;
+            eprintln!(
+                "gitrun-autoscaler: prewarmed workload {} ({}) for {} at target epoch {}",
+                workload_code, job_name, repo, target_epoch
+            );
         }
         Action::RecreateOrphaned { name, permanent } => {
             ensure_not_dock_bound(state_dir, repo, name, "recreate orphaned runner")?;
@@ -1317,6 +1361,9 @@ fn execute(
                     job_run_id: None,
                     job_id: None,
                     job_labels: &[],
+                    prewarm_workload_code: None,
+                    prewarm_target_epoch: None,
+                    prewarm_hold_until_epoch: None,
                 },
             )?;
             state.clear_recovery(name);
@@ -1540,6 +1587,9 @@ struct RunnerCreateContext<'a> {
     job_run_id: Option<u64>,
     job_id: Option<u64>,
     job_labels: &'a [String],
+    prewarm_workload_code: Option<&'a str>,
+    prewarm_target_epoch: Option<u64>,
+    prewarm_hold_until_epoch: Option<u64>,
 }
 
 fn create_runner(
@@ -1556,6 +1606,9 @@ fn create_runner(
         job_run_id,
         job_id,
         job_labels,
+        prewarm_workload_code,
+        prewarm_target_epoch,
+        prewarm_hold_until_epoch,
     } = context;
     let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
         std::io::Error::other(format!(
@@ -1623,6 +1676,9 @@ fn create_runner(
             workflow_job_name: job_name,
             workflow_run_id: job_run_id,
             workflow_job_id: job_id,
+            prewarm_workload_code,
+            prewarm_target_epoch,
+            prewarm_hold_until_epoch,
             dock_target: load_dock_target_jobs(state_dir, repo)?
                 .into_iter()
                 .any(|target| Some(target.as_str()) == job_name),

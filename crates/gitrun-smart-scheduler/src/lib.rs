@@ -487,20 +487,24 @@ impl KittyRuntime {
         let model = self.models.get_mut(&key).ok_or_else(|| {
             KittyError::Invalid("model disappeared during a single-threaded update".into())
         })?;
+        if model.history.len() > self.settings.history_buckets {
+            let excess = model.history.len() - self.settings.history_buckets;
+            model.history.drain(0..excess);
+            model.latest_forecast = None;
+            self.dirty_models.insert(key.clone());
+        }
         model.validate_for(&input.repository, self.settings.history_buckets)?;
-
-        let is_new_bucket = match model.history.last() {
-            None => true,
-            Some(last) if bucket > last.bucket_epoch => true,
-            Some(last) if bucket == last.bucket_epoch => false,
-            Some(_) => {
-                return Ok(KittyDecision::fallback(
-                    &input.repository,
-                    configured_min_runners,
-                    "system clock moved backwards; predictive action withheld",
-                ));
-            }
-        };
+        if model
+            .history
+            .last()
+            .is_some_and(|last| bucket < last.bucket_epoch)
+        {
+            return Ok(KittyDecision::fallback(
+                &input.repository,
+                configured_min_runners,
+                "system clock moved backwards; predictive action withheld",
+            ));
+        }
 
         if let Some(last) = model
             .history
@@ -721,6 +725,19 @@ impl KittyRuntime {
 
         // A live capacity change is impossible unless its model and decision
         // audit are durable before the deterministic planner sees the raised floor.
+        if decision.status == DecisionStatus::AppliedWarmPoolFloor
+            && self.dirty_models.contains(&key)
+        {
+            if let Err(error) = self.persist_model(&key) {
+                self.disabled_models.insert(key.clone());
+                return Err(error);
+            }
+            self.dirty_models.remove(&key);
+        }
+
+        // Persist the source window and audit before allowing an automated
+        // floor increase to reach the planner. A storage failure blocks this
+        // recommendation now, not only on the following reconcile cycle.
         if decision.status == DecisionStatus::AppliedWarmPoolFloor
             && self.dirty_models.contains(&key)
         {

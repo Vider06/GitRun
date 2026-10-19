@@ -2075,9 +2075,7 @@ fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
         && !job.name.chars().any(char::is_control)
         && !job.workflow_path.chars().any(char::is_control)
         && job.labels.iter().all(|label| {
-            !label.is_empty()
-                && label.len() <= 128
-                && !label.chars().any(char::is_control)
+            !label.is_empty() && label.len() <= 128 && !label.chars().any(char::is_control)
         })
 }
 
@@ -2213,7 +2211,10 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                 })
                 .collect();
             recurring_slots.sort_by_key(|slot| {
-                (std::cmp::Reverse(slot.distinct_weeks), std::cmp::Reverse(slot.observed_occurrences))
+                (
+                    std::cmp::Reverse(slot.distinct_weeks),
+                    std::cmp::Reverse(slot.observed_occurrences),
+                )
             });
             recurring_slots.truncate(3);
             WorkloadPatternStatus {

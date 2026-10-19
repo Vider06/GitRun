@@ -684,7 +684,9 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
     }
     for occurrence in &mut model.recent_job_occurrences {
         if !valid_generated_gitrun_job_id(&occurrence.gitrun_job_id) {
-            if let Some(id) = generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence) {
+            if let Some(id) =
+                generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
+            {
                 if let Some(next) = model.next_gitrun_job_sequence.checked_add(1) {
                     occurrence.gitrun_job_id = id;
                     model.next_gitrun_job_sequence = next;

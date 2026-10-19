@@ -2801,10 +2801,9 @@ fn record_started_job_occurrences(
             if valid_generated_gitrun_job_id(&existing_id) {
                 existing_id
             } else {
-                let Some(id) = generate_occurrence_id(
-                    &model.repository,
-                    model.next_gitrun_job_sequence,
-                ) else {
+                let Some(id) =
+                    generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
+                else {
                     continue;
                 };
                 let Some(next) = model.next_gitrun_job_sequence.checked_add(1) else {
@@ -2816,10 +2815,9 @@ fn record_started_job_occurrences(
                 id
             }
         } else {
-            let Some(id) = generate_occurrence_id(
-                &model.repository,
-                model.next_gitrun_job_sequence,
-            ) else {
+            let Some(id) =
+                generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
+            else {
                 continue;
             };
             let Some(next) = model.next_gitrun_job_sequence.checked_add(1) else {

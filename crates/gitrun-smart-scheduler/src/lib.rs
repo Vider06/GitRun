@@ -658,7 +658,9 @@ fn default_next_gitrun_job_sequence() -> u64 {
 /// A per-repository monotonic sequence keeps each occurrence ID unique while
 /// avoiding GitHub's run_id/job_id in the GitRun identifier itself.
 fn repository_identity_hash(repository: &str) -> Option<String> {
-    if !valid_repository(repository) { return None; }
+    if !valid_repository(repository) {
+        return None;
+    }
     let mut hash = 0xcbf29ce484222325u64;
     for byte in repository.trim().to_ascii_lowercase().bytes() {
         hash ^= u64::from(byte);
@@ -669,13 +671,20 @@ fn repository_identity_hash(repository: &str) -> Option<String> {
 
 fn generate_occurrence_id(repository: &str, sequence: u64) -> Option<String> {
     // Keep room for the persisted next-sequence value; never wrap on overflow.
-    if sequence == 0 || sequence == u64::MAX { return None; }
-    Some(format!("grj-{}-{sequence:016x}", repository_identity_hash(repository)?))
+    if sequence == 0 || sequence == u64::MAX {
+        return None;
+    }
+    Some(format!(
+        "grj-{}-{sequence:016x}",
+        repository_identity_hash(repository)?
+    ))
 }
 
 fn generated_gitrun_job_sequence_for_repository(code: &str, repository: &str) -> Option<u64> {
     let repo_hash = code.strip_prefix("grj-")?.split_once('-')?.0;
-    if repository_identity_hash(repository)?.as_str() != repo_hash { return None; }
+    if repository_identity_hash(repository)?.as_str() != repo_hash {
+        return None;
+    }
     generated_gitrun_job_sequence(code)
 }
 
@@ -713,7 +722,8 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
             changed = true;
         }
         if let Some(sequence) = generated_gitrun_job_sequence_for_repository(
-            &occurrence.gitrun_job_id, &model.repository,
+            &occurrence.gitrun_job_id,
+            &model.repository,
         ) {
             if let Some(next) = sequence.checked_add(1) {
                 model.next_gitrun_job_sequence = model.next_gitrun_job_sequence.max(next);
@@ -724,7 +734,8 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
     }
     for occurrence in &mut model.recent_job_occurrences {
         if !valid_generated_gitrun_job_id_for_repository(
-            &occurrence.gitrun_job_id, &model.repository,
+            &occurrence.gitrun_job_id,
+            &model.repository,
         ) {
             if let Some(id) =
                 generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
@@ -864,12 +875,13 @@ impl WorkflowModel {
         let mut occurrence_codes = HashSet::new();
         let mut generated_job_ids = HashSet::new();
         for occurrence in &self.recent_job_occurrences {
-            if !valid_generated_gitrun_job_id_for_repository(
-                &occurrence.gitrun_job_id, repository,
-            )
+            if !valid_generated_gitrun_job_id_for_repository(&occurrence.gitrun_job_id, repository)
                 || generated_gitrun_job_sequence_for_repository(
-                    &occurrence.gitrun_job_id, repository,
-                ).map(|sequence| sequence >= self.next_gitrun_job_sequence).unwrap_or(true)
+                    &occurrence.gitrun_job_id,
+                    repository,
+                )
+                .map(|sequence| sequence >= self.next_gitrun_job_sequence)
+                .unwrap_or(true)
                 || !generated_job_ids.insert(occurrence.gitrun_job_id.as_str())
                 || occurrence.run_id == 0
                 || occurrence.job_id == 0
@@ -1285,7 +1297,9 @@ impl KittyRuntime {
             self.dirty_models.insert(key.clone());
         }
         if record_started_job_occurrences_with_coverage(
-            model, &input.started_job_occurrences, input.observed_at_epoch,
+            model,
+            &input.started_job_occurrences,
+            input.observed_at_epoch,
             input.started_job_history_complete,
         ) {
             self.dirty_models.insert(key.clone());
@@ -1337,7 +1351,10 @@ impl KittyRuntime {
             }
             if self.settings.predictive_analytics_enabled {
                 model.latest_forecast = compute_forecast(
-                    model, &self.settings, input.observed_at_epoch, input.poll_interval_seconds,
+                    model,
+                    &self.settings,
+                    input.observed_at_epoch,
+                    input.poll_interval_seconds,
                 );
                 if let Some(forecast) = &model.latest_forecast {
                     model.predictions.push(PredictionRecord {
@@ -1432,9 +1449,7 @@ impl KittyRuntime {
                 f.confidence_score >= self.settings.minimum_quality_score
                     && sample_count >= self.settings.minimum_samples
             }) {
-            forecast_workload_prewarms(
-                model, bucket, &self.settings, input.poll_interval_seconds,
-            )
+            forecast_workload_prewarms(model, bucket, &self.settings, input.poll_interval_seconds)
         } else {
             Vec::new()
         };
@@ -2815,7 +2830,8 @@ fn record_queued_job_occurrences(
             }
             if existing.gitrun_job_id.is_empty()
                 || !valid_generated_gitrun_job_id_for_repository(
-                    &existing.gitrun_job_id, &model.repository,
+                    &existing.gitrun_job_id,
+                    &model.repository,
                 )
             {
                 let Some(id) =
@@ -2966,9 +2982,9 @@ fn record_started_job_occurrences_with_coverage(
             .recent_job_occurrences
             .iter()
             .position(|entry| entry.run_id == job.run_id && entry.job_id == job.job_id);
-        if existing_index.is_some_and(|index| {
-            model.recent_job_occurrences[index].workload_id != workload_id
-        }) {
+        if existing_index
+            .is_some_and(|index| model.recent_job_occurrences[index].workload_id != workload_id)
+        {
             // Reject a changed workload identity before allocating or mutating a GitRun ID.
             continue;
         }
@@ -3169,14 +3185,22 @@ fn workload_prediction_bias(model: &WorkflowModel, workload_id: &str) -> Option<
 }
 
 fn upcoming_schedule_target(
-    bucket_epoch: u64, lead_seconds: u64, poll_interval_seconds: u64,
+    bucket_epoch: u64,
+    lead_seconds: u64,
+    poll_interval_seconds: u64,
 ) -> Option<u64> {
     let candidate = bucket_epoch.checked_add(lead_seconds)?;
-    if candidate <= bucket_epoch { return None; }
-    if candidate % 3_600 == 0 { return Some(candidate); }
+    if candidate <= bucket_epoch {
+        return None;
+    }
+    if candidate % 3_600 == 0 {
+        return Some(candidate);
+    }
     // Fast polling must honor the requested lead exactly. Slow polling may
     // catch the next boundary only when it falls within one poll interval.
-    if poll_interval_seconds <= BUCKET_SECONDS { return None; }
+    if poll_interval_seconds <= BUCKET_SECONDS {
+        return None;
+    }
     let target = candidate.checked_add(3_600 - candidate % 3_600)?;
     (target > bucket_epoch && target.saturating_sub(candidate) <= poll_interval_seconds)
         .then_some(target)
@@ -3191,9 +3215,11 @@ fn forecast_workload_prewarms(
     if !settings.predictive_warm_pool_enabled || settings.max_additional_warm_runners == 0 {
         return Vec::new();
     }
-    let Some(target_epoch) =
-        upcoming_schedule_target(bucket_epoch, settings.warm_pool_lead_seconds, poll_interval_seconds)
-    else {
+    let Some(target_epoch) = upcoming_schedule_target(
+        bucket_epoch,
+        settings.warm_pool_lead_seconds,
+        poll_interval_seconds,
+    ) else {
         return Vec::new();
     };
     let slot_index = weekday_hour_slot(target_epoch);
@@ -3422,10 +3448,12 @@ fn compute_forecast(
     // scheduled targets from the aligned bucket, so a 300-second lead maps
     // 15:55 -> exactly 16:00 and does not slide forward on every poll.
     let bucket_epoch = now_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
-    let seasonal_target_epoch =
-        upcoming_schedule_target(
-            bucket_epoch, settings.warm_pool_lead_seconds, poll_interval_seconds,
-        ).unwrap_or(0);
+    let seasonal_target_epoch = upcoming_schedule_target(
+        bucket_epoch,
+        settings.warm_pool_lead_seconds,
+        poll_interval_seconds,
+    )
+    .unwrap_or(0);
     let seasonal_prediction = if seasonal_target_epoch > 0 {
         let seasonal_slot = weekday_hour_slot(seasonal_target_epoch);
         let seasonal_stats = seasonal_slot_stats(model, seasonal_slot, now_epoch);

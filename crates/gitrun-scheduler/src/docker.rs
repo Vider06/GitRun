@@ -1131,8 +1131,6 @@ fn append_env_passthrough_args(
 
 fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
     const RESERVED_EXACT: &[&str] = &[
-        "GITRUN_API_SOCKET",
-        "GITRUN_SHARED_CACHE_DIR",
         "HOME",
         "PATH",
         "DOCKER_CONFIG",
@@ -1141,6 +1139,23 @@ fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
         "BASH_ENV",
         "ENV",
         "IFS",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHONUSERBASE",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        "RUBYOPT",
+        "RUBYLIB",
+        "PERL5OPT",
+        "PERL5LIB",
+        "PHPRC",
+        "PHP_INI_SCAN_DIR",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
         "SHELLOPTS",
         "BASHOPTS",
         "GLIBC_TUNABLES",
@@ -1159,6 +1174,15 @@ fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
             )));
         }
         if name.starts_with("RUNNER_")
+            // Treat GitRun/GitHub/ACTIONS and Git config namespaces as runtime
+            // control variables, not user-defined secrets. The Docker CLI
+            // injects Vault values before the entrypoint's privilege drop, and
+            // later runner startup consumes these namespaces for identity,
+            // API routing, hooks, configuration and action runtime credentials.
+            || name.starts_with("GITRUN_")
+            || name.starts_with("GITHUB_")
+            || name.starts_with("ACTIONS_")
+            || name.starts_with("GIT_CONFIG_")
             || name.starts_with("GITRUN_GSR_")
             // GitVault values are passed to Docker before the entrypoint starts.
             // The dynamic loader processes LD_* variables before the root
@@ -2621,6 +2645,18 @@ mod tests {
             "GITRUN_GSR_COMMAND_POLICY_ENABLED",
             "GITRUN_GSR_ALLOW_UNSAFE_RUNNER",
             "GITRUN_API_SOCKET",
+            "GITHUB_TOKEN",
+            "GITHUB_WORKSPACE",
+            "ACTIONS_RUNTIME_TOKEN",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_SSH_COMMAND",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "NODE_OPTIONS",
+            "RUBYOPT",
+            "PERL5OPT",
             "LD_PRELOAD",
             "LD_AUDIT",
             "LD_DEBUG",

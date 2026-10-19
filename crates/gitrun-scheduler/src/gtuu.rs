@@ -329,6 +329,7 @@ fn update_one(
         registration_token: &registration_token,
         image: config.image,
         labels: config.runner_labels,
+        no_default_labels: false,
         ephemeral: config.ephemeral,
         disable_update: config.disable_update,
         cpus: config.cpus,

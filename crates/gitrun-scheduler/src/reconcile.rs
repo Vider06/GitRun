@@ -758,6 +758,45 @@ mod tests {
     }
 
     #[test]
+    fn reuses_available_workload_family_capacity_and_creates_only_the_deficit() {
+        let family = "wk-0123456789abcdef";
+        let label = format!("gitrun-job-{family}");
+        let mut input = base_input();
+        input.min_runners = 0;
+        input.max_runners = 8;
+        input.queued_jobs = 2;
+        input.queued_job_labels = vec![vec![label.clone()], vec![label]];
+        input.queued_job_names = vec!["build".into(), "build".into()];
+        input.queued_job_run_ids = vec![41, 41];
+        input.queued_job_ids = vec![410, 411];
+        input.containers = vec![ContainerView {
+            name: "family-runner-1".into(),
+            health: ContainerHealth::Running,
+            permanent: false,
+        }];
+        input.runners = vec![RunnerView {
+            name: "family-runner-1".into(),
+            online: true,
+            busy: false,
+        }];
+        input.routed_workload_capacity = vec![(family.into(), 1)];
+
+        let actions = plan(&input);
+        let creates: Vec<_> = actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::CreateRunner { job_id, .. } => Some(*job_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            creates,
+            vec![Some(411)],
+            "the idle family member serves the first queued occurrence; one runner is created for the remaining family demand"
+        );
+    }
+
+    #[test]
     fn overflow_beyond_minimum_is_dynamic() {
         let mut input = base_input();
         input.queued_jobs = 5; // desired = clamp(0+5, 3, 8) = 5

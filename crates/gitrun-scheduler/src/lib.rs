@@ -1050,33 +1050,34 @@ fn reconcile_repo(
     let observed_at_epoch = wall_clock_epoch;
     // Historical job-start sampling is deliberately slower than queue
     // reconciliation. API failures affect only Kitty's learning, not scheduling.
-    let started_job_occurrences: Vec<gitrun_smart_scheduler::QueuedJobOccurrence> =
-        if kitty_runtime.should_poll_workload_history(repo, observed_at_epoch) {
-            match client.recent_self_hosted_job_starts(repo, 3) {
-                Ok(jobs) => jobs
-                    .into_iter()
-                    .filter(|job| !dock_target_jobs.iter().any(|target| target == &job.name))
-                    .take(256)
-                    .map(|job| gitrun_smart_scheduler::QueuedJobOccurrence {
-                        run_id: job.run_id,
-                        job_id: job.job_id,
-                        workflow_id: job.workflow_id,
-                        workflow_path: job.workflow_path,
-                        name: job.name,
-                        labels: job.labels,
-                        started_at_epoch: job.started_at_epoch,
-                    })
-                    .collect(),
-                Err(error) => {
-                    eprintln!(
+    let started_job_occurrences: Vec<gitrun_smart_scheduler::QueuedJobOccurrence> = if kitty_runtime
+        .should_poll_workload_history(repo, observed_at_epoch)
+    {
+        match client.recent_self_hosted_job_starts(repo, 3) {
+            Ok(jobs) => jobs
+                .into_iter()
+                .filter(|job| !dock_target_jobs.iter().any(|target| target == &job.name))
+                .take(256)
+                .map(|job| gitrun_smart_scheduler::QueuedJobOccurrence {
+                    run_id: job.run_id,
+                    job_id: job.job_id,
+                    workflow_id: job.workflow_id,
+                    workflow_path: job.workflow_path,
+                    name: job.name,
+                    labels: job.labels,
+                    started_at_epoch: job.started_at_epoch,
+                })
+                .collect(),
+            Err(error) => {
+                eprintln!(
                         "gitrun-autoscaler: Kitty actual-start history sampling failed for {repo}; existing model retained: {error}"
                     );
-                    Vec::new()
-                }
+                Vec::new()
             }
-        } else {
-            Vec::new()
-        };
+        }
+    } else {
+        Vec::new()
+    };
     let mut kitty_decision = match kitty_runtime.observe(
         gitrun_smart_scheduler::ObservationInput {
             repository: repo.to_owned(),

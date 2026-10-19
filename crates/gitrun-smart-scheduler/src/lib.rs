@@ -1034,7 +1034,9 @@ impl WorkflowModel {
         }
         if let Some(forecast) = &self.latest_forecast {
             let valid_score = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
-            if forecast.model_version != self.model_version
+            if !forecast.generated_at_epoch.is_multiple_of(BUCKET_SECONDS)
+                || !forecast.target_epoch.is_multiple_of(BUCKET_SECONDS)
+                || forecast.model_version != self.model_version
                 || forecast.horizon_seconds != FORECAST_HORIZON_SECONDS
                 || forecast.target_epoch
                     != forecast
@@ -4064,6 +4066,12 @@ mod tests {
     #[test]
     fn saved_settings_flow_through_runtime_into_dashboard_status() {
         let dir = temp_dir("settings-runtime-dashboard-flow");
+        let observed_at_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            / BUCKET_SECONDS
+            * BUCKET_SECONDS;
         let mut settings = enabled_settings();
         settings.predictive_warm_pool_enabled = true;
         settings.shadow_mode = false;
@@ -4074,7 +4082,7 @@ mod tests {
             .observe(
                 ObservationInput {
                     repository: "owner/repo".into(),
-                    observed_at_epoch: 1_800,
+                    observed_at_epoch,
                     queued_job_occurrences: Vec::new(),
                     started_job_occurrences: vec![QueuedJobOccurrence {
                         run_id: 41,
@@ -4083,7 +4091,7 @@ mod tests {
                         workflow_path: ".github/workflows/build.yml".into(),
                         name: "build-linux".into(),
                         labels: vec!["self-hosted".into(), "linux".into()],
-                        started_at_epoch: Some(1_800),
+                        started_at_epoch: Some(observed_at_epoch),
                     }],
                     started_job_history_complete: false,
                     poll_interval_seconds: BUCKET_SECONDS,
@@ -4115,7 +4123,10 @@ mod tests {
         assert_eq!(status.repositories.len(), 1);
         assert_eq!(status.repositories[0].repository, "owner/repo");
         assert_eq!(status.repositories[0].sample_count, 1);
-        assert_eq!(status.repositories[0].latest_observation_epoch, Some(1_800));
+        assert_eq!(
+            status.repositories[0].latest_observation_epoch,
+            Some(observed_at_epoch)
+        );
         assert_eq!(status.repositories[0].workload_patterns.len(), 1);
         assert_eq!(
             status.repositories[0].workload_patterns[0].job_name,
@@ -4136,10 +4147,17 @@ mod tests {
         write_settings(&dir, &settings);
         let mut runtime = KittyRuntime::new(&dir);
         let repositories = MAX_MODELS + 2;
+        let latest_stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            / BUCKET_SECONDS
+            * BUCKET_SECONDS;
 
         for index in 0..repositories {
             let repository = format!("owner/repo-{index}");
-            let stamp = 1_800 + (index as u64) * BUCKET_SECONDS;
+            let stamp = latest_stamp
+                .saturating_sub((repositories - index) as u64 * BUCKET_SECONDS);
             let decision = runtime
                 .observe(
                     ObservationInput {
@@ -4564,7 +4582,7 @@ mod tests {
         model.latest_forecast = None;
         model.predictions.push(PredictionRecord {
             issued_at_bucket: start,
-            target_bucket: start + 2 * BUCKET_SECONDS,
+            target_bucket: start + 2 * BUCKET_SECONDS + 1,
             horizon_seconds: 2 * BUCKET_SECONDS,
             is_seasonal: false,
             predicted_demand: 3,
@@ -5621,7 +5639,7 @@ mod tests {
         }
         assert_eq!(
             workload_prediction_bias(&model, &workload_id),
-            Some(-1.75),
+            Some(-2.0),
             "repeated over-prediction should lower the next warm-up request"
         );
     }

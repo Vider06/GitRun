@@ -3934,6 +3934,24 @@ mod tests {
     #[test]
     fn tiered_retention_bounds_history_and_preserves_weekday_hour_summaries() {
         let mut model = WorkflowModel::empty("owner/repo");
+        let workload_epoch = 3_600;
+        let workload_slot = weekday_hour_slot(workload_epoch);
+        let mut workload = WorkloadPattern {
+            workload_code: "wk-0123456789abcdef".into(),
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            job_name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            first_seen_epoch: workload_epoch,
+            last_seen_epoch: workload_epoch,
+            occurrence_count: 1,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+            slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+        };
+        workload.slots[workload_slot] = TemporalDemandSlot(1, 1, 1, 1);
+        workload.slot_last_week[workload_slot] = weekly_period_start(workload_epoch);
+        model.workload_patterns.push(workload);
+
         let total_weeks = (MAX_YEARLY_SUMMARIES as u64 + 3) * 48 + 8;
         for week in 0..total_weeks {
             let bucket_epoch = week * WEEK_SECONDS + 3_600;
@@ -3956,6 +3974,13 @@ mod tests {
         assert!(model.monthly_summaries.len() <= MAX_MONTHLY_SUMMARIES);
         assert!(model.yearly_summaries.len() <= MAX_YEARLY_SUMMARIES);
         assert!(model.lifetime_summary.is_some());
+        assert_eq!(model.workload_patterns.len(), 1);
+        assert_eq!(model.workload_patterns[0].occurrence_count, 1);
+        assert_eq!(
+            model.workload_patterns[0].slots[workload_slot].0,
+            1,
+            "recurring job profiles survive years of time-series compaction"
+        );
         let retained = model
             .weekly_summaries
             .iter()

@@ -324,6 +324,84 @@ impl SchedulerState {
             .unwrap_or(0)
     }
 
+    /// Assign a durable GitRun ID to an observed queued job. Provider run/job
+    /// IDs are only used to recover the same entry across polls.
+    pub fn ensure_gitrun_job_id(
+        &mut self,
+        repository: &str,
+        run_id: u64,
+        job_id: u64,
+        observed_at_epoch: u64,
+    ) -> Result<(String, bool), StateError> {
+        if !valid_repository_identity(repository)
+            || run_id == 0
+            || job_id == 0
+            || observed_at_epoch == 0
+        {
+            return Err(StateError::Invalid(
+                "cannot assign a GitRun job ID to invalid provider metadata".into(),
+            ));
+        }
+        let repository = repository.trim().to_ascii_lowercase();
+        let key = job_identity_key(&repository, run_id, job_id);
+        let refresh_bucket =
+            observed_at_epoch / JOB_ID_REFRESH_BUCKET_SECONDS * JOB_ID_REFRESH_BUCKET_SECONDS;
+        if let Some(identity) = self.data.job_identities.get_mut(&key) {
+            if identity.repository != repository
+                || identity.run_id != run_id
+                || identity.job_id != job_id
+                || !valid_gitrun_job_id(&identity.gitrun_job_id, &repository)
+            {
+                return Err(StateError::Invalid(
+                    "existing GitRun job identity conflicts with this provider job".into(),
+                ));
+            }
+            let mut changed = false;
+            if refresh_bucket > identity.last_seen_epoch {
+                identity.last_seen_epoch = refresh_bucket;
+                changed = true;
+            }
+            return Ok((identity.gitrun_job_id.clone(), changed));
+        }
+
+        let stale_before = observed_at_epoch.saturating_sub(JOB_ID_RETENTION_SECONDS);
+        self.data.job_identities.retain(|_, identity| {
+            identity.last_seen_epoch >= stale_before
+        });
+        while self.data.job_identities.len() >= MAX_JOB_IDENTITIES {
+            let oldest = self.data.job_identities
+                .iter()
+                .min_by_key(|(_, identity)| identity.last_seen_epoch)
+                .map(|(key, _)| key.clone())
+                .ok_or_else(|| StateError::Invalid(
+                    "GitRun job identity registry could not evict an entry".into()
+                ))?;
+            self.data.job_identities.remove(&oldest);
+        }
+        if self.data.next_job_identity_sequence == 0 {
+            self.data.next_job_identity_sequence = 1;
+        }
+        let sequence = self.data.next_job_identity_sequence;
+        let next_sequence = sequence.checked_add(1).ok_or_else(|| {
+            StateError::Invalid("GitRun job identity sequence exhausted".into())
+        })?;
+        let gitrun_job_id = make_gitrun_job_id(&repository, sequence).ok_or_else(|| {
+            StateError::Invalid("GitRun could not generate a job identity".into())
+        })?;
+        self.data.next_job_identity_sequence = next_sequence;
+        self.data.job_identities.insert(
+            key,
+            PersistedJobIdentity {
+                repository,
+                run_id,
+                job_id,
+                gitrun_job_id: gitrun_job_id.clone(),
+                last_seen_epoch: refresh_bucket,
+            },
+        );
+        Ok((gitrun_job_id, true))
+    }
+
     /// Marks a container as idle if it wasn't already tracked, and returns
     /// how long it's been idle so far.
     pub fn mark_idle(&mut self, name: &str) -> Duration {
@@ -537,6 +615,35 @@ mod tests {
         state.mark_idle("runner-a");
         state.clear_idle("runner-a");
         assert!(state.idle_entries().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gitrun_job_identity_is_unique_stable_and_persisted() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-job-identities-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let mut state = SchedulerState::load(&dir).unwrap();
+
+        let (first, changed) = state.ensure_gitrun_job_id("owner/repo", 41, 410, 10_000).unwrap();
+        assert!(changed);
+        assert!(valid_gitrun_job_id(&first, "owner/repo"));
+        let (repeat, changed) = state.ensure_gitrun_job_id("owner/repo", 41, 410, 10_060).unwrap();
+        assert!(!changed);
+        assert_eq!(repeat, first);
+        let (next, changed) = state.ensure_gitrun_job_id("owner/repo", 41, 411, 10_060).unwrap();
+        assert!(changed);
+        assert_ne!(next, first);
+        let (other_repo, _) = state.ensure_gitrun_job_id("other/repo", 41, 410, 10_060).unwrap();
+        assert_ne!(other_repo, first);
+        state.save().unwrap();
+
+        let mut reloaded = SchedulerState::load(&dir).unwrap();
+        let (persisted, changed) = reloaded.ensure_gitrun_job_id("owner/repo", 41, 410, 10_120).unwrap();
+        assert!(!changed);
+        assert_eq!(persisted, first);
         let _ = fs::remove_dir_all(&dir);
     }
 

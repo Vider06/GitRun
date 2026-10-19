@@ -258,6 +258,9 @@ fn validate(
             }
         }
         AutomationAction::StopIdleRunner => {
+            if !policy.kitty_enabled {
+                return Err("Kitty master switch is disabled".into());
+            }
             if !policy
                 .allowed_repositories
                 .iter()
@@ -281,6 +284,9 @@ fn validate(
             }
         }
         AutomationAction::FastStopWorkflowRun => {
+            if !policy.kitty_enabled {
+                return Err("Kitty master switch is disabled".into());
+            }
             if !policy
                 .allowed_repositories
                 .iter()
@@ -380,6 +386,23 @@ mod tests {
         .unwrap();
         assert_eq!(permit.action(), AutomationAction::PredictiveWarmPool);
         drop(permit);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn disabling_kitty_master_switch_disables_stop_automation() {
+        let (dir, path) = audit_path();
+        let mut disabled = policy();
+        disabled.kitty_enabled = false;
+
+        let mut stop = intent(AutomationAction::StopIdleRunner);
+        stop.runner_name = Some("runner-1".into());
+        stop.runner_id = Some(11);
+        stop.runner_is_verified_idle = true;
+        assert!(authorize_action(&disabled, stop, &path).is_err());
+
+        let fast_stop = intent(AutomationAction::FastStopWorkflowRun);
+        assert!(authorize_action(&disabled, fast_stop, &path).is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 

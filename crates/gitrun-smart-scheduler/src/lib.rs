@@ -4301,6 +4301,60 @@ mod tests {
     }
 
     #[test]
+    fn workload_slot_restarts_learning_after_a_long_schedule_change() {
+        let now = 200 * WEEK_SECONDS + 15 * 3_600 + 55 * 60;
+        let old_week = weekly_period_start(now.saturating_sub(120 * 86_400));
+        let mut settings = enabled_settings();
+        settings.predictive_warm_pool_enabled = true;
+        settings.warm_pool_lead_seconds = 300;
+        let job = QueuedJobOccurrence {
+            run_id: 51,
+            job_id: 510,
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+        };
+        let workload_code = workload_fingerprint(&job);
+        let slot_index = weekday_hour_slot(now);
+        let mut pattern = WorkloadPattern {
+            workload_code: workload_code.clone(),
+            workflow_id: job.workflow_id,
+            workflow_path: job.workflow_path.clone(),
+            job_name: job.name.clone(),
+            labels: job.labels.clone(),
+            first_seen_epoch: old_week,
+            last_seen_epoch: old_week,
+            occurrence_count: 20,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+            slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+        };
+        pattern.slots[slot_index] = TemporalDemandSlot(40, 40, 40, 20);
+        pattern.slot_last_week[slot_index] = old_week;
+        let mut model = WorkflowModel::empty("owner/repo");
+        model.workload_patterns.push(pattern);
+
+        assert!(record_queued_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&job),
+            now,
+        ));
+        let pattern = &model.workload_patterns[0];
+        assert_eq!(pattern.occurrence_count, 21, "lifetime total is preserved");
+        assert_eq!(
+            pattern.slots[slot_index].0, 1,
+            "the old hourly count is reset after a 120-day hiatus"
+        );
+        assert_eq!(pattern.slots[slot_index].3, 1);
+        assert_eq!(pattern.slot_last_week[slot_index], weekly_period_start(now));
+        assert!(
+            forecast_workload_prewarms(&model, now / BUCKET_SECONDS * BUCKET_SECONDS, &settings)
+                .is_empty(),
+            "one fresh occurrence cannot immediately reactivate an old weekly schedule"
+        );
+    }
+
+    #[test]
     fn completed_workload_prewarms_persist_and_cannot_exceed_the_forecast_budget() {
         let dir = temp_dir("prewarm-fulfilled-slots");
         let mut settings = enabled_settings();

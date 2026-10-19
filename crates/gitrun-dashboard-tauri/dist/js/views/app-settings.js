@@ -72,6 +72,7 @@ export async function renderAppSettings() {
       const predictionText = latest
         ? 'Latest target ' + formatEpoch(latest.target_epoch) +
           ' · predicted ' + String(latest.predicted_occurrences) +
+          ' · prepared ' + String(latest.prewarm_runners_created || 0) +
           ' · observed ' + (latest.actual_occurrences == null ? "pending" : String(latest.actual_occurrences)) +
           (Number.isFinite(latest.mean_error_correction)
             ? ' · correction ' + Number(latest.mean_error_correction).toFixed(2)
@@ -125,7 +126,7 @@ export async function renderAppSettings() {
     '<label class="checkbox-row"><input type="checkbox" disabled><span><strong>Adaptive Resource Management</strong>Unavailable in this version; reliable per-job resource attribution and bounded profiles are not ready.</span></label>' +
     '<div class="two-col mt-12">' +
       '<div class="field"><label for="kitty-min-samples">Minimum five-minute samples</label><input id="kitty-min-samples" type="number" min="24" max="2016" value="' + esc(String(kittySettings.minimum_samples)) + '"><small class="field-hint">Default 576 samples (48 hours); forecast quality needs later outcomes too.</small></div>' +
-      '<div class="field"><label for="kitty-history-buckets">History buckets (maximum 2016)</label><input id="kitty-history-buckets" type="number" min="24" max="2016" value="' + esc(String(kittySettings.history_buckets)) + '"><small class="field-hint">Five-minute buckets, at most seven days of history.</small></div>' +
+      '<div class="field"><label for="kitty-history-buckets">History buckets (maximum 2016)</label><input id="kitty-history-buckets" type="number" min="24" max="2016" value="' + esc(String(kittySettings.history_buckets)) + '"><small class="field-hint">Five-minute high-resolution history, at most seven days. Weekly, four-week, yearly and lifetime summaries plus bounded workload profiles are retained separately.</small></div>' +
       '<div class="field"><label for="kitty-max-additional">Maximum extra warm runners</label><input id="kitty-max-additional" type="number" min="0" max="100" value="' + esc(String(kittySettings.max_additional_warm_runners)) + '"><small class="field-hint">Additional capacity Kitty may request above the configured minimum.</small></div>' +
       '<div class="field"><label for="kitty-hold-seconds">Warm-pool minimum hold (seconds)</label><input id="kitty-hold-seconds" type="number" min="300" max="3600" step="300" value="' + esc(String(kittySettings.warm_pool_min_hold_seconds)) + '"><small class="field-hint">300–3600 seconds to avoid rapid scale-up/scale-down oscillation.</small></div>' +
       '<div class="field"><label for="kitty-warmup-lead">Predictive warm-up lead (seconds)</label><input id="kitty-warmup-lead" type="number" min="300" max="3600" step="300" value="' + esc(String(kittySettings.warm_pool_lead_seconds ?? 300)) + '"><small class="field-hint">Default 300 seconds: prepare for a recurring weekday/hour demand pattern five minutes before its target slot.</small></div>' +

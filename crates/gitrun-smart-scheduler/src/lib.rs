@@ -2388,6 +2388,9 @@ fn record_queued_job_occurrences(
                     model
                         .recent_job_occurrences
                         .retain(|entry| entry.workload_code != stale);
+                    model
+                        .workload_predictions
+                        .retain(|prediction| prediction.workload_code != stale);
                 }
             }
             let mut labels: Vec<String> = job
@@ -3186,6 +3189,7 @@ mod tests {
                     ObservationInput {
                         repository: repository.clone(),
                         observed_at_epoch: stamp,
+                        job_occurrences: Vec::new(),
                         queued_jobs: 0,
                         busy_runners: 1,
                         online_runners: 1,
@@ -3893,6 +3897,86 @@ mod tests {
             .yearly_summaries
             .iter()
             .all(|summary| summary.slots.len() == TEMPORAL_SLOT_COUNT));
+    }
+
+    #[test]
+    fn workload_predictions_learn_from_unique_jobs_and_close_empty_windows() {
+        let mut model = WorkflowModel::empty("owner/repo");
+        let target = 80_000 / 3_600 * 3_600;
+        let issued = target - BUCKET_SECONDS;
+        let job = QueuedJobOccurrence {
+            run_id: 41,
+            job_id: 410,
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+        };
+        let workload_code = workload_fingerprint(&job);
+        let mut pattern = WorkflowPattern {
+            workload_code: workload_code.clone(),
+            workflow_id: job.workflow_id,
+            workflow_path: job.workflow_path.clone(),
+            job_name: job.name.clone(),
+            labels: job.labels.clone(),
+            first_seen_epoch: issued,
+            last_seen_epoch: issued,
+            occurrence_count: 4,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+            slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+        };
+        let slot = weekday_hour_slot(target);
+        pattern.slots[slot] = TemporalDemandSlot(4, 8, 2, 4);
+        model.workload_patterns.push(pattern);
+        model.workload_predictions.push(WorkloadPredictionRecord {
+            workload_code: workload_code.clone(),
+            issued_at_bucket: issued,
+            target_epoch: target,
+            predicted_occurrences: 2,
+            observed_occurrences: 0,
+            actual_occurrences: None,
+        });
+
+        assert!(record_queued_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&job),
+            issued + 30,
+        ));
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
+
+        // Repeated queue polling for the same exact run/job ID is not a second
+        // workload occurrence.
+        record_queued_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&job),
+            issued + 60,
+        );
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
+
+        // When the target hour completes with no further job occurrence, the
+        // current count is finalized rather than leaving an unevaluable record.
+        record_queued_job_occurrences(&mut model, &[], target + 3_600);
+        assert_eq!(model.workload_predictions[0].actual_occurrences, Some(1));
+        assert_eq!(
+            workload_prediction_bias(&model, &workload_code),
+            None,
+            "self-correction waits for at least four evaluated occurrences"
+        );
+        for index in 0..3 {
+            model.workload_predictions.push(WorkloadPredictionRecord {
+                workload_code: workload_code.clone(),
+                issued_at_bucket: issued - (index + 1) * 3_600,
+                target_epoch: target - (index + 1) * 3_600,
+                predicted_occurrences: 2,
+                observed_occurrences: 0,
+                actual_occurrences: Some(0),
+            });
+        }
+        assert_eq!(
+            workload_prediction_bias(&model, &workload_code),
+            Some(-2.0),
+            "repeated over-prediction should lower the next warm-up request"
+        );
     }
 
     #[test]

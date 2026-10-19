@@ -2157,6 +2157,14 @@ jobs:
           ci_cache_note npm "$PRIMARY" "$MATCHED" "$NPM_CONFIG_CACHE"
           deps() { (cd crates/gitrun-dashboard-tauri && npm install --ignore-scripts --no-audit --no-fund); }
           ci_run "npm install (tauri frontend)" deps
+      - name: Test privileged dashboard executable trust boundary
+        if: runner.os == 'Linux'
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          dashboard_security_test() {
+            cargo test --locked -p gitrun-dashboard-tauri --lib trusted_privileged_binary_accepts_system_cli_and_rejects_symlinks
+          }
+          ci_run "Trusted system CLI and symlink rejection" dashboard_security_test
       - name: Build Tauri application
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

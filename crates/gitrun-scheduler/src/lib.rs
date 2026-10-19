@@ -680,9 +680,9 @@ fn bound_workload_prewarms_to_budget(
         remaining = remaining.saturating_sub(target.runner_count);
     }
     targets.retain(|target| target.runner_count > 0);
-    targets
-        .iter()
-        .fold(0u32, |count, target| count.saturating_add(target.runner_count))
+    targets.iter().fold(0u32, |count, target| {
+        count.saturating_add(target.runner_count)
+    })
 }
 
 fn actions_for_resource_pressure(

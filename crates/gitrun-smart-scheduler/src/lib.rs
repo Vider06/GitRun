@@ -896,7 +896,7 @@ impl KittyRuntime {
                 let excess = model.decision_audit.len() - MAX_AUDIT_RECORDS;
                 model.decision_audit.drain(0..excess);
             }
-            self.dirty_models.insert(key);
+            self.dirty_models.insert(key.clone());
         }
 
         // A raised floor is not passed to the planner until its source model and
@@ -1407,7 +1407,7 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
             path.display()
         )));
     }
-    let mut file = fs::OpenOptions::new()
+    let file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)?;
@@ -1753,7 +1753,7 @@ fn read_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
     }
-    let mut file = options.open(path)?;
+    let file = options.open(path)?;
     let opened = file.metadata()?;
     if !opened.is_file() || opened.len() > max_bytes {
         return Err(KittyError::Invalid(format!(

@@ -3111,6 +3111,7 @@ mod tests {
             source_window_start: Some(start),
             source_window_end: Some(start + 29 * BUCKET_SECONDS),
             status: DecisionStatus::RecommendationOnly,
+            gsr_authorized: false,
             reason: "sample audit from wider prior history window".into(),
             configured_min_runners: 2,
             proposed_min_runners: 2,
@@ -3536,6 +3537,55 @@ mod tests {
         assert_eq!(percentile(&values, 0.0), 0.0);
         assert_eq!(percentile(&values, 0.9), 20.0);
         assert_eq!(percentile(&values, 0.5), 2.0);
+    }
+
+    #[test]
+    fn queued_job_occurrences_receive_stable_codes_and_are_counted_once() {
+        let dir = temp_dir("job-identity");
+        let mut settings = enabled_settings();
+        settings.predictive_warm_pool_enabled = false;
+        write_settings(&dir, &settings);
+        let job = |run_id, job_id| QueuedJobOccurrence {
+            run_id,
+            job_id,
+            workflow_id: 77,
+            workflow_path: ".github/workflows/build.yml".into(),
+            name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "Linux".into()],
+        };
+        let mut runtime = KittyRuntime::new(&dir);
+        let mut first = input(1_800, 2, 1);
+        first.job_occurrences = vec![job(100, 1000), job(101, 1001)];
+        let first_decision = runtime.observe(first, 2, 8, true).unwrap();
+        runtime.finish_cycle(&first_decision, 0, true).unwrap();
+
+        let model_path = dir
+            .join("kitty")
+            .join(format!("model-{}.json", repository_key("owner/repo")));
+        let first_model: WorkflowModel =
+            serde_json::from_slice(&fs::read(&model_path).unwrap()).unwrap();
+        assert_eq!(first_model.workload_patterns.len(), 1);
+        assert_eq!(first_model.workload_patterns[0].occurrence_count, 2);
+        assert_ne!(
+            first_model.recent_job_occurrences[0].occurrence_code,
+            first_model.recent_job_occurrences[1].occurrence_code
+        );
+
+        // A still-queued job appears in every poll, but its run/job code is
+        // counted as a single workload occurrence.
+        let mut repeat = input(1_860, 2, 1);
+        repeat.job_occurrences = vec![job(100, 1000), job(101, 1001)];
+        let repeat_decision = runtime.observe(repeat, 2, 8, true).unwrap();
+        runtime.finish_cycle(&repeat_decision, 0, true).unwrap();
+        let repeated_model: WorkflowModel =
+            serde_json::from_slice(&fs::read(&model_path).unwrap()).unwrap();
+        assert_eq!(repeated_model.workload_patterns[0].occurrence_count, 2);
+        assert_eq!(repeated_model.recent_job_occurrences.len(), 2);
+        assert_eq!(
+            repeated_model.workload_patterns[0].workload_code,
+            first_model.workload_patterns[0].workload_code
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -29,15 +29,15 @@ const MAX_JOB_PATTERNS: usize = 24;
 const MAX_JOB_OCCURRENCES: usize = 256;
 const MAX_WORKLOAD_PREDICTIONS: usize = 256;
 const MAX_DASHBOARD_JOB_OCCURRENCES: usize = 32;
-const MAX_AUDIT_RECORDS: usize = 128;
-const MAX_EVALUATED_FORECASTS: usize = 512;
+const MAX_AUDIT_RECORDS: usize = 64;
+const MAX_EVALUATED_FORECASTS: usize = 256;
 const FORECAST_HORIZON_SECONDS: u64 = 3600;
 const WEEK_SECONDS: u64 = 7 * 24 * 60 * 60;
 const COMPACT_MONTH_SECONDS: u64 = WEEK_SECONDS * 4;
 const COMPACT_YEAR_SECONDS: u64 = COMPACT_MONTH_SECONDS * 12;
 const MAX_WEEKLY_SUMMARIES: usize = 4;
 const MAX_MONTHLY_SUMMARIES: usize = 12;
-const MAX_YEARLY_SUMMARIES: usize = 32;
+const MAX_YEARLY_SUMMARIES: usize = 16;
 const TEMPORAL_SLOT_COUNT: usize = 7 * 24;
 const MIN_SEASONAL_OCCURRENCES: f64 = 4.0;
 const DEFAULT_WARM_POOL_LEAD_SECONDS: u64 = 300;
@@ -555,7 +555,7 @@ pub struct WorkflowModel {
     /// Four-week (28-day) compact periods retained for up to twelve periods.
     #[serde(default)]
     pub monthly_summaries: Vec<PeriodSummary>,
-    /// Twelve compact periods (336 days) retained for up to 32 years.
+    /// Twelve compact periods (336 days) retained for up to 16 years.
     #[serde(default)]
     pub yearly_summaries: Vec<PeriodSummary>,
     /// Bounded aggregate for older years so storage remains capped indefinitely.
@@ -2272,7 +2272,7 @@ fn compact_model_history(model: &mut WorkflowModel, now_epoch: u64, history_limi
         }
     }
 
-    // Keep the last 32 annual summaries and fold still older years into one
+    // Keep the last 16 annual summaries and fold still older years into one
     // lifetime profile. Storage therefore remains bounded for arbitrarily old
     // installations while retaining long-term weekday/hour statistics.
     while model.yearly_summaries.len() > MAX_YEARLY_SUMMARIES {

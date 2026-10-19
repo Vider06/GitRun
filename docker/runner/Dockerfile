@@ -11,7 +11,7 @@ ARG POWERSHELL_SHA256=492FF26BB958336BF61E597CE19E07648B4003BD2A08659E02F0E3E044
 
 # Build the GSR shell agent with a pinned Rust toolchain. BuildKit cache mounts
 # are persisted explicitly by the CI cache-dance step.
-FROM rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0 AS gsr-builder
+FROM rust:1.99.1-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29 AS gsr-builder
 
 WORKDIR /usr/src/gitrun
 

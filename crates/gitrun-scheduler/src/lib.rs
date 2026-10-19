@@ -1099,7 +1099,11 @@ fn reconcile_repo(
                     })
                     .count()
                     .min(u32::MAX as usize) as u32;
-                let missing = target.runner_count.saturating_sub(existing);
+                // A created runner slot remains fulfilled even when its
+                // ephemeral container later exits. Live inventory covers older
+                // runners created before this completion counter was persisted.
+                let fulfilled = existing.max(target.prewarm_runners_created);
+                let missing = target.runner_count.saturating_sub(fulfilled);
                 (missing > 0).then(|| {
                     let mut pending = target.clone();
                     pending.runner_count = missing;

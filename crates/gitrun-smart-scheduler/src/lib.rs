@@ -1202,6 +1202,7 @@ impl KittyRuntime {
                     predicted_occurrences: target.runner_count,
                     observed_occurrences: 0,
                     actual_occurrences: None,
+                    prewarm_runners_created: 0,
                 });
                 self.dirty_models.insert(key.clone());
             }
@@ -1516,6 +1517,64 @@ impl KittyRuntime {
         self.dirty_models.remove(&key);
         if let Err(error) = self.persist_dashboard_snapshot() {
             eprintln!("gitrun-smart-scheduler: dashboard status persistence failed after GSR authorization: {error}");
+        }
+        Ok(())
+    }
+
+    /// Record a successfully materialized warmup slot for one predicted
+    /// workload/hour. This is persistent even when the runner is ephemeral and
+    /// is later removed after completing its job.
+    pub fn record_workload_prewarm_created(
+        &mut self,
+        repository: &str,
+        workload_code: &str,
+        target_epoch: u64,
+        created_count: u32,
+    ) -> Result<()> {
+        if !valid_repository(repository)
+            || !valid_workload_code(workload_code)
+            || target_epoch == 0
+            || !target_epoch.is_multiple_of(3_600)
+            || created_count == 0
+        {
+            return Err(KittyError::Invalid(
+                "workload prewarm completion identity is invalid".into(),
+            ));
+        }
+        let key = repository_key(repository);
+        {
+            let model = self.models.get_mut(&key).ok_or_else(|| {
+                KittyError::Invalid("workload prewarm completion has no repository model".into())
+            })?;
+            let prediction = model
+                .workload_predictions
+                .iter_mut()
+                .find(|record| {
+                    record.workload_code == workload_code && record.target_epoch == target_epoch
+                })
+                .ok_or_else(|| {
+                    KittyError::Invalid(
+                        "workload prewarm completion has no matching forecast record".into(),
+                    )
+                })?;
+            let completed = prediction
+                .prewarm_runners_created
+                .saturating_add(created_count);
+            if completed > prediction.predicted_occurrences {
+                return Err(KittyError::Invalid(
+                    "workload prewarm completion exceeds its predicted runner count".into(),
+                ));
+            }
+            prediction.prewarm_runners_created = completed;
+        }
+        self.dirty_models.insert(key.clone());
+        if let Err(error) = self.persist_model(&key) {
+            self.disabled_models.insert(key.clone());
+            return Err(error);
+        }
+        self.dirty_models.remove(&key);
+        if let Err(error) = self.persist_dashboard_snapshot() {
+            eprintln!("gitrun-smart-scheduler: dashboard status persistence failed after workload prewarm: {error}");
         }
         Ok(())
     }
@@ -2603,10 +2662,22 @@ fn forecast_workload_prewarms(
             if !corrected_occurrences.is_finite() || corrected_occurrences <= 0.0 {
                 return None;
             }
-            let runner_count = corrected_occurrences
+            let calculated_runner_count = corrected_occurrences
                 .ceil()
                 .clamp(1.0, f64::from(settings.max_additional_warm_runners))
                 as u32;
+            let existing_prediction = model.workload_predictions.iter().find(|record| {
+                record.workload_code == pattern.workload_code
+                    && record.target_epoch == target_epoch
+            });
+            // Once a prediction exists, preserve its original target count for
+            // the entire hour. Repeated polls must not amplify or shrink it.
+            let runner_count = existing_prediction
+                .map(|record| record.predicted_occurrences)
+                .unwrap_or(calculated_runner_count);
+            let prewarm_runners_created = existing_prediction
+                .map(|record| record.prewarm_runners_created)
+                .unwrap_or(0);
             Some(WorkloadPrewarm {
                 workload_code: pattern.workload_code.clone(),
                 workflow_id: pattern.workflow_id,
@@ -2616,6 +2687,7 @@ fn forecast_workload_prewarms(
                 target_epoch,
                 hold_until_epoch: target_epoch.saturating_add(settings.warm_pool_min_hold_seconds),
                 runner_count,
+                prewarm_runners_created,
                 observed_distinct_weeks: distinct_weeks,
                 historical_occurrences_per_week: corrected_occurrences,
             })

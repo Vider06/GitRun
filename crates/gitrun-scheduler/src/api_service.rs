@@ -4758,9 +4758,8 @@ mod mount_runtime_tests {
         let disconnect_mount = mountinfo_by_target(pid, &target)
             .expect("inspect mount before disconnect cleanup")
             .expect("mount must exist before disconnect cleanup");
-        let disconnect_state_dir = std::env::temp_dir().join(format!(
-            "gitrun-disconnect-live-cleanup-{suffix}"
-        ));
+        let disconnect_state_dir =
+            std::env::temp_dir().join(format!("gitrun-disconnect-live-cleanup-{suffix}"));
         let _disconnect_state_guard = TemporaryDirectory(disconnect_state_dir.clone());
         let disconnect_source_metadata = fs::metadata(&canonical_source).unwrap();
         let disconnect_record = MountRecord {

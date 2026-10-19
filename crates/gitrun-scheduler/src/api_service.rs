@@ -5819,9 +5819,7 @@ mod secure_runner_file_helper_tests {
         );
     }
 
-    fn exercise_secure_file_helper(
-        directory: &std::path::Path,
-    ) -> Result<(), String> {
+    fn exercise_secure_file_helper(directory: &std::path::Path) -> Result<(), String> {
         use std::os::unix::fs::symlink;
 
         let file = directory.join("safe.txt");

@@ -670,6 +670,21 @@ fn maybe_fast_stop_workflow(
 /// safety work. Suppress whole replacement actions (rather than splitting
 /// remove/create), and suppress scale-down plans computed assuming deferred
 /// creations will succeed.
+fn bound_workload_prewarms_to_budget(
+    targets: &mut Vec<gitrun_smart_scheduler::WorkloadPrewarm>,
+    extra_runner_budget: u32,
+) -> u32 {
+    let mut remaining = extra_runner_budget;
+    for target in targets.iter_mut() {
+        target.runner_count = target.runner_count.min(remaining);
+        remaining = remaining.saturating_sub(target.runner_count);
+    }
+    targets.retain(|target| target.runner_count > 0);
+    targets
+        .iter()
+        .fold(0u32, |count, target| count.saturating_add(target.runner_count))
+}
+
 fn actions_for_resource_pressure(
     actions: Vec<reconcile::Action>,
     allow_creation: bool,
@@ -1101,19 +1116,12 @@ fn reconcile_repo(
     let floor_extra = kitty_decision
         .effective_min_runners
         .saturating_sub(configured_floor);
-    let mut remaining_prewarm_budget = kitty_settings_snapshot
-        .max_additional_warm_runners
-        .saturating_sub(floor_extra);
-    for target in &mut pending_workload_prewarms {
-        target.runner_count = target.runner_count.min(remaining_prewarm_budget);
-        remaining_prewarm_budget = remaining_prewarm_budget.saturating_sub(target.runner_count);
-    }
-    pending_workload_prewarms.retain(|target| target.runner_count > 0);
-    let prewarm_runner_count = pending_workload_prewarms
-        .iter()
-        .fold(0u32, |count, target| {
-            count.saturating_add(target.runner_count)
-        });
+    let prewarm_runner_count = bound_workload_prewarms_to_budget(
+        &mut pending_workload_prewarms,
+        kitty_settings_snapshot
+            .max_additional_warm_runners
+            .saturating_sub(floor_extra),
+    );
     let floor_growth_requested = matches!(
         kitty_decision.status,
         gitrun_smart_scheduler::DecisionStatus::AppliedWarmPoolFloor
@@ -2959,6 +2967,13 @@ mod resource_pressure_reconciliation_tests {
                 job_run_id: None,
                 job_id: None,
             },
+            Action::PrewarmWorkload {
+                workload_code: "wk-0123456789abcdef".into(),
+                target_epoch: 3_600,
+                hold_until_epoch: 4_500,
+                job_name: "build".into(),
+                job_labels: vec!["self-hosted".into()],
+            },
             Action::RestartUnresponsive {
                 name: "offline".into(),
             },
@@ -2983,6 +2998,43 @@ mod resource_pressure_reconciliation_tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn prewarm_capacity_shares_the_operator_extra_runner_budget() {
+        let mut targets = vec![
+            gitrun_smart_scheduler::WorkloadPrewarm {
+                workload_code: "wk-0123456789abcdef".into(),
+                workflow_id: 7,
+                workflow_path: ".github/workflows/build.yml".into(),
+                job_name: "build".into(),
+                labels: vec!["self-hosted".into(), "linux".into()],
+                target_epoch: 3_600,
+                hold_until_epoch: 4_500,
+                runner_count: 2,
+                observed_distinct_weeks: 8,
+                historical_occurrences_per_week: 2.0,
+            },
+            gitrun_smart_scheduler::WorkloadPrewarm {
+                workload_code: "wk-fedcba9876543210".into(),
+                workflow_id: 8,
+                workflow_path: ".github/workflows/test.yml".into(),
+                job_name: "test".into(),
+                labels: vec!["self-hosted".into(), "linux".into()],
+                target_epoch: 3_600,
+                hold_until_epoch: 4_500,
+                runner_count: 1,
+                observed_distinct_weeks: 6,
+                historical_occurrences_per_week: 1.0,
+            },
+        ];
+
+        let total = bound_workload_prewarms_to_budget(&mut targets, 1);
+        assert_eq!(total, 1);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].runner_count, 1);
+        assert_eq!(bound_workload_prewarms_to_budget(&mut targets, 0), 0);
+        assert!(targets.is_empty());
     }
 
     #[test]

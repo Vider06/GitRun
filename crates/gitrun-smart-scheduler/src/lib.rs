@@ -741,7 +741,11 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
             for index in 0..TEMPORAL_SLOT_COUNT {
                 if pattern.slots.get(index).is_some_and(|slot| slot.0 > 0) {
                     let approximate_first = weekly_period_start(pattern.first_seen_epoch);
-                    let last = pattern.slot_last_week.get(index).copied().unwrap_or_default();
+                    let last = pattern
+                        .slot_last_week
+                        .get(index)
+                        .copied()
+                        .unwrap_or_default();
                     pattern.slot_first_week[index] = if last > 0 {
                         approximate_first.min(last)
                     } else {
@@ -895,7 +899,10 @@ impl WorkflowModel {
                 || pattern.slots.len() != TEMPORAL_SLOT_COUNT
                 || pattern.slot_last_week.len() != TEMPORAL_SLOT_COUNT
                 || pattern.slot_first_week.len() != TEMPORAL_SLOT_COUNT
-                || pattern.slot_first_week.iter().zip(&pattern.slot_last_week)
+                || pattern
+                    .slot_first_week
+                    .iter()
+                    .zip(&pattern.slot_last_week)
                     .any(|(first, last)| *first > 0 && *last > 0 && first > last)
                 || pattern.job_name.len() > 256
                 || pattern.workflow_path.len() > 512
@@ -2979,7 +2986,7 @@ fn record_queued_job_occurrences(
                 occurrence_count: 0,
                 slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
                 slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
-            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
+                slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
             });
         }
         let Some(gitrun_job_id) =
@@ -3152,7 +3159,7 @@ fn record_started_job_occurrences_with_coverage(
                 occurrence_count: 0,
                 slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
                 slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
-            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
+                slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
             });
         }
 
@@ -5423,7 +5430,7 @@ mod tests {
                 occurrence_count: 1,
                 slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
                 slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
-            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
+                slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
             };
             let slot = weekday_hour_slot(target_epoch);
             pattern.slots[slot] = TemporalDemandSlot(1, 1, 1, 1);

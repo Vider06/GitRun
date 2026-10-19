@@ -1186,6 +1186,7 @@ mod tests {
             target_epoch: 7_200,
             hold_until_epoch: 8_100,
             runner_count: 5,
+            prewarm_runners_created: 0,
             observed_distinct_weeks: 6,
             historical_occurrences_per_week: 5.0,
         }];

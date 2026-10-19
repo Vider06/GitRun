@@ -383,11 +383,22 @@ pub struct Forecast {
     pub bias_correction: Option<f64>,
     #[serde(default)]
     pub seasonal_bias_correction: Option<f64>,
+    /// Reliability of the schedule-specific forecast, evaluated independently.
+    #[serde(default)]
+    pub seasonal_quality_score: Option<f64>,
     pub mean_absolute_error: Option<f64>,
     pub quality_score: f64,
     /// Readiness score combines data volume, forecast quality and freshness.
     /// It is explicitly not a calibrated probability.
     pub confidence_score: f64,
+}
+
+fn forecast_actionable_quality(forecast: &Forecast) -> f64 {
+    if forecast.seasonal_predicted_peak_concurrency.is_some() {
+        forecast.seasonal_quality_score.unwrap_or(0.0)
+    } else {
+        forecast.confidence_score
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -396,6 +407,9 @@ pub struct PredictionRecord {
     pub target_bucket: u64,
     #[serde(default = "default_forecast_horizon_seconds")]
     pub horizon_seconds: u64,
+    /// Separate seasonal records from the rolling aggregate prediction.
+    #[serde(default)]
+    pub is_seasonal: bool,
     pub predicted_demand: u32,
     pub actual_demand: Option<u32>,
     pub skipped_missing_observation: bool,
@@ -1008,6 +1022,9 @@ impl WorkflowModel {
                 || forecast
                     .seasonal_bias_correction
                     .is_some_and(|value| !value.is_finite())
+                || forecast.seasonal_quality_score.is_some_and(|value| {
+                    !value.is_finite() || !(0.0..=1.0).contains(&value)
+                })
             {
                 return Err(KittyError::Invalid(
                     "stored forecast record is outside supported bounds".into(),
@@ -1388,6 +1405,7 @@ impl KittyRuntime {
                         issued_at_bucket: bucket,
                         target_bucket: bucket.saturating_add(FORECAST_HORIZON_SECONDS),
                         horizon_seconds: FORECAST_HORIZON_SECONDS,
+                        is_seasonal: false,
                         predicted_demand: forecast.predicted_peak_concurrency,
                         actual_demand: None,
                         skipped_missing_observation: false,
@@ -1399,6 +1417,7 @@ impl KittyRuntime {
                             target_bucket: bucket
                                 .saturating_add(self.settings.warm_pool_lead_seconds),
                             horizon_seconds: self.settings.warm_pool_lead_seconds,
+                            is_seasonal: true,
                             predicted_demand: seasonal_prediction,
                             actual_demand: None,
                             skipped_missing_observation: false,
@@ -1439,7 +1458,7 @@ impl KittyRuntime {
         let proposed_min = forecast
             .filter(|f| {
                 self.settings.predictive_warm_pool_enabled
-                    && f.confidence_score >= self.settings.minimum_quality_score
+                    && forecast_actionable_quality(f) >= self.settings.minimum_quality_score
             })
             .map(|f| {
                 let desired = f
@@ -1473,7 +1492,7 @@ impl KittyRuntime {
 
         let mut workload_prewarms = if self.settings.predictive_warm_pool_enabled
             && forecast.is_some_and(|f| {
-                f.confidence_score >= self.settings.minimum_quality_score
+                forecast_actionable_quality(f) >= self.settings.minimum_quality_score
                     && sample_count >= self.settings.minimum_samples
             }) {
             forecast_workload_prewarms(model, bucket, &self.settings, input.poll_interval_seconds)
@@ -1559,7 +1578,7 @@ impl KittyRuntime {
             }
         } else {
             let f = forecast.expect("checked forecast");
-            let acceptable = f.confidence_score >= self.settings.minimum_quality_score
+            let acceptable = forecast_actionable_quality(f) >= self.settings.minimum_quality_score
                 && sample_count >= self.settings.minimum_samples;
             if !acceptable {
                 if let Some(held) = held_floor.filter(|floor| *floor > configured_min_runners) {
@@ -1654,7 +1673,7 @@ impl KittyRuntime {
             proposed_min_runners: proposed_min,
             effective_min_runners: effective_min,
             predicted_peak_concurrency: forecast_demand,
-            confidence_score: forecast.map(|f| f.confidence_score),
+            confidence_score: forecast.map(forecast_actionable_quality),
             sample_count,
             shadow_mode: self.settings.shadow_mode,
             decision_bucket: Some(bucket),
@@ -2689,6 +2708,7 @@ fn compact_model_history(model: &mut WorkflowModel, now_epoch: u64, history_limi
 struct SeasonalSlotStats {
     weighted_samples: f64,
     weighted_demand_sum: f64,
+    weighted_peak_demand: f64,
     occurrences: f64,
 }
 
@@ -2702,8 +2722,10 @@ fn seasonal_slot_stats(
 
     for observation in &model.history {
         if weekday_hour_slot(observation.bucket_epoch) == slot_index {
+            let demand = f64::from(observation.demand());
             stats.weighted_samples += 1.0;
-            stats.weighted_demand_sum += f64::from(observation.demand());
+            stats.weighted_demand_sum += demand;
+            stats.weighted_peak_demand = stats.weighted_peak_demand.max(demand);
             observed_weeks.insert(weekly_period_start(observation.bucket_epoch));
         }
     }
@@ -2718,6 +2740,7 @@ fn seasonal_slot_stats(
             let weight = 2.0_f64.powf(-age / half_life_seconds.max(1.0));
             stats.weighted_samples += slot.0 as f64 * weight;
             stats.weighted_demand_sum += slot.1 as f64 * weight;
+            stats.weighted_peak_demand = stats.weighted_peak_demand.max(f64::from(slot.2) * weight);
             stats.occurrences += slot.3 as f64 * weight;
         }
     };
@@ -3448,7 +3471,8 @@ fn compute_forecast(
         .predictions
         .iter()
         .filter(|record| {
-            record.horizon_seconds == FORECAST_HORIZON_SECONDS
+            !record.is_seasonal
+                && record.horizon_seconds == FORECAST_HORIZON_SECONDS
                 && record.actual_demand.is_some()
                 && !record.skipped_missing_observation
         })
@@ -3493,7 +3517,8 @@ fn compute_forecast(
                 .predictions
                 .iter()
                 .filter(|record| {
-                    record.horizon_seconds == settings.warm_pool_lead_seconds
+                    record.is_seasonal
+                        && record.horizon_seconds == settings.warm_pool_lead_seconds
                         && record.actual_demand.is_some()
                         && !record.skipped_missing_observation
                 })
@@ -3507,7 +3532,18 @@ fn compute_forecast(
                 .collect::<Vec<_>>();
             let seasonal_bias_correction =
                 (schedule_correction.len() >= 4).then(|| mean(&schedule_correction));
+            let recent_slot_demands: Vec<f64> = model.history.iter()
+                .filter(|observation| weekday_hour_slot(observation.bucket_epoch) == seasonal_slot)
+                .map(|observation| f64::from(observation.demand()))
+                .collect();
+            let recent_slot_p90 = if recent_slot_demands.is_empty() {
+                0.0
+            } else {
+                percentile(&recent_slot_demands, 0.90)
+            };
             let corrected = (seasonal_mean + seasonal_bias_correction.unwrap_or(0.0))
+                .max(recent_slot_p90)
+                .max(seasonal_stats.weighted_peak_demand)
                 .max(0.0)
                 .ceil()
                 .min(u32::MAX as f64) as u32;
@@ -3547,6 +3583,29 @@ fn compute_forecast(
     let confidence_score =
         (sample_factor * evaluation_factor * quality_score * freshness_factor).clamp(0.0, 1.0);
 
+    let seasonal_evaluated: Vec<&PredictionRecord> = model.predictions.iter()
+        .filter(|record| {
+            record.is_seasonal
+                && record.horizon_seconds == settings.warm_pool_lead_seconds
+                && record.actual_demand.is_some()
+                && !record.skipped_missing_observation
+        })
+        .rev().take(48).collect();
+    let seasonal_quality_score = if seasonal_evaluated.len() >= 24 {
+        let errors: Vec<f64> = seasonal_evaluated.iter().filter_map(|record| {
+            record.actual_demand.map(|actual| {
+                (f64::from(record.predicted_demand) - f64::from(actual)).abs()
+            })
+        }).collect();
+        let actual_mean = mean(&seasonal_evaluated.iter()
+            .filter_map(|record| record.actual_demand.map(f64::from)).collect::<Vec<_>>());
+        let accuracy = (1.0 - mean(&errors) / actual_mean.max(1.0)).clamp(0.0, 1.0);
+        let evaluation_factor = (seasonal_evaluated.len() as f64 / 48.0).clamp(0.0, 1.0);
+        Some((sample_factor * evaluation_factor * accuracy * freshness_factor).clamp(0.0, 1.0))
+    } else {
+        None
+    };
+
     let (seasonal_predicted_peak_concurrency, seasonal_bias_correction) = seasonal_prediction
         .map(|(prediction, correction)| (Some(prediction), correction))
         .unwrap_or((None, None));
@@ -3562,6 +3621,7 @@ fn compute_forecast(
         seasonal_predicted_peak_concurrency,
         bias_correction,
         seasonal_bias_correction,
+        seasonal_quality_score,
         mean_absolute_error: mae,
         quality_score,
         confidence_score,
@@ -3864,6 +3924,8 @@ mod tests {
             observed_at_epoch: bucket,
             queued_job_occurrences: Vec::new(),
             started_job_occurrences: Vec::new(),
+            started_job_history_complete: false,
+            poll_interval_seconds: BUCKET_SECONDS,
             queued_jobs: queue,
             busy_runners: busy,
             online_runners: 2,
@@ -4004,6 +4066,8 @@ mod tests {
                         observed_at_epoch: stamp,
                         queued_job_occurrences: Vec::new(),
                         started_job_occurrences: Vec::new(),
+                        started_job_history_complete: false,
+                        poll_interval_seconds: BUCKET_SECONDS,
                         queued_jobs: 0,
                         busy_runners: 1,
                         online_runners: 1,
@@ -4410,6 +4474,7 @@ mod tests {
             seasonal_predicted_peak_concurrency: None,
             bias_correction: None,
             seasonal_bias_correction: None,
+            seasonal_quality_score: None,
             mean_absolute_error: None,
             quality_score: 0.8,
             confidence_score: 0.8,
@@ -4421,6 +4486,7 @@ mod tests {
             issued_at_bucket: start,
             target_bucket: start + 2 * BUCKET_SECONDS,
             horizon_seconds: 2 * BUCKET_SECONDS,
+            is_seasonal: false,
             predicted_demand: 3,
             actual_demand: None,
             skipped_missing_observation: false,
@@ -4743,6 +4809,62 @@ mod tests {
         model
             .validate_for("owner/repo", MAX_HISTORY_BUCKETS)
             .unwrap();
+    }
+
+    #[test]
+    fn gitrun_occurrence_ids_are_repository_bound_and_duplicate_ids_are_migrated() {
+        let mut model = WorkflowModel::empty("owner/repo");
+        let workload_id = "wk-0123456789abcdef".to_owned();
+        model.workload_patterns.push(WorkloadPattern {
+            workload_id: workload_id.clone(), workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(), job_name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            first_seen_epoch: 1_800, last_seen_epoch: 1_800, occurrence_count: 2,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+            slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+        });
+        let foreign_id = generate_occurrence_id("other/repo", 1).unwrap();
+        let duplicate_id = generate_occurrence_id("owner/repo", 2).unwrap();
+        model.next_gitrun_job_sequence = 3;
+        model.recent_job_occurrences = vec![
+            RecentJobOccurrence { gitrun_job_id: foreign_id, workload_id: workload_id.clone(),
+                occurrence_code: String::new(), run_id: 1, job_id: 11, observed_at_epoch: 1_900,
+                started_at_epoch: Some(1_850), counted_prediction_target_epoch: None },
+            RecentJobOccurrence { gitrun_job_id: duplicate_id.clone(), workload_id: workload_id.clone(),
+                occurrence_code: String::new(), run_id: 2, job_id: 22, observed_at_epoch: 2_000,
+                started_at_epoch: Some(1_950), counted_prediction_target_epoch: None },
+            RecentJobOccurrence { gitrun_job_id: duplicate_id, workload_id,
+                occurrence_code: String::new(), run_id: 3, job_id: 33, observed_at_epoch: 2_100,
+                started_at_epoch: Some(2_050), counted_prediction_target_epoch: None },
+        ];
+        assert!(migrate_job_identity(&mut model));
+        let mut ids = HashSet::new();
+        for occurrence in &model.recent_job_occurrences {
+            assert!(valid_generated_gitrun_job_id_for_repository(&occurrence.gitrun_job_id, "owner/repo"));
+            assert!(ids.insert(occurrence.gitrun_job_id.clone()));
+        }
+        model.validate_for("owner/repo", MAX_HISTORY_BUCKETS).unwrap();
+    }
+
+    #[test]
+    fn incomplete_started_history_never_closes_an_empty_prediction_as_zero() {
+        let mut model = WorkflowModel::empty("owner/repo");
+        let workload_id = "wk-0123456789abcdef".to_owned();
+        model.workload_patterns.push(WorkloadPattern {
+            workload_id: workload_id.clone(), workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(), job_name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            first_seen_epoch: 1_800, last_seen_epoch: 1_800, occurrence_count: 4,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+            slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+        });
+        model.workload_predictions.push(WorkloadPredictionRecord {
+            workload_id, issued_at_bucket: 3_600, target_epoch: 7_200,
+            predicted_occurrences: 2, observed_occurrences: 0,
+            actual_occurrences: None, prewarm_runners_created: 0,
+        });
+        assert!(!record_started_job_occurrences_with_coverage(&mut model, &[], 10_800, false));
+        assert_eq!(model.workload_predictions[0].actual_occurrences, None);
     }
 
     #[test]
@@ -5096,7 +5218,7 @@ mod tests {
         let mut model = WorkflowModel::empty("owner/repo");
         model.workload_patterns.push(pattern);
 
-        let prewarms = forecast_workload_prewarms(&model, bucket, &settings);
+        let prewarms = forecast_workload_prewarms(&model, bucket, &settings, BUCKET_SECONDS);
         assert_eq!(prewarms.len(), 1);
         assert_eq!(prewarms[0].target_epoch, target);
         assert_eq!(prewarms[0].runner_count, 2);
@@ -5154,7 +5276,9 @@ mod tests {
         assert_eq!(pattern.slots[slot_index].3, 1);
         assert_eq!(pattern.slot_last_week[slot_index], weekly_period_start(now));
         assert!(
-            forecast_workload_prewarms(&model, now / BUCKET_SECONDS * BUCKET_SECONDS, &settings)
+            forecast_workload_prewarms(
+                &model, now / BUCKET_SECONDS * BUCKET_SECONDS, &settings, BUCKET_SECONDS,
+            )
                 .is_empty(),
             "one fresh occurrence cannot immediately reactivate an old weekly schedule"
         );
@@ -5341,7 +5465,9 @@ mod tests {
             });
         }
         // Forecast is held back when no evaluated forecast quality exists.
-        let forecast = compute_forecast(&model, &settings, start + 23 * BUCKET_SECONDS).unwrap();
+        let forecast = compute_forecast(
+            &model, &settings, start + 23 * BUCKET_SECONDS, BUCKET_SECONDS,
+        ).unwrap();
         assert_eq!(forecast.predicted_peak_concurrency, 3);
         assert_eq!(forecast.confidence_score, 0.0);
         assert_eq!(forecast.evaluated_forecasts, 0);

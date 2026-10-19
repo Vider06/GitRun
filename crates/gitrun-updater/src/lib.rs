@@ -303,7 +303,17 @@ impl ReleaseManifest {
                 .as_deref(),
         )?;
         let key = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_HEX").ok();
-        match (self.signature.as_deref(), key.as_deref()) {
+        let expected_key_id = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_ID").ok();
+        self.verify_signature(required, key.as_deref(), expected_key_id.as_deref())
+    }
+
+    fn verify_signature(
+        &self,
+        required: bool,
+        public_key: Option<&str>,
+        expected_key_id: Option<&str>,
+    ) -> Result<(), UpdateError> {
+        match (self.signature.as_deref(), public_key) {
             (None, _) if required => Err(UpdateError::InvalidManifest(
                 "update manifest signature is required by default; set GITRUN_UPDATE_SIGNATURE_REQUIRED=false only for an explicit unsigned-update opt-out".into(),
             )),
@@ -312,7 +322,7 @@ impl ReleaseManifest {
                 "manifest is signed but no public key is configured".into(),
             )),
             (Some(signature), Some(public_key)) => {
-                if let Ok(expected_id) = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_ID") {
+                if let Some(expected_id) = expected_key_id {
                     if self.signature_key_id.as_deref() != Some(expected_id.trim()) {
                         return Err(UpdateError::InvalidManifest(
                             "update manifest signing key id does not match configured key".into(),
@@ -2353,6 +2363,40 @@ mod tests {
         let mut source = canonical_premade_runner_dockerfile();
         source.reference = "refs/heads/main".into();
         assert!(source.validate().is_err());
+    }
+
+    #[test]
+    fn signature_verification_accepts_valid_signature_and_rejects_tampering() {
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+
+        let seed = [7u8; 32];
+        let key_pair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
+        let mut signed = manifest();
+        signed.signature_key_id = Some("release-key-1".into());
+        let payload = signed.signing_payload().unwrap();
+        signed.signature = Some(
+            key_pair.sign(&payload).as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+        );
+        let public_key: String = key_pair.public_key().as_ref().iter()
+            .map(|byte| format!("{byte:02x}")).collect();
+
+        assert!(signed.verify_signature(true, Some(&public_key), Some("release-key-1")).is_ok());
+        assert!(signed.verify_signature(true, Some(&public_key), Some("wrong-key")).is_err());
+
+        let mut tampered = signed.clone();
+        tampered.version = "0.3.1".into();
+        assert!(tampered.verify_signature(true, Some(&public_key), Some("release-key-1")).is_err());
+    }
+
+    #[test]
+    fn signature_verification_fails_closed_without_key_or_required_signature() {
+        let unsigned = manifest();
+        assert!(unsigned.verify_signature(true, None, None).is_err());
+        assert!(unsigned.verify_signature(false, None, None).is_ok());
+
+        let mut signed_without_key = unsigned;
+        signed_without_key.signature = Some("a".repeat(128));
+        assert!(signed_without_key.verify_signature(false, None, None).is_err());
     }
 
     #[test]

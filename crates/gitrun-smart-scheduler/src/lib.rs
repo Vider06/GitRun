@@ -946,6 +946,7 @@ impl WorkflowModel {
         }
         let mut occurrence_codes = HashSet::new();
         let mut generated_job_ids = HashSet::new();
+        let mut provider_job_ids = HashSet::new();
         for occurrence in &self.recent_job_occurrences {
             if !valid_generated_gitrun_job_id_for_repository(&occurrence.gitrun_job_id, repository)
                 || generated_gitrun_job_sequence_for_repository(
@@ -973,6 +974,7 @@ impl WorkflowModel {
                 || !valid_workload_id(&occurrence.workload_id)
                 || !workload_ids.contains(occurrence.workload_id.as_str())
                 || !occurrence_codes.insert(occurrence.occurrence_code.as_str())
+                || !provider_job_ids.insert((occurrence.run_id, occurrence.job_id))
             {
                 return Err(KittyError::Invalid(
                     "stored job occurrence has an invalid identity or workload reference".into(),

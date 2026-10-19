@@ -63,7 +63,31 @@ export async function renderAppSettings() {
     const outcome = decision?.execution_outcome
       ? String(decision.execution_outcome).replaceAll("_", " ")
       : "Pending reconciliation";
-    return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>' +
+    const workloadRows = (entry.workload_patterns || []).slice(0, 3).map((workload) => {
+      const recurring = (workload.recurring_slots || []).map((slot) =>
+        String(slot.weekday) + ' ' + String(slot.hour).padStart(2, "0") +
+          ':00 (' + String(slot.distinct_weeks) + ' weeks)'
+      ).join(' · ') || "No recurring slot established";
+      const latest = workload.latest_prediction;
+      const predictionText = latest
+        ? 'Latest target ' + formatEpoch(latest.target_epoch) +
+          ' · predicted ' + String(latest.predicted_occurrences) +
+          ' · observed ' + (latest.actual_occurrences == null ? "pending" : String(latest.actual_occurrences)) +
+          (Number.isFinite(latest.mean_error_correction)
+            ? ' · correction ' + Number(latest.mean_error_correction).toFixed(2)
+            : '')
+        : 'No scheduled prediction evaluated yet';
+      return '<div class="field-hint mt-8"><strong>' + esc(workload.job_name) + '</strong>' +
+        '<small>' + esc(String(workload.workflow_path)) + ' · workload ' +
+        esc(String(workload.workload_code)) + ' · ' + esc(String(workload.occurrence_count)) +
+        ' unique occurrences</small><small>Recurring: ' + esc(recurring) +
+        '</small><small>' + esc(predictionText) + '</small></div>';
+    }).join("");
+    const recentJobs = (entry.recent_job_occurrences || []).slice(-3).reverse().map((job) =>
+      '<small>Job occurrence ' + esc(String(job.occurrence_code)) +
+        ' · workload ' + esc(String(job.workload_code)) + '</small>'
+    ).join("");
+    return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>'
       esc(String(entry.sample_count)) + ' recent five-minute samples · last observation ' + esc(formatEpoch(entry.latest_observation_epoch)) +
       '</small><small>Predicted concurrency: ' + esc(predicted) +
       (forecast && forecast.seasonal_predicted_peak_concurrency != null
@@ -75,7 +99,10 @@ export async function renderAppSettings() {
         ' · horizon target ' + esc(formatEpoch(forecast.target_epoch)) + '</small>' : '') +
       '<small>Last decision: ' + esc(decisionAt) + ' · planned actions: ' + esc(plannedActions) +
       ' · outcome: ' + esc(outcome) + '</small><small>' +
-      esc(decisionText) + ': ' + esc(explanation) + '</small></div>' +
+      esc(decisionText) + ': ' + esc(explanation) + '</small>' +
+      (workloadRows ? '<div class="mt-10"><strong>Recurring workload profiles</strong>' + workloadRows + '</div>' : '') +
+      (recentJobs ? '<div class="mt-10"><strong>Recent unique job IDs</strong>' + recentJobs + '</div>' : '') +
+      '</div>' +
       pill(forecastLabel, forecastFresh ? "good" : forecast ? "neutral" : "info") + '</div>';
   }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);
   const kittyPanel = '<div class="section">' + panel("Kitty Smart Scheduler",

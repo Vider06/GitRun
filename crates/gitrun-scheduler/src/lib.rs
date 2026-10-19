@@ -1537,11 +1537,18 @@ fn execute(
                     return Ok(None);
                 }
             };
-            let automation_scope = kitty_settings.automation_mode
-                && kitty_settings
-                    .automation_allowed_repositories
-                    .iter()
-                    .any(|allowed| allowed.eq_ignore_ascii_case(repo));
+            let automation_repository_allowed = kitty_settings
+                .automation_allowed_repositories
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(repo));
+            if kitty_settings.automation_mode && !automation_repository_allowed {
+                eprintln!(
+                    "gitrun-autoscaler: Kitty Stop withheld for {repo}/{name}: repository is not on the explicit Automation allowlist"
+                );
+                state.clear_idle(name);
+                return Ok(None);
+            }
+            let automation_scope = kitty_settings.automation_mode && automation_repository_allowed;
             if automation_scope {
                 let registered_runner = client
                     .list_runners(repo)?

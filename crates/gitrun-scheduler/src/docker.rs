@@ -1635,10 +1635,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         spec.image.to_owned(),
     ]);
     if spec.no_default_labels {
-        args.extend([
-            "-e".into(),
-            "GITRUN_RUNNER_NO_DEFAULT_LABELS=true".into(),
-        ]);
+        args.extend(["-e".into(), "GITRUN_RUNNER_NO_DEFAULT_LABELS=true".into()]);
     }
 
     // Docker accepts "-e NAME" and reads NAME from the CLI process

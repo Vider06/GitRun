@@ -45,7 +45,10 @@ impl SettingsPolicyLock {
     /// remain administrative operations outside this advisory-lock contract.
     pub fn acquire(path: impl AsRef<Path>) -> Result<Self, SettingsError> {
         let path = path.as_ref();
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
             #[cfg(unix)]
             {
@@ -111,9 +114,7 @@ impl Drop for SettingsPolicyLock {
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Some(file) = &self.file {
-            let _ = unsafe {
-                libc::flock(std::os::fd::AsRawFd::as_raw_fd(file), libc::LOCK_UN)
-            };
+            let _ = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(file), libc::LOCK_UN) };
         }
     }
 }
@@ -978,7 +979,10 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .expect("policy writer should proceed after the operation releases its lock");
         worker.join().unwrap();
-        assert_eq!(GitRunSettings::load(&path).unwrap(), GitRunSettings::default());
+        assert_eq!(
+            GitRunSettings::load(&path).unwrap(),
+            GitRunSettings::default()
+        );
 
         #[cfg(unix)]
         {

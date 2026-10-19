@@ -1965,16 +1965,30 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
 
 fn http_client() -> Result<Client, UpdateError> {
     Ok(Client::builder()
+        // A valid HTTPS starting URL is not enough: an HTTP downgrade during
+        // redirect would still send the updater's request over cleartext.
+        // Keep every redirect on HTTPS, including release-asset redirects.
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if is_https_url(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.error("update redirects must remain on HTTPS")
+            }
+        }))
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(300))
         .user_agent("GitRun-Updater/0.3")
         .build()?)
 }
 
+fn is_https_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+}
+
 fn validate_https_url(value: &str) -> Result<(), UpdateError> {
     let url = reqwest::Url::parse(value)
         .map_err(|_| UpdateError::InvalidManifest(format!("invalid HTTPS URL: {value}")))?;
-    if url.scheme() != "https" {
+    if !is_https_url(&url) {
         return Err(UpdateError::InvalidManifest(format!(
             "update URL must use HTTPS: {value}"
         )));
@@ -2481,6 +2495,14 @@ mod tests {
             minimum_version: "0.3.0".into(),
         });
         assert!(m.validate().is_err());
+    }
+
+    #[test]
+    fn update_redirect_targets_must_remain_https() {
+        let secure = reqwest::Url::parse("https://github.com/releases/asset").unwrap();
+        let downgrade = reqwest::Url::parse("http://example.invalid/asset").unwrap();
+        assert!(is_https_url(&secure));
+        assert!(!is_https_url(&downgrade));
     }
 
     #[test]

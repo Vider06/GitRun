@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -27,6 +27,96 @@ use thiserror::Error;
 
 pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
 const SETTINGS_FILE_NAME: &str = "gitrun-settings.json";
+
+/// Cross-process exclusion for security-policy readers performing a privileged
+/// operation and writers replacing the policy file. Atomic rename protects
+/// readers from partial JSON, but by itself cannot prevent a policy change
+/// between authorization and the associated privileged side effect.
+pub struct SettingsPolicyLock {
+    file: Option<fs::File>,
+}
+
+impl SettingsPolicyLock {
+    /// Lock the stable sidecar file associated with a settings path.
+    ///
+    /// Every supported writer uses this same lock through `GitRunSettings::save`.
+    /// Security-sensitive operations may hold it from policy load until their
+    /// side effect has completed. Direct edits that bypass GitRun's writer API
+    /// remain administrative operations outside this advisory-lock contract.
+    pub fn acquire(path: impl AsRef<Path>) -> Result<Self, SettingsError> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let metadata = fs::symlink_metadata(parent)?;
+                if !metadata.is_dir()
+                    || metadata.uid() != unsafe { libc::geteuid() }
+                    || metadata.permissions().mode() & 0o022 != 0
+                {
+                    return Err(SettingsError::Io(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "GitRun settings directory must be a real directory owned by the current service identity and not group/world writable",
+                    )));
+                }
+            }
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+            let file_name = path.file_name().ok_or_else(|| {
+                SettingsError::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "GitRun settings path must name a file",
+                ))
+            })?;
+            let lock_path = path.with_file_name(format!("{}.lock", file_name.to_string_lossy()));
+            let mut options = fs::OpenOptions::new();
+            options
+                .read(true)
+                .write(true)
+                .create(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+            let file = options.open(&lock_path)?;
+            let metadata = file.metadata()?;
+            if !metadata.is_file()
+                || metadata.nlink() != 1
+                || metadata.uid() != unsafe { libc::geteuid() }
+            {
+                return Err(SettingsError::Io(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "GitRun settings lock must be a single-link regular file owned by the current service identity",
+                )));
+            }
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) } != 0 {
+                return Err(SettingsError::Io(io::Error::last_os_error()));
+            }
+            Ok(Self { file: Some(file) })
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Ok(Self { file: None })
+        }
+    }
+}
+
+impl Drop for SettingsPolicyLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(file) = &self.file {
+            let _ = unsafe {
+                libc::flock(std::os::fd::AsRawFd::as_raw_fd(file), libc::LOCK_UN)
+            };
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum SettingsError {
@@ -147,6 +237,11 @@ impl GitRunSettings {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        // Hold the same cross-process lock that MOUNT holds around its policy
+        // read and privileged namespace transition. Other official writers
+        // cannot replace policy until that transition has reached a terminal
+        // state.
+        let _policy_lock = SettingsPolicyLock::acquire(path)?;
 
         let raw = serde_json::to_vec_pretty(self).map_err(SettingsError::Encode)?;
         let timestamp = SystemTime::now()
@@ -842,6 +937,65 @@ mod tests {
         settings.save(&path).unwrap();
         let loaded = GitRunSettings::load(&path).unwrap();
         assert_eq!(loaded, settings);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn policy_operation_lock_serializes_atomic_settings_replacements() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-settings-policy-lock-{}-{nonce}",
+            std::process::id()
+        ));
+        let path = dir.join(SETTINGS_FILE_NAME);
+        GitRunSettings::default().save(&path).unwrap();
+
+        let guard = SettingsPolicyLock::acquire(&path).unwrap();
+        let worker_path = path.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            GitRunSettings::default().save(&worker_path).unwrap();
+            finished_tx.send(()).unwrap();
+        });
+
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(
+            finished_rx.recv_timeout(Duration::from_millis(75)).is_err(),
+            "policy writer must wait while a privileged operation holds the policy lock"
+        );
+        drop(guard);
+        finished_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("policy writer should proceed after the operation releases its lock");
+        worker.join().unwrap();
+        assert_eq!(GitRunSettings::load(&path).unwrap(), GitRunSettings::default());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let lock_path = path.with_file_name(format!(
+                "{}.lock",
+                path.file_name().unwrap().to_string_lossy()
+            ));
+            let target = dir.join("unrelated-lock-target");
+            fs::write(&target, b"do not lock through a symlink").unwrap();
+            fs::remove_file(&lock_path).unwrap();
+            symlink(&target, &lock_path).unwrap();
+            assert!(
+                SettingsPolicyLock::acquire(&path).is_err(),
+                "policy-lock symlink replacement must fail closed"
+            );
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }

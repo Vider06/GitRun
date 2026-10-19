@@ -443,6 +443,9 @@ pub struct WorkloadPattern {
     pub occurrence_count: u64,
     pub slots: Vec<TemporalDemandSlot>,
     pub slot_last_week: Vec<u64>,
+    /// First weekly period in which this weekday/hour had a real job start.
+    #[serde(default)]
+    pub slot_first_week: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -732,6 +735,24 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
 
     // Backwards compatibility: the original implementation used this field
     // for the workload profile ID rather than the unique occurrence ID.
+    for pattern in &mut model.workload_patterns {
+        if pattern.slot_first_week.len() != TEMPORAL_SLOT_COUNT {
+            pattern.slot_first_week = vec![0; TEMPORAL_SLOT_COUNT];
+            for index in 0..TEMPORAL_SLOT_COUNT {
+                if pattern.slots.get(index).is_some_and(|slot| slot.0 > 0) {
+                    let approximate_first = weekly_period_start(pattern.first_seen_epoch);
+                    let last = pattern.slot_last_week.get(index).copied().unwrap_or_default();
+                    pattern.slot_first_week[index] = if last > 0 {
+                        approximate_first.min(last)
+                    } else {
+                        approximate_first
+                    };
+                }
+            }
+            changed = true;
+        }
+    }
+
     for occurrence in &mut model.recent_job_occurrences {
         if occurrence.workload_id.is_empty() && valid_workload_id(&occurrence.gitrun_job_id) {
             occurrence.workload_id = std::mem::take(&mut occurrence.gitrun_job_id);
@@ -873,6 +894,9 @@ impl WorkflowModel {
                 || pattern.job_name.chars().any(char::is_control)
                 || pattern.slots.len() != TEMPORAL_SLOT_COUNT
                 || pattern.slot_last_week.len() != TEMPORAL_SLOT_COUNT
+                || pattern.slot_first_week.len() != TEMPORAL_SLOT_COUNT
+                || pattern.slot_first_week.iter().zip(&pattern.slot_last_week)
+                    .any(|(first, last)| *first > 0 && *last > 0 && first > last)
                 || pattern.job_name.len() > 256
                 || pattern.workflow_path.len() > 512
                 || pattern.labels.len() > 32
@@ -2955,6 +2979,7 @@ fn record_queued_job_occurrences(
                 occurrence_count: 0,
                 slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
                 slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
             });
         }
         let Some(gitrun_job_id) =
@@ -3127,6 +3152,7 @@ fn record_started_job_occurrences_with_coverage(
                 occurrence_count: 0,
                 slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
                 slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
             });
         }
 
@@ -3149,6 +3175,10 @@ fn record_started_job_occurrences_with_coverage(
             if pattern.slots[slot_index].0 > 0 && week.saturating_sub(last_week) > 90 * 86_400 {
                 pattern.slots[slot_index] = TemporalDemandSlot::default();
                 pattern.slot_last_week[slot_index] = 0;
+                pattern.slot_first_week[slot_index] = 0;
+            }
+            if pattern.slots[slot_index].0 == 0 {
+                pattern.slot_first_week[slot_index] = week;
             }
 
             let slot = &mut pattern.slots[slot_index];
@@ -3283,14 +3313,28 @@ fn forecast_workload_prewarms(
             }
             let slot = pattern.slots.get(slot_index)?;
             let last_slot_week = *pattern.slot_last_week.get(slot_index)?;
-            if last_slot_week < weekly_period_start(recent_cutoff) {
+            let first_slot_week = *pattern.slot_first_week.get(slot_index)?;
+            if last_slot_week < weekly_period_start(recent_cutoff) || first_slot_week == 0 {
                 return None;
             }
             let distinct_weeks = u64::from(slot.3);
             if distinct_weeks < MIN_SEASONAL_OCCURRENCES as u64 || slot.0 == 0 {
                 return None;
             }
-            let historical_occurrences_per_week = slot.0 as f64 / distinct_weeks as f64;
+            let observed_span_weeks = last_slot_week
+                .saturating_sub(first_slot_week)
+                .checked_div(WEEK_SECONDS)?
+                .saturating_add(1);
+            if observed_span_weeks == 0 {
+                return None;
+            }
+            // Active-week-only averages can overstate sporadic jobs. Require
+            // the slot to recur in at least 80% of the observed weekly span.
+            let active_week_fraction = distinct_weeks as f64 / observed_span_weeks as f64;
+            if active_week_fraction < 0.80 {
+                return None;
+            }
+            let historical_occurrences_per_week = slot.0 as f64 / observed_span_weeks as f64;
             if !historical_occurrences_per_week.is_finite()
                 || historical_occurrences_per_week <= 0.0
             {
@@ -4839,6 +4883,7 @@ mod tests {
             occurrence_count: 2,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         });
         let foreign_id = generate_occurrence_id("other/repo", 1).unwrap();
         let duplicate_id = generate_occurrence_id("owner/repo", 2).unwrap();
@@ -4904,6 +4949,7 @@ mod tests {
             occurrence_count: 4,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         });
         model.workload_predictions.push(WorkloadPredictionRecord {
             workload_id,
@@ -4938,6 +4984,7 @@ mod tests {
             occurrence_count: 1,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         });
         // This is the shape written by earlier in-branch builds: gitrun_job_id
         // still held the stable wk-* profile key, not a unique job occurrence ID.
@@ -5032,6 +5079,7 @@ mod tests {
             occurrence_count: 1,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         };
         workload.slots[workload_slot] = TemporalDemandSlot(1, 1, 1, 1);
         workload.slot_last_week[workload_slot] = weekly_period_start(workload_epoch);
@@ -5102,6 +5150,7 @@ mod tests {
             occurrence_count: 4,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         });
         model.workload_predictions.push(WorkloadPredictionRecord {
             workload_id: workload_id.clone(),
@@ -5267,6 +5316,7 @@ mod tests {
             occurrence_count: 8,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         };
         let slot = weekday_hour_slot(target);
         pattern.slots[slot] = TemporalDemandSlot(8, 8, 8, 4);
@@ -5312,6 +5362,7 @@ mod tests {
             occurrence_count: 20,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         };
         pattern.slots[slot_index] = TemporalDemandSlot(40, 40, 40, 20);
         pattern.slot_last_week[slot_index] = old_week;
@@ -5372,6 +5423,7 @@ mod tests {
                 occurrence_count: 1,
                 slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
                 slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
             };
             let slot = weekday_hour_slot(target_epoch);
             pattern.slots[slot] = TemporalDemandSlot(1, 1, 1, 1);
@@ -5441,6 +5493,7 @@ mod tests {
             occurrence_count: 4,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+            slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         };
         let slot = weekday_hour_slot(target);
         pattern.slots[slot] = TemporalDemandSlot(4, 8, 2, 4);

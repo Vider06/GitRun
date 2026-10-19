@@ -1447,7 +1447,7 @@ impl KittyRuntime {
             let bounded_fallback = fallback_minimum.min(decision.configured_min_runners);
             let bounded_reason: String = reason.chars().take(512).collect();
             let denial_reason = format!(
-                "GSR denied the predicted warm-pool floor; deterministic minimum retained: {bounded_reason}"
+                "GSR denied predictive automation; deterministic minimum retained: {bounded_reason}"
             );
             audit.status = DecisionStatus::SafeFallback;
             audit.gsr_authorized = false;
@@ -1455,6 +1455,7 @@ impl KittyRuntime {
             audit.reason = denial_reason.clone();
             decision.status = DecisionStatus::SafeFallback;
             decision.effective_min_runners = bounded_fallback;
+            decision.workload_prewarms.clear();
             decision.reason = denial_reason;
         }
 

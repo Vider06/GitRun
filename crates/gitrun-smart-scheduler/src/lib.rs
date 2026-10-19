@@ -726,6 +726,7 @@ fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
     (value > 0).then_some(value)
 }
 
+#[cfg(test)]
 fn valid_generated_gitrun_job_id(code: &str) -> bool {
     generated_gitrun_job_sequence(code).is_some()
 }

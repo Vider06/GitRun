@@ -2379,11 +2379,8 @@ fn record_queued_job_occurrences(
                 // One authoritative run/job ID must never change workload identity.
                 continue;
             }
-            let heartbeat_bucket =
-                observed_at_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
-            if existing.observed_at_epoch / BUCKET_SECONDS
-                < heartbeat_bucket / BUCKET_SECONDS
-            {
+            let heartbeat_bucket = observed_at_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
+            if existing.observed_at_epoch / BUCKET_SECONDS < heartbeat_bucket / BUCKET_SECONDS {
                 existing.observed_at_epoch = heartbeat_bucket;
                 if let Some(pattern) = model
                     .workload_patterns

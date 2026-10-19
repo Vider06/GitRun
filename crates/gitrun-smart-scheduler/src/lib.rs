@@ -4015,17 +4015,9 @@ mod tests {
         // target-hour forecast, even if it remains visible through later polls.
         let mut early_job = job.clone();
         early_job.job_id = 409;
-        record_queued_job_occurrences(
-            &mut model,
-            std::slice::from_ref(&early_job),
-            issued + 30,
-        );
+        record_queued_job_occurrences(&mut model, std::slice::from_ref(&early_job), issued + 30);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
-        record_queued_job_occurrences(
-            &mut model,
-            std::slice::from_ref(&early_job),
-            target + 30,
-        );
+        record_queued_job_occurrences(&mut model, std::slice::from_ref(&early_job), target + 30);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
 
         // A distinct job first observed inside the target window counts once.
@@ -4035,11 +4027,7 @@ mod tests {
             target + 30,
         ));
         assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
-        record_queued_job_occurrences(
-            &mut model,
-            std::slice::from_ref(&job),
-            target + 60,
-        );
+        record_queued_job_occurrences(&mut model, std::slice::from_ref(&job), target + 60);
         assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
 
         // When the target hour completes, the observed occurrence count is finalized.

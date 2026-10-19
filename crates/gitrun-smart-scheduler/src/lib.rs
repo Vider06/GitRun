@@ -2411,8 +2411,7 @@ fn record_queued_job_occurrences(
                 && observed_at_epoch >= prediction.target_epoch
                 && observed_at_epoch < prediction.target_epoch.saturating_add(3_600)
             {
-                prediction.observed_occurrences =
-                    prediction.observed_occurrences.saturating_add(1);
+                prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
                 changed = true;
             }
         }
@@ -2456,9 +2455,9 @@ fn workload_prediction_bias(model: &WorkflowModel, workload_code: &str) -> Optio
         .rev()
         .filter(|record| record.workload_code == workload_code)
         .filter_map(|record| {
-            record.actual_occurrences.map(|actual| {
-                f64::from(actual) - f64::from(record.predicted_occurrences)
-            })
+            record
+                .actual_occurrences
+                .map(|actual| f64::from(actual) - f64::from(record.predicted_occurrences))
         })
         .take(48)
         .collect();

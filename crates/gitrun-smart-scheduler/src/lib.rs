@@ -401,7 +401,8 @@ pub struct PredictionRecord {
     pub skipped_missing_observation: bool,
 }
 
-/// Bounded, metadata-only identity of one queued GitHub Actions job.
+/// Bounded metadata for one GitHub Actions job, from either the live queue
+/// or the authoritative recent-start sample.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct QueuedJobOccurrence {
     pub run_id: u64,
@@ -441,14 +442,14 @@ pub struct RecentJobOccurrence {
     /// Authoritative started_at timestamp from GitHub Actions.
     #[serde(default)]
     pub started_at_epoch: Option<u64>,
-    /// Target hour in which this unique job first contributed to a workload
-    /// forecast. This avoids duplicate counts across queue polls and hours.
+    /// Target hour in which this unique job's actual start contributed to a
+    /// workload forecast. This avoids double-counting historical API samples.
     #[serde(default)]
     pub counted_prediction_target_epoch: Option<u64>,
 }
 
 /// Per-workload prediction made before a recurring weekday/hour slot. It is
-/// evaluated against unique queued job occurrences in the following hour.
+/// evaluated against unique job start timestamps in the following hour.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkloadPredictionRecord {
     #[serde(alias = "workload_code")]
@@ -4191,6 +4192,39 @@ mod tests {
         assert!(!runtime.should_poll_workload_history("owner/repo", 2_500));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn queue_only_snapshots_do_not_train_workload_start_profiles() {
+        let mut model = WorkflowModel::empty("owner/repo");
+        let queued_only = QueuedJobOccurrence {
+            run_id: 500,
+            job_id: 5000,
+            workflow_id: 50,
+            workflow_path: ".github/workflows/build.yml".into(),
+            name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            started_at_epoch: None,
+        };
+
+        assert!(!record_started_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&queued_only),
+            10_000,
+        ));
+        assert!(model.workload_patterns.is_empty());
+        assert!(model.recent_job_occurrences.is_empty());
+
+        let mut started = queued_only;
+        started.started_at_epoch = Some(9_900);
+        assert!(record_started_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&started),
+            10_000,
+        ));
+        assert_eq!(model.workload_patterns.len(), 1);
+        assert_eq!(model.workload_patterns[0].last_seen_epoch, 9_900);
+        assert_eq!(model.workload_patterns[0].occurrence_count, 1);
     }
 
     #[test]

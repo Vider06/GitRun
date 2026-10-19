@@ -361,6 +361,7 @@ pub struct ManagedContainer {
     pub dock_target: bool,
     pub workflow_job: Option<String>,
     pub workflow_run_id: Option<u64>,
+    pub workflow_job_id: Option<u64>,
     /// Predicted recurring workload attached to a time-bounded warmup, if any.
     pub prewarm_workload_code: Option<String>,
     pub prewarm_target_epoch: Option<u64>,
@@ -501,6 +502,19 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
         let workflow_job = container_label_on(host, &id, "gitrun.workflow_job")?;
         let workflow_run_id = container_label_on(host, &id, "gitrun.workflow_run")?
             .and_then(|value| value.parse::<u64>().ok());
+        let workflow_job_id = match container_label_on(host, &id, "gitrun.workflow_job_id")? {
+            None => None,
+            Some(value) => Some(value.parse::<u64>().ok().filter(|id| *id > 0).ok_or_else(|| {
+                DockerError::Command(format!(
+                    "managed runner {name} has an invalid authoritative workflow job ID label"
+                ))
+            })?),
+        };
+        if workflow_job_id.is_some() && (workflow_run_id.is_none() || workflow_job.is_none()) {
+            return Err(DockerError::Command(format!(
+                "managed runner {name} has incomplete authoritative workflow job binding labels"
+            )));
+        }
         let raw_prewarm_code = container_label_on(host, &id, "gitrun.prewarm_workload_code")?;
         let raw_prewarm_target = container_label_on(host, &id, "gitrun.prewarm_target_epoch")?;
         let raw_prewarm_hold = container_label_on(host, &id, "gitrun.prewarm_hold_until_epoch")?;
@@ -551,6 +565,7 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             dock_target,
             workflow_job,
             workflow_run_id,
+            workflow_job_id,
             prewarm_workload_code,
             prewarm_target_epoch,
             prewarm_hold_until_epoch,
@@ -1983,6 +1998,7 @@ pub struct ApiRunnerIdentity {
     /// for a specific workflow job. They are authoritative when present.
     pub workflow_job: Option<String>,
     pub workflow_run_id: Option<u64>,
+    pub workflow_job_id: Option<u64>,
 }
 
 /// Resolves the GitRun-managed runner container that owns a Unix-socket
@@ -2017,7 +2033,7 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
         &[
             "inspect",
             "-f",
-            "{{.Id}}|{{.Name}}|{{index .Config.Labels \"gitrun.runner\"}}|{{index .Config.Labels \"gitrun.repo\"}}|{{index .Config.Labels \"gitrun.workflow_job\"}}|{{index .Config.Labels \"gitrun.workflow_run\"}}",
+            "{{.Id}}|{{.Name}}|{{index .Config.Labels \"gitrun.runner\"}}|{{index .Config.Labels \"gitrun.repo\"}}|{{index .Config.Labels \"gitrun.workflow_job\"}}|{{index .Config.Labels \"gitrun.workflow_run\"}}|{{index .Config.Labels \"gitrun.workflow_job_id\"}}",
             &container_id,
         ],
     )?;
@@ -2038,18 +2054,27 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     }
 
     let raw = String::from_utf8_lossy(&output.stdout);
-    let mut parts = raw.trim().splitn(6, '|');
+    let mut parts = raw.trim().splitn(7, '|');
     let resolved_id = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default().trim_start_matches('/');
     let runner_label = parts.next().unwrap_or_default();
     let repository = parts.next().unwrap_or_default();
     let workflow_job = parts.next().unwrap_or_default();
     let workflow_run_id = parts.next().and_then(|value| value.parse::<u64>().ok());
+    let workflow_job_id = match parts.next() {
+        None | Some("") => None,
+        Some(value) => match value.parse::<u64>() {
+            Ok(id) if id > 0 => Some(id),
+            _ => return Ok(None),
+        },
+    };
 
     if runner_label != "true"
         || resolved_id != container_id
         || name.is_empty()
         || repository.is_empty()
+        || (workflow_job_id.is_some()
+            && (workflow_job.is_empty() || workflow_run_id.is_none()))
     {
         return Ok(None);
     }
@@ -2060,6 +2085,7 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
         container_id: resolved_id.to_owned(),
         workflow_job: (!workflow_job.is_empty()).then(|| workflow_job.to_owned()),
         workflow_run_id,
+        workflow_job_id,
     }))
 }
 

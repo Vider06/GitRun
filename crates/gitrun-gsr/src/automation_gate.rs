@@ -37,6 +37,7 @@ pub struct AutomationPolicy {
     pub automation_mode: bool,
     pub smart_fast_stop_enabled: bool,
     pub minimum_readiness_score: f64,
+    pub fast_stop_max_runtime_seconds: u64,
     pub allowed_repositories: Vec<String>,
     pub configured_repositories: Vec<String>,
 }
@@ -59,7 +60,6 @@ pub struct AutomationIntent {
     /// Set only after a fresh GitHub API lookup confirms this run is active.
     pub workflow_run_is_verified_active: bool,
     pub run_age_seconds: Option<u64>,
-    pub fast_stop_max_runtime_seconds: Option<u64>,
     pub reason: String,
 }
 
@@ -264,10 +264,10 @@ fn validate(policy: &AutomationPolicy, intent: &AutomationIntent) -> std::result
             let age = intent
                 .run_age_seconds
                 .ok_or_else(|| "workflow run start time is unknown".to_owned())?;
-            let maximum = intent
-                .fast_stop_max_runtime_seconds
-                .filter(|seconds| *seconds > 0)
-                .ok_or_else(|| "Fast Stop runtime threshold is disabled".to_owned())?;
+            let maximum = policy.fast_stop_max_runtime_seconds;
+            if !(300..=604_800).contains(&maximum) {
+                return Err("Fast Stop runtime threshold is disabled or outside bounds".into());
+            }
             if age < maximum {
                 return Err("workflow run has not reached the configured stop threshold".into());
             }
@@ -290,6 +290,7 @@ mod tests {
             automation_mode: true,
             smart_fast_stop_enabled: true,
             minimum_readiness_score: 0.85,
+            fast_stop_max_runtime_seconds: 3_600,
             allowed_repositories: vec!["owner/repo".into()],
             configured_repositories: vec!["owner/repo".into()],
         }
@@ -323,7 +324,6 @@ mod tests {
             runner_is_dock_bound: false,
             workflow_run_is_verified_active: true,
             run_age_seconds: Some(7_200),
-            fast_stop_max_runtime_seconds: Some(3_600),
             reason: "test policy".into(),
         }
     }

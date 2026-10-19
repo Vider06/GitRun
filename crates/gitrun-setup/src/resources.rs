@@ -356,6 +356,10 @@ mod tests {
         assert!(RUNNER_ENTRYPOINT
             .contains(r#"echo "gitrun-runner: starting in GitDockRun dock-only mode""#));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
+        assert!(RUNNER_ENTRYPOINT.contains("RUNNER_NO_DEFAULT_LABELS"));
+        assert!(RUNNER_ENTRYPOINT.contains("--no-default-labels"));
+        assert!(RUNNER_ENTRYPOINT.contains("gitrun-job-wk-"));
+        assert!(RUNNER_ENTRYPOINT.contains("only a canonical GitRun workload-family label"));
         assert_eq!(
             SYSTEMD_SERVICE,
             include_str!("../../../systemd/gitrun.service")

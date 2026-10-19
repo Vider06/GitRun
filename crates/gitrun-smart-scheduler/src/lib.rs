@@ -3977,8 +3977,7 @@ mod tests {
         assert_eq!(model.workload_patterns.len(), 1);
         assert_eq!(model.workload_patterns[0].occurrence_count, 1);
         assert_eq!(
-            model.workload_patterns[0].slots[workload_slot].0,
-            1,
+            model.workload_patterns[0].slots[workload_slot].0, 1,
             "recurring job profiles survive years of time-series compaction"
         );
         let retained = model

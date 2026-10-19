@@ -1184,7 +1184,7 @@ fn validate_runner_network_metadata(
     network: &str,
     metadata: &str,
     require_inter_container_isolation: bool,
-) -> Result<(), String> {
+) -> std::result::Result<(), String> {
     let mut fields = metadata.trim().split('|');
     let driver = fields.next().unwrap_or("");
     let managed = fields.next().unwrap_or("");

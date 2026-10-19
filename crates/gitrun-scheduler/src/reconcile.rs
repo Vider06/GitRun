@@ -311,7 +311,7 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
             .filter(|(index, labels)| !job_needs_dedicated_runner(input, *index, labels))
             .nth(dynamic_index);
 
-        let (job_name, job_run_id, job_labels) = next
+        let (job_name, job_run_id, job_id, job_labels) = next
             .map(|(index, labels)| {
                 (
                     input.queued_job_names.get(index).cloned(),

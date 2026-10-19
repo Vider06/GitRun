@@ -617,6 +617,30 @@ fn valid_workload_id(code: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// True if a job asks GitRun to route it using a known workload-family label.
+/// Any malformed/conflicting label with this reserved prefix must fail closed.
+pub fn has_workload_routing_marker(labels: &[String]) -> bool {
+    labels
+        .iter()
+        .any(|label| label.trim().to_ascii_lowercase().starts_with("gitrun-job-"))
+}
+
+/// Resolve exactly one canonical GitRun workload-family label.
+pub fn workload_id_from_routing_labels(labels: &[String]) -> Option<String> {
+    let candidates: Vec<String> = labels
+        .iter()
+        .filter_map(|label| {
+            let label = label.trim().to_ascii_lowercase();
+            label.starts_with("gitrun-job-").then_some(label)
+        })
+        .collect();
+    if candidates.len() != 1 {
+        return None;
+    }
+    let workload_id = candidates[0].strip_prefix("gitrun-job-")?;
+    valid_workload_id(workload_id).then(|| workload_id.to_owned())
+}
+
 fn provider_occurrence_key(workload_id: &str, run_id: u64, job_id: u64) -> String {
     let canonical = format!("{workload_id}|{run_id}|{job_id}");
     let mut hash = 0xcbf29ce484222325u64;
@@ -1063,6 +1087,34 @@ impl KittyRuntime {
 
     pub fn settings(&self) -> &KittySettings {
         &self.settings
+    }
+
+    /// Return only validated label profiles for explicit workload routing.
+    /// This works even when telemetry is disabled; routing never guesses a
+    /// backend or image from an opaque workload-family ID.
+    pub fn workload_routing_profiles(
+        &self,
+        repository: &str,
+    ) -> Result<HashMap<String, Vec<String>>> {
+        if !valid_repository(repository) {
+            return Err(KittyError::Invalid(
+                "invalid repository identity for workload routing lookup".into(),
+            ));
+        }
+        let key = repository_key(repository);
+        if let Some(model) = self.models.get(&key) {
+            return Ok(model
+                .workload_patterns
+                .iter()
+                .map(|pattern| (pattern.workload_id.clone(), pattern.labels.clone()))
+                .collect());
+        }
+        let (model, _) = self.load_model(repository, &key)?;
+        Ok(model
+            .workload_patterns
+            .iter()
+            .map(|pattern| (pattern.workload_id.clone(), pattern.labels.clone()))
+            .collect())
     }
 
     /// Rate-limit optional historical start sampling per repository. It is
@@ -2639,9 +2691,15 @@ pub fn generate_workload_id(
     {
         return None;
     }
+    if has_workload_routing_marker(labels)
+        && workload_id_from_routing_labels(labels).is_none()
+    {
+        return None;
+    }
     let mut labels: Vec<String> = labels
         .iter()
         .map(|label| label.trim().to_ascii_lowercase())
+        .filter(|label| !label.starts_with("gitrun-job-"))
         .collect();
     labels.sort();
     labels.dedup();
@@ -2663,6 +2721,9 @@ pub fn generate_workload_id(
 }
 
 fn workload_id_for(repository: &str, job: &QueuedJobOccurrence) -> Option<String> {
+    if has_workload_routing_marker(&job.labels) {
+        return workload_id_from_routing_labels(&job.labels);
+    }
     generate_workload_id(repository, &job.workflow_path, &job.name, &job.labels)
 }
 

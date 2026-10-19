@@ -82,6 +82,8 @@ pub struct KittySettings {
     pub automation_mode: bool,
     /// Operator-controlled repository allowlist for automatic Stop/Fast Stop.
     pub automation_allowed_repositories: Vec<String>,
+    /// Optional run-level Fast Stop deadline. Zero disables cancellation.
+    pub fast_stop_max_runtime_seconds: u64,
     pub shadow_mode: bool,
     /// Five-minute buckets required before a forecast can be considered.
     /// The default requires two days of observed history.
@@ -112,6 +114,7 @@ impl Default for KittySettings {
             smart_fast_stop_enabled: false,
             automation_mode: false,
             automation_allowed_repositories: Vec::new(),
+            fast_stop_max_runtime_seconds: 0,
             shadow_mode: true,
             minimum_samples: 576,
             history_buckets: MAX_HISTORY_BUCKETS,
@@ -175,10 +178,18 @@ impl KittySettings {
             ));
         }
         if self.smart_fast_stop_enabled
-            && (!self.automation_mode || self.automation_allowed_repositories.is_empty())
+            && (!self.automation_mode
+                || self.automation_allowed_repositories.is_empty()
+                || !(300..=604_800).contains(&self.fast_stop_max_runtime_seconds))
         {
             return Err(KittyError::Invalid(
-                "Smart Fast Stop requires Automation mode and an explicit repository allowlist"
+                "Smart Fast Stop requires Automation mode, an explicit repository allowlist, and a runtime threshold from 300 to 604800 seconds"
+                    .into(),
+            ));
+        }
+        if !self.smart_fast_stop_enabled && self.fast_stop_max_runtime_seconds != 0 {
+            return Err(KittyError::Invalid(
+                "fast_stop_max_runtime_seconds must be zero while Smart Fast Stop is disabled"
                     .into(),
             ));
         }

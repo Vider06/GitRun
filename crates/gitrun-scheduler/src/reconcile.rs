@@ -543,6 +543,7 @@ mod tests {
         ];
         input.queued_job_names = vec!["deploy-production".into(), "build-docs".into()];
         input.queued_job_run_ids = vec![42, 43];
+        input.queued_job_ids = vec![420, 430];
         input.dock_target_jobs = vec!["deploy-production".into()];
         input.logic_rules = Vec::new();
 

@@ -1424,7 +1424,12 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
             ));
         }
         let expected_label = format!("gitrun-job-{workload_id}");
-        if !spec.labels.split(',').map(str::trim).any(|label| label.eq_ignore_ascii_case(&expected_label)) {
+        if !spec
+            .labels
+            .split(',')
+            .map(str::trim)
+            .any(|label| label.eq_ignore_ascii_case(&expected_label))
+        {
             return Err(DockerError::Command(
                 "routed runner labels do not contain their workload identity".into(),
             ));
@@ -1507,7 +1512,10 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         args.extend(["--label".into(), format!("gitrun.workflow_job_id={job_id}")]);
     }
     if let Some(workload_id) = spec.workload_routing_id {
-        args.extend(["--label".into(), format!("gitrun.workload_id={workload_id}")]);
+        args.extend([
+            "--label".into(),
+            format!("gitrun.workload_id={workload_id}"),
+        ]);
     }
     if let (Some(code), Some(target), Some(hold)) = (
         spec.prewarm_workload_id,

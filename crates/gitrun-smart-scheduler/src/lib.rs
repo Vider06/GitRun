@@ -2548,13 +2548,19 @@ fn compute_forecast(
     let predicted = corrected.max(recent_mean).max(recent_p90).max(0.0).ceil();
     let predicted_peak_concurrency = predicted.min(u32::MAX as f64) as u32;
 
-    let seasonal_target_epoch = now_epoch.saturating_add(settings.warm_pool_lead_seconds);
-    let seasonal_slot = weekday_hour_slot(seasonal_target_epoch);
-    let seasonal_stats = seasonal_slot_stats(model, seasonal_slot, now_epoch);
-    let seasonal_occurrences = seasonal_stats.occurrences;
-    let seasonal_prediction = if seasonal_occurrences >= MIN_SEASONAL_OCCURRENCES
-        && seasonal_stats.weighted_samples > 0.0
-    {
+    // The scheduler samples several times per five-minute bucket. Derive
+    // scheduled targets from the aligned bucket, so a 300-second lead maps
+    // 15:55 -> exactly 16:00 and does not slide forward on every poll.
+    let bucket_epoch = now_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
+    let seasonal_target_epoch =
+        upcoming_schedule_target(bucket_epoch, settings.warm_pool_lead_seconds).unwrap_or(0);
+    let seasonal_prediction = if seasonal_target_epoch > 0 {
+        let seasonal_slot = weekday_hour_slot(seasonal_target_epoch);
+        let seasonal_stats = seasonal_slot_stats(model, seasonal_slot, now_epoch);
+        let seasonal_occurrences = seasonal_stats.occurrences;
+        if seasonal_occurrences >= MIN_SEASONAL_OCCURRENCES
+            && seasonal_stats.weighted_samples > 0.0
+        {
         let seasonal_mean = seasonal_stats.weighted_demand_sum / seasonal_stats.weighted_samples;
         let schedule_correction = model
             .predictions
@@ -2578,7 +2584,10 @@ fn compute_forecast(
             .max(0.0)
             .ceil()
             .min(u32::MAX as f64) as u32;
-        Some((corrected, seasonal_bias_correction))
+            Some((corrected, seasonal_bias_correction))
+        } else {
+            None
+        }
     } else {
         None
     };

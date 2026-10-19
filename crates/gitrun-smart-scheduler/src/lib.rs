@@ -447,6 +447,10 @@ pub struct WorkloadPredictionRecord {
     pub observed_occurrences: u32,
     #[serde(default)]
     pub actual_occurrences: Option<u32>,
+    /// Number of time-targeted warmup containers successfully created for this
+    /// target. Counted even after an ephemeral runner exits.
+    #[serde(default)]
+    pub prewarm_runners_created: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -494,7 +498,12 @@ pub struct WorkloadPrewarm {
     /// Keep this capacity reservation out of idle cleanup until the predicted
     /// start plus the configured warm-pool hold window.
     pub hold_until_epoch: u64,
+    /// Total desired warmup slots for this target hour, before subtracting
+    /// slots already fulfilled.
     pub runner_count: u32,
+    /// Number of slots already created and durably recorded for this target.
+    #[serde(default)]
+    pub prewarm_runners_created: u32,
     pub observed_distinct_weeks: u64,
     pub historical_occurrences_per_week: f64,
 }
@@ -666,6 +675,7 @@ impl WorkflowModel {
                         .issued_at_bucket
                         .saturating_add(FORECAST_HORIZON_SECONDS)
                 || prediction.predicted_occurrences == 0
+                || prediction.prewarm_runners_created > prediction.predicted_occurrences
                 || prediction
                     .actual_occurrences
                     .is_some_and(|actual| actual != prediction.observed_occurrences)

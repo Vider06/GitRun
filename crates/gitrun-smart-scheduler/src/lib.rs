@@ -173,6 +173,11 @@ impl KittySettings {
                 "automation_allowed_repositories contains duplicate repositories".into(),
             ));
         }
+        if self.automation_mode && !self.enabled {
+            return Err(KittyError::Invalid(
+                "Automation mode requires Kitty to be enabled".into(),
+            ));
+        }
         if self.automation_mode && self.automation_allowed_repositories.is_empty() {
             return Err(KittyError::Invalid(
                 "Automation mode requires an explicit repository allowlist".into(),

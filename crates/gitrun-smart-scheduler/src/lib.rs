@@ -433,6 +433,10 @@ pub struct RecentJobOccurrence {
     pub run_id: u64,
     pub job_id: u64,
     pub observed_at_epoch: u64,
+    /// Target hour in which this unique job first contributed to a workload
+    /// forecast. This avoids duplicate counts across queue polls and hours.
+    #[serde(default)]
+    pub counted_prediction_target_epoch: Option<u64>,
 }
 
 /// Per-workload prediction made before a recurring weekday/hour slot. It is
@@ -695,6 +699,9 @@ impl WorkflowModel {
                 || occurrence.occurrence_code
                     != format!("run-{}-job-{}", occurrence.run_id, occurrence.job_id)
                 || occurrence.observed_at_epoch == 0
+                || occurrence
+                    .counted_prediction_target_epoch
+                    .is_some_and(|target| target == 0 || !target.is_multiple_of(3_600))
                 || !valid_workload_code(&occurrence.workload_code)
                 || !workload_codes.contains(occurrence.workload_code.as_str())
                 || !occurrence_codes.insert(occurrence.occurrence_code.as_str())
@@ -2480,18 +2487,29 @@ fn record_queued_job_occurrences(
         }
         let workload_code = workload_fingerprint(job);
 
-        if let Some(existing) = model
+        if let Some(existing_index) = model
             .recent_job_occurrences
-            .iter_mut()
-            .find(|entry| entry.occurrence_code == occurrence_code)
+            .iter()
+            .position(|entry| entry.occurrence_code == occurrence_code)
         {
-            if existing.workload_code != workload_code {
+            if model.recent_job_occurrences[existing_index].workload_code != workload_code {
                 // One authoritative run/job ID must never change workload identity.
                 continue;
             }
             let heartbeat_bucket = observed_at_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
-            if existing.observed_at_epoch / BUCKET_SECONDS < heartbeat_bucket / BUCKET_SECONDS {
-                existing.observed_at_epoch = heartbeat_bucket;
+            let heartbeat_changed = {
+                let existing = &mut model.recent_job_occurrences[existing_index];
+                if existing.observed_at_epoch / BUCKET_SECONDS
+                    < heartbeat_bucket / BUCKET_SECONDS
+                {
+                    existing.observed_at_epoch = heartbeat_bucket;
+                    changed = true;
+                    true
+                } else {
+                    false
+                }
+            };
+            if heartbeat_changed {
                 if let Some(pattern) = model
                     .workload_patterns
                     .iter_mut()
@@ -2499,7 +2517,29 @@ fn record_queued_job_occurrences(
                 {
                     pattern.last_seen_epoch = heartbeat_bucket;
                 }
-                changed = true;
+            }
+
+            // A job can first appear in the queue before the target hour and
+            // remain queued when that hour opens. Count it on the first poll
+            // within the target window; persist that target to avoid counting
+            // the same unique job again on subsequent polls or later hours.
+            if model.recent_job_occurrences[existing_index]
+                .counted_prediction_target_epoch
+                .is_none()
+            {
+                if let Some(prediction) = model.workload_predictions.iter_mut().find(|record| {
+                    record.workload_code == workload_code
+                        && record.actual_occurrences.is_none()
+                        && observed_at_epoch >= record.target_epoch
+                        && observed_at_epoch < record.target_epoch.saturating_add(3_600)
+                }) {
+                    let target = prediction.target_epoch;
+                    prediction.observed_occurrences =
+                        prediction.observed_occurrences.saturating_add(1);
+                    model.recent_job_occurrences[existing_index]
+                        .counted_prediction_target_epoch = Some(target);
+                    changed = true;
+                }
             }
             continue;
         }
@@ -2566,19 +2606,23 @@ fn record_queued_job_occurrences(
             }
         }
 
-        // Count each authoritative run/job only once toward a workload
-        // prediction, even if the API continues reporting it queued on later
-        // scheduler polls.
-        for prediction in &mut model.workload_predictions {
-            if prediction.workload_code == workload_code
-                && prediction.actual_occurrences.is_none()
-                && observed_at_epoch >= prediction.target_epoch
-                && observed_at_epoch < prediction.target_epoch.saturating_add(3_600)
-            {
+        // If this unique job is first discovered inside an open target hour,
+        // count it and pin the count to that target. A later queue poll can
+        // count a previously-seen job if it first remains queued into the
+        // predicted hour.
+        let counted_prediction_target_epoch =
+            if let Some(prediction) = model.workload_predictions.iter_mut().find(|record| {
+                record.workload_code == workload_code
+                    && record.actual_occurrences.is_none()
+                    && observed_at_epoch >= record.target_epoch
+                    && observed_at_epoch < record.target_epoch.saturating_add(3_600)
+            }) {
                 prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
                 changed = true;
-            }
-        }
+                Some(prediction.target_epoch)
+            } else {
+                None
+            };
 
         model.recent_job_occurrences.push(RecentJobOccurrence {
             occurrence_code,
@@ -2586,6 +2630,7 @@ fn record_queued_job_occurrences(
             run_id: job.run_id,
             job_id: job.job_id,
             observed_at_epoch,
+            counted_prediction_target_epoch,
         });
         if model.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES {
             let excess = model.recent_job_occurrences.len() - MAX_JOB_OCCURRENCES;

@@ -765,6 +765,19 @@ fn reconcile_repo(
         .map(|job| job.name.clone())
         .collect();
     let queued_job_run_ids: Vec<u64> = queued_jobs_info.iter().map(|job| job.run_id).collect();
+    let queued_job_ids: Vec<u64> = queued_jobs_info.iter().map(|job| job.job_id).collect();
+    let job_occurrences: Vec<gitrun_smart_scheduler::QueuedJobOccurrence> = queued_jobs_info
+        .iter()
+        .take(512)
+        .map(|job| gitrun_smart_scheduler::QueuedJobOccurrence {
+            run_id: job.run_id,
+            job_id: job.job_id,
+            workflow_id: job.workflow_id,
+            workflow_path: job.workflow_path.clone(),
+            name: job.name.clone(),
+            labels: job.labels.clone(),
+        })
+        .collect();
     let logic_rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
         .map_err(|error| {
             std::io::Error::other(format!(
@@ -858,6 +871,7 @@ fn reconcile_repo(
         gitrun_smart_scheduler::ObservationInput {
             repository: repo.to_owned(),
             observed_at_epoch,
+            job_occurrences: job_occurrences.clone(),
             queued_jobs: kitty_counts.queued_jobs,
             busy_runners: kitty_counts.busy_runners,
             online_runners: kitty_counts.online_runners,
@@ -907,6 +921,7 @@ fn reconcile_repo(
         queued_job_labels,
         queued_job_names,
         queued_job_run_ids,
+        queued_job_ids,
         dock_target_jobs,
         logic_rules,
         idle,
@@ -1017,6 +1032,7 @@ fn execute(
             job_labels,
             job_name,
             job_run_id,
+            job_id,
         } => {
             create_runner(
                 client,
@@ -1028,6 +1044,7 @@ fn execute(
                     permanent: *permanent,
                     job_name: job_name.as_deref(),
                     job_run_id: *job_run_id,
+                    job_id: *job_id,
                     job_labels,
                 },
             )?;
@@ -1050,6 +1067,7 @@ fn execute(
                     permanent: *permanent,
                     job_name: None,
                     job_run_id: None,
+                    job_id: None,
                     job_labels: &[],
                 },
             )?;
@@ -1205,6 +1223,7 @@ struct RunnerCreateContext<'a> {
     permanent: bool,
     job_name: Option<&'a str>,
     job_run_id: Option<u64>,
+    job_id: Option<u64>,
     job_labels: &'a [String],
 }
 
@@ -1220,6 +1239,7 @@ fn create_runner(
         permanent,
         job_name,
         job_run_id,
+        job_id,
         job_labels,
     } = context;
     let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
@@ -1287,6 +1307,7 @@ fn create_runner(
             is_windows,
             workflow_job_name: job_name,
             workflow_run_id: job_run_id,
+            workflow_job_id: job_id,
             dock_target: load_dock_target_jobs(state_dir, repo)?
                 .into_iter()
                 .any(|target| Some(target.as_str()) == job_name),
@@ -2464,6 +2485,7 @@ mod resource_pressure_reconciliation_tests {
                 job_labels: Vec::new(),
                 job_name: None,
                 job_run_id: None,
+                job_id: None,
             },
             Action::RestartUnresponsive {
                 name: "offline".into(),
@@ -2499,6 +2521,7 @@ mod resource_pressure_reconciliation_tests {
                 job_labels: vec!["linux".into()],
                 job_name: Some("build".into()),
                 job_run_id: Some(42),
+                job_id: Some(420),
             },
             Action::RemoveIdle {
                 name: "idle".into(),

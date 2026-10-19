@@ -348,6 +348,7 @@ fn update_one(
         is_windows: false,
         workflow_job_name: None,
         workflow_run_id: None,
+        workflow_job_id: None,
         dock_target: false,
         docker_socket_enabled,
         docker_socket_hardening: config.docker_socket_hardening,

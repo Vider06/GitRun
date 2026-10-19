@@ -1093,7 +1093,7 @@ impl KittyRuntime {
         let model = self.models.get_mut(&key).ok_or_else(|| {
             KittyError::Invalid("model disappeared during a single-threaded update".into())
         })?;
-        if record_queued_job_occurrences(model, &input.job_occurrences, input.observed_at_epoch) {
+        if record_started_job_occurrences(model, &input.started_job_occurrences, input.observed_at_epoch) {
             self.dirty_models.insert(key.clone());
         }
         if compact_model_history(
@@ -1279,7 +1279,7 @@ impl KittyRuntime {
         // that job is handled by the ordinary planner's live queue path, but
         // its profile prediction above still participates in self-correction.
         workload_prewarms.retain(|target| {
-            !input.job_occurrences.iter().any(|job| {
+            !input.queued_job_occurrences.iter().any(|job| {
                 valid_queued_job(job)
                     && gitrun_job_id_for(&input.repository, job).as_deref()
                         == Some(target.gitrun_job_id.as_str())
@@ -2566,17 +2566,24 @@ fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
         })
 }
 
-fn record_queued_job_occurrences(
+fn record_started_job_occurrences(
     model: &mut WorkflowModel,
     jobs: &[QueuedJobOccurrence],
     observed_at_epoch: u64,
 ) -> bool {
     let mut changed = false;
     let mut jobs_seen_this_poll = HashSet::new();
+
     for job in jobs.iter().take(MAX_JOB_OCCURRENCES) {
         if !valid_queued_job(job) {
             continue;
         }
+        let Some(started_at_epoch) = job
+            .started_at_epoch
+            .filter(|started| *started > 0 && *started <= observed_at_epoch)
+        else {
+            continue;
+        };
         let Some(gitrun_job_id) = gitrun_job_id_for(&model.repository, job) else {
             continue;
         };
@@ -2585,72 +2592,37 @@ fn record_queued_job_occurrences(
             continue;
         }
 
-        if let Some(existing_index) = model
+        let existing_index = model
             .recent_job_occurrences
             .iter()
-            .position(|entry| entry.run_id == job.run_id && entry.job_id == job.job_id)
-        {
-            if model.recent_job_occurrences[existing_index].gitrun_job_id != gitrun_job_id {
-                // One authoritative run/job pair must never change its generated
-                // GitRun logical identity. Treat a mismatch as corrupt provider data.
+            .position(|entry| entry.run_id == job.run_id && entry.job_id == job.job_id);
+        let was_legacy_queue_record = if let Some(index) = existing_index {
+            let existing = &mut model.recent_job_occurrences[index];
+            if existing.gitrun_job_id != gitrun_job_id {
+                // One authoritative run/job pair must never change workload family.
                 continue;
             }
-            if model.recent_job_occurrences[existing_index].occurrence_code != occurrence_code {
-                model.recent_job_occurrences[existing_index].occurrence_code =
-                    occurrence_code.clone();
-                changed = true;
+            if existing.started_at_epoch.is_some() {
+                // Same GitHub execution was already learned in a prior poll.
+                continue;
             }
-            let heartbeat_bucket = observed_at_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
-            let heartbeat_changed = {
-                let existing = &mut model.recent_job_occurrences[existing_index];
-                if existing.observed_at_epoch / BUCKET_SECONDS < heartbeat_bucket / BUCKET_SECONDS {
-                    existing.observed_at_epoch = heartbeat_bucket;
-                    changed = true;
-                    true
-                } else {
-                    false
-                }
-            };
-            if heartbeat_changed {
-                if let Some(pattern) = model
-                    .workload_patterns
-                    .iter_mut()
-                    .find(|pattern| pattern.gitrun_job_id == gitrun_job_id)
-                {
-                    pattern.last_seen_epoch = heartbeat_bucket;
-                }
-            }
+            // Upgrade a legacy queue-only occurrence: retain its stable ID but
+            // replace queue-time metadata with the authoritative start.
+            existing.started_at_epoch = Some(started_at_epoch);
+            existing.observed_at_epoch = observed_at_epoch;
+            existing.occurrence_code = occurrence_code.clone();
+            existing.counted_prediction_target_epoch = None;
+            changed = true;
+            true
+        } else {
+            false
+        };
 
-            // A job can first appear in the queue before the target hour and
-            // remain queued when that hour opens. Count it on the first poll
-            // within the target window; persist that target to avoid counting
-            // the same unique job again on subsequent polls or later hours.
-            if model.recent_job_occurrences[existing_index]
-                .counted_prediction_target_epoch
-                .is_none()
-            {
-                if let Some(prediction) = model.workload_predictions.iter_mut().find(|record| {
-                    record.gitrun_job_id == gitrun_job_id
-                        && record.actual_occurrences.is_none()
-                        && observed_at_epoch >= record.target_epoch
-                        && observed_at_epoch < record.target_epoch.saturating_add(3_600)
-                }) {
-                    let target = prediction.target_epoch;
-                    prediction.observed_occurrences =
-                        prediction.observed_occurrences.saturating_add(1);
-                    model.recent_job_occurrences[existing_index].counted_prediction_target_epoch =
-                        Some(target);
-                    changed = true;
-                }
-            }
-            continue;
-        }
-
-        if !model
+        let profile_exists_before = model
             .workload_patterns
             .iter()
-            .any(|pattern| pattern.gitrun_job_id == gitrun_job_id)
-        {
+            .any(|pattern| pattern.gitrun_job_id == gitrun_job_id);
+        if !profile_exists_before {
             if model.workload_patterns.len() >= MAX_JOB_PATTERNS {
                 if let Some((index, stale)) = model
                     .workload_patterns
@@ -2660,14 +2632,11 @@ fn record_queued_job_occurrences(
                     .map(|(index, pattern)| (index, pattern.gitrun_job_id.clone()))
                 {
                     model.workload_patterns.remove(index);
-                    model
-                        .recent_job_occurrences
-                        .retain(|entry| entry.gitrun_job_id != stale);
-                    model
-                        .workload_predictions
-                        .retain(|prediction| prediction.gitrun_job_id != stale);
+                    model.recent_job_occurrences.retain(|entry| entry.gitrun_job_id != stale);
+                    model.workload_predictions.retain(|prediction| prediction.gitrun_job_id != stale);
                 }
             }
+
             let mut labels: Vec<String> = job
                 .labels
                 .iter()
@@ -2681,8 +2650,8 @@ fn record_queued_job_occurrences(
                 workflow_path: job.workflow_path.chars().take(512).collect(),
                 job_name: job.name.chars().take(256).collect(),
                 labels,
-                first_seen_epoch: observed_at_epoch,
-                last_seen_epoch: observed_at_epoch,
+                first_seen_epoch: started_at_epoch,
+                last_seen_epoch: started_at_epoch,
                 occurrence_count: 0,
                 slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
                 slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
@@ -2694,16 +2663,20 @@ fn record_queued_job_occurrences(
             .iter_mut()
             .find(|pattern| pattern.gitrun_job_id == gitrun_job_id)
         {
-            pattern.last_seen_epoch = observed_at_epoch;
-            pattern.occurrence_count = pattern.occurrence_count.saturating_add(1);
-            let slot_index = weekday_hour_slot(observed_at_epoch);
-            let week = weekly_period_start(observed_at_epoch);
+            pattern.first_seen_epoch = pattern.first_seen_epoch.min(started_at_epoch);
+            pattern.last_seen_epoch = pattern.last_seen_epoch.max(started_at_epoch);
+            if !was_legacy_queue_record || !profile_exists_before {
+                pattern.occurrence_count = pattern.occurrence_count.saturating_add(1);
+            }
+            let slot_index = weekday_hour_slot(started_at_epoch);
+            let week = weekly_period_start(started_at_epoch);
             let last_week = pattern.slot_last_week[slot_index];
 
-            // Preserve the lifetime job count, but restart this weekday/hour
-            // estimator after a long hiatus. A workflow that moved schedules
-            // must not keep prewarming its old hour indefinitely.
-            if pattern.slots[slot_index].0 > 0 && week.saturating_sub(last_week) > 90 * 86_400 {
+            // Preserve lifetime totals but restart a weekday/hour estimator after
+            // a long hiatus, so schedule changes don't prewarm a stale time slot.
+            if pattern.slots[slot_index].0 > 0
+                && week.saturating_sub(last_week) > 90 * 86_400
+            {
                 pattern.slots[slot_index] = TemporalDemandSlot::default();
                 pattern.slot_last_week[slot_index] = 0;
             }
@@ -2718,32 +2691,34 @@ fn record_queued_job_occurrences(
             }
         }
 
-        // If this unique job is first discovered inside an open target hour,
-        // count it and pin the count to that target. A later queue poll can
-        // count a previously-seen job if it first remains queued into the
-        // predicted hour.
-        let counted_prediction_target_epoch = if let Some(prediction) =
-            model.workload_predictions.iter_mut().find(|record| {
+        let counted_prediction_target_epoch =
+            if let Some(prediction) = model.workload_predictions.iter_mut().find(|record| {
                 record.gitrun_job_id == gitrun_job_id
                     && record.actual_occurrences.is_none()
-                    && observed_at_epoch >= record.target_epoch
-                    && observed_at_epoch < record.target_epoch.saturating_add(3_600)
+                    && started_at_epoch >= record.target_epoch
+                    && started_at_epoch < record.target_epoch.saturating_add(3_600)
             }) {
-            prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
-            changed = true;
-            Some(prediction.target_epoch)
-        } else {
-            None
-        };
+                prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
+                changed = true;
+                Some(prediction.target_epoch)
+            } else {
+                None
+            };
 
-        model.recent_job_occurrences.push(RecentJobOccurrence {
-            occurrence_code,
-            gitrun_job_id,
-            run_id: job.run_id,
-            job_id: job.job_id,
-            observed_at_epoch,
-            counted_prediction_target_epoch,
-        });
+        if let Some(index) = existing_index {
+            model.recent_job_occurrences[index].counted_prediction_target_epoch =
+                counted_prediction_target_epoch;
+        } else {
+            model.recent_job_occurrences.push(RecentJobOccurrence {
+                occurrence_code,
+                gitrun_job_id,
+                run_id: job.run_id,
+                job_id: job.job_id,
+                observed_at_epoch,
+                started_at_epoch: Some(started_at_epoch),
+                counted_prediction_target_epoch,
+            });
+        }
         if model.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES {
             let excess = model.recent_job_occurrences.len() - MAX_JOB_OCCURRENCES;
             model.recent_job_occurrences.drain(0..excess);
@@ -2751,8 +2726,8 @@ fn record_queued_job_occurrences(
         changed = true;
     }
 
-    // A missed occurrence means zero jobs matched the workload during its
-    // predicted hour. Close records only after the full observation window.
+    // A missed occurrence means zero actual job starts in the target hour. Close
+    // the target only after that full hour has elapsed.
     for prediction in &mut model.workload_predictions {
         if prediction.actual_occurrences.is_none()
             && observed_at_epoch >= prediction.target_epoch.saturating_add(3_600)

@@ -201,6 +201,13 @@ pub struct WorkflowRunInfo {
 
 /// Parse GitHub's RFC3339 run_started_at timestamp into Unix seconds without
 /// accepting partial dates, invalid calendar values, or unbounded numeric fields.
+fn job_targets_gitrun_runner(labels: &[String]) -> bool {
+    labels
+        .iter()
+        .any(|label| label.eq_ignore_ascii_case("self-hosted"))
+        || gitrun_smart_scheduler::has_workload_routing_marker(labels)
+}
+
 fn parse_github_timestamp_epoch(raw: &str) -> Option<u64> {
     let (date, time) = raw.trim().split_once('T')?;
     let mut date_parts = date.split('-');
@@ -1039,11 +1046,7 @@ impl GitHubClient {
             let next_url = parse_next_link(response.headers());
             let parsed: JobsResponse = response.json()?;
             jobs.extend(parsed.jobs.into_iter().filter_map(|job| {
-                if !job
-                    .labels
-                    .iter()
-                    .any(|label| label.eq_ignore_ascii_case("self-hosted"))
-                {
+                if !job_targets_gitrun_runner(&job.labels) {
                     return None;
                 }
                 let started_at_epoch = job
@@ -1097,11 +1100,7 @@ impl GitHubClient {
                     .jobs
                     .into_iter()
                     .filter(|job| {
-                        job.status == "queued"
-                            && job
-                                .labels
-                                .iter()
-                                .any(|label| label.eq_ignore_ascii_case("self-hosted"))
+                        job.status == "queued" && job_targets_gitrun_runner(&job.labels)
                     })
                     .map(|job| QueuedJobInfo {
                         run_id,

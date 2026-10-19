@@ -590,41 +590,40 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
         let raw_prewarm_code = container_label_on(host, &id, "gitrun.prewarm_workload_code")?;
         let raw_prewarm_target = container_label_on(host, &id, "gitrun.prewarm_target_epoch")?;
         let raw_prewarm_hold = container_label_on(host, &id, "gitrun.prewarm_hold_until_epoch")?;
-        let (prewarm_workload_id, prewarm_target_epoch, prewarm_hold_until_epoch) =
-            match (
-                raw_prewarm_code.clone(),
-                raw_prewarm_target,
-                raw_prewarm_hold,
-            ) {
-                (None, None, None) => (None, None, None),
-                (Some(code), Some(target), Some(hold)) => {
-                    let target = target.parse::<u64>().map_err(|_| {
-                        DockerError::Command(format!(
-                            "managed runner {name} has an invalid Kitty prewarm target label"
-                        ))
-                    })?;
-                    let hold = hold.parse::<u64>().map_err(|_| {
-                        DockerError::Command(format!(
-                            "managed runner {name} has an invalid Kitty prewarm hold label"
-                        ))
-                    })?;
-                    if !valid_prewarm_workload_id(&code)
-                        || target == 0
-                        || !target.is_multiple_of(3_600)
-                        || hold < target
-                    {
-                        return Err(DockerError::Command(format!(
-                            "managed runner {name} has inconsistent Kitty prewarm labels"
-                        )));
-                    }
-                    (Some(code), Some(target), Some(hold))
-                }
-                _ => {
+        let (prewarm_workload_id, prewarm_target_epoch, prewarm_hold_until_epoch) = match (
+            raw_prewarm_code.clone(),
+            raw_prewarm_target,
+            raw_prewarm_hold,
+        ) {
+            (None, None, None) => (None, None, None),
+            (Some(code), Some(target), Some(hold)) => {
+                let target = target.parse::<u64>().map_err(|_| {
+                    DockerError::Command(format!(
+                        "managed runner {name} has an invalid Kitty prewarm target label"
+                    ))
+                })?;
+                let hold = hold.parse::<u64>().map_err(|_| {
+                    DockerError::Command(format!(
+                        "managed runner {name} has an invalid Kitty prewarm hold label"
+                    ))
+                })?;
+                if !valid_prewarm_workload_id(&code)
+                    || target == 0
+                    || !target.is_multiple_of(3_600)
+                    || hold < target
+                {
                     return Err(DockerError::Command(format!(
-                        "managed runner {name} has incomplete Kitty prewarm metadata"
+                        "managed runner {name} has inconsistent Kitty prewarm labels"
                     )));
                 }
-            };
+                (Some(code), Some(target), Some(hold))
+            }
+            _ => {
+                return Err(DockerError::Command(format!(
+                    "managed runner {name} has incomplete Kitty prewarm metadata"
+                )));
+            }
+        };
         let workload_routing_id = match (raw_workload_id, raw_prewarm_code.as_deref()) {
             (Some(workload_id), Some(prewarm_id)) if workload_id != prewarm_id => {
                 return Err(DockerError::Command(format!(

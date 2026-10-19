@@ -1078,6 +1078,9 @@ pub struct RunnerSpec<'a> {
     pub registration_token: &'a str,
     pub image: &'a str,
     pub labels: &'a str,
+    /// Remove GitHub's default self-hosted/OS labels for exclusive workload
+    /// family routing. Only GitRun job-family labels may remain on such runners.
+    pub no_default_labels: bool,
     pub ephemeral: bool,
     pub disable_update: bool,
     pub cpus: &'a str,
@@ -1381,6 +1384,25 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         }
     }
 
+    if spec.no_default_labels {
+        let route_labels = vec![spec.labels.to_owned()];
+        if spec.is_windows {
+            return Err(DockerError::Command(
+                "exclusive workload-family labels require the managed Linux runner bootstrap; Windows runner bootstrap has no verified no-default-labels contract"
+                    .into(),
+            ));
+        }
+        if spec.permanent
+            || spec.dock_target
+            || gitrun_smart_scheduler::workload_id_from_routing_labels(&route_labels).is_none()
+        {
+            return Err(DockerError::Command(
+                "no-default-label routing is allowed only for one valid GitRun workload-family label on an ordinary dynamic runner"
+                    .into(),
+            ));
+        }
+    }
+
     validate_secret_env(spec.secret_env)?;
     ensure_runner_network(host, spec.network, !spec.is_windows)?;
     if spec.is_windows && spec.docker_socket_enabled {
@@ -1396,7 +1418,11 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         spec.repo,
         spec.name,
     );
-    let labels = ensure_label(spec.labels, "gitrun-ci");
+    let labels = if spec.no_default_labels {
+        spec.labels.trim().to_owned()
+    } else {
+        ensure_label(spec.labels, "gitrun-ci")
+    };
 
     let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), spec.name.into()];
     args.extend(["--network".into(), spec.network.into()]);
@@ -1608,6 +1634,13 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         "GITRUN_API_SOCKET=/run/gitrun/api.sock".into(),
         spec.image.to_owned(),
     ]);
+    if spec.no_default_labels {
+        args.extend([
+            "-e".into(),
+            "GITRUN_RUNNER_NO_DEFAULT_LABELS=true".into(),
+        ]);
+    }
+
     // Docker accepts "-e NAME" and reads NAME from the CLI process
     // environment. Keep registration tokens and Vault plaintext out of argv;
     // only variable names are visible in the process listing.

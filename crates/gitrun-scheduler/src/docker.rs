@@ -335,6 +335,13 @@ pub fn sanitize(value: &str, replacement: char) -> String {
 /// Collision-resistant, URL-safe repository prefix for runner container names.
 /// The short readable prefix is cosmetic; the full unpadded Base64URL encoding
 /// makes distinct repository identifiers map to distinct prefixes.
+fn valid_prewarm_workload_code(code: &str) -> bool {
+    let Some(digest) = code.strip_prefix("wk-") else {
+        return false;
+    };
+    digest.len() == 16 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 pub fn runner_name_prefix(repo: &str) -> String {
     use base64::Engine as _;
     let readable: String = sanitize(repo, '-').chars().take(16).collect();
@@ -354,6 +361,10 @@ pub struct ManagedContainer {
     pub dock_target: bool,
     pub workflow_job: Option<String>,
     pub workflow_run_id: Option<u64>,
+    /// Predicted recurring workload attached to a time-bounded warmup, if any.
+    pub prewarm_workload_code: Option<String>,
+    pub prewarm_target_epoch: Option<u64>,
+    pub prewarm_hold_until_epoch: Option<u64>,
 }
 
 fn cache_volume_name(base: &str, scope: &str, repo: &str, runner: &str) -> String {
@@ -490,6 +501,40 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
         let workflow_job = container_label_on(host, &id, "gitrun.workflow_job")?;
         let workflow_run_id = container_label_on(host, &id, "gitrun.workflow_run")?
             .and_then(|value| value.parse::<u64>().ok());
+        let raw_prewarm_code = container_label_on(host, &id, "gitrun.prewarm_workload_code")?;
+        let raw_prewarm_target = container_label_on(host, &id, "gitrun.prewarm_target_epoch")?;
+        let raw_prewarm_hold = container_label_on(host, &id, "gitrun.prewarm_hold_until_epoch")?;
+        let (prewarm_workload_code, prewarm_target_epoch, prewarm_hold_until_epoch) =
+            match (raw_prewarm_code, raw_prewarm_target, raw_prewarm_hold) {
+                (None, None, None) => (None, None, None),
+                (Some(code), Some(target), Some(hold)) => {
+                    let target = target.parse::<u64>().map_err(|_| {
+                        DockerError::Command(format!(
+                            "managed runner {name} has an invalid Kitty prewarm target label"
+                        ))
+                    })?;
+                    let hold = hold.parse::<u64>().map_err(|_| {
+                        DockerError::Command(format!(
+                            "managed runner {name} has an invalid Kitty prewarm hold label"
+                        ))
+                    })?;
+                    if !valid_prewarm_workload_code(&code)
+                        || target == 0
+                        || !target.is_multiple_of(3_600)
+                        || hold < target
+                    {
+                        return Err(DockerError::Command(format!(
+                            "managed runner {name} has inconsistent Kitty prewarm labels"
+                        )));
+                    }
+                    (Some(code), Some(target), Some(hold))
+                }
+                _ => {
+                    return Err(DockerError::Command(format!(
+                        "managed runner {name} has incomplete Kitty prewarm metadata"
+                    )));
+                }
+            };
         // Labels/status above are looked up by name. Refuse to publish a
         // mixed snapshot if that name was rebound to a different container
         // while inventory metadata was being read.
@@ -506,6 +551,9 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
             dock_target,
             workflow_job,
             workflow_run_id,
+            prewarm_workload_code,
+            prewarm_target_epoch,
+            prewarm_hold_until_epoch,
         });
     }
     Ok(containers)
@@ -1052,6 +1100,11 @@ pub struct RunnerSpec<'a> {
     pub workflow_run_id: Option<u64>,
     /// GitHub's unique workflow job ID paired with the run ID.
     pub workflow_job_id: Option<u64>,
+    /// Metadata for one recurring-workload prewarm. These labels are for
+    /// deduplication/retention only; GitHub dispatch still uses runner labels.
+    pub prewarm_workload_code: Option<&'a str>,
+    pub prewarm_target_epoch: Option<u64>,
+    pub prewarm_hold_until_epoch: Option<u64>,
     /// Whether this container is a GitDockRun target that must survive the
     /// normal Dynamic-runner cleanup until the dock binding is released.
     pub dock_target: bool,
@@ -1290,6 +1343,24 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
         ));
     }
 
+    match (
+        spec.prewarm_workload_code,
+        spec.prewarm_target_epoch,
+        spec.prewarm_hold_until_epoch,
+    ) {
+        (None, None, None) => {}
+        (Some(code), Some(target), Some(hold))
+            if valid_prewarm_workload_code(code)
+                && target > 0
+                && target.is_multiple_of(3_600)
+                && hold >= target => {}
+        _ => {
+            return Err(DockerError::Command(
+                "Kitty prewarm runner metadata is incomplete or outside supported bounds".into(),
+            ));
+        }
+    }
+
     validate_secret_env(spec.secret_env)?;
     ensure_runner_network(host, spec.network, !spec.is_windows)?;
     if spec.is_windows && spec.docker_socket_enabled {
@@ -1342,6 +1413,20 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
     if let Some(job_id) = spec.workflow_job_id {
         args.extend(["--label".into(), format!("gitrun.workflow_job_id={job_id}")]);
+    }
+    if let (Some(code), Some(target), Some(hold)) = (
+        spec.prewarm_workload_code,
+        spec.prewarm_target_epoch,
+        spec.prewarm_hold_until_epoch,
+    ) {
+        args.extend([
+            "--label".into(),
+            format!("gitrun.prewarm_workload_code={code}"),
+            "--label".into(),
+            format!("gitrun.prewarm_target_epoch={target}"),
+            "--label".into(),
+            format!("gitrun.prewarm_hold_until_epoch={hold}"),
+        ]);
     }
 
     if spec.is_windows {

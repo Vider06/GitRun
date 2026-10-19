@@ -629,14 +629,15 @@ impl WorkflowModel {
                 || prediction.target_epoch % 3_600 != 0
                 || prediction.target_epoch <= prediction.issued_at_bucket
                 || prediction.target_epoch
-                    > prediction.issued_at_bucket.saturating_add(FORECAST_HORIZON_SECONDS)
+                    > prediction
+                        .issued_at_bucket
+                        .saturating_add(FORECAST_HORIZON_SECONDS)
                 || prediction.predicted_occurrences == 0
-                || prediction.actual_occurrences
+                || prediction
+                    .actual_occurrences
                     .is_some_and(|actual| actual != prediction.observed_occurrences)
-                || !workload_prediction_keys.insert((
-                    prediction.workload_code.as_str(),
-                    prediction.target_epoch,
-                ))
+                || !workload_prediction_keys
+                    .insert((prediction.workload_code.as_str(), prediction.target_epoch))
             {
                 return Err(KittyError::Invalid(
                     "stored workload prediction is malformed or duplicated".into(),

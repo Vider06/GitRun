@@ -1858,10 +1858,7 @@ fn create_runner(
     };
 
     let runner_labels = runner_labels_for_job(&config.runner_labels, permanent, job_labels);
-    let runner_labels = append_workload_routing_label(
-        &runner_labels,
-        prewarm_gitrun_job_id,
-    )?;
+    let runner_labels = append_workload_routing_label(&runner_labels, prewarm_gitrun_job_id)?;
 
     docker::create_runner_on(
         &backend,
@@ -2079,8 +2076,11 @@ mod workload_routing_label_tests {
             format!("self-hosted,linux,{label}")
         );
         assert_eq!(
-            append_workload_routing_label(&format!("self-hosted,{label}"), Some("wk-0123456789abcdef"))
-                .unwrap(),
+            append_workload_routing_label(
+                &format!("self-hosted,{label}"),
+                Some("wk-0123456789abcdef")
+            )
+            .unwrap(),
             format!("self-hosted,{label}")
         );
         assert_eq!(

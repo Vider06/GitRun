@@ -1531,7 +1531,8 @@ fn execute(
                     let permit =
                         gitrun_gsr::automation_gate::authorize_action(&policy, intent, &audit_path)
                             .map_err(|error| std::io::Error::other(error.to_string()))?;
-                    let removed = remove_if_still_idle(client, repo, name, expected_id)?;
+                    let removed =
+                        remove_if_still_idle(client, repo, name, expected_id, Some(runner.id))?;
                     if let Err(error) = permit.record_outcome(
                         removed,
                         if removed {
@@ -1558,7 +1559,7 @@ fn execute(
                 }
             }
 
-            let _ = remove_if_still_idle(client, repo, name, expected_id)?;
+            let _ = remove_if_still_idle(client, repo, name, expected_id, None)?;
             state.clear_idle(name);
         }
     }
@@ -1656,11 +1657,19 @@ fn deregister_and_remove(
     Ok(())
 }
 
+fn expected_runner_matches_authorized_id(
+    expected_runner_id: Option<u64>,
+    observed_runner_id: u64,
+) -> bool {
+    expected_runner_id.is_none_or(|expected| expected == observed_runner_id)
+}
+
 fn remove_if_still_idle(
     client: &GitHubClient,
     repo: &str,
     name: &str,
     expected_id: &str,
+    expected_runner_id: Option<u64>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     ensure_current_container_identity(name, expected_id)?;
     let runner = client
@@ -1669,11 +1678,22 @@ fn remove_if_still_idle(
         .find(|runner| runner.name == name);
 
     let Some(runner) = runner else {
-        // The registration disappeared on its own; there is no GitHub runner
-        // left to protect, so removing the container is still safe.
+        // The registration disappeared on its own; this remains safe for the
+        // legacy deterministic cleanup. Automation must not replace an
+        // authorized numeric ID with an absent/new identity during its TOCTOU window.
+        if expected_runner_id.is_some() {
+            return Ok(false);
+        }
         docker::remove_container(expected_id)?;
         return Ok(true);
     };
+
+    if !expected_runner_matches_authorized_id(expected_runner_id, runner.id) {
+        eprintln!(
+            "gitrun-autoscaler: preserving Automation Stop candidate {name} for {repo}: GitHub runner identity changed after GSR authorization"
+        );
+        return Ok(false);
+    }
 
     if runner.busy || !runner.is_online() {
         eprintln!(
@@ -3148,6 +3168,13 @@ mod reconcile_identity_pin_tests {
             "immutable-container-id"
         );
         assert!(expected_container_id(&inventory, "replacement-name").is_err());
+    }
+
+    #[test]
+    fn automation_stop_is_bound_to_the_exact_authorized_runner_id() {
+        assert!(expected_runner_matches_authorized_id(Some(41), 41));
+        assert!(!expected_runner_matches_authorized_id(Some(42), 41));
+        assert!(expected_runner_matches_authorized_id(None, 41));
     }
 
     #[test]

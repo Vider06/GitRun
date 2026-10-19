@@ -24,6 +24,7 @@ const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 const MAX_MODEL_BYTES: u64 = 1024 * 1024;
 const MAX_HISTORY_BUCKETS: usize = 2016; // Seven days, sampled every five minutes.
 const MAX_MODELS: usize = 64;
+const MAX_DASHBOARD_REPOSITORIES: usize = 64;
 const MAX_AUDIT_RECORDS: usize = 128;
 const MAX_EVALUATED_FORECASTS: usize = 2016;
 const FORECAST_HORIZON_SECONDS: u64 = 3600;
@@ -542,16 +543,6 @@ impl KittyRuntime {
         observation.validate()?;
 
         let key = repository_key(&input.repository);
-        if !self.models.contains_key(&key)
-            && !self.disabled_models.contains(&key)
-            && self.disabled_models.len() >= MAX_MODELS
-        {
-            return Ok(KittyDecision::fallback(
-                &input.repository,
-                configured_min_runners,
-                "Kitty validation-failure cache is full; deterministic scheduler remains authoritative",
-            ));
-        }
         if self.disabled_models.contains(&key) {
             return Ok(KittyDecision::fallback(
                 &input.repository,
@@ -561,11 +552,13 @@ impl KittyRuntime {
         }
         if !self.models.contains_key(&key) {
             if self.models.len() >= MAX_MODELS {
-                return Ok(KittyDecision::fallback(
-                    &input.repository,
-                    configured_min_runners,
-                    "Kitty model capacity reached; deterministic scheduler unchanged",
-                ));
+                if let Err(error) = self.evict_oldest_model() {
+                    return Ok(KittyDecision::fallback(
+                        &input.repository,
+                        configured_min_runners,
+                        format!("Kitty could not safely evict an older model; deterministic scheduler unchanged: {error}"),
+                    ));
+                }
             }
             match self.load_model(&input.repository, &key) {
                 Ok(model) => {
@@ -1038,6 +1031,32 @@ impl KittyRuntime {
         Ok(())
     }
 
+    /// Keep memory bounded while allowing repositories beyond the cache
+    /// limit to build independent persistent models. Dirty history is made
+    /// durable before an entry can be evicted.
+    fn evict_oldest_model(&mut self) -> Result<()> {
+        if self.models.len() < MAX_MODELS {
+            return Ok(());
+        }
+        let victim = self
+            .models
+            .iter()
+            .min_by_key(|(_, model)| model.generated_at_epoch)
+            .map(|(key, _)| key.clone())
+            .ok_or(KittyError::ModelLimit)?;
+        if self.dirty_models.contains(&victim) {
+            self.persist_model(&victim)?;
+            self.dirty_models.remove(&victim);
+            if let Err(error) = self.persist_dashboard_snapshot() {
+                eprintln!(
+                    "gitrun-smart-scheduler: dashboard status persistence failed during model eviction: {error}"
+                );
+            }
+        }
+        self.models.remove(&victim).ok_or(KittyError::ModelLimit)?;
+        Ok(())
+    }
+
     fn dashboard_snapshot(&self) -> KittyDashboardStatus {
         let mut repositories: Vec<_> = self
             .models
@@ -1069,7 +1088,38 @@ impl KittyRuntime {
     }
 
     fn persist_dashboard_snapshot(&self) -> Result<()> {
-        let status = self.dashboard_snapshot();
+        let mut status = self.dashboard_snapshot();
+        // Preserve the last known summary for models temporarily evicted from
+        // the bounded in-memory cache. Only the 64 most recently observed
+        // repositories are exposed; full history remains in private model files.
+        if let Ok(previous) = load_dashboard_status(&self.state_dir) {
+            let mut repositories: HashMap<String, KittyRepositoryStatus> = previous
+                .repositories
+                .into_iter()
+                .map(|entry| (entry.repository.clone(), entry))
+                .collect();
+            for entry in status.repositories.drain(..) {
+                repositories.insert(entry.repository.clone(), entry);
+            }
+            let now = status.generated_at_epoch;
+            let cutoff = now.saturating_sub(
+                (MAX_HISTORY_BUCKETS as u64).saturating_mul(BUCKET_SECONDS),
+            );
+            let mut recent: Vec<_> = repositories
+                .into_values()
+                .filter(|entry| {
+                    entry.latest_observation_epoch.is_some_and(|stamp| {
+                        stamp <= now && stamp >= cutoff
+                    })
+                })
+                .collect();
+            recent.sort_by_key(|entry| {
+                std::cmp::Reverse(entry.latest_observation_epoch.unwrap_or_default())
+            });
+            recent.truncate(MAX_DASHBOARD_REPOSITORIES);
+            recent.sort_by(|left, right| left.repository.cmp(&right.repository));
+            status.repositories = recent;
+        }
         let bytes = serde_json::to_vec(&status)?;
         if bytes.len() as u64 > MAX_MODEL_BYTES {
             return Err(KittyError::Invalid(
@@ -1882,6 +1932,56 @@ mod tests {
         assert!(status.predictive_warm_pool_enabled);
         assert!(status.shadow_mode);
         assert!(status.repositories.is_empty());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn repository_model_cache_evicts_oldest_without_losing_persisted_history() {
+        let dir = temp_dir("model-cache-eviction");
+        let settings = enabled_settings();
+        write_settings(&dir, &settings);
+        let mut runtime = KittyRuntime::new(&dir);
+        let repositories = MAX_MODELS + 2;
+
+        for index in 0..repositories {
+            let repository = format!("owner/repo-{index}");
+            let stamp = 1_800 + (index as u64) * BUCKET_SECONDS;
+            let decision = runtime
+                .observe(
+                    ObservationInput {
+                        repository: repository.clone(),
+                        observed_at_epoch: stamp,
+                        queued_jobs: 0,
+                        busy_runners: 1,
+                        online_runners: 1,
+                        managed_runners: 1,
+                        host_cpu_percent: None,
+                        host_memory_percent: None,
+                        host_disk_percent: None,
+                    },
+                    2,
+                    8,
+                    true,
+                )
+                .unwrap();
+            assert_ne!(decision.status, DecisionStatus::SafeFallback);
+            runtime.finish_cycle(&decision, 0, true).unwrap();
+        }
+
+        assert_eq!(runtime.models.len(), MAX_MODELS);
+        assert!(!runtime.models.contains_key(&repository_key("owner/repo-0")));
+        let persisted_path = dir
+            .join("kitty")
+            .join(format!("model-{}.json", repository_key("owner/repo-0")));
+        assert!(persisted_path.is_file());
+
+        let status = load_dashboard_status(&dir).unwrap();
+        assert!(status.repositories.len() <= MAX_DASHBOARD_REPOSITORIES);
+        assert!(status
+            .repositories
+            .iter()
+            .any(|entry| entry.repository == format!("owner/repo-{}", repositories - 1)));
 
         let _ = fs::remove_dir_all(dir);
     }

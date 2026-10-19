@@ -21,6 +21,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 static STATE_TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const MAX_JOB_IDENTITIES: usize = 4096;
+const JOB_ID_RETENTION_SECONDS: u64 = 90 * 86_400;
+const JOB_ID_REFRESH_BUCKET_SECONDS: u64 = 300;
 
 #[derive(Debug, Error)]
 pub enum StateError {
@@ -33,18 +36,42 @@ pub enum StateError {
     #[error("unsafe scheduler state path: {0}")]
     UnsafePath(String),
 }
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedJobIdentity {
+    repository: String,
+    run_id: u64,
+    job_id: u64,
+    gitrun_job_id: String,
+    last_seen_epoch: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StateFile {
-    /// container name -> unix seconds when it was first observed idle.
     #[serde(default)]
     idle_since: HashMap<String, u64>,
-    /// container name -> unix seconds when it was first observed needing recovery.
     #[serde(default)]
     recovery_since: HashMap<String, u64>,
-    /// Containers observed to have exited unexpectedly. Quarantined names
-    /// are never restarted/reused; reconciliation must create a fresh runner.
     #[serde(default)]
     quarantined_since: HashMap<String, u64>,
+    /// Provider IDs are lookup keys only; values have an independent GitRun ID.
+    #[serde(default)]
+    job_identities: HashMap<String, PersistedJobIdentity>,
+    #[serde(default = "default_next_job_identity_sequence")]
+    next_job_identity_sequence: u64,
+}
+
+fn default_next_job_identity_sequence() -> u64 { 1 }
+
+impl Default for StateFile {
+    fn default() -> Self {
+        Self {
+            idle_since: HashMap::new(),
+            recovery_since: HashMap::new(),
+            quarantined_since: HashMap::new(),
+            job_identities: HashMap::new(),
+            next_job_identity_sequence: 1,
+        }
+    }
 }
 
 pub struct SchedulerState {

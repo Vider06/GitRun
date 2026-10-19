@@ -339,7 +339,10 @@ fn valid_prewarm_workload_code(code: &str) -> bool {
     let Some(digest) = code.strip_prefix("wk-") else {
         return false;
     };
-    digest.len() == 16 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    digest.len() == 16
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 pub fn runner_name_prefix(repo: &str) -> String {

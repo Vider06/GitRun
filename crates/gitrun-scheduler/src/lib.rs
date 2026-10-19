@@ -1940,7 +1940,8 @@ fn create_runner(
     if routed_workload_id.is_some() && dock_target {
         return Err(std::io::Error::other(
             "a GitDockRun-owned lifecycle cannot be mixed with a Kitty workload-family route",
-        ).into());
+        )
+        .into());
     }
     let (container_job_name, container_run_id, container_job_id) =
         runner_workflow_binding(routed_workload_id.as_deref(), job_name, job_run_id, job_id);

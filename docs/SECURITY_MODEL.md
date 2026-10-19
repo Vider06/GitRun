@@ -135,3 +135,19 @@ Trusted infrastructure: GitRun scheduler, host Docker daemon, GitHub API identit
 Untrusted input: workflow code, workflow-visible environment variables, requested API arguments, logical dock/resource names, repository configuration supplied by workflow code, and downloaded update artifacts until verified.
 
 A successful privileged request therefore requires both authenticated transport identity and authoritative workload binding; policy alone is never treated as proof of identity.
+
+
+## v1.5.0 Phase 7 verification note — 2026-10-19
+
+PR #83 adds regression coverage for updater signature verification and rollback, privileged dashboard executable trust resolution, VM configuration/resolution, and GitDockRun mount cleanup in a privileged Docker namespace. The current CI source baseline passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. Consult the [refactor status tracker](v1.5.0-refactor-status.md) for exact commit/run evidence; documentation-only changes made during Phase 7 need a final-head verification run.
+
+The following are **not** claimed as verified by those automated checks:
+
+- A live desktop `pkexec` authorization dialog and real install/uninstall/reinstall privilege transitions.
+- Full KVM/libvirt and VirtualBox provisioning/recovery on actual hypervisor hosts.
+- Disconnect cleanup initiated through the complete authorized API endpoint (the live namespace test exercises the cleanup helper).
+- Upgrade/migration behavior for every pre-existing or operator-customized runner image and control volume.
+- Serialization of direct privileged policy edits that intentionally bypass GitRun's advisory-lock protocol.
+- Zero open alerts in GitHub's Security tab; successful CodeQL workflow execution proves the scan ran, not the state of all alerts.
+
+These are deployment/evidence limits, not assurances that the behaviors are safe in every environment. Before production release, validate the relevant environment-specific paths or explicitly accept each residual risk with a named scope and rationale.

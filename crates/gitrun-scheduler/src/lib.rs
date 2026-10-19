@@ -1341,7 +1341,10 @@ fn reconcile_repo(
     let has_explicit_workload_route = input
         .queued_job_labels
         .iter()
-        .any(|labels| gitrun_smart_scheduler::has_workload_routing_marker(labels));
+        .any(|labels| gitrun_smart_scheduler::has_workload_routing_marker(labels))
+        || containers
+            .iter()
+            .any(|container| container.workload_routing_id.is_some());
     let workload_routing_profiles = if has_explicit_workload_route {
         match kitty_runtime.workload_routing_profiles(repo) {
             Ok(profiles) => profiles,
@@ -1557,10 +1560,20 @@ fn execute(
             ensure_not_dock_bound(state_dir, repo, name, "recreate orphaned runner")?;
             let expected_id = expected_container_id(inventory, name)?;
             ensure_current_container_identity(name, expected_id)?;
+            let prior = inventory.iter().find(|container| container.name == *name);
+            let route_labels = prior
+                .and_then(|container| container.workload_routing_id.as_deref())
+                .map(|workload_id| vec![format!("gitrun-job-{workload_id}")]);
+            let job_labels = route_labels.as_deref().unwrap_or(&[]);
+            let prewarm_workload_id =
+                prior.and_then(|container| container.prewarm_workload_id.as_deref());
+            let prewarm_target_epoch =
+                prior.and_then(|container| container.prewarm_target_epoch);
+            let prewarm_hold_until_epoch =
+                prior.and_then(|container| container.prewarm_hold_until_epoch);
             deregister_and_remove(client, repo, name, expected_id)?;
-            // Recreation isn't tied to a specific queued job (it's replacing
-            // a container GitHub lost track of, not opening new capacity),
-            // so it keeps the pre-existing behavior of an empty label set.
+            // Preserve the validated workload family/profile on recovery,
+            // rather than silently turning a routed runner into a generic one.
             if !create_runner(
                 client,
                 config,
@@ -1573,10 +1586,10 @@ fn execute(
                     job_name: None,
                     job_run_id: None,
                     job_id: None,
-                    job_labels: &[],
-                    prewarm_workload_id: None,
-                    prewarm_target_epoch: None,
-                    prewarm_hold_until_epoch: None,
+                    job_labels,
+                    prewarm_workload_id,
+                    prewarm_target_epoch,
+                    prewarm_hold_until_epoch,
                 },
             )? {
                 return Err(std::io::Error::other(
@@ -1874,10 +1887,15 @@ fn create_runner(
         prewarm_hold_until_epoch,
     } = context;
     let explicit_workload_id = explicit_workload_routing_id(job_labels)?;
-    if explicit_workload_id.is_some() && prewarm_workload_id.is_some() {
-        return Err(std::io::Error::other(
-            "a runner cannot mix an explicit queued workload route with a predictive prewarm reservation",
-        ).into());
+    if let (Some(explicit_id), Some(prewarm_id)) =
+        (explicit_workload_id.as_deref(), prewarm_workload_id)
+    {
+        if explicit_id != prewarm_id {
+            return Err(std::io::Error::other(
+                "a runner cannot mix different workload-family routing and prewarm identities",
+            )
+            .into());
+        }
     }
     let routed_workload_id = prewarm_workload_id
         .map(str::to_owned)

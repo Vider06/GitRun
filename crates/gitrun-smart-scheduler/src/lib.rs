@@ -3371,13 +3371,23 @@ mod tests {
     }
 
     #[test]
-    fn reserved_automation_capabilities_cannot_be_enabled() {
+    fn adaptive_resource_management_is_reserved_and_automation_requires_master_switch() {
         let mut settings = enabled_settings();
         settings.adaptive_resource_management_enabled = true;
         assert!(settings.validate().is_err());
+
         settings.adaptive_resource_management_enabled = false;
-        settings.smart_fast_stop_enabled = true;
+        settings.automation_mode = true;
+        settings.automation_allowed_repositories = vec!["owner/repo".into()];
+        assert!(settings.validate().is_ok());
+
+        settings.enabled = false;
         assert!(settings.validate().is_err());
+
+        settings.enabled = true;
+        settings.smart_fast_stop_enabled = true;
+        settings.fast_stop_max_runtime_seconds = 3_600;
+        assert!(settings.validate().is_ok());
     }
 
     #[test]

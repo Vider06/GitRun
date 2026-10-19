@@ -22,6 +22,8 @@ export async function renderAppSettings() {
   };
   const kittyStatus = kittyData?.status || {repositories:[]};
   const formatEpoch = (value) => value ? new Date(value * 1000).toLocaleString() : "Not recorded";
+  const hiddenModelPlaceholder = '<div class="notice"><div><strong>Workflow Model details are hidden</strong><p>Historical predictions remain stored privately. Re-enable model visibility to show the summarized history and latest decision.</p></div></div>';
+  const emptyModelPlaceholder = '<div class="notice"><div><strong>No Workflow Model history yet</strong><p>Kitty is off by default. After enabling telemetry, aggregated observations are collected in five-minute buckets. Forecasts require sufficient history and evaluated outcomes.</p></div></div>';
   const kittyRows = (kittyStatus.repositories || []).map((entry) => {
     const forecast = entry.latest_forecast;
     const decision = entry.latest_decision;
@@ -43,7 +45,7 @@ export async function renderAppSettings() {
       ' · forecast quality: ' + esc(quality) + ' · MAE: ' + esc(error) + '</small><small>' +
       esc(decisionText) + ': ' + esc(explanation) + '</small></div>' +
       pill(forecast ? "Forecast" : "Learning", forecast ? "good" : "info") + '</div>';
-  }).join("") || '<div class="notice"><div><strong>No Workflow Model history yet</strong><p>Kitty is off by default. After enabling telemetry, aggregated observations are collected in five-minute buckets. Forecasts require sufficient history and evaluated outcomes.</p></div></div>';
+  }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);
   const kittyPanel = '<div class="section">' + panel("Kitty Smart Scheduler",
     '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. It is disabled by default; recommendations never authorize themselves.</p>' +
     (kittyLoadError ? '<div class="notice warn"><div><strong>Kitty settings could not be loaded</strong><p>' + esc(kittyLoadError) + '</p><p>Saving below can repair a malformed or inaccessible settings file.</p></div></div>' : '') +
@@ -125,7 +127,7 @@ export async function renderAppSettings() {
     }
     if (updated.enabled && updated.telemetry_enabled && updated.predictive_analytics_enabled &&
         updated.predictive_warm_pool_enabled && !updated.shadow_mode &&
-        (!kittySettings.predictive_warm_pool_enabled || kittySettings.shadow_mode)) {
+        (!kittySettings.enabled || !kittySettings.predictive_warm_pool_enabled || kittySettings.shadow_mode)) {
       const confirmed = await confirmModal(
         "Enable predictive runner prewarming?",
         "Kitty may raise the minimum runner pool by at most " + updated.max_additional_warm_runners +

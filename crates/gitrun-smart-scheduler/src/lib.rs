@@ -124,7 +124,9 @@ impl KittySettings {
                 "Adaptive Resource Management and Smart Fast Stop automation are reserved and not supported by this version".into(),
             ));
         }
-        if !(300..=3600).contains(&self.warm_pool_min_hold_seconds) {
+        if !(300..=3600).contains(&self.warm_pool_min_hold_seconds)
+            || self.warm_pool_min_hold_seconds % 300 != 0
+        {
             return Err(KittyError::Invalid(
                 "warm_pool_min_hold_seconds must be between 300 and 3600".into(),
             ));
@@ -1198,7 +1200,10 @@ fn trusted_system_state_dir() -> Option<PathBuf> {
         let mut state_dir = PathBuf::from("/var/lib/gitrun");
         for line in content.lines() {
             let line = line.trim();
-            if let Some(value) = line.strip_prefix("GITRUN_STATE_DIR=") {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if key.trim() == "GITRUN_STATE_DIR" {
                 let value = value.trim().trim_matches('"').trim_matches('\'');
                 if value.is_empty() {
                     return None;
@@ -1947,7 +1952,7 @@ mod tests {
         let mut settings = enabled_settings();
         settings.predictive_warm_pool_enabled = true;
         settings.shadow_mode = true;
-        settings.minimum_quality_score = 0.0;
+        settings.minimum_quality_score = 0.5;
         settings.minimum_samples = 24;
         settings.max_additional_warm_runners = 1;
         write_settings(&dir, &settings);
@@ -1973,7 +1978,7 @@ mod tests {
         let mut settings = enabled_settings();
         settings.predictive_warm_pool_enabled = true;
         settings.shadow_mode = false;
-        settings.minimum_quality_score = 0.0;
+        settings.minimum_quality_score = 0.5;
         settings.minimum_samples = 24;
         settings.history_buckets = 48;
         settings.max_additional_warm_runners = 1;
@@ -2137,5 +2142,61 @@ mod tests {
     fn invalid_model_identity_fails_validation() {
         let model = WorkflowModel::empty("another/repo");
         assert!(model.validate_for("owner/repo", 48).is_err());
+    }
+
+    #[test]
+    fn mismatched_repository_model_fails_closed_without_changing_the_floor() {
+        let dir = temp_dir("wrong-model-identity");
+        let settings = enabled_settings();
+        write_settings(&dir, &settings);
+
+        let model_path = dir
+            .join("kitty")
+            .join(format!("model-{}.json", repository_key("owner/repo")));
+        fs::write(
+            &model_path,
+            serde_json::to_vec(&WorkflowModel::empty("different/repo")).unwrap(),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&model_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        let mut runtime = KittyRuntime::new(&dir);
+        let decision = runtime.observe(input(1_800, 10, 5), 3, 8, true).unwrap();
+        assert_eq!(decision.status, DecisionStatus::SafeFallback);
+        assert_eq!(decision.proposed_min_runners, 3);
+        assert_eq!(decision.effective_min_runners, 3);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn settings_symlinks_and_hardlinks_are_rejected() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let dir = temp_dir("unsafe-settings-links");
+        let kitty_dir = dir.join("kitty");
+        fs::create_dir(&kitty_dir).unwrap();
+        fs::set_permissions(&kitty_dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let outside = dir.join("settings-target.json");
+        fs::write(&outside, serde_json::to_vec(&KittySettings::default()).unwrap()).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let settings_path = KittyRuntime::settings_path(&dir);
+        symlink(&outside, &settings_path).unwrap();
+        assert!(read_settings(&settings_path).is_err());
+
+        fs::remove_file(&settings_path).unwrap();
+        fs::write(&settings_path, serde_json::to_vec(&KittySettings::default()).unwrap()).unwrap();
+        fs::set_permissions(&settings_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let hard_link = dir.join("settings-hard-link.json");
+        fs::hard_link(&settings_path, &hard_link).unwrap();
+        assert!(read_settings(&settings_path).is_err());
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

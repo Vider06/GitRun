@@ -30,7 +30,7 @@ const MAX_JOB_OCCURRENCES: usize = 512;
 const MAX_WORKLOAD_PREDICTIONS: usize = 512;
 const MAX_DASHBOARD_JOB_OCCURRENCES: usize = 32;
 const MAX_AUDIT_RECORDS: usize = 128;
-const MAX_EVALUATED_FORECASTS: usize = 4032;
+const MAX_EVALUATED_FORECASTS: usize = 1024;
 const FORECAST_HORIZON_SECONDS: u64 = 3600;
 const WEEK_SECONDS: u64 = 7 * 24 * 60 * 60;
 const COMPACT_MONTH_SECONDS: u64 = WEEK_SECONDS * 4;
@@ -561,6 +561,13 @@ pub struct WorkflowModel {
     pub decision_audit: Vec<DecisionAudit>,
 }
 
+fn valid_workload_code(code: &str) -> bool {
+    let Some(digest) = code.strip_prefix("wk-") else {
+        return false;
+    };
+    digest.len() == 16 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 impl WorkflowModel {
     fn empty(repository: &str) -> Self {
         Self {
@@ -613,14 +620,22 @@ impl WorkflowModel {
         }
         let mut workload_codes = HashSet::new();
         for pattern in &self.workload_patterns {
-            if pattern.workload_code.len() != 19
-                || !pattern.workload_code.starts_with("wk-")
+            if !valid_workload_code(&pattern.workload_code)
+                || pattern.workflow_id == 0
+                || pattern.workflow_path.trim().is_empty()
+                || pattern.workflow_path.chars().any(char::is_control)
+                || pattern.job_name.is_empty()
+                || pattern.job_name.chars().any(char::is_control)
                 || pattern.slots.len() != TEMPORAL_SLOT_COUNT
                 || pattern.slot_last_week.len() != TEMPORAL_SLOT_COUNT
                 || pattern.job_name.is_empty()
                 || pattern.job_name.len() > 256
                 || pattern.workflow_path.len() > 512
                 || pattern.labels.len() > 32
+                || pattern.labels.iter().any(|label| {
+                    label.is_empty() || label.chars().any(char::is_control)
+                })
+                || pattern.first_seen_epoch == 0
                 || pattern.first_seen_epoch > pattern.last_seen_epoch
                 || pattern.occurrence_count == 0
                 || pattern.labels.iter().any(|label| label.len() > 128)
@@ -633,7 +648,7 @@ impl WorkflowModel {
         }
         let mut workload_prediction_keys = HashSet::new();
         for prediction in &self.workload_predictions {
-            if prediction.workload_code.len() != 19
+            if !valid_workload_code(&prediction.workload_code)
                 || !workload_codes.contains(prediction.workload_code.as_str())
                 || prediction.issued_at_bucket % BUCKET_SECONDS != 0
                 || prediction.target_epoch % 3_600 != 0
@@ -660,7 +675,8 @@ impl WorkflowModel {
                 || occurrence.job_id == 0
                 || occurrence.occurrence_code
                     != format!("run-{}-job-{}", occurrence.run_id, occurrence.job_id)
-                || occurrence.workload_code.len() != 19
+                || occurrence.observed_at_epoch == 0
+                || !valid_workload_code(&occurrence.workload_code)
                 || !workload_codes.contains(occurrence.workload_code.as_str())
                 || !occurrence_codes.insert(occurrence.occurrence_code.as_str())
             {
@@ -3935,6 +3951,11 @@ mod tests {
             .yearly_summaries
             .iter()
             .all(|summary| summary.slots.len() == TEMPORAL_SLOT_COUNT));
+        let serialized = serde_json::to_vec(&model).unwrap();
+        assert!(
+            serialized.len() <= MAX_MODEL_BYTES as usize,
+            "tiered retention should keep representative multi-decade JSON within the storage cap"
+        );
     }
 
     #[test]

@@ -461,6 +461,9 @@ pub struct WorkloadPrewarm {
     pub job_name: String,
     pub labels: Vec<String>,
     pub target_epoch: u64,
+    /// Keep this capacity reservation out of idle cleanup until the predicted
+    /// start plus the configured warm-pool hold window.
+    pub hold_until_epoch: u64,
     pub runner_count: u32,
     pub observed_distinct_weeks: u64,
     pub historical_occurrences_per_week: f64,
@@ -2401,6 +2404,7 @@ fn forecast_workload_prewarms(
                 job_name: pattern.job_name.clone(),
                 labels: pattern.labels.clone(),
                 target_epoch,
+                hold_until_epoch: target_epoch.saturating_add(settings.warm_pool_min_hold_seconds),
                 runner_count,
                 observed_distinct_weeks: distinct_weeks,
                 historical_occurrences_per_week: occurrences_per_week,

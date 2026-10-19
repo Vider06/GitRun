@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{env, fs, path::Path};
+use std::{env, fs, io::Read, path::Path};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -270,19 +270,72 @@ impl Config {
     }
 
     pub fn from_env_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
-        let content = fs::read_to_string(path)?;
+        let content = Self::read_config_file(path.as_ref())?;
         let mut lookup = std::collections::HashMap::new();
-        for raw in content.lines() {
+        for (line_index, raw) in content.lines().enumerate() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let Some((key, value)) = line.split_once('=') else {
-                return Err(ConfigError::Invalid(format!("invalid env line: {line}")));
+            let Some((raw_key, value)) = line.split_once('=') else {
+                // Do not echo the malformed line: it may be a pasted secret
+                // or token that accidentally omitted its key and '='.
+                return Err(ConfigError::Invalid(format!(
+                    "invalid env file syntax at line {}: expected KEY=VALUE",
+                    line_index + 1
+                )));
             };
-            lookup.insert(key.trim().to_owned(), unquote(value.trim()));
+            let key = raw_key.trim();
+            let mut chars = key.chars();
+            let valid_key = matches!(chars.next(), Some(c) if c.is_ascii_uppercase() || c == '_')
+                && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            if !valid_key {
+                return Err(ConfigError::Invalid(format!(
+                    "invalid environment variable name at line {}",
+                    line_index + 1
+                )));
+            }
+            if lookup.contains_key(key) {
+                return Err(ConfigError::Invalid(format!(
+                    "duplicate environment variable at line {}",
+                    line_index + 1
+                )));
+            }
+            lookup.insert(key.to_owned(), unquote(value.trim()));
         }
         Self::from_lookup(&lookup)
+    }
+
+    fn read_config_file(path: &Path) -> Result<String, ConfigError> {
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+            let mut file = options.open(path)?;
+            let metadata = file.metadata()?;
+            if !metadata.is_file() || metadata.nlink() != 1 {
+                return Err(ConfigError::Invalid(
+                    "configuration path must be a regular file without hard links".into(),
+                ));
+            }
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            Ok(content)
+        }
+        #[cfg(not(unix))]
+        {
+            let mut file = options.open(path)?;
+            if !file.metadata()?.is_file() {
+                return Err(ConfigError::Invalid(
+                    "configuration path must be a regular file".into(),
+                ));
+            }
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            Ok(content)
+        }
     }
 
     /// Shared field-by-field build, driven by a plain string lookup. Both
@@ -557,21 +610,27 @@ impl Config {
                 "runner labels must not be empty".into(),
             ));
         }
-        if !is_positive_decimal(&self.container_cpus) {
+        if self.container_cpus.trim() != self.container_cpus
+            || !is_positive_decimal(&self.container_cpus)
+        {
             return Err(ConfigError::Invalid(format!(
-                "container cpus must be a positive decimal number, got {:?}",
+                "container cpus must be a positive decimal number without surrounding whitespace, got {:?}",
                 self.container_cpus
             )));
         }
-        if !is_positive_docker_size(&self.container_memory) {
+        if self.container_memory.trim() != self.container_memory
+            || !is_positive_docker_size(&self.container_memory)
+        {
             return Err(ConfigError::Invalid(format!(
-                "container memory must be a positive Docker size, got {:?}",
+                "container memory must be a positive Docker size without surrounding whitespace, got {:?}",
                 self.container_memory
             )));
         }
-        if !is_positive_u64(&self.container_pids_limit) {
+        if self.container_pids_limit.trim() != self.container_pids_limit
+            || !is_positive_u64(&self.container_pids_limit)
+        {
             return Err(ConfigError::Invalid(format!(
-                "container pids limit must be a positive integer, got {:?}",
+                "container pids limit must be a positive integer without surrounding whitespace, got {:?}",
                 self.container_pids_limit
             )));
         }
@@ -584,24 +643,18 @@ impl Config {
                 self.shared_cache_scope
             )));
         }
-        if self
-            .resource_pressure_paths
-            .split(';')
-            .all(|path| path.trim().is_empty())
-        {
-            return Err(ConfigError::Invalid(
-                "resource pressure paths must contain at least one filesystem path".into(),
-            ));
-        }
+        validate_resource_pressure_paths(&self.resource_pressure_paths)?;
         if !is_valid_docker_name(&self.shared_cache_volume) {
             return Err(ConfigError::Invalid(format!(
                 "shared cache volume must be a valid Docker volume name, got {:?}",
                 self.shared_cache_volume
             )));
         }
-        if !is_positive_docker_size(&self.runner_home_size) {
+        if self.runner_home_size.trim() != self.runner_home_size
+            || !is_positive_docker_size(&self.runner_home_size)
+        {
             return Err(ConfigError::Invalid(format!(
-                "runner home size must be a positive Docker size, got {:?}",
+                "runner home size must be a positive Docker size without surrounding whitespace, got {:?}",
                 self.runner_home_size
             )));
         }
@@ -655,6 +708,16 @@ impl Config {
                 "runner seccomp profile must be a non-empty value without whitespace".into(),
             ));
         }
+        if self
+            .runner_seccomp_profile
+            .trim()
+            .eq_ignore_ascii_case("unconfined")
+            && !self.gsr_allow_unsafe_runner
+        {
+            return Err(ConfigError::Invalid(
+                "GITRUN_RUNNER_SECCOMP_PROFILE=unconfined requires GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true as an explicit opt-in".into(),
+            ));
+        }
         if self.runner_apparmor_profile.chars().any(char::is_control)
             || self
                 .runner_apparmor_profile
@@ -663,6 +726,16 @@ impl Config {
         {
             return Err(ConfigError::Invalid(
                 "runner AppArmor profile must not contain whitespace or control characters".into(),
+            ));
+        }
+        if self
+            .runner_apparmor_profile
+            .trim()
+            .eq_ignore_ascii_case("unconfined")
+            && !self.gsr_allow_unsafe_runner
+        {
+            return Err(ConfigError::Invalid(
+                "GITRUN_RUNNER_APPARMOR_PROFILE=unconfined requires GITRUN_GSR_ALLOW_UNSAFE_RUNNER=true as an explicit opt-in".into(),
             ));
         }
         if !matches!(self.gtuu_schedule_timezone.as_str(), "utc" | "local") {
@@ -695,6 +768,18 @@ impl Config {
             return Err(ConfigError::Invalid(
                 "GitHub App auth requires GITRUN_GITHUB_APP_ID, GITRUN_GITHUB_APP_INSTALLATION_ID, and GITRUN_GITHUB_APP_PRIVATE_KEY_PATH to all be set together".into(),
             ));
+        }
+        if app_fields.iter().all(|set| *set) {
+            if !is_positive_decimal_integer(&self.github_app_id) {
+                return Err(ConfigError::Invalid(
+                    "GITRUN_GITHUB_APP_ID must be a positive decimal integer".into(),
+                ));
+            }
+            if !is_positive_decimal_integer(&self.github_app_installation_id) {
+                return Err(ConfigError::Invalid(
+                    "GITRUN_GITHUB_APP_INSTALLATION_ID must be a positive decimal integer".into(),
+                ));
+            }
         }
         validate_time(&self.container_update_time)?;
         let mut seen_repositories =
@@ -832,6 +917,46 @@ fn validate_single_line(key: &str, value: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// Accept rooted POSIX paths and fully-qualified Windows drive/UNC paths
+/// regardless of the host compiling this crate; configuration can describe a
+/// different runner/host platform than the one running unit tests.
+fn is_absolute_filesystem_path(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        || value.starts_with('/')
+        || (value.len() >= 3
+            && value.as_bytes()[0].is_ascii_alphabetic()
+            && value.as_bytes()[1] == b':'
+            && matches!(value.as_bytes()[2], b'/' | b'\\'))
+        || value.starts_with("\\\\")
+}
+
+/// Validate every filesystem used by resource-pressure backpressure. Reject
+/// malformed entries at startup instead of accepting a partial list and
+/// discovering a bad path only when the scheduler samples host pressure.
+fn validate_resource_pressure_paths(value: &str) -> Result<(), ConfigError> {
+    let paths: Vec<&str> = value.split(';').map(str::trim).collect();
+    if paths.is_empty() || paths.iter().any(|path| path.is_empty()) {
+        return Err(ConfigError::Invalid(
+            "resource pressure paths must be a semicolon-separated list of non-empty absolute paths".into(),
+        ));
+    }
+
+    for path in paths {
+        if !is_absolute_filesystem_path(path)
+            || path.chars().any(char::is_control)
+            || path
+                .split(['/', '\\'])
+                .any(|component| matches!(component, "." | ".."))
+        {
+            return Err(ConfigError::Invalid(format!(
+                "resource pressure path must be a clean absolute path without control characters or dot segments, got {path:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn parse_repositories(raw: &str) -> Result<Vec<String>, ConfigError> {
     let mut repositories = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -867,6 +992,12 @@ fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, Config
         }),
         None => Ok(default),
     }
+}
+
+fn is_positive_decimal_integer(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && value.parse::<u64>().is_ok_and(|number| number > 0)
 }
 
 fn is_positive_u64(value: &str) -> bool {
@@ -931,12 +1062,24 @@ fn is_valid_docker_name(value: &str) -> bool {
 }
 
 fn is_repository(value: &str) -> bool {
+    fn valid_component(part: &str) -> bool {
+        !part.is_empty()
+            && !matches!(part, "." | "..")
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+    }
+
     let mut parts = value.split('/');
-    matches!((parts.next(), parts.next(), parts.next()), (Some(a), Some(b), None) if !a.is_empty() && !b.is_empty())
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(owner), Some(repo), None)
+            if valid_component(owner) && valid_component(repo)
+    )
 }
 fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, ConfigError> {
     match value {
-        Some(v) => v.parse().map_err(|_| ConfigError::Integer {
+        Some(v) => v.trim().parse().map_err(|_| ConfigError::Integer {
             key: key.into(),
             value: v.clone(),
         }),
@@ -945,7 +1088,7 @@ fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, Con
 }
 fn value_u64(value: &Option<String>, key: &str, default: u64) -> Result<u64, ConfigError> {
     match value {
-        Some(v) => v.parse().map_err(|_| ConfigError::Integer {
+        Some(v) => v.trim().parse().map_err(|_| ConfigError::Integer {
             key: key.into(),
             value: v.clone(),
         }),
@@ -985,8 +1128,13 @@ mod tests {
     #[test]
     fn repository_validation_is_strict() {
         assert!(is_repository("owner/repo"));
+        assert!(is_repository("owner/repo.name-2_test"));
         assert!(!is_repository("owner"));
         assert!(!is_repository("owner/repo/extra"));
+        assert!(!is_repository("owner/repo name"));
+        assert!(!is_repository("owner/repo?query"));
+        assert!(!is_repository("../repo"));
+        assert!(!is_repository("owner/.."));
     }
 
     #[test]
@@ -1086,8 +1234,107 @@ mod tests {
     }
 
     #[test]
+    fn env_file_rejects_duplicate_and_invalid_keys() {
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-config-duplicate-{}", std::process::id()));
+        let _ = fs::remove_file(&dir);
+        fs::write(
+            &dir,
+            "GITRUN_GSR_COMMAND_POLICY_ENABLED=true\nGITRUN_GSR_COMMAND_POLICY_ENABLED=false\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            Config::from_env_file(&dir),
+            Err(ConfigError::Invalid(_))
+        ));
+        fs::write(&dir, "=true\n").unwrap();
+        assert!(matches!(
+            Config::from_env_file(&dir),
+            Err(ConfigError::Invalid(_))
+        ));
+        let _ = fs::remove_file(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_file_rejects_symlink_paths() {
+        use std::os::unix::fs::symlink;
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-config-symlink-{}", std::process::id()));
+        let target = dir.with_extension("target");
+        let _ = fs::remove_file(&dir);
+        let _ = fs::remove_file(&target);
+        fs::write(&target, "GITRUN_GSR_COMMAND_POLICY_ENABLED=false\n").unwrap();
+        symlink(&target, &dir).unwrap();
+        assert!(matches!(
+            Config::from_env_file(&dir),
+            Err(ConfigError::Io(_))
+        ));
+        let _ = fs::remove_file(&dir);
+        let _ = fs::remove_file(&target);
+    }
+
+    #[test]
     fn invalid_boolean_is_rejected() {
         assert!(parse_bool("TEST", "maybe").is_err());
+    }
+
+    #[test]
+    fn environment_numeric_values_are_trimmed_before_parsing() {
+        let lookup = std::collections::HashMap::from([
+            ("GITRUN_MIN_RUNNERS".to_owned(), " 2 ".to_owned()),
+            ("GITRUN_MAX_RUNNERS".to_owned(), " 4 ".to_owned()),
+            ("GITRUN_IDLE_TIMEOUT".to_owned(), " 120 ".to_owned()),
+            (
+                "GITRUN_CONTAINER_RECOVERY_COOLDOWN".to_owned(),
+                " 90 ".to_owned(),
+            ),
+        ]);
+        let config = Config::from_lookup(&lookup).unwrap();
+        assert_eq!(config.min_runners, 2);
+        assert_eq!(config.max_runners, 4);
+        assert_eq!(config.idle_timeout, 120);
+        assert_eq!(config.container_recovery_cooldown, 90);
+    }
+
+    #[test]
+    fn malformed_env_line_errors_do_not_echo_possible_secrets() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-config-malformed-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "GITRUN_MIN_RUNNERS=2\nthis-looks-like-a-secret-token\n",
+        )
+        .unwrap();
+        let error = Config::from_env_file(&path).unwrap_err().to_string();
+        fs::remove_file(path).unwrap();
+
+        assert!(error.contains("line 2"));
+        assert!(error.contains("expected KEY=VALUE"));
+        assert!(!error.contains("this-looks-like-a-secret-token"));
+    }
+
+    #[test]
+    fn unconfined_sandbox_profiles_require_explicit_unsafe_opt_in() {
+        let mut config = Config::default();
+        config.runner_seccomp_profile = "unconfined".into();
+        assert!(config.validate().is_err());
+
+        config.gsr_allow_unsafe_runner = true;
+        assert!(config.validate().is_ok());
+
+        config.gsr_allow_unsafe_runner = false;
+        config.runner_seccomp_profile = "default".into();
+        config.runner_apparmor_profile = "UNCONFINED".into();
+        assert!(config.validate().is_err());
+
+        config.gsr_allow_unsafe_runner = true;
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -1121,8 +1368,52 @@ mod tests {
         assert!(config.validate().is_err());
         config.container_pids_limit = "1024".into();
 
+        // The validator must not accept a trimmed interpretation when the
+        // exact string is passed through to Docker as a CLI argument.
+        config.container_cpus = " 1 ".into();
+        assert!(config.validate().is_err());
+        config.container_cpus = "1".into();
+
+        config.container_memory = " 1g ".into();
+        assert!(config.validate().is_err());
+        config.container_memory = "1g".into();
+
+        config.container_pids_limit = " 1024 ".into();
+        assert!(config.validate().is_err());
+        config.container_pids_limit = "1024".into();
+
+        config.runner_home_size = " 8g ".into();
+        assert!(config.validate().is_err());
         config.runner_home_size = "nope".into();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn resource_pressure_paths_require_clean_absolute_paths() {
+        let mut config = Config::default();
+        assert!(config.validate().is_ok());
+
+        config.resource_pressure_paths = "/var/lib/docker; /var/lib/gitrun".into();
+        assert!(config.validate().is_ok());
+        assert!(validate_resource_pressure_paths(r"C:\runner\data").is_ok());
+
+        for invalid in [
+            "",
+            " ; ",
+            "/var/lib/docker;",
+            "; /var/lib/docker",
+            "var/lib/docker",
+            "/var/lib/../docker",
+            "/var/lib/./docker",
+            r"C:\runner\..\data",
+            "/var/lib/do\ncker",
+        ] {
+            config.resource_pressure_paths = invalid.into();
+            assert!(
+                config.validate().is_err(),
+                "resource pressure paths should reject {invalid:?}"
+            );
+        }
     }
 
     #[test]
@@ -1147,6 +1438,25 @@ mod tests {
         let mut config = Config::default();
         config.min_runners = 0;
         config.max_runners = 1;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn github_app_ids_must_be_positive_decimal_integers() {
+        let mut config = Config::default();
+        config.github_app_id = "abc".into();
+        config.github_app_installation_id = "456".into();
+        config.github_app_private_key_path = "/tmp/github-app.pem".into();
+        assert!(config.validate().is_err());
+
+        config.github_app_id = "123".into();
+        config.github_app_installation_id = "12/../../evil".into();
+        assert!(config.validate().is_err());
+
+        config.github_app_installation_id = "0".into();
+        assert!(config.validate().is_err());
+
+        config.github_app_installation_id = "456".into();
         assert!(config.validate().is_ok());
     }
 

@@ -17,6 +17,12 @@
 use crate::docker::{self, sanitize};
 use crate::github::GitHubClient;
 use std::fs;
+#[cfg(unix)]
+use std::fs::OpenOptions;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -31,6 +37,8 @@ pub enum GtuuError {
     GitHub(#[from] crate::github::GitHubError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("GitVault secret resolution failed: {0}")]
+    Vault(String),
 }
 
 pub type Result<T> = std::result::Result<T, GtuuError>;
@@ -44,20 +52,23 @@ pub enum UpdateOutcome {
     Offline,
 }
 
-/// Filesystem lock preventing two GTUU runs from overlapping. Mirrors the
-/// Python version's `state_dir/gtuu.lock` directory-as-mutex, which is atomic
-/// on POSIX (`mkdir` fails if the directory already exists).
+/// Filesystem lock preventing two GTUU runs from overlapping.
 ///
-/// `Drop` releases the lock on a normal return or an unwinding panic, but
-/// that alone is not a complete guarantee: a `SIGKILL`, an OOM-kill, or a
-/// host power loss skips `Drop` entirely and can leave the lock directory
-/// behind forever, wedging every future GTUU run. To recover from that,
-/// `acquire` checks whether an *existing* lock is stale — a recorded PID
-/// must be dead, while a lock with no usable PID may be reclaimed after the
-/// conservative age cutoff — and reclaims it atomically instead of
-/// refusing forever.
+/// On Unix, a persistent sidecar file is locked with nonblocking `flock`
+/// before inspecting or reclaiming the legacy PID directory. The kernel
+/// releases that lock on process exit, including SIGKILL, and the sidecar is
+/// deliberately never unlinked: unlinking a lock file can split contenders
+/// across different inodes. Holding this guard across the stale-check and
+/// directory rename prevents concurrent current-version GTUU runs from
+/// reclaiming a newly-created live lock based on an earlier stale observation.
+///
+/// Non-Unix platforms retain the PID-directory fallback; its race and crash
+/// recovery semantics are therefore weaker and must not be described as
+/// cross-platform-safe.
 pub struct GtuuLock {
     path: PathBuf,
+    #[cfg(unix)]
+    _guard: fs::File,
 }
 
 /// Fallback age for a lock that has no usable PID. A valid live PID is
@@ -68,6 +79,11 @@ const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 impl GtuuLock {
     pub fn acquire(state_dir: &Path) -> Result<Self> {
         fs::create_dir_all(state_dir)?;
+        // Serialize stale detection, reclamation, and creation as one critical
+        // section. A PID check followed by rename alone is racy: another
+        // process can replace the stale directory between those operations.
+        #[cfg(unix)]
+        let guard = acquire_guard(state_dir)?;
         let path = state_dir.join("gtuu.lock");
 
         loop {
@@ -78,7 +94,11 @@ impl GtuuLock {
                         let _ = fs::remove_dir_all(&path);
                         return Err(error.into());
                     }
-                    return Ok(Self { path });
+                    return Ok(Self {
+                        path,
+                        #[cfg(unix)]
+                        _guard: guard,
+                    });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     if !is_stale(&path) {
@@ -115,6 +135,32 @@ impl GtuuLock {
     }
 }
 
+#[cfg(unix)]
+fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
+    let guard_path = state_dir.join("gtuu.lock.guard");
+    let guard = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(guard_path)?;
+    // The guard file is intentionally persistent. Never unlink it after
+    // unlocking, or a waiter could hold the old inode while a third process
+    // locks a newly-created inode at the same path.
+    let result = unsafe { libc::flock(guard.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK)
+            || error.raw_os_error() == Some(libc::EAGAIN)
+        {
+            return Err(GtuuError::AlreadyRunning);
+        }
+        return Err(error.into());
+    }
+    Ok(guard)
+}
+
 /// A lock is stale when its recorded PID is no longer running. If the PID
 /// file is absent or unreadable, the age cutoff provides a conservative
 /// fallback for abandoned locks whose owner cannot be identified.
@@ -134,10 +180,15 @@ fn is_stale(lock_path: &Path) -> bool {
 
 #[cfg(unix)]
 fn process_is_alive(pid: u32) -> bool {
+    // PID 0 and values that cannot fit in kill(2)'s signed pid_t are not
+    // valid process IDs here. In particular, casting u32::MAX would turn it
+    // into -1, which has process-group-wide signal semantics.
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     // Signal 0 performs no actual signal delivery, only existence/permission
     // checks (see kill(2)) — the standard portable way to ask "is this PID
-    // alive" without a `/proc` dependency (which isn't guaranteed on every
-    // Unix, though it is on Linux, GitRun's only supported host OS today).
+    // alive" without a `/proc` dependency.
     let result = unsafe { libc_kill(pid as i32, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1) // EPERM: alive, just not ours
 }
@@ -159,8 +210,11 @@ impl Drop for GtuuLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(self.path.join("pid"));
         let _ = fs::remove_dir(&self.path);
+        // _guard is dropped after this method, releasing flock automatically.
     }
 }
+
+type SecretEnvForRepo<'a> = dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String> + 'a;
 
 pub struct GtuuConfig<'a> {
     pub image: &'a str,
@@ -187,7 +241,7 @@ pub struct GtuuConfig<'a> {
     /// rather than a fixed list because GTUU updates containers across
     /// potentially many repos in one run, each needing its own repo-scoped
     /// secrets — see `main.rs::vault_env_for_repo`, which this wraps.
-    pub secret_env_for_repo: &'a dyn Fn(&str) -> Vec<(String, String)>,
+    pub secret_env_for_repo: &'a SecretEnvForRepo<'a>,
     pub online_wait_timeout: Duration,
     /// See `Config::gsr_docker_socket_hardening` / `RunnerSpec::docker_socket_hardening`.
     pub docker_socket_hardening: bool,
@@ -265,7 +319,7 @@ fn update_one(
     // pulled up and authenticated with GitHub.
     let registration_token = client.registration_token(repo)?;
     let replacement_name = format!("{}-gtuu-{}", sanitize(name, '-'), replacement_suffix());
-    let secret_env = (config.secret_env_for_repo)(repo);
+    let secret_env = (config.secret_env_for_repo)(repo).map_err(GtuuError::Vault)?;
     let docker_socket_enabled = (config.docker_socket_enabled_for_repo)(repo);
 
     docker::create_runner(&crate::docker::RunnerSpec {
@@ -275,6 +329,7 @@ fn update_one(
         registration_token: &registration_token,
         image: config.image,
         labels: config.runner_labels,
+        no_default_labels: false,
         ephemeral: config.ephemeral,
         disable_update: config.disable_update,
         cpus: config.cpus,
@@ -294,6 +349,11 @@ fn update_one(
         is_windows: false,
         workflow_job_name: None,
         workflow_run_id: None,
+        workflow_job_id: None,
+        workload_routing_id: None,
+        prewarm_workload_id: None,
+        prewarm_target_epoch: None,
+        prewarm_hold_until_epoch: None,
         dock_target: false,
         docker_socket_enabled,
         docker_socket_hardening: config.docker_socket_hardening,
@@ -311,11 +371,13 @@ fn update_one(
     }
 
     if let Err(error) = docker::remove_container(name) {
-        // The old GitHub registration has already been removed, so don't
-        // risk leaving an unregistered replacement around under a temporary
-        // name if Docker cannot remove the old container. Best effort cleanup
-        // of the replacement is safe because it is not serving any job yet.
-        let _ = docker::remove_container(&replacement_name);
+        // The replacement has already appeared online and may have accepted a
+        // job between the last API poll and this Docker failure. Never remove
+        // it as cleanup: preserve the potentially busy, registered runner and
+        // surface the incomplete swap. The old container may now be
+        // unregistered, but deleting the healthy replacement could interrupt
+        // an active workflow and would turn a recoverable partial swap into
+        // job loss.
         return Err(error.into());
     }
 
@@ -441,6 +503,14 @@ mod tests {
             "expected an old lock without a usable PID to be reclaimed"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_pid_values_are_not_treated_as_live_processes() {
+        assert!(!process_is_alive(0));
+        assert!(!process_is_alive(u32::MAX));
+        assert!(!process_is_alive(i32::MAX as u32 + 1));
     }
 
     #[test]

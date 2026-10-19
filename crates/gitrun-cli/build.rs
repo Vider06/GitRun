@@ -8,6 +8,7 @@ const WORKSPACE_CRATES: &[&str] = &[
     "gitrun-cli",
     "gitrun-gsr",
     "gitrun-scheduler",
+    "gitrun-smart-scheduler",
     "gitrun-setup",
     "gitrun-updater",
     "gitrun-vault",

@@ -6,8 +6,8 @@
 //! before it can be converted into an AuthorizedOperation for gitrun-exe.
 
 use gitrun_core::{
-    api_policy::{validate_arguments, GitRunApi, GitRunOperation},
-    command_policy::{CommandPolicy, Decision},
+    api_policy::{parse_boolean_argument, validate_arguments, GitRunApi, GitRunOperation},
+    command_policy::{validate_simple_shell_command, CommandPolicy, Decision},
     settings::EffectiveRepositorySettings,
     GitRunSettings,
 };
@@ -234,18 +234,22 @@ fn authorize_resource_scope(
                     reason: "resource registration is disabled".into(),
                 });
             }
-            let permanent = match arguments.get("permanent").map(String::as_str) {
-                None => false,
-                Some(value) if value.eq_ignore_ascii_case("true") => true,
-                Some(value) if value.eq_ignore_ascii_case("false") => false,
-                Some(_) => {
-                    return Err(ApiGateError::InvalidArguments {
-                        api: GitRunApi::GitRegisterRun,
-                        operation: GitRunOperation::Register,
-                        detail: "permanent must be true or false".into(),
-                    })
-                }
-            };
+            let entry =
+                required_argument(GitRunApi::GitRegisterRun, operation, arguments, "entry")?;
+            if !effective.register.allows_entry(entry) {
+                return Err(ApiGateError::ResourceDenied {
+                    resource: entry.to_owned(),
+                });
+            }
+
+            let permanent = arguments
+                .get("permanent")
+                .and_then(|value| parse_boolean_argument(value))
+                .ok_or_else(|| ApiGateError::InvalidArguments {
+                    api: GitRunApi::GitRegisterRun,
+                    operation: GitRunOperation::Register,
+                    detail: "permanent must be true or false".into(),
+                })?;
             if permanent && effective.register.allow_permanent {
                 return Ok(());
             }
@@ -316,11 +320,72 @@ fn authorize_dock(
                 .get("job")
                 .map(String::as_str)
                 .unwrap_or(&caller.job);
+            if job_name != caller.job {
+                return Err(ApiGateError::PolicyDenied {
+                    reason: format!(
+                        "GitDockRun {} may only target the caller's current workflow job",
+                        operation.as_str()
+                    ),
+                });
+            }
             if effective.docker.allows_job(job_name) {
                 Ok(())
             } else {
                 Err(ApiGateError::ResourceDenied {
                     resource: job_name.to_owned(),
+                })
+            }
+        }
+        GitRunOperation::Mount => {
+            let container = resource
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| ApiGateError::InvalidArguments {
+                    api: GitRunApi::GitDockRun,
+                    operation,
+                    detail: "missing docked resource".into(),
+                })?;
+            if !effective.docker.allows_container(container) {
+                return Err(ApiGateError::ResourceDenied {
+                    resource: container.to_owned(),
+                });
+            }
+            let logic = effective.docker.logic_container(container).ok_or_else(|| {
+                ApiGateError::ResourceDenied {
+                    resource: container.to_owned(),
+                }
+            })?;
+            if !logic.mountable {
+                return Err(ApiGateError::PolicyDenied {
+                    reason: format!("mounting is disabled for logic container {container}"),
+                });
+            }
+            let source = required_argument(GitRunApi::GitDockRun, operation, arguments, "source")?;
+            let read_only =
+                required_argument(GitRunApi::GitDockRun, operation, arguments, "read_only")?
+                    == "true";
+            effective
+                .docker
+                .allowed_mounts
+                .authorize_source(std::path::Path::new(source), read_only)
+                .map_err(|reason| ApiGateError::PolicyDenied { reason })?;
+            Ok(())
+        }
+        GitRunOperation::Unmount => {
+            let container = resource
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| ApiGateError::InvalidArguments {
+                    api: GitRunApi::GitDockRun,
+                    operation,
+                    detail: "missing docked resource".into(),
+                })?;
+            if effective.docker.allows_container(container) {
+                // The execution backend validates mount ownership, resource
+                // identity and the mount ID again. Keep cleanup possible even
+                // after the administrator has disabled new mounts.
+                Ok(())
+            } else {
+                Err(ApiGateError::ResourceDenied {
+                    resource: container.to_owned(),
                 })
             }
         }
@@ -376,9 +441,24 @@ fn authorize_dock(
                     arguments,
                     "command",
                 )?;
+                validate_simple_shell_command(command).map_err(|detail| {
+                    ApiGateError::PolicyDenied {
+                        reason: detail.into(),
+                    }
+                })?;
                 let policy = command_policy.ok_or(ApiGateError::PolicyDenied {
                     reason: "GSR command policy is required for docked execute".into(),
                 })?;
+                // Docker exec starts outside the long-lived runner's GSR
+                // supervisor tree. A blacklist-only policy is therefore not
+                // sufficient for this API: require the administrator to
+                // explicitly enumerate permitted executables before allowing
+                // direct Execute operations.
+                if !policy.user_whitelist.enabled {
+                    return Err(ApiGateError::PolicyDenied {
+                        reason: "GitDockRun Execute requires an enabled command whitelist".into(),
+                    });
+                }
                 if let Decision::Denied { reason } = policy.evaluate(command) {
                     return Err(ApiGateError::CommandDenied { reason });
                 }
@@ -423,7 +503,8 @@ fn request_id(caller: &VerifiedCaller, api: GitRunApi, operation: GitRunOperatio
 mod tests {
     use super::*;
     use gitrun_core::{
-        ApiPolicy, DockerPolicy, GitRunOperation, LogicContainerPolicy, RepositorySettings,
+        ApiPolicy, DockerPolicy, GitRunOperation, LogicContainerPolicy, MountPolicy, MountRule,
+        RepositorySettings,
     };
 
     fn settings_for_dock() -> GitRunSettings {
@@ -520,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn dangerous_docked_execute_is_blocked() {
+    fn dock_execute_fails_closed_when_command_whitelist_is_disabled() {
         let settings = settings_for_dock();
         let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
         let policy = CommandPolicy {
@@ -537,10 +618,196 @@ mod tests {
             GitRunApi::GitDockRun,
             GitRunOperation::Execute,
             Some("cache"),
-            BTreeMap::from([("command".into(), "sudo id".into())]),
+            BTreeMap::from([("command".into(), "cargo test".into())]),
+            Some(&policy),
+        );
+        assert!(matches!(
+            result,
+            Err(ApiGateError::PolicyDenied { reason })
+                if reason.contains("enabled command whitelist")
+        ));
+    }
+
+    #[test]
+    fn dock_execute_rejects_shell_operators_even_when_whitelist_matches() {
+        let settings = settings_for_dock();
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let policy = CommandPolicy {
+            baseline_blacklist: Default::default(),
+            user_blacklist: Default::default(),
+            // The old preflight accepted any command starting with cargo,
+            // including a shell compound command that would then execute echo.
+            user_whitelist: gitrun_core::PatternList::new(true, vec!["cargo".into()]),
+        };
+        let result = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Execute,
+            Some("cache"),
+            BTreeMap::from([("command".into(), "cargo test; echo injected".into())]),
+            Some(&policy),
+        );
+        assert!(matches!(
+            result,
+            Err(ApiGateError::PolicyDenied { reason })
+                if reason.contains("shell operators")
+        ));
+
+        let ordinary = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Execute,
+            Some("cache"),
+            BTreeMap::from([("command".into(), "cargo test".into())]),
+            Some(&policy),
+        );
+        assert!(ordinary.is_ok());
+    }
+
+    #[test]
+    fn dangerous_docked_execute_is_blocked() {
+        let settings = settings_for_dock();
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let policy = CommandPolicy {
+            baseline_blacklist: gitrun_core::PatternList::new(
+                true,
+                gitrun_core::baseline_patterns(),
+            ),
+            user_blacklist: Default::default(),
+            user_whitelist: gitrun_core::PatternList::new(true, vec!["curl".into()]),
+        };
+        let result = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Execute,
+            Some("cache"),
+            BTreeMap::from([(
+                "command".into(),
+                // DevSkim: ignore DS137138 — deliberate HTTP fixture for the link-local metadata SSRF denial test.
+                "curl http://169.254.169.254/latest/meta-data/".into(),
+            )]),
             Some(&policy),
         );
         assert!(matches!(result, Err(ApiGateError::CommandDenied { .. })));
+    }
+
+    fn enable_mount_operations(settings: &mut GitRunSettings) {
+        let mut policy = settings.global.get(GitRunApi::GitDockRun);
+        policy.allowed_operations.insert(GitRunOperation::Mount);
+        policy.allowed_operations.insert(GitRunOperation::Unmount);
+        settings.global.set(GitRunApi::GitDockRun, policy);
+    }
+
+    #[test]
+    fn mount_is_denied_when_logic_container_is_not_mountable() {
+        let mut settings = settings_for_dock();
+        enable_mount_operations(&mut settings);
+        let dir = std::env::temp_dir().join(format!("gitrun-gate-mount-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("payload.txt");
+        std::fs::write(&source, "safe").unwrap();
+        let repo = settings.repositories.get_mut("owner/repo").unwrap();
+        repo.docker.allowed_mounts = MountPolicy {
+            enabled: true,
+            rules: vec![MountRule {
+                source: dir.to_string_lossy().into_owned(),
+                recursive: true,
+                read_only: true,
+                allow: true,
+            }],
+        };
+        // settings_for_dock deliberately leaves mountable=false.
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let result = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Mount,
+            Some("cache"),
+            BTreeMap::from([
+                ("source".into(), source.to_string_lossy().into_owned()),
+                ("target".into(), "/workspace/shared".into()),
+                ("read_only".into(), "true".into()),
+            ]),
+            None,
+        );
+        assert!(matches!(result, Err(ApiGateError::PolicyDenied { .. })));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mount_enforces_enabled_allowlist_and_read_only_mode() {
+        let mut settings = settings_for_dock();
+        enable_mount_operations(&mut settings);
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-gate-mount-policy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("payload.txt");
+        std::fs::write(&source, "safe").unwrap();
+        {
+            let repo = settings.repositories.get_mut("owner/repo").unwrap();
+            repo.docker
+                .logic_containers
+                .get_mut("cache")
+                .unwrap()
+                .mountable = true;
+        }
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+
+        let args = |read_only: &str| {
+            BTreeMap::from([
+                ("source".into(), source.to_string_lossy().into_owned()),
+                ("target".into(), "/workspace/shared".into()),
+                ("read_only".into(), read_only.into()),
+            ])
+        };
+        let disabled = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Mount,
+            Some("cache"),
+            args("true"),
+            None,
+        );
+        assert!(matches!(disabled, Err(ApiGateError::PolicyDenied { .. })));
+
+        {
+            let repo = settings.repositories.get_mut("owner/repo").unwrap();
+            repo.docker.allowed_mounts = MountPolicy {
+                enabled: true,
+                rules: vec![MountRule {
+                    source: dir.to_string_lossy().into_owned(),
+                    recursive: true,
+                    read_only: true,
+                    allow: true,
+                }],
+            };
+        }
+        let writable = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Mount,
+            Some("cache"),
+            args("false"),
+            None,
+        );
+        assert!(matches!(writable, Err(ApiGateError::PolicyDenied { .. })));
+        let read_only = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitDockRun,
+            GitRunOperation::Mount,
+            Some("cache"),
+            args("true"),
+            None,
+        );
+        assert!(read_only.is_ok());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -581,6 +848,171 @@ mod tests {
             None,
         );
         assert!(matches!(result, Err(ApiGateError::PolicyDenied { .. })));
+    }
+
+    fn settings_for_register(allowed_entries: Vec<String>) -> GitRunSettings {
+        let mut settings = GitRunSettings::default();
+        let mut matrix = gitrun_core::PolicyMatrix::default();
+        matrix.set(
+            GitRunApi::GitRegisterRun,
+            ApiPolicy::enabled_with([GitRunOperation::Register]),
+        );
+        settings.global = matrix;
+        settings.repositories.insert(
+            "owner/repo".into(),
+            RepositorySettings {
+                register: gitrun_core::RegisterPolicy {
+                    enabled: true,
+                    allow_workflow: true,
+                    allow_permanent: false,
+                    allowed_entries,
+                },
+                ..RepositorySettings::default()
+            },
+        );
+        settings
+    }
+
+    #[test]
+    fn register_permanent_values_use_the_shared_canonical_boolean_parser() {
+        let settings = settings_for_register(vec!["*".into()]);
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let args = |permanent: &str| {
+            BTreeMap::from([
+                ("name".into(), "tool".into()),
+                ("entry".into(), "/home/runner/tool".into()),
+                ("permanent".into(), permanent.into()),
+            ])
+        };
+
+        assert!(authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            None,
+            args("false"),
+            None,
+        )
+        .is_ok());
+
+        assert!(matches!(
+            authorize(
+                &settings,
+                &caller,
+                GitRunApi::GitRegisterRun,
+                GitRunOperation::Register,
+                None,
+                args("true"),
+                None,
+            ),
+            Err(ApiGateError::PolicyDenied { .. })
+        ));
+
+        for value in ["TRUE", "False", "yes", "1"] {
+            assert!(
+                matches!(
+                    authorize(
+                        &settings,
+                        &caller,
+                        GitRunApi::GitRegisterRun,
+                        GitRunOperation::Register,
+                        None,
+                        args(value),
+                        None,
+                    ),
+                    Err(ApiGateError::InvalidArguments { detail, .. })
+                        if detail.contains("permanent must be true or false")
+                ),
+                "non-canonical boolean {value:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn register_entry_must_match_the_repository_allowlist_before_authorization() {
+        let settings = settings_for_register(vec!["/home/runner/approved".into()]);
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+        let args = |entry: &str| {
+            BTreeMap::from([
+                ("name".into(), "tool".into()),
+                ("entry".into(), entry.into()),
+                ("permanent".into(), "false".into()),
+            ])
+        };
+
+        let denied = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            None,
+            args("/home/runner/unapproved"),
+            None,
+        );
+        assert!(matches!(
+            denied,
+            Err(ApiGateError::ResourceDenied { resource }) if resource == "/home/runner/unapproved"
+        ));
+
+        let allowed = authorize(
+            &settings,
+            &caller,
+            GitRunApi::GitRegisterRun,
+            GitRunOperation::Register,
+            None,
+            args("/home/runner/approved"),
+            None,
+        );
+        assert!(allowed.is_ok());
+    }
+
+    #[test]
+    fn dock_connect_and_disconnect_only_authorize_the_callers_current_job() {
+        let settings = settings_for_dock();
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+
+        for operation in [GitRunOperation::Connect, GitRunOperation::Disconnect] {
+            let result = authorize(
+                &settings,
+                &caller,
+                GitRunApi::GitDockRun,
+                operation,
+                None,
+                BTreeMap::from([("job".into(), "cache".into())]),
+                None,
+            );
+            assert!(matches!(
+                result,
+                Err(ApiGateError::PolicyDenied { reason })
+                    if reason.contains("caller's current workflow job")
+            ));
+        }
+    }
+
+    #[test]
+    fn dock_connect_and_disconnect_allow_the_current_job_when_policy_permits_it() {
+        let mut settings = settings_for_dock();
+        settings
+            .repositories
+            .get_mut("owner/repo")
+            .unwrap()
+            .docker
+            .allowed_job_names = vec!["build".into()];
+        let caller = VerifiedCaller::new("owner/repo", "ci.yml", "build", "runner-1");
+
+        for operation in [GitRunOperation::Connect, GitRunOperation::Disconnect] {
+            let result = authorize(
+                &settings,
+                &caller,
+                GitRunApi::GitDockRun,
+                operation,
+                None,
+                BTreeMap::from([("job".into(), "build".into())]),
+                None,
+            );
+            assert!(result.is_ok());
+        }
     }
 
     #[test]

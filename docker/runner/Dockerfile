@@ -90,8 +90,14 @@ RUN rustc --version \
     && cargo --version
 
 RUN useradd --create-home --shell /bin/bash runner \
-    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared \
-    && chown -R runner:runner /home/runner /var/lib/gitrun/shared /opt/rustup /opt/cargo
+    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared /var/lib/gitrun/control \
+    && chown -R runner:runner /home/runner /var/lib/gitrun/shared \
+    && chown root:root /var/lib/gitrun/control \
+    && chmod 0700 /var/lib/gitrun/control \
+    && chown -R root:root /opt/rustup /opt/cargo \
+    && chmod -R go-w /opt/rustup /opt/cargo \
+    && test -x /opt/cargo/bin/cargo \
+    && test -z "$(find /opt/cargo /opt/rustup -xdev \( ! -user root -o -perm /022 \) -print -quit)"
 
 WORKDIR /home/runner/actions-runner
 
@@ -120,6 +126,7 @@ RUN chmod 0755 /entrypoint.sh \
 RUN install -d -o root -g root -m 0755 /run/gitrun \
     && printf '%s\n' \
        'GITRUN_GSR_COMMAND_POLICY_ENABLED=true' \
+       'GITRUN_GSR_ALLOW_UNSAFE_RUNNER=false' \
        'GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED=true' \
        'GITRUN_GSR_COMMAND_BLACKLIST_ENABLED=false' \
        'GITRUN_GSR_COMMAND_BLACKLIST=' \

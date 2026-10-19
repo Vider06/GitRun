@@ -5,9 +5,29 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    # Forzza Dependabot a unificare il grafo dei 522 crate in un unico check
+    # Keep the workspace dependency graph in one version-update PR.
     groups:
       workspace-crates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      all-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /crates/gitrun-dashboard-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      all-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      all-security-updates:
+        applies-to: security-updates
         patterns:
           - "*"
 
@@ -16,15 +36,42 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      all-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      all-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /docker/manager-rs
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      all-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      all-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /docker/runner
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      all-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      all-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"

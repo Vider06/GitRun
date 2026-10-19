@@ -4,8 +4,8 @@ export function renderSetup(isReinstall, onComplete) {
   document.body.classList.add("setup-mode");
   content.innerHTML = heading("FIRST RUN","Welcome to GitRun","Connect a repository and configure a reviewed runner profile. Credentials are sent to the local privileged setup flow.") +
     '<div class="setup-shell"><section class="panel panel-pad"><div class="section-heading"><h2>1 · Runner profile</h2><span class="pill info">GSR included</span></div><div class="field"><label for="setup-runner-profile">Runner image profile</label><select id="setup-runner-profile"><option value="minimum">Minimum — lightweight tools</option><option value="workbench" selected>Workbench — full development toolchain</option></select><p class="field-hint">Both official profiles include mandatory GitSecureRun protections.</p></div></section>' +
-    '<section class="panel panel-pad section"><div class="section-heading"><h2>2 · GitHub authentication</h2><span class="pill neutral">Local setup</span></div><div class="field"><label for="setup-auth-mode">Credential type</label><select id="setup-auth-mode"><option value="pat">Personal Access Token</option><option value="app">GitHub App</option></select></div><div id="setup-pat-fields"><div class="field"><label for="setup-token">GitHub token</label><input id="setup-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"><p class="field-hint">Never place a token in logs or screenshots. GitRun setup receives it through local IPC.</p></div></div><div id="setup-app-fields" hidden><div class="field"><label for="setup-app-id">GitHub App ID</label><input id="setup-app-id" inputmode="numeric" placeholder="123456"></div><div class="field"><label for="setup-installation-id">Installation ID</label><input id="setup-installation-id" inputmode="numeric" placeholder="12345678"></div><div class="field"><label for="setup-private-key-path">Private key PEM path</label><input id="setup-private-key-path" placeholder="/home/user/.config/gitrun/github-app.pem"><p class="field-hint" id="setup-private-key-hint">The private key remains in its file and will be secured to mode 0600.</p></div></div><div class="field"><label for="setup-repositories">Repositories</label><input id="setup-repositories" placeholder="owner/repository, owner/another-repository"><p class="field-hint">Use the owner/repository format. Only connect repositories you intend GitRun to manage.</p></div><div class="toolbar"><span id="setup-status" class="field-hint"></span><button class="btn btn-primary" id="setup-submit">' + (isReinstall ? "Reinstall and start GitRun" : "Install and start GitRun") + '</button></div></section>' +
-    '<section id="setup-progress-panel" class="panel panel-pad section" hidden><div class="section-heading"><h2 id="setup-progress-title">Preparing setup…</h2><span id="setup-progress-count" class="pill info">0 / 9</span></div><div class="setup-progress"><span id="setup-progress-bar"></span></div><div id="setup-terminal" class="terminal" role="log" aria-live="polite"></div><div class="toolbar" style="margin-top:12px"><span id="setup-progress-status" class="field-hint">Waiting for privileged setup</span><button id="setup-retry" class="btn" hidden>Return to setup</button></div></section></div>';
+    '<section class="panel panel-pad section"><div class="section-heading"><h2>2 · GitHub authentication</h2><span class="pill neutral">Local setup</span></div><div class="field"><label for="setup-auth-mode">Credential type</label><select id="setup-auth-mode"><option value="pat">Personal Access Token</option><option value="app">GitHub App</option></select></div><div id="setup-pat-fields"><div class="field"><label for="setup-token">GitHub token</label><input id="setup-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"><p class="field-hint">Never place a token in logs or screenshots. GitRun setup receives it through local IPC.</p></div></div><div id="setup-app-fields" hidden><div class="field"><label for="setup-app-id">GitHub App ID</label><input id="setup-app-id" inputmode="numeric" placeholder="123456"></div><div class="field"><label for="setup-installation-id">Installation ID</label><input id="setup-installation-id" inputmode="numeric" placeholder="12345678"></div><div class="field"><label for="setup-private-key-path">Private key PEM path</label><input id="setup-private-key-path" placeholder="/home/user/.config/gitrun/github-app.pem"><p class="field-hint" id="setup-private-key-hint">The private key remains in its file and will be secured to mode 0600.</p></div></div><div class="field"><label for="setup-repositories">Repositories</label><input id="setup-repositories" placeholder="owner/repository, owner/another-repository"><p class="field-hint">Use the owner/repository format. Only connect repositories you intend GitRun to manage.</p></div><div class="toolbar"><span id="setup-status" class="field-hint" role="status" aria-live="polite"></span><button class="btn btn-primary" id="setup-submit">' + (isReinstall ? "Reinstall and start GitRun" : "Install and start GitRun") + '</button></div></section>' +
+    '<section id="setup-progress-panel" class="panel panel-pad section" hidden><div class="section-heading"><h2 id="setup-progress-title">Preparing setup…</h2><span id="setup-progress-count" class="pill info">0 / 9</span></div><div class="setup-progress"><span id="setup-progress-bar"></span></div><div id="setup-terminal" class="terminal" role="log" aria-live="polite"></div><div class="toolbar mt-12"><span id="setup-progress-status" class="field-hint">Waiting for privileged setup</span><button id="setup-retry" class="btn" hidden>Return to setup</button></div></section></div>';
   const mode = document.getElementById("setup-auth-mode");
   const pat = document.getElementById("setup-pat-fields");
   const app = document.getElementById("setup-app-fields");
@@ -27,10 +27,27 @@ export function renderSetup(isReinstall, onComplete) {
     const privateKeyPath = document.getElementById("setup-private-key-path").value.trim();
     const repositories = document.getElementById("setup-repositories").value.trim();
     const runnerProfile = document.getElementById("setup-runner-profile").value;
+    const repositoryNames = repositories.split(",").map((repo) => repo.trim()).filter(Boolean);
+    const validRepository = (repo) => {
+      const parts = repo.split("/");
+      return parts.length === 2 && parts.every((part) => part.length > 0 && /^[A-Za-z0-9._-]+$/.test(part));
+    };
     if ((authMode === "pat" && !token) || (authMode === "app" && (!appId || !installationId || !privateKeyPath)) || !repositories) {
       status.textContent = authMode === "pat" && !token ? "A GitHub token is required." : authMode === "app" && (!appId || !installationId || !privateKeyPath) ? "Complete the GitHub App fields." : "At least one repository is required.";
       status.style.color = "var(--danger)"; return;
     }
+    if (authMode === "app" && (!/^\d+$/.test(appId) || !/^\d+$/.test(installationId))) {
+      status.textContent = "GitHub App ID and Installation ID must contain digits only.";
+      status.style.color = "var(--danger)";
+      return;
+    }
+    if (repositoryNames.length === 0 || repositoryNames.some((repo) => !validRepository(repo))) {
+      status.textContent = "Use owner/repository names with letters, digits, dots, underscores or hyphens.";
+      status.style.color = "var(--danger)";
+      return;
+    }
+    status.textContent = "";
+    status.style.color = "";
     const submit = document.getElementById("setup-submit");
     submit.disabled = true;
     status.textContent = "Starting privileged setup…";
@@ -38,7 +55,6 @@ export function renderSetup(isReinstall, onComplete) {
     const log = document.getElementById("setup-terminal");
     const append = (line) => { if (line) { log.textContent += String(line) + "\n"; log.scrollTop = log.scrollHeight; } };
     let unlisten = null;
-    let done = false;
     let succeeded = false;
     let failed = false;
     try {
@@ -52,7 +68,6 @@ export function renderSetup(isReinstall, onComplete) {
         document.getElementById("setup-progress-title").textContent = item.message || "Working…";
         document.getElementById("setup-progress-status").textContent = item.done ? (item.success ? "Setup completed" : "Setup failed") : "Running";
         append(item.message);
-        done = Boolean(item.done);
         if (item.done) document.getElementById("setup-retry").hidden = Boolean(item.success);
       });
       let safeKeyPath = privateKeyPath;

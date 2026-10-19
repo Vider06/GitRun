@@ -83,7 +83,10 @@ pub fn prepare_directories(
     let state_dir = PathBuf::from(&config.state_dir);
     let log_dir = PathBuf::from(&config.log_dir);
     ensure_directory(&config_dir, 0o700)?;
-    ensure_directory(&state_dir, 0o750)?;
+    // This directory contains privileged registry and lease entries. Keep
+    // it searchable for the desktop user's explicitly-owned settings/vault
+    // children, but never writable by that user.
+    ensure_directory(&state_dir, 0o755)?;
     ensure_directory(&log_dir, 0o750)?;
 
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
@@ -181,7 +184,7 @@ pub fn uninstall_linux() -> Result<(), SetupError> {
 
     if package_registered {
         println!("[GitRun uninstall] Purging package registration with dpkg");
-        run_command(Command::new("dpkg").args(["--purge", "gitrun"]))?;
+        run_command(Command::new("/usr/bin/dpkg").args(["--purge", "gitrun"]))?;
     }
 
     // Catch leftovers from previous manual installs and old package layouts.
@@ -215,7 +218,7 @@ fn validate_uninstall_host() -> Result<(), SetupError> {
 }
 
 fn deb_package_registered() -> bool {
-    let Ok(output) = Command::new("dpkg-query")
+    let Ok(output) = Command::new("/usr/bin/dpkg-query")
         .args(["-W", "-f=${db:Status-Status}", "gitrun"])
         .output()
     else {
@@ -237,15 +240,15 @@ fn deb_package_registered() -> bool {
 fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
     println!("[GitRun uninstall] Stopping and disabling GitRun systemd units");
     for unit in ["gitrun-gsr.service", "gitrun.service"] {
-        let _ = Command::new("systemctl")
+        let _ = Command::new("/usr/bin/systemctl")
             .args(["disable", "--now", unit])
             .status();
-        if Command::new("systemctl")
+        if Command::new("/usr/bin/systemctl")
             .args(["is-active", "--quiet", unit])
             .status()
             .is_ok_and(|status| status.success())
         {
-            run_command(Command::new("systemctl").args(["stop", unit]))?;
+            run_command(Command::new("/usr/bin/systemctl").args(["stop", unit]))?;
         }
     }
 
@@ -393,7 +396,7 @@ fn reload_systemd() -> Result<(), SetupError> {
     if !command_exists("systemctl") {
         return Ok(());
     }
-    run_command(Command::new("systemctl").args(["daemon-reload"]))
+    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))
 }
 
 fn verify_uninstall_complete() -> Result<(), SetupError> {
@@ -426,11 +429,11 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
         return Ok(());
     }
 
-    let daemon_ready = Command::new("docker")
+    let daemon_ready = Command::new("/usr/bin/docker")
         .arg("info")
         .output()
         .is_ok_and(|output| output.status.success());
-    let docker_was_active = Command::new("systemctl")
+    let docker_was_active = Command::new("/usr/bin/systemctl")
         .args(["is-active", "--quiet", "docker.service"])
         .status()
         .is_ok_and(|status| status.success());
@@ -442,14 +445,14 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
                 "Docker daemon is unavailable and systemd cannot start it for cleanup".into(),
             ));
         }
-        run_command(Command::new("systemctl").args(["start", "docker.service"]))?;
-        let ready = Command::new("docker")
+        run_command(Command::new("/usr/bin/systemctl").args(["start", "docker.service"]))?;
+        let ready = Command::new("/usr/bin/docker")
             .arg("info")
             .output()
             .is_ok_and(|output| output.status.success());
         if !ready {
             if !docker_was_active {
-                let _ = Command::new("systemctl")
+                let _ = Command::new("/usr/bin/systemctl")
                     .args(["stop", "docker.service"])
                     .status();
             }
@@ -484,7 +487,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
             vec!["image", "ls", "-q", "--filter", "label=gitrun.managed=true"],
             vec!["image", "ls", "-q", "--filter", "reference=gitrun-runner:*"],
         ] {
-            let output = Command::new("docker").args(args).output()?;
+            let output = Command::new("/usr/bin/docker").args(args).output()?;
             if !output.status.success() {
                 return Err(SetupError::Command(format!(
                     "unable to enumerate GitRun images: {}",
@@ -500,7 +503,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
             );
         }
         for image in image_ids {
-            run_command(Command::new("docker").args(["image", "rm", "-f", &image]))?;
+            run_command(Command::new("/usr/bin/docker").args(["image", "rm", "-f", &image]))?;
         }
         Ok(())
     })();
@@ -508,7 +511,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     // Do not change Docker's pre-existing service state. If Docker was stopped
     // before uninstall, restore that state even when object cleanup fails.
     let restore_result = if started_temporarily {
-        run_command(Command::new("systemctl").args(["stop", "docker.service"]))
+        run_command(Command::new("/usr/bin/systemctl").args(["stop", "docker.service"]))
     } else {
         Ok(())
     };
@@ -517,7 +520,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
 }
 
 fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> {
-    let output = Command::new("docker")
+    let output = Command::new("/usr/bin/docker")
         .args(["ps", "-aq", "--filter", "label=gitrun.runner=true"])
         .output()?;
     if !output.status.success() {
@@ -536,7 +539,7 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
         // <container-name>-home and do not carry the shared-volume label.
         // Resolve names before removing containers so these per-runner volumes
         // do not survive an otherwise successful uninstall.
-        let inspect = Command::new("docker")
+        let inspect = Command::new("/usr/bin/docker")
             .args(["inspect", "-f", "{{.Name}}", id])
             .output()?;
         let container_name = if inspect.status.success() {
@@ -548,7 +551,7 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
             String::new()
         };
 
-        run_command(Command::new("docker").args(["rm", "-f", "-v", id]))?;
+        run_command(Command::new("/usr/bin/docker").args(["rm", "-f", "-v", id]))?;
 
         if container_name.starts_with("gitrun-") && !container_name.chars().any(char::is_control) {
             remove_volume_if_present(&format!("{container_name}-home"))?;
@@ -557,7 +560,7 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
 
     // Catch orphaned runner-home volumes left by prior crashes or older
     // versions that failed between container removal and volume cleanup.
-    let volumes = Command::new("docker")
+    let volumes = Command::new("/usr/bin/docker")
         .args(["volume", "ls", "-q"])
         .output()?;
     if !volumes.status.success() {
@@ -577,11 +580,11 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
 }
 
 fn remove_volume_if_present(name: &str) -> Result<(), SetupError> {
-    let inspect = Command::new("docker")
+    let inspect = Command::new("/usr/bin/docker")
         .args(["volume", "inspect", name])
         .output()?;
     if inspect.status.success() {
-        run_command(Command::new("docker").args(["volume", "rm", "-f", name]))?;
+        run_command(Command::new("/usr/bin/docker").args(["volume", "rm", "-f", name]))?;
     }
     Ok(())
 }
@@ -591,7 +594,7 @@ fn remove_docker_items(
     remove_prefix: &[&str],
     label: &str,
 ) -> Result<(), SetupError> {
-    let output = Command::new("docker").args(list_args).output()?;
+    let output = Command::new("/usr/bin/docker").args(list_args).output()?;
     if !output.status.success() {
         return Err(SetupError::Command(format!(
             "unable to enumerate GitRun Docker {label}: {}",
@@ -603,7 +606,7 @@ fn remove_docker_items(
         .map(str::trim)
         .filter(|id| !id.is_empty())
     {
-        let mut command = Command::new("docker");
+        let mut command = Command::new("/usr/bin/docker");
         command.args(remove_prefix).arg(id);
         run_command(&mut command)?;
     }
@@ -650,10 +653,10 @@ pub fn reinstall_linux_with_auth(
     let existing_config = fs::read_to_string(config_path)?;
 
     println!("[GitRun reinstall] Stopping the existing GitRun services");
-    let _ = Command::new("systemctl")
+    let _ = Command::new("/usr/bin/systemctl")
         .args(["disable", "--now", "gitrun-gsr.service"])
         .status();
-    let _ = Command::new("systemctl")
+    let _ = Command::new("/usr/bin/systemctl")
         .args(["disable", "--now", "gitrun.service"])
         .status();
 
@@ -666,10 +669,12 @@ pub fn reinstall_linux_with_auth(
     ] {
         remove_path_if_present(Path::new(path))?;
     }
-    let _ = Command::new("docker")
+    let _ = Command::new("/usr/bin/docker")
         .args(["image", "rm", "-f", "gitrun-runner:latest"])
         .status();
-    let _ = Command::new("systemctl").args(["daemon-reload"]).status();
+    let _ = Command::new("/usr/bin/systemctl")
+        .args(["daemon-reload"])
+        .status();
 
     let report = bootstrap_linux_with_auth(auth, repositories, app_binary, owner_uid)?;
 
@@ -677,10 +682,18 @@ pub fn reinstall_linux_with_auth(
     if let Some(uid) = owner_uid {
         chown_path(config_path, uid)?;
     }
-    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun.service",
+    ]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun-gsr.service",
+    ]))?;
 
     println!("GitRun reinstall: PASS");
     Ok(report)
@@ -743,7 +756,11 @@ pub fn bootstrap_linux_with_auth_and_profile(
 
     setup_progress(2, "Preparing GitRun system directories");
     ensure_directory(&config_dir, 0o755)?;
-    ensure_directory(&state_dir, 0o750)?;
+    // The scheduler performs privileged Docker and mount operations as root.
+    // Its state directory must therefore not be writable by the desktop/runner
+    // account: otherwise that account could replace root-authored DockRegistry
+    // and mount-lease directory entries even when the files are mode 0600.
+    ensure_directory(&state_dir, 0o755)?;
     ensure_directory(&log_dir, 0o750)?;
     ensure_directory(&root, 0o755)?;
     let vault_dir = state_dir.join("vault");
@@ -797,12 +814,19 @@ pub fn bootstrap_linux_with_auth_and_profile(
     let config_path = config_dir.join("gitrun.env");
     let rendered = render_bootstrap_config(&auth, &repositories.join(","));
     write_resource(&config_path, &rendered, 0o600)?;
+    // The dashboard only needs read access to system configuration. Keep the
+    // file root-owned and grant read access to the installer's primary group;
+    // all configuration writes go through the administrator-authorized helper.
+    secure_system_config_file(&config_path, owner_uid)?;
 
     if let Some(uid) = owner_uid {
-        chown_path(&config_path, uid)?;
-        chown_path(&state_dir, uid)?;
+        // Keep the shared state directory root-owned. Specific user-managed
+        // files/directories (settings, vault, logs) are granted ownership below;
+        // the runner must not be able to replace privileged registry files.
+        chown_path(&state_dir, 0)?;
+        ensure_directory(&state_dir, 0o755)?;
         chown_path(&log_dir, uid)?;
-        chown_path(&settings_path, uid)?;
+        secure_system_settings_file(&settings_path, Some(uid))?;
         chown_path(&vault_dir, uid)?;
         add_user_to_docker_group(uid)?;
     }
@@ -839,13 +863,21 @@ pub fn bootstrap_linux_with_auth_and_profile(
     }
 
     setup_progress(9, "Enabling and starting the GitRun service");
-    run_command(Command::new("systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("systemctl").args(["enable", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun.service"]))?;
-    run_command(Command::new("systemctl").args(["enable", "gitrun-gsr.service"]))?;
-    run_command(Command::new("systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("systemctl").args(["is-active", "--quiet", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun.service",
+    ]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun-gsr.service",
+    ]))?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),
@@ -864,9 +896,8 @@ fn setup_progress(step: u8, message: &str) {
 
 fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {
     [
-        std::env::var("GITRUN_RECOVERY_BINARY")
-            .ok()
-            .map(PathBuf::from),
+        // This resolver is used while bootstrapping with elevated privileges.
+        // Do not let an inherited environment variable select a root-installed binary.
         Some(PathBuf::from("/usr/local/bin/gitrun-recovery")),
         app_binary.parent().map(|parent| {
             parent.join(if cfg!(windows) {
@@ -982,9 +1013,14 @@ fn ensure_docker() -> Result<(), SetupError> {
         return Err(SetupError::MissingCommand("apt-get".into()));
     }
 
-    run_command(Command::new("apt-get").args(["update"]))?;
-    run_command(Command::new("apt-get").args(["install", "-y", "docker.io", "docker-compose-v2"]))?;
-    run_command(Command::new("systemctl").args(["enable", "--now", "docker"]))?;
+    run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
+    run_command(Command::new("/usr/bin/apt-get").args([
+        "install",
+        "-y",
+        "docker.io",
+        "docker-compose-v2",
+    ]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "--now", "docker"]))?;
 
     if !docker_daemon_ready() || !compose_ready() {
         return Err(SetupError::Command(
@@ -995,7 +1031,7 @@ fn ensure_docker() -> Result<(), SetupError> {
 }
 
 fn docker_buildx_ready() -> bool {
-    Command::new("docker")
+    Command::new("/usr/bin/docker")
         .args(["buildx", "version"])
         .status()
         .is_ok_and(|status| status.success())
@@ -1016,14 +1052,14 @@ fn ensure_buildx() -> Result<(), SetupError> {
     }
 
     println!("[GitRun setup] Docker Buildx is missing; installing the distro plugin");
-    run_command(Command::new("apt-get").args(["update"]))?;
+    run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
 
-    let plugin_status = Command::new("apt-get")
+    let plugin_status = Command::new("/usr/bin/apt-get")
         .args(["install", "-y", "docker-buildx-plugin"])
         .status()?;
     if !plugin_status.success() {
         // Ubuntu/Debian may package the same plugin under this name instead.
-        run_command(Command::new("apt-get").args(["install", "-y", "docker-buildx"]))?;
+        run_command(Command::new("/usr/bin/apt-get").args(["install", "-y", "docker-buildx"]))?;
     }
 
     if !docker_buildx_ready() {
@@ -1038,7 +1074,7 @@ fn build_image(tag: &str, context: &Path, dockerfile: &Path) -> Result<(), Setup
     // Use Buildx explicitly: docker build may select the legacy builder on
     // otherwise healthy Docker installations, which cannot process cache mounts.
     run_command(
-        Command::new("docker")
+        Command::new("/usr/bin/docker")
             .args(["buildx", "build", "--load", "-t", tag, "-f"])
             .arg(dockerfile)
             .arg(context),
@@ -1199,7 +1235,7 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
 }
 
 fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
-    let user = Command::new("getent")
+    let user = Command::new("/usr/bin/getent")
         .args(["passwd", &uid.to_string()])
         .output()
         .ok()
@@ -1207,11 +1243,243 @@ fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .and_then(|line| line.split(':').next().map(str::to_owned))
         .ok_or_else(|| SetupError::Command(format!("unable to resolve username for uid {uid}")))?;
-    run_command(Command::new("usermod").args(["-aG", "docker", &user]))
+    run_command(Command::new("/usr/sbin/usermod").args(["-aG", "docker", &user]))
+}
+
+fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
+    let output = Command::new("/usr/bin/getent")
+        .args(["passwd", &uid.to_string()])
+        .output()
+        .map_err(|error| {
+            SetupError::Command(format!("resolve primary group for uid {uid}: {error}"))
+        })?;
+    if !output.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to resolve passwd entry for uid {uid}"
+        )));
+    }
+    let line = String::from_utf8(output.stdout).map_err(|error| {
+        SetupError::Command(format!("decode passwd entry for uid {uid}: {error}"))
+    })?;
+    let fields: Vec<_> = line.trim_end().split(':').collect();
+    let username = fields
+        .first()
+        .copied()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| SetupError::Command(format!("unable to resolve username for uid {uid}")))?;
+    let gid = fields
+        .get(3)
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or_else(|| {
+            SetupError::Command(format!("unable to resolve primary gid for uid {uid}"))
+        })?;
+
+    // A group-readable config can contain GitHub credentials. Never grant that
+    // access to a shared primary group: prove that only the intended account
+    // uses this GID as its primary group and that no other account is listed as
+    // a supplementary member. Typical desktop installs use a private user group.
+    let all_users = Command::new("/usr/bin/getent")
+        .arg("passwd")
+        .output()
+        .map_err(|error| SetupError::Command(format!("inspect passwd database: {error}")))?;
+    if !all_users.status.success() {
+        return Err(SetupError::Command(
+            "unable to inspect passwd database to validate a private config group".into(),
+        ));
+    }
+    let all_users = String::from_utf8(all_users.stdout)
+        .map_err(|error| SetupError::Command(format!("decode passwd database: {error}")))?;
+    for account in all_users.lines() {
+        let fields: Vec<_> = account.split(':').collect();
+        if fields.first().copied() == Some(username) {
+            continue;
+        }
+        let other_uid = fields.get(2).and_then(|value| value.parse::<u32>().ok());
+        let other_gid = fields.get(3).and_then(|value| value.parse::<u32>().ok());
+        if other_uid.is_some_and(|other| other != uid) && other_gid == Some(gid) {
+            return Err(SetupError::Command(format!(
+                "primary group {gid} is shared with another account; refusing group-readable system config"
+            )));
+        }
+    }
+
+    let group = Command::new("/usr/bin/getent")
+        .args(["group", &gid.to_string()])
+        .output()
+        .map_err(|error| SetupError::Command(format!("inspect config group {gid}: {error}")))?;
+    if !group.status.success() {
+        return Err(SetupError::Command(format!(
+            "unable to resolve config group {gid}"
+        )));
+    }
+    let group = String::from_utf8(group.stdout)
+        .map_err(|error| SetupError::Command(format!("decode config group {gid}: {error}")))?;
+    let group_members = group.trim_end().split(':').nth(3).unwrap_or("");
+    if group_members
+        .split(',')
+        .filter(|member| !member.is_empty())
+        .any(|member| member != username)
+    {
+        return Err(SetupError::Command(format!(
+            "primary group {gid} has other supplementary members; refusing group-readable system config"
+        )));
+    }
+
+    Ok(gid)
+}
+
+/// Validate the full directory chain for paths that will contain state or policy
+/// trusted by a privileged service. Checking only the final parent is not enough:
+/// an attacker-writable ancestor can rename a root-owned child directory.
+fn validate_root_owned_directory_chain(directory: &Path) -> Result<(), SetupError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if !directory.is_absolute()
+        || directory
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(SetupError::Command(
+            "trusted system directory must be absolute and contain no parent traversal".into(),
+        ));
+    }
+
+    let mut prefix = PathBuf::from("/");
+    for component in directory.components() {
+        match component {
+            std::path::Component::RootDir => continue,
+            std::path::Component::Normal(name) => prefix.push(name),
+            _ => {
+                return Err(SetupError::Command(
+                    "trusted system directory contains unsupported path components".into(),
+                ))
+            }
+        }
+        let metadata = fs::symlink_metadata(&prefix)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(SetupError::Command(format!(
+                "trusted system path {} must be a real directory",
+                prefix.display()
+            )));
+        }
+        if metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
+            return Err(SetupError::Command(format!(
+                "trusted system directory {} must be root-owned and not group/world-writable",
+                prefix.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate the complete root-owned state directory before any privileged
+/// policy or registry write is attempted.
+pub fn validate_system_state_directory(directory: &Path) -> Result<(), SetupError> {
+    validate_root_owned_directory_chain(directory)
+}
+
+/// Security policy is consumed by the root scheduler to authorize privileged
+/// workflow operations. Never make this file desktop-user-owned or writable:
+/// grant only read access through the desktop user's primary group.
+pub fn secure_system_settings_file(
+    path: &Path,
+    desktop_uid: Option<u32>,
+) -> Result<(), SetupError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let parent = path.parent().ok_or_else(|| {
+        SetupError::Command("GitRun settings path has no parent directory".into())
+    })?;
+    validate_root_owned_directory_chain(parent)?;
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(SetupError::Command(
+            "GitRun security settings must be a regular, non-symlink file".into(),
+        ));
+    }
+
+    let (mode, expected_gid) = if let Some(uid) = desktop_uid {
+        let gid = primary_gid_for_uid(uid)?;
+        run_command(
+            Command::new("/usr/bin/chown")
+                .arg(format!("0:{gid}"))
+                .arg(path),
+        )?;
+        (0o640, gid)
+    } else {
+        run_command(Command::new("/usr/bin/chown").arg("0:0").arg(path))?;
+        (0o600, 0)
+    };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+
+    let final_metadata = fs::symlink_metadata(path)?;
+    if final_metadata.file_type().is_symlink()
+        || !final_metadata.is_file()
+        || final_metadata.uid() != 0
+        || final_metadata.gid() != expected_gid
+        || final_metadata.permissions().mode() & 0o777 != mode
+    {
+        return Err(SetupError::Command(
+            "GitRun security settings ownership/permissions failed postcondition verification"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Secure the installed system config for use by the privileged scheduler and
+/// read-only desktop UI. The file and its parent must be regular trusted paths;
+/// writes stay root-owned, while a known desktop user's primary group receives
+/// read-only access. With no desktop user, keep the file root-only.
+pub fn secure_system_config_file(path: &Path, desktop_uid: Option<u32>) -> Result<(), SetupError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| SetupError::Command("system config path has no parent directory".into()))?;
+    validate_root_owned_directory_chain(parent)?;
+
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(SetupError::Command(
+            "system config must be a regular, non-symlink file".into(),
+        ));
+    }
+
+    let (mode, expected_gid) = if let Some(uid) = desktop_uid {
+        let gid = primary_gid_for_uid(uid)?;
+        run_command(
+            Command::new("/usr/bin/chown")
+                .arg(format!("0:{gid}"))
+                .arg(path),
+        )?;
+        (0o640, gid)
+    } else {
+        run_command(Command::new("/usr/bin/chown").arg("0:0").arg(path))?;
+        (0o600, 0)
+    };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+
+    let final_metadata = fs::symlink_metadata(path)?;
+    if final_metadata.file_type().is_symlink()
+        || !final_metadata.is_file()
+        || final_metadata.uid() != 0
+        || final_metadata.gid() != expected_gid
+        || final_metadata.permissions().mode() & 0o777 != mode
+    {
+        return Err(SetupError::Command(
+            "system config ownership/permissions failed postcondition verification".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {
-    run_command(Command::new("chown").arg(uid.to_string()).arg(path))
+    run_command(
+        Command::new("/usr/bin/chown")
+            .arg(uid.to_string())
+            .arg(path),
+    )
 }
 
 fn valid_repo(value: &str) -> bool {
@@ -1229,23 +1497,39 @@ fn valid_repo(value: &str) -> bool {
 }
 
 fn running_as_root() -> bool {
-    Command::new("id")
+    Command::new("/usr/bin/id")
         .args(["-u"])
         .output()
         .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "0")
         .unwrap_or(false)
 }
 
+fn trusted_command_path(name: &str) -> Option<&'static str> {
+    match name {
+        "docker" => Some("/usr/bin/docker"),
+        "git" => Some("/usr/bin/git"),
+        "systemctl" => Some("/usr/bin/systemctl"),
+        "dpkg" => Some("/usr/bin/dpkg"),
+        "dpkg-query" => Some("/usr/bin/dpkg-query"),
+        "apt-get" => Some("/usr/bin/apt-get"),
+        "getent" => Some("/usr/bin/getent"),
+        "usermod" => Some("/usr/sbin/usermod"),
+        "chown" => Some("/usr/bin/chown"),
+        "id" => Some("/usr/bin/id"),
+        _ => None,
+    }
+}
+
 fn command_exists(name: &str) -> bool {
-    Command::new("sh")
-        .args(["-c", &format!("command -v {name} >/dev/null 2>&1")])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    let Some(path) = trusted_command_path(name) else {
+        return false;
+    };
+    fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 fn docker_daemon_ready() -> bool {
-    Command::new("docker")
+    Command::new("/usr/bin/docker")
         .arg("info")
         .output()
         .map(|o| o.status.success())
@@ -1269,7 +1553,7 @@ fn docker_daemon_status() -> DependencyStatus {
 }
 
 fn compose_ready() -> bool {
-    Command::new("docker")
+    Command::new("/usr/bin/docker")
         .args(["compose", "version"])
         .output()
         .map(|o| o.status.success())
@@ -1281,7 +1565,7 @@ fn compose_status() -> DependencyStatus {
         DependencyStatus {
             name: "docker compose",
             available: true,
-            version: Command::new("docker")
+            version: Command::new("/usr/bin/docker")
                 .args(["compose", "version"])
                 .output()
                 .ok()
@@ -1302,7 +1586,14 @@ fn compose_status() -> DependencyStatus {
 }
 
 fn command_status(name: &'static str, args: &[&str]) -> DependencyStatus {
-    match Command::new(name).args(args).output() {
+    let Some(path) = trusted_command_path(name) else {
+        return DependencyStatus {
+            name,
+            available: false,
+            version: None,
+        };
+    };
+    match Command::new(path).args(args).output() {
         Ok(output) if output.status.success() => DependencyStatus {
             name,
             available: true,
@@ -1485,8 +1776,7 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
 
 pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     config.validate().map_err(|e| e.to_string())?;
-    let original =
-        fs::read_to_string(path).map_err(|e| format!("unable to read {}: {e}", path.display()))?;
+    let original = read_existing_env_file(path)?;
     let values = config_env_values(config);
 
     // Environment-file values are emitted as one physical line per key.
@@ -1500,17 +1790,37 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     let mut seen = std::collections::BTreeSet::new();
     let mut output = Vec::new();
 
-    for line in original.lines() {
+    for (line_index, line) in original.lines().enumerate() {
         let trimmed = line.trim();
-        if let Some((key, _)) = trimmed.split_once('=') {
-            let key = key.trim();
-            if managed.contains(key) {
-                if let Some((_, value)) = values.iter().find(|(k, _)| *k == key) {
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            output.push(line.to_owned());
+            continue;
+        }
+        let Some((raw_key, _)) = trimmed.split_once('=') else {
+            return Err(format!(
+                "invalid environment file syntax at line {}: expected KEY=VALUE",
+                line_index + 1
+            ));
+        };
+        let key = raw_key.trim();
+        if !is_valid_env_key(key) {
+            return Err(format!(
+                "invalid environment variable name at line {}",
+                line_index + 1
+            ));
+        }
+        if managed.contains(key) {
+            if let Some((_, value)) = values.iter().find(|(k, _)| *k == key) {
+                if seen.insert(key) {
                     output.push(format!("{key}={value}"));
-                    seen.insert(key);
-                    continue;
                 }
+                continue;
             }
+        } else if !seen.insert(key) {
+            return Err(format!(
+                "duplicate unmanaged environment variable at line {}",
+                line_index + 1
+            ));
         }
         output.push(line.to_owned());
     }
@@ -1527,6 +1837,52 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+fn is_valid_env_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_uppercase() || c == '_')
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+fn read_existing_env_file(path: &Path) -> Result<String, String> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = options
+            .open(path)
+            .map_err(|error| format!("unable to read {}: {error}", path.display()))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("unable to inspect {}: {error}", path.display()))?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(format!(
+                "refusing unsafe environment file {}",
+                path.display()
+            ));
+        }
+        let mut content = String::new();
+        file.read_to_string(&mut content)
+            .map_err(|error| format!("unable to read {}: {error}", path.display()))?;
+        Ok(content)
+    }
+    #[cfg(not(unix))]
+    {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| format!("unable to inspect {}: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(format!(
+                "refusing unsafe environment file {}",
+                path.display()
+            ));
+        }
+        fs::read_to_string(path)
+            .map_err(|error| format!("unable to read {}: {error}", path.display()))
+    }
+}
+
 fn validate_env_file_value(key: &str, value: &str) -> Result<(), String> {
     if value.contains('\n') || value.contains('\r') {
         return Err(format!("{key} must not contain newlines"));
@@ -1541,6 +1897,19 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn privileged_host_commands_use_fixed_paths_and_reject_unknown_names() {
+        assert_eq!(trusted_command_path("docker"), Some("/usr/bin/docker"));
+        assert_eq!(
+            trusted_command_path("systemctl"),
+            Some("/usr/bin/systemctl")
+        );
+        assert_eq!(trusted_command_path("dpkg"), Some("/usr/bin/dpkg"));
+        assert_eq!(trusted_command_path("apt-get"), Some("/usr/bin/apt-get"));
+        assert_eq!(trusted_command_path("id"), Some("/usr/bin/id"));
+        assert_eq!(trusted_command_path("unknown-command"), None);
+    }
 
     #[test]
     fn setup_flag_parser_accepts_only_the_expected_marker() {
@@ -1738,6 +2107,51 @@ mod tests {
         assert!(!content.contains("GITRUN_MIN_RUNNERS=1"));
 
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn update_env_file_collapses_managed_duplicates_and_rejects_unmanaged_duplicates() {
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-duplicates-{}.env",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "GITRUN_MIN_RUNNERS=1\nGITRUN_MIN_RUNNERS=2\nUNMANAGED=value\n",
+        )
+        .unwrap();
+        update_env_file(&path, &Config::default()).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content.matches("GITRUN_MIN_RUNNERS=").count(), 1);
+        assert!(content.contains("UNMANAGED=value"));
+        fs::write(&path, "UNMANAGED=one\nUNMANAGED=two\n").unwrap();
+        assert!(update_env_file(&path, &Config::default())
+            .unwrap_err()
+            .contains("duplicate unmanaged"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn update_env_file_rejects_symlink_path() {
+        use std::os::unix::fs::symlink;
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-setup-update-symlink-{}.env",
+            std::process::id()
+        ));
+        let target = path.with_extension("target");
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&target);
+        fs::write(&target, "GITRUN_MIN_RUNNERS=1\n").unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(update_env_file(&path, &Config::default())
+            .unwrap_err()
+            .contains("unable to read"));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&target);
     }
 
     #[test]

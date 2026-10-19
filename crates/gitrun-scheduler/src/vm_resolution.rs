@@ -327,6 +327,15 @@ fn resolve_blocking(
 
         match hypervisor_decision::poll(state_dir, &vm_config.name) {
             Ok(Some(record)) => {
+                // The decision file is an IPC boundary with the dashboard.
+                // Never apply a choice unless the record identifies the VM
+                // whose request this worker is waiting on.
+                if record.vm_name != vm_config.name {
+                    return Err(format!(
+                        "hypervisor decision record identity mismatch: expected VM '{}', got '{}'",
+                        vm_config.name, record.vm_name
+                    ));
+                }
                 if let Some(choice) = record.choice {
                     hypervisor_decision::clear(state_dir, &vm_config.name).map_err(|error| {
                         format!(
@@ -383,46 +392,36 @@ fn refresh_resolved(
 fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<DockerHost> {
     let mut config = vm_config.clone();
     config.hypervisor = kind;
+
+    // Every remote Docker daemon is a host-level privilege boundary. Do not
+    // probe an unauthenticated TCP endpoint or permit a guest to steer the
+    // scheduler toward a non-private address.
+    if config.docker_tls_cert_dir.trim().is_empty() {
+        return Err(vm::VmError::InvalidConfig(format!(
+            "VM '{}' requires docker_tls_cert_dir for authenticated Docker TLS",
+            config.name
+        )));
+    }
+    vm::validate_vm_config(&config)?;
     vm::ensure_vm(&config)?;
 
-    // Ephemeral modes are lifecycle policies, not mere labels. Restore the
-    // operator-designated clean snapshot before a new workload is admitted.
-    // The VM is stopped first because both supported hypervisors require
-    // quiesced state for a deterministic rollback.
-    if matches!(
-        config.activation,
-        vm::ActivationMode::EphemeralSnapshotRollback
-    ) {
-        let snapshot = format!("gitrun-clean-{}", config.name);
-        if vm::is_running(kind, &config.name)? {
-            vm::stop(kind, &config.name)?;
-        }
-        vm::restore_snapshot(kind, &config.name, &snapshot)?;
-    }
+    // Ephemeral modes are rejected by validate_vm_config until reset/recreate
+    // is coordinated with an authoritative runner-idle boundary. In particular,
+    // health refreshes must never stop or roll back a guest that may be active.
     if !vm::is_running(kind, &config.name)? {
         vm::start(kind, &config.name)?;
     }
     let ip = vm::wait_for_ip(kind, &config.name, VM_BOOT_TIMEOUT)?;
-    if config.is_windows && !is_private_guest_ipv4(&ip) {
+    if !is_private_guest_ipv4(&ip) {
         return Err(vm::VmError::InvalidConfig(format!(
-            "Windows KVM VM '{}' reported non-private guest address {}; refusing remote Docker endpoint",
+            "VM '{}' reported non-private or invalid guest address {}; refusing remote Docker endpoint",
             config.name, ip
         )));
     }
     let endpoint = vm::docker_host_address(kind, &ip, config.docker_port);
-    let host = if config.is_windows {
-        if config.docker_tls_cert_dir.trim().is_empty() {
-            return Err(vm::VmError::InvalidConfig(format!(
-                "Windows VM '{}' has no Docker TLS credential directory configured",
-                config.name
-            )));
-        }
-        DockerHost::RemoteTls {
-            endpoint,
-            cert_dir: config.docker_tls_cert_dir.clone(),
-        }
-    } else {
-        DockerHost::Remote(endpoint)
+    let host = DockerHost::RemoteTls {
+        endpoint,
+        cert_dir: config.docker_tls_cert_dir.clone(),
     };
     docker::verify_docker_endpoint_health(&host).map_err(|error| {
         vm::VmError::Command(format!(
@@ -458,7 +457,52 @@ fn is_private_guest_ipv4(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn guest_docker_endpoints_accept_only_private_ipv4_addresses() {
+        for address in ["10.0.0.5", "172.16.0.1", "172.31.255.254", "192.168.1.2"] {
+            assert!(
+                is_private_guest_ipv4(address),
+                "{address} should be accepted"
+            );
+        }
+        for address in [
+            "8.8.8.8",
+            "172.15.255.255",
+            "172.32.0.1",
+            // DevSkim: ignore DS162092 — loopback is an intentional rejected input in this security regression test.
+            "127.0.0.1",
+            "169.254.1.2",
+            "::1",
+            "not-an-ip",
+        ] {
+            assert!(
+                !is_private_guest_ipv4(address),
+                "{address} must be rejected"
+            );
+        }
+    }
+
     fn sample_vm(name: &str) -> VmConfig {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_CERT_DIR: AtomicU64 = AtomicU64::new(0);
+        let cert_dir = std::env::temp_dir().join(format!(
+            "gitrun-vm-resolution-certs-{}-{}",
+            std::process::id(),
+            NEXT_CERT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&cert_dir).unwrap();
+        for file in ["ca.pem", "cert.pem", "key.pem"] {
+            std::fs::write(cert_dir.join(file), "test certificate fixture").unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                cert_dir.join("key.pem"),
+                std::fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+        }
         VmConfig {
             name: name.to_owned(),
             hypervisor: HypervisorKind::Kvm,
@@ -468,7 +512,7 @@ mod tests {
             docker_port: 2376,
             activation: vm::ActivationMode::Standard,
             is_windows: false,
-            docker_tls_cert_dir: String::new(),
+            docker_tls_cert_dir: cert_dir.to_string_lossy().into_owned(),
         }
     }
 
@@ -478,6 +522,19 @@ mod tests {
         let first = config_fingerprint(&vm);
         vm.docker_port += 1;
         assert_ne!(first, config_fingerprint(&vm));
+    }
+
+    #[test]
+    fn missing_docker_tls_credentials_fail_before_vm_lifecycle() {
+        let mut config = sample_vm("missing-tls");
+        config.docker_tls_cert_dir.clear();
+
+        let error = provision_and_wait(HypervisorKind::Kvm, &config)
+            .expect_err("remote Docker must fail closed without TLS credentials");
+        assert!(
+            error.to_string().contains("requires docker_tls_cert_dir"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

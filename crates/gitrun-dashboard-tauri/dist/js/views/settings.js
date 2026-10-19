@@ -9,7 +9,7 @@ export async function renderGeneral() {
   } catch (error) { if (generation !== window.__gitrunNavigationGeneration) return; content.innerHTML = heading("OPERATIONS","General settings","Global runner behavior, version and diagnostics.") + errorView(error); return; }
   if (generation !== window.__gitrunNavigationGeneration) return;
   content.innerHTML = heading("OPERATIONS","General settings","Global runner configuration, diagnostics and update checks.", '<button class="btn" id="run-health-check">Run health check</button><button class="btn btn-primary" id="check-updates">Check for updates</button>') +
-    '<div class="grid metrics-grid"><article class="panel metric-card"><div class="metric-top">Installed version</div><div class="metric-value" style="font-size:22px">' + esc(health.version || "Unknown") + '</div><div class="metric-foot">Resolved by local backend</div></article><article class="panel metric-card"><div class="metric-top">Configuration</div><div class="metric-value">' + (health.config_ok ? "Valid" : "Issue") + '</div><div class="metric-foot">' + esc(health.config_path || "Path unavailable") + '</div></article><article class="panel metric-card"><div class="metric-top">Docker</div><div class="metric-value">' + (health.docker_ok ? "Reachable" : "Unavailable") + '</div><div class="metric-foot">Local daemon check</div></article><article class="panel metric-card"><div class="metric-top">GSR process</div><div class="metric-value">' + (health.gsr_process_seen ? "Seen" : "Missing") + '</div><div class="metric-foot">Presence check only</div></article></div>' +
+    '<div class="grid metrics-grid"><article class="panel metric-card"><div class="metric-top">Installed version</div><div class="metric-value metric-value-compact">' + esc(health.version || "Unknown") + '</div><div class="metric-foot">Resolved by local backend</div></article><article class="panel metric-card"><div class="metric-top">Configuration</div><div class="metric-value">' + (health.config_ok ? "Valid" : "Issue") + '</div><div class="metric-foot">' + esc(health.config_path || "Path unavailable") + '</div></article><article class="panel metric-card"><div class="metric-top">Docker</div><div class="metric-value">' + (health.docker_ok ? "Reachable" : "Unavailable") + '</div><div class="metric-foot">Local daemon check</div></article><article class="panel metric-card"><div class="metric-top">GSR process</div><div class="metric-value">' + (health.gsr_process_seen ? "Seen" : "Missing") + '</div><div class="metric-foot">Presence check only</div></article></div>' +
     '<div id="update-result" class="section"></div>' +
     '<div class="two-col section">' +
       '<section class="panel panel-pad"><div class="section-heading"><h2>Runner pool</h2>' + pill("Global","info") + '</div><p class="section-description">These are desired limits, not a live count of online or busy runners.</p><div class="form-grid"><div class="field"><label for="min-runners">Minimum runners</label><input id="min-runners" type="number" min="0" max="100" value="' + esc(config.min_runners) + '"></div><div class="field"><label for="max-runners">Maximum runners</label><input id="max-runners" type="number" min="1" max="500" value="' + esc(config.max_runners) + '"></div><div class="field"><label for="poll-interval">Scheduler poll interval (seconds)</label><input id="poll-interval" type="number" min="1" max="3600" value="' + esc(config.poll_interval) + '"></div><div class="field"><label for="idle-timeout">Idle timeout (seconds)</label><input id="idle-timeout" type="number" min="0" max="86400" value="' + esc(config.idle_timeout) + '"></div></div><div class="toolbar"><span class="field-hint">Changes affect scheduler behavior.</span><button class="btn btn-primary" id="save-general">Save runner settings</button></div></section>' +
@@ -53,8 +53,23 @@ export async function renderGeneral() {
       ephemeral: document.getElementById("runner-ephemeral").checked,
       runner_disable_update: document.getElementById("runner-disable-update").checked
     };
-    try { await invoke("save_config", {updated:next}); window.dispatchEvent(new Event("gitrun:config-saved")); toast("Capacity settings saved."); }
-    catch (error) { toast("Could not save capacity settings: " + error, "error"); }
+    const saveButton = document.getElementById("save-capacity-settings");
+    if (saveButton.disabled || generation !== window.__gitrunNavigationGeneration) return;
+    saveButton.disabled = true;
+    saveButton.setAttribute("aria-busy", "true");
+    try {
+      await invoke("save_config", {updated:next});
+      if (generation !== window.__gitrunNavigationGeneration) return;
+      window.dispatchEvent(new Event("gitrun:config-saved"));
+      toast("Capacity settings saved.");
+    } catch (error) {
+      if (generation === window.__gitrunNavigationGeneration) toast("Could not save capacity settings: " + error, "error");
+    } finally {
+      if (generation === window.__gitrunNavigationGeneration && saveButton.isConnected) {
+        saveButton.disabled = false;
+        saveButton.removeAttribute("aria-busy");
+      }
+    }
   });
   document.getElementById("save-general").addEventListener("click", async () => {
     const min = Number(document.getElementById("min-runners").value);
@@ -65,8 +80,23 @@ export async function renderGeneral() {
       toast("Check the numeric values: runner limits must be valid and minimum cannot exceed maximum.", "warning"); return;
     }
     const next = {...config, min_runners:min, max_runners:max, poll_interval:poll, idle_timeout:idle, auto_container_update:document.getElementById("auto-update").checked, container_update_time:document.getElementById("update-time").value || "03:00", auto_container_recovery:document.getElementById("auto-recovery").checked};
-    try { await invoke("save_config", {updated:next}); window.dispatchEvent(new Event("gitrun:config-saved")); toast("General settings saved."); }
-    catch (error) { toast("Could not save settings: " + error, "error"); }
+    const saveButton = document.getElementById("save-general");
+    if (saveButton.disabled || generation !== window.__gitrunNavigationGeneration) return;
+    saveButton.disabled = true;
+    saveButton.setAttribute("aria-busy", "true");
+    try {
+      await invoke("save_config", {updated:next});
+      if (generation !== window.__gitrunNavigationGeneration) return;
+      window.dispatchEvent(new Event("gitrun:config-saved"));
+      toast("General settings saved.");
+    } catch (error) {
+      if (generation === window.__gitrunNavigationGeneration) toast("Could not save settings: " + error, "error");
+    } finally {
+      if (generation === window.__gitrunNavigationGeneration && saveButton.isConnected) {
+        saveButton.disabled = false;
+        saveButton.removeAttribute("aria-busy");
+      }
+    }
   });
   document.getElementById("run-health-check").addEventListener("click", async () => {
     try {

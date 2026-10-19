@@ -101,7 +101,14 @@ pub trait ExecutionBackend: Send + Sync {
         sink: &mut dyn FnMut(ExecutionEvent),
     ) -> Result<i32, ExecutionError> {
         sink(ExecutionEvent::Started);
-        let result = self.execute(request)?;
+        let result = match self.execute(request) {
+            Ok(result) => result,
+            Err(error) => {
+                sink(ExecutionEvent::Stderr(error.to_string()));
+                sink(ExecutionEvent::Finished { exit_code: 1 });
+                return Err(error);
+            }
+        };
         if !result.stdout.is_empty() {
             sink(ExecutionEvent::Stdout(result.stdout.clone()));
         }
@@ -145,6 +152,25 @@ mod tests {
             resource: None,
             arguments: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn default_stream_adapter_finishes_even_when_execution_fails() {
+        let backend = NoopExecutionBackend;
+        let request = request(GitRunApi::GitDockRun, GitRunOperation::Melt);
+        let mut events = Vec::new();
+
+        let result = backend.execute_stream(&request, &mut |event| events.push(event));
+
+        assert!(matches!(result, Err(ExecutionError::Unsupported { .. })));
+        assert!(matches!(events.first(), Some(ExecutionEvent::Started)));
+        assert!(
+            matches!(events.get(1), Some(ExecutionEvent::Stderr(message)) if message.contains("does not implement"))
+        );
+        assert!(matches!(
+            events.last(),
+            Some(ExecutionEvent::Finished { exit_code: 1 })
+        ));
     }
 
     #[test]

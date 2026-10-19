@@ -14,12 +14,20 @@ RestartSec=5
 TimeoutStopSec=15
 
 # GSR must remain a separate service so it survives a scheduler crash.
-# The watchdog only needs to read GitRun state and write security events;
-# it does not need Docker or ptrace privileges.
+# This unit currently runs as root to read the configured state/config paths.
+# Root therefore still has broad host privileges; a dedicated service identity
+# requires coordinated ownership/permission changes in setup and is not implied
+# by the sandbox settings below.
 NoNewPrivileges=yes
 ProtectSystem=full
 ProtectHome=yes
 PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes

@@ -1,38 +1,37 @@
-//! Pre-flight validation of a repository's `.github/workflows/*.yml` files,
-//! run before a job is handed to a runner (see `Config::gsr_workflow_validation_enabled`).
+//! Static checks for GitHub Actions workflow risks and GitDockRun references.
 //!
-//! This is deliberately a *line-pattern* scan, not a full YAML parser: the
-//! workflow text is attacker-influenced (anyone who can open a PR can shape
-//! it), and a full parser is itself attack surface we'd rather not carry
-//! here, on top of the workspace's existing pinned-toolchain fragility (see
-//! the project's session notes on `Cargo.lock`/edition2024 constraints —
-//! adding a YAML crate is more dependency-graph risk than this module's
-//! job justifies). The tradeoff is the same one made in
-//! `command_policy::CommandPolicy::evaluate`: some false negatives on
-//! deliberately obfuscated YAML, in exchange for a scanner that cannot
-//! itself be exploited via crafted input and has no new dependencies.
-//!
-//! Two layers, matching the operator's request:
-//! 1. Our own built-in checks (`scan`), always available, based on the
-//!    well-documented GitHub Actions risk patterns (`pull_request_target`
-//!    combined with an explicit checkout of the PR head, unquoted/untrusted
-//!    `${{ }}` expansion directly in `run:`, `ACTIONS_ALLOW_UNSECURE_COMMANDS`).
-//! 2. An optional shell-out to the third-party `zizmor` static analyzer
-//!    (MIT license, <https://github.com/zizmorcore/zizmor> — credited in
-//!    this project's README/NOTICE) if installed and enabled via
-//!    `Config::gsr_zizmor_enabled`. `zizmor` is a far more thorough
-//!    workflow analyzer than anything reasonable to reimplement here; we
-//!    do not vendor it as a Rust library dependency because it is
-//!    published and versioned as a CLI tool (not a stable embeddable
-//!    library) and because it targets a newer Rust edition than this
-//!    workspace's pinned toolchain currently supports. Invoking it as a
-//!    subprocess avoids both problems. A missing binary is not an error —
-//!    see `run_zizmor` — since it's an optional enhancement, not a
-//!    dependency GitRun installs on the operator's behalf.
+//! The built-in scanner is deliberately dependency-light and advisory. The
+//! optional zizmor integration adds findings when enabled and installed;
+//! callers must report missing or failed scans rather than treating them as
+//! a clean result.
 
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn kill(pid: i32, signal: i32) -> i32;
+}
+
+#[cfg(unix)]
+fn kill_analyzer_process_group(pid: u32) {
+    // The analyzer and descendants share a dedicated process group so a
+    // descendant cannot keep captured stdout/stderr open after the parent exits.
+    let _ = unsafe { kill(-(pid as i32), 9) };
+}
+
+#[cfg(not(unix))]
+fn kill_analyzer_process_group(_pid: u32) {}
+
+fn terminate_analyzer(child: &mut Child) {
+    kill_analyzer_process_group(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
 
 /// One finding from either the built-in scan or `zizmor`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -323,7 +322,10 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
             path.extension().and_then(|e| e.to_str()),
             Some("yml") | Some("yaml")
         );
-        if !is_yaml || !path.is_file() {
+        // Do not follow workflow symlinks out of the scanned directory.
+        // Repositories control these entries and a symlink must not redirect
+        // a privileged scanner to arbitrary host files.
+        if !is_yaml || !entry.file_type()?.is_file() {
             continue;
         }
         let content = std::fs::read_to_string(&path)?;
@@ -345,8 +347,9 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
 /// an optional third-party enhancement (see module docs), and its absence
 /// must never block a job from running. Returns `Ok(Some(findings))` on a
 /// successful run, parsing zizmor's own JSON finding format loosely (only
-/// the fields this module needs) so an unrecognized future zizmor output
-/// shape degrades to "no additional findings" rather than a hard error.
+/// the fields this module needs). Invalid JSON or an unexpected top-level
+/// shape is reported as an error so an analyzer output change cannot silently
+/// appear to be a clean scan.
 pub fn run_zizmor(workflows_dir: &Path) -> std::io::Result<Option<Vec<Finding>>> {
     run_zizmor_command("zizmor", workflows_dir)
 }
@@ -355,12 +358,9 @@ fn run_zizmor_command(
     program: &str,
     workflows_dir: &Path,
 ) -> std::io::Result<Option<Vec<Finding>>> {
-    let output = match Command::new(program)
-        .arg("--format")
-        .arg("json")
-        .arg(workflows_dir)
-        .output()
-    {
+    let mut command = Command::new(program);
+    command.arg("--format").arg("json").arg(workflows_dir);
+    let output = match run_bounded_command(command, Duration::from_secs(30), 4 * 1024 * 1024) {
         Ok(output) => output,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -369,14 +369,117 @@ fn run_zizmor_command(
     // failure of the invocation itself. We only bail on stdout we can't
     // read at all.
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
-        Ok(value) => value,
-        Err(_) => return Ok(Some(Vec::new())),
+    parse_zizmor_output(&stdout).map(Some)
+}
+
+fn run_bounded_command(
+    mut command: Command,
+    timeout: Duration,
+    output_limit: usize,
+) -> std::io::Result<Output> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("failed to capture analyzer stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("failed to capture analyzer stderr"))?;
+    let stdout_reader = thread::spawn(move || read_bounded_stream(stdout, output_limit));
+    let stderr_reader = thread::spawn(move || read_bounded_stream(stderr, output_limit));
+    let deadline = Instant::now() + timeout;
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // The direct analyzer may exit while a helper/descendant still
+                // owns either pipe; kill the group before joining reader threads.
+                kill_analyzer_process_group(child.id());
+                break status;
+            }
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                terminate_analyzer(&mut child);
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("analyzer command exceeded its {timeout:?} timeout"),
+                ));
+            }
+            Err(error) => {
+                terminate_analyzer(&mut child);
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(error);
+            }
+        }
     };
+
+    let (stdout, stdout_truncated) = stdout_reader
+        .join()
+        .map_err(|_| std::io::Error::other("analyzer stdout reader panicked"))??;
+    let (stderr, stderr_truncated) = stderr_reader
+        .join()
+        .map_err(|_| std::io::Error::other("analyzer stderr reader panicked"))??;
+    if stdout_truncated || stderr_truncated {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("analyzer command output exceeded the {output_limit}-byte safety limit"),
+        ));
+    }
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn read_bounded_stream(
+    mut reader: impl Read,
+    output_limit: usize,
+) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut output = Vec::with_capacity(output_limit.min(8192));
+    let mut buffer = [0u8; 8192];
+    let mut truncated = false;
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = output_limit.saturating_sub(output.len());
+        let keep = count.min(remaining);
+        output.extend_from_slice(&buffer[..keep]);
+        truncated |= keep < count;
+    }
+    Ok((output, truncated))
+}
+
+fn parse_zizmor_output(stdout: &str) -> std::io::Result<Vec<Finding>> {
+    let parsed: serde_json::Value = serde_json::from_str(stdout).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("zizmor returned invalid JSON: {error}"),
+        )
+    })?;
     let Some(items) = parsed.as_array() else {
-        return Ok(Some(Vec::new()));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "zizmor JSON output must be an array of findings",
+        ));
     };
-    let findings = items
+    Ok(items
         .iter()
         .map(|item| Finding {
             file: item
@@ -401,8 +504,7 @@ fn run_zizmor_command(
                 .unwrap_or("zizmor reported a finding with no description")
                 .to_owned(),
         })
-        .collect();
-    Ok(Some(findings))
+        .collect())
 }
 
 /// Static metadata about the optional `zizmor` integration, shown on the
@@ -442,6 +544,21 @@ pub fn zizmor_info() -> ZizmorInfo {
     }
 }
 
+/// Checks whether the optional analyzer is available without allowing an
+/// unbounded version-probe subprocess to hang the dashboard.
+pub fn zizmor_is_installed() -> bool {
+    let mut command = Command::new("zizmor");
+    command.arg("--version");
+    matches!(
+        run_bounded_command(
+            command,
+            Duration::from_secs(10),
+            64 * 1024,
+        ),
+        Ok(output) if output.status.success()
+    )
+}
+
 /// Installs `zizmor` via `cargo install zizmor` if it isn't already on
 /// `PATH`. Called by the dashboard's "enable" flow ONLY after the operator
 /// has accepted the license/terms dialog (see
@@ -453,27 +570,46 @@ pub fn zizmor_info() -> ZizmorInfo {
 /// Already-installed is treated as success with no reinstall — this is an
 /// idempotent "make sure it's available" call, not a forced upgrade.
 pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
-    if Command::new("zizmor")
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-    {
-        return Ok(InstallOutcome::AlreadyInstalled);
+    let mut version_command = Command::new("zizmor");
+    version_command.arg("--version");
+    match run_bounded_command(version_command, Duration::from_secs(10), 64 * 1024) {
+        Ok(output) if output.status.success() => return Ok(InstallOutcome::AlreadyInstalled),
+        Ok(_) => {
+            // A broken installed binary can be repaired by the pinned install below.
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Expected first-install path.
+        }
+        Err(error) => {
+            return Ok(InstallOutcome::Failed(format!(
+                "could not verify existing zizmor binary: {error}"
+            )));
+        }
     }
-    let output = Command::new("cargo")
+
+    // cargo install is a network/build operation, so bound both its lifetime
+    // and retained diagnostics rather than using Command::output() indefinitely.
+    let mut install_command = Command::new("cargo");
+    install_command
         .arg("install")
         .arg("--locked")
         .arg("--version")
         .arg("1.30.1")
-        .arg("zizmor")
-        .output()?;
+        .arg("zizmor");
+    let output = run_bounded_command(
+        install_command,
+        Duration::from_secs(15 * 60),
+        16 * 1024 * 1024,
+    )?;
     if output.status.success() {
         Ok(InstallOutcome::Installed)
     } else {
-        Ok(InstallOutcome::Failed(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ))
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Ok(InstallOutcome::Failed(if stderr.is_empty() {
+            format!("cargo install zizmor exited with {}", output.status)
+        } else {
+            stderr
+        }))
     }
 }
 
@@ -585,6 +721,27 @@ mod tests {
         assert_eq!(report.findings[0].file, "risky.yml");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn validate_workflows_dir_ignores_symlinked_workflow_files() {
+        use std::os::unix::fs::symlink;
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-workflows-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = dir.with_extension("outside.yml");
+        std::fs::write(
+            &outside,
+            "env:\\n  ACTIONS_ALLOW_UNSECURE_COMMANDS: true\\n",
+        )
+        .unwrap();
+        symlink(&outside, dir.join("linked.yml")).unwrap();
+        let report = validate_workflows_dir(&dir).unwrap();
+        assert!(report.is_clean());
+        std::fs::remove_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_file(outside);
+    }
+
     #[test]
     fn run_zizmor_missing_binary_is_none_not_an_error() {
         // In this sandbox zizmor is not installed - this exercises the
@@ -597,6 +754,50 @@ mod tests {
         let result =
             run_zizmor_command("__gitrun_zizmor_binary_that_should_not_exist__", &dir).unwrap();
         assert!(result.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn analyzer_timeout_is_bounded() {
+        let mut command = Command::new("/bin/sleep");
+        command.arg("5");
+        let error = run_bounded_command(command, Duration::from_millis(20), 1024).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn analyzer_exit_kills_descendant_holding_output_pipe() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "(sleep 5) & exit 0"]);
+        let started = Instant::now();
+        let result = run_bounded_command(command, Duration::from_secs(2), 1024).unwrap();
+        assert!(result.status.success());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "descendant kept analyzer output pipe open past parent exit"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn analyzer_output_limit_is_enforced() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf '1234567890'"]);
+        let error = run_bounded_command(command, Duration::from_secs(1), 4).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn zizmor_invalid_json_is_reported_instead_of_becoming_no_findings() {
+        let error = parse_zizmor_output("not-json").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn zizmor_unexpected_json_shape_is_reported() {
+        let error = parse_zizmor_output(r#"{"findings":[]}"#).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

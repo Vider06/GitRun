@@ -3,18 +3,69 @@ set -Eeuo pipefail
 
 cd /home/runner/actions-runner
 
+# This volume is mounted separately from the read-only rootfs and from the
+# runner-owned home/cache volumes. Only root may inspect or change lifecycle
+# state here; never fall back to a writable workspace/home marker.
+CONTROL_DIR=/var/lib/gitrun/control
+if [[ -L "$CONTROL_DIR" || ! -d "$CONTROL_DIR" ]]; then
+  echo "gitrun-runner: root-only control volume is missing or unsafe" >&2
+  exit 1
+fi
+# This volume is mounted read-only inside the container; only the host
+# scheduler may mutate its contents. Validate, do not chmod/chown in-container.
+if [[ "$(stat -c '%u:%g:%a' -- "$CONTROL_DIR")" != "0:0:700" ]]; then
+  echo "gitrun-runner: control volume must be root-owned mode 0700" >&2
+  exit 1
+fi
+
+DOCK_ONLY_MARKER="$CONTROL_DIR/dock-only"
+if [[ -L "$DOCK_ONLY_MARKER" ]]; then
+  echo "gitrun-runner: refusing a symlinked dock-only marker" >&2
+  exit 1
+fi
+if [[ -e "$DOCK_ONLY_MARKER" && ! -f "$DOCK_ONLY_MARKER" ]]; then
+  echo "gitrun-runner: dock-only marker is not a regular file" >&2
+  exit 1
+fi
+if [[ -f "$DOCK_ONLY_MARKER" ]]; then
+  if [[ "$(stat -c '%u:%g:%a:%h' -- "$DOCK_ONLY_MARKER")" != "0:0:600:1" ]]; then
+    echo "gitrun-runner: dock-only marker ownership or permissions are unsafe" >&2
+    exit 1
+  fi
+  if [[ "$(cat -- "$DOCK_ONLY_MARKER")" != "GitRun dock-only v1" ]]; then
+    echo "gitrun-runner: dock-only marker contents are invalid" >&2
+    exit 1
+  fi
+fi
+
 : "${RUNNER_URL:?RUNNER_URL is required}"
 : "${RUNNER_NAME:?RUNNER_NAME is required}"
 
 RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,Linux,X64,gitrun,gitrun-ci}"
-if [[ ",${RUNNER_LABELS}," != *,gitrun-ci,* ]]; then
-  RUNNER_LABELS="${RUNNER_LABELS},gitrun-ci"
+RUNNER_NO_DEFAULT_LABELS="${GITRUN_RUNNER_NO_DEFAULT_LABELS:-false}"
+if [[ "$RUNNER_NO_DEFAULT_LABELS" != "true" && "$RUNNER_NO_DEFAULT_LABELS" != "false" ]]; then
+  echo "gitrun-runner: invalid no-default-labels toggle" >&2
+  exit 1
+fi
+if [[ "$RUNNER_NO_DEFAULT_LABELS" == "true" ]]; then
+  # Exclusive family runners must expose exactly their opaque routing label.
+  # Do not append gitrun-ci or platform labels: those would let unrelated jobs
+  # match this runner as a subset of their runs-on requirements.
+  if [[ ! "$RUNNER_LABELS" =~ ^gitrun-job-wk-[0-9a-f]{16}$ ]]; then
+    echo "gitrun-runner: exclusive runner requires one canonical GitRun workload-family label" >&2
+    exit 1
+  fi
+else
+  if [[ ",${RUNNER_LABELS}," != *,gitrun-ci,* ]]; then
+    RUNNER_LABELS="${RUNNER_LABELS},gitrun-ci"
+  fi
 fi
 RUNNER_EPHEMERAL="${RUNNER_EPHEMERAL:-false}"
 RUNNER_DISABLE_UPDATE="${RUNNER_DISABLE_UPDATE:-false}"
 SHARED_CACHE_DIR="${GITRUN_SHARED_CACHE_DIR:-/var/lib/gitrun/shared}"
 
 GITRUN_GSR_COMMAND_POLICY_ENABLED="${GITRUN_GSR_COMMAND_POLICY_ENABLED:-true}"
+GITRUN_GSR_ALLOW_UNSAFE_RUNNER="${GITRUN_GSR_ALLOW_UNSAFE_RUNNER:-false}"
 GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED="${GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED:-true}"
 GITRUN_GSR_COMMAND_BLACKLIST_ENABLED="${GITRUN_GSR_COMMAND_BLACKLIST_ENABLED:-false}"
 GITRUN_GSR_COMMAND_BLACKLIST="${GITRUN_GSR_COMMAND_BLACKLIST:-}"
@@ -35,6 +86,7 @@ validate_policy_value() {
 }
 
 validate_policy_value GITRUN_GSR_COMMAND_POLICY_ENABLED "$GITRUN_GSR_COMMAND_POLICY_ENABLED"
+validate_policy_value GITRUN_GSR_ALLOW_UNSAFE_RUNNER "$GITRUN_GSR_ALLOW_UNSAFE_RUNNER"
 validate_policy_value GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED "$GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED"
 validate_policy_value GITRUN_GSR_COMMAND_BLACKLIST_ENABLED "$GITRUN_GSR_COMMAND_BLACKLIST_ENABLED"
 validate_policy_value GITRUN_GSR_COMMAND_BLACKLIST "$GITRUN_GSR_COMMAND_BLACKLIST"
@@ -47,6 +99,7 @@ tmp_policy="$(mktemp "${GSR_POLICY_DIR}/gsr-policy.env.XXXXXX")"
 trap 'rm -f "$tmp_policy"' EXIT
 {
   printf 'GITRUN_GSR_COMMAND_POLICY_ENABLED=%s\n' "$GITRUN_GSR_COMMAND_POLICY_ENABLED"
+  printf 'GITRUN_GSR_ALLOW_UNSAFE_RUNNER=%s\n' "$GITRUN_GSR_ALLOW_UNSAFE_RUNNER"
   printf 'GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED=%s\n' "$GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED"
   printf 'GITRUN_GSR_COMMAND_BLACKLIST_ENABLED=%s\n' "$GITRUN_GSR_COMMAND_BLACKLIST_ENABLED"
   printf 'GITRUN_GSR_COMMAND_BLACKLIST=%s\n' "$GITRUN_GSR_COMMAND_BLACKLIST"
@@ -61,16 +114,17 @@ trap - EXIT
 
 GSR_EVENTS_FILE="${GSR_POLICY_DIR}/gsr-events.jsonl"
 touch "$GSR_EVENTS_FILE"
-chown runner:runner "$GSR_EVENTS_FILE"
+# The root-owned GSR agent emits events after dropping only its runner child.
+# Never grant the untrusted job identity write access to the local audit queue:
+# it could otherwise truncate or forge the security trail.
+chown root:root "$GSR_EVENTS_FILE"
 chmod 0600 "$GSR_EVENTS_FILE"
 
 mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 
-# GitDockRun can temporarily convert a completed runner container into a
-# dock-only resource. The marker lives in the per-runner home volume, so the
-# state survives stop/start without starting another GitHub Actions runner.
-DOCK_ONLY_MARKER=/home/runner/actions-runner/.gitrun-dock-only
+# GitDockRun's lifecycle marker lives in the root-only persistent control
+# volume, not the read-only rootfs or a runner-writable home/cache location.
 if [[ ! -f "$DOCK_ONLY_MARKER" ]]; then
   : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
 fi
@@ -79,6 +133,7 @@ if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   unset RUNNER_TOKEN
   unset GITRUN_API_TOKEN
   unset GITRUN_GSR_COMMAND_POLICY_ENABLED
+  unset GITRUN_GSR_ALLOW_UNSAFE_RUNNER
   unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED
   unset GITRUN_GSR_COMMAND_BLACKLIST_ENABLED
   unset GITRUN_GSR_COMMAND_BLACKLIST
@@ -88,8 +143,24 @@ if [[ -f "$DOCK_ONLY_MARKER" ]]; then
   exec sudo -P -u runner -E /bin/bash -c 'exec sleep infinity'
 fi
 
-mkdir -p "$HOME" "$XDG_CONFIG_HOME"
-chown runner:runner "$HOME" "$XDG_CONFIG_HOME"
+ensure_runner_owned_dir() {
+  local path="$1"
+  if [[ -L "$path" ]]; then
+    echo "gitrun-runner: refusing symlinked runner state directory: $path" >&2
+    exit 1
+  fi
+  mkdir -p -- "$path"
+  if [[ -L "$path" || ! -d "$path" ]]; then
+    echo "gitrun-runner: runner state path is not a real directory: $path" >&2
+    exit 1
+  fi
+  # -h avoids following a symlink if an untrusted runner process races the
+  # checks above and replaces the final path component before chown executes.
+  chown --no-dereference runner:runner -- "$path"
+}
+
+ensure_runner_owned_dir "$HOME"
+ensure_runner_owned_dir "$XDG_CONFIG_HOME"
 
 sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/cargo" \
@@ -97,18 +168,35 @@ sudo -P -u runner -E mkdir -p \
   "$SHARED_CACHE_DIR/pip" \
   "$SHARED_CACHE_DIR/npm"
 
+for runner_state in .runner .credentials .credentials_rsaparams; do
+  if [[ -L "$runner_state" ]]; then
+    echo "gitrun-runner: refusing symlinked runner credential/state file: $runner_state" >&2
+    exit 1
+  fi
+done
 if [[ -f .runner ]]; then
-  chown runner:runner .runner .credentials .credentials_rsaparams 2>/dev/null || true
+  for runner_state in .runner .credentials .credentials_rsaparams; do
+    if [[ -e "$runner_state" ]]; then
+      if [[ ! -f "$runner_state" ]]; then
+        echo "gitrun-runner: runner credential/state path is not a regular file: $runner_state" >&2
+        exit 1
+      fi
+      chown --no-dereference runner:runner -- "$runner_state"
+    fi
+  done
 fi
 
 if [[ ! -f .runner ]]; then
   args=(--url "$RUNNER_URL" --token "$RUNNER_TOKEN" --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" --unattended --replace)
+  [[ "$RUNNER_NO_DEFAULT_LABELS" == "true" ]] && args+=(--no-default-labels)
   [[ "$RUNNER_EPHEMERAL" == "true" ]] && args+=(--ephemeral)
   [[ "$RUNNER_DISABLE_UPDATE" == "true" ]] && args+=(--disableupdate)
   sudo -P -u runner -E ./config.sh "${args[@]}"
 fi
 
 unset RUNNER_TOKEN
+unset GITRUN_RUNNER_NO_DEFAULT_LABELS
+unset GITRUN_GSR_ALLOW_UNSAFE_RUNNER
 unset GITRUN_GSR_COMMAND_POLICY_ENABLED
 unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED
 unset GITRUN_GSR_COMMAND_BLACKLIST_ENABLED

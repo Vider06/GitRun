@@ -73,6 +73,17 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60
 KillMode=control-group
+# Keep the embedded fallback aligned with systemd/gitrun.service.
+# The scheduler still runs as root for Docker/mount orchestration.
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
 EnvironmentFile=/etc/gitrun/gitrun.env
 
 [Install]
@@ -195,6 +206,11 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
     (
         "crates/gitrun-gsr/src/api_gate.rs",
         include_str!("../../../crates/gitrun-gsr/src/api_gate.rs"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-gsr/src/automation_gate.rs",
+        include_str!("../../../crates/gitrun-gsr/src/automation_gate.rs"),
         0o644,
     ),
     (
@@ -340,13 +356,38 @@ mod tests {
             include_str!("../../../docker/runner/entrypoint.sh")
         );
         assert!(RUNNER_ENTRYPOINT.contains("sudo -P -u runner"));
-        assert!(RUNNER_ENTRYPOINT.contains("actions-runner/.gitrun-dock-only"));
+        assert!(RUNNER_ENTRYPOINT.contains("CONTROL_DIR=/var/lib/gitrun/control"));
+        assert!(RUNNER_ENTRYPOINT.contains(r#"DOCK_ONLY_MARKER="$CONTROL_DIR/dock-only""#));
+        assert!(RUNNER_ENTRYPOINT
+            .contains(r#"echo "gitrun-runner: starting in GitDockRun dock-only mode""#));
         assert!(RUNNER_ENTRYPOINT.contains("gitrun-ci"));
+        assert!(RUNNER_ENTRYPOINT.contains("RUNNER_NO_DEFAULT_LABELS"));
+        assert!(RUNNER_ENTRYPOINT.contains("--no-default-labels"));
+        assert!(RUNNER_ENTRYPOINT.contains("gitrun-job-wk-"));
+        assert!(RUNNER_ENTRYPOINT
+            .contains("exclusive runner requires one canonical GitRun workload-family label"));
         assert_eq!(
             SYSTEMD_SERVICE,
             include_str!("../../../systemd/gitrun.service")
         );
         assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
         assert!(!SYSTEMD_SERVICE.contains("docker compose"));
+        for directive in [
+            "NoNewPrivileges=yes",
+            "ProtectSystem=full",
+            "PrivateTmp=yes",
+            "ProtectKernelTunables=yes",
+            "ProtectKernelModules=yes",
+            "RestrictSUIDSGID=yes",
+            "LockPersonality=yes",
+            "SystemCallArchitectures=native",
+            "UMask=0077",
+        ] {
+            assert!(SYSTEMD_SERVICE.contains(directive), "missing {directive}");
+            assert!(
+                SYSTEMD_SERVICE_DIRECT.contains(directive),
+                "fallback missing {directive}"
+            );
+        }
     }
 }

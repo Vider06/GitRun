@@ -34,6 +34,7 @@ use gitrun_core::command_policy::{CommandPolicy, Decision, ViolationAction};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -44,6 +45,8 @@ pub enum GsrPollError {
     Io(#[from] std::io::Error),
     #[error("invalid ban state file: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("unsafe GSR ban state path: {0}")]
+    UnsafePath(String),
 }
 
 /// One violation found on a poll tick, for logging/events — deliberately
@@ -97,35 +100,55 @@ pub const DEFAULT_BAN_DURATION: Duration = Duration::from_secs(60 * 60);
 impl BanStore {
     pub fn load(state_dir: &Path) -> Result<Self, GsrPollError> {
         let path = state_dir.join("gsr-bans.json");
-        let data = match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BanFile::default(),
+        match fs::symlink_metadata(state_dir) {
+            Ok(_) => validate_ban_state_directory(state_dir)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    path,
+                    data: BanFile::default(),
+                });
+            }
             Err(error) => return Err(error.into()),
-        };
+        }
+        let data = read_ban_file(&path)?.unwrap_or_default();
         Ok(Self { path, data })
     }
 
-    fn lock(&self) -> Result<File, GsrPollError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
+    /// Creates a store handle when persisted ban state cannot currently be
+    /// read. Polling can still enforce Kill/LogOnly, and KillAndBan still
+    /// attempts to terminate a violating container; persistence errors are
+    /// surfaced by ban() rather than disabling all external enforcement.
+    fn unavailable(state_dir: &Path) -> Self {
+        Self {
+            path: state_dir.join("gsr-bans.json"),
+            data: BanFile::default(),
         }
+    }
+
+    fn lock(&self) -> Result<File, GsrPollError> {
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        validate_ban_state_directory(parent)?;
         let lock_path = self.path.with_extension("json.lock");
-        let lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(lock_path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let lock = options.open(&lock_path)?;
+        validate_ban_file_metadata(&lock.metadata()?, &lock_path)?;
         lock.lock()?;
         Ok(lock)
     }
 
     fn reload_from_disk(&mut self) -> Result<(), GsrPollError> {
-        self.data = match fs::read_to_string(&self.path) {
-            Ok(raw) => serde_json::from_str(&raw)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BanFile::default(),
-            Err(error) => return Err(error.into()),
-        };
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        validate_ban_state_directory(parent)?;
+        self.data = read_ban_file(&self.path)?.unwrap_or_default();
         Ok(())
     }
 
@@ -133,9 +156,36 @@ impl BanStore {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(&self.data)?)?;
-        fs::rename(&tmp, &self.path)?;
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let serialized = serde_json::to_vec_pretty(&self.data)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let tmp = parent.join(format!(".gsr-bans.{}.{}.tmp", std::process::id(), nonce));
+
+        // create_new avoids following a pre-created symlink and keeps
+        // concurrent saves from truncating one another's temporary file.
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        if let Err(error) =
+            std::io::Write::write_all(&mut file, &serialized).and_then(|()| file.sync_all())
+        {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
+        if let Err(error) = fs::rename(&tmp, &self.path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
+        #[cfg(unix)]
+        File::open(parent)?.sync_all()?;
         Ok(())
     }
 
@@ -170,6 +220,67 @@ impl BanStore {
     }
 }
 
+fn validate_ban_state_directory(path: &Path) -> Result<(), GsrPollError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(GsrPollError::UnsafePath(format!(
+            "{} must be a real directory",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let mode = metadata.mode();
+        if mode & 0o022 != 0 && !(mode & 0o1000 != 0) {
+            return Err(GsrPollError::UnsafePath(format!(
+                "{} is group/world-writable without the sticky bit",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_ban_file_metadata(metadata: &fs::Metadata, path: &Path) -> Result<(), GsrPollError> {
+    if !metadata.is_file() {
+        return Err(GsrPollError::UnsafePath(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 || metadata.mode() & 0o022 != 0 {
+            return Err(GsrPollError::UnsafePath(format!(
+                "{} must have one link and no group/world write permission",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn read_ban_file(path: &Path) -> Result<Option<BanFile>, GsrPollError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    validate_ban_file_metadata(&file.metadata()?, path)?;
+    let mut raw = String::new();
+    file.read_to_string(&mut raw)?;
+    Ok(Some(serde_json::from_str(&raw)?))
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -198,88 +309,162 @@ pub fn poll_once(
 ) -> docker::Result<Vec<PolledViolation>> {
     let mut violations = Vec::new();
     for container_name in docker::all_managed_container_names_on(host)? {
-        let command_lines = match docker::container_command_lines_on(host, &container_name) {
-            Ok(command_lines) => command_lines,
+        // Pin the Docker object identity before inspecting its processes. Every
+        // subsequent read and enforcement action uses this ID, never the
+        // mutable name: a container recreated under the same name between
+        // inspection and enforcement must not be killed as the original.
+        let container_id = match docker::container_id_on(host, &container_name) {
+            Ok(Some(id)) => id,
+            Ok(None) => continue,
             Err(error) => {
                 eprintln!(
-                        "gitrun-scheduler: gsr_poll could not inspect {container_name} on {host:?}: {error}"
-                    );
+                    "gitrun-scheduler: gsr_poll could not pin Docker identity for {container_name} on {host:?}; skipping this container for this tick: {error}"
+                );
                 continue;
             }
         };
-        let mut container_already_handled = false;
-        for command_line in command_lines {
-            let Decision::Denied { reason } = policy.evaluate(&command_line) else {
-                continue;
-            };
-            if !container_already_handled {
-                container_already_handled = true;
-                let (repo, repo_error) =
-                    match docker::container_repo_label_on(host, &container_name) {
-                        Ok(repo) => (repo, None),
-                        Err(error) => {
-                            let detail = format!(
-                                "unable to inspect repo label for {container_name}: {error}"
-                            );
-                            eprintln!("gitrun-scheduler: gsr_poll: {detail}");
-                            (None, Some(detail))
-                        }
-                    };
-                let action_error = apply_violation_action(
-                    host,
-                    &container_name,
-                    repo.as_deref(),
-                    action,
-                    ban_store,
-                );
-                let action_error = match (repo_error, action_error) {
-                    (Some(repo_error), Some(action_error)) => {
-                        Some(format!("{repo_error}; {action_error}"))
-                    }
-                    (Some(error), None) | (None, Some(error)) => Some(error),
-                    (None, None) => None,
-                };
-                violations.push(PolledViolation {
-                    container_name: container_name.clone(),
-                    repo,
-                    command_line: redact_command_line(&command_line),
-                    reason,
-                    action_taken: action,
-                    action_error,
-                });
-            }
-        }
+
+        violations.extend(poll_container_with_identity(
+            host,
+            &container_name,
+            &container_id,
+            policy,
+            action,
+            ban_store,
+            PollOperations {
+                read_processes: |target: &str| docker::container_command_lines_on(host, target),
+                read_repo: |target: &str| docker::container_repo_label_on(host, target),
+                enforce: |target: &str,
+                          repo: Option<&str>,
+                          action: ViolationAction,
+                          store: &mut BanStore| {
+                    apply_violation_action(host, target, repo, action, store)
+                },
+            },
+        ));
     }
     Ok(violations)
 }
 
-fn apply_violation_action(
+/// Operations are injected only to make the identity flow deterministic in
+/// regression tests; production supplies the real Docker inspection and
+/// enforcement calls above.
+struct PollOperations<P, R, A> {
+    read_processes: P,
+    read_repo: R,
+    enforce: A,
+}
+
+/// Process one container using a pinned immutable Docker ID. Keeping the
+/// callbacks together leaves identity and policy parameters explicit without
+/// a long positional-argument list.
+fn poll_container_with_identity<P, R, A, ProcessError, RepoError>(
     host: &DockerHost,
     container_name: &str,
+    container_id: &str,
+    policy: &CommandPolicy,
+    action: ViolationAction,
+    ban_store: &mut BanStore,
+    operations: PollOperations<P, R, A>,
+) -> Vec<PolledViolation>
+where
+    P: FnMut(&str) -> Result<Vec<String>, ProcessError>,
+    ProcessError: std::fmt::Display,
+    R: FnMut(&str) -> Result<Option<String>, RepoError>,
+    RepoError: std::fmt::Display,
+    A: FnMut(&str, Option<&str>, ViolationAction, &mut BanStore) -> Option<String>,
+{
+    let PollOperations {
+        mut read_processes,
+        mut read_repo,
+        mut enforce,
+    } = operations;
+    let command_lines = match read_processes(container_id) {
+        Ok(command_lines) => command_lines,
+        Err(error) => {
+            eprintln!(
+                "gitrun-scheduler: gsr_poll could not inspect {container_name} ({container_id}) on {host:?}: {error}"
+            );
+            return Vec::new();
+        }
+    };
+
+    let mut violations = Vec::new();
+    let mut container_already_handled = false;
+    for command_line in command_lines {
+        let Decision::Denied { reason } = policy.evaluate(&command_line) else {
+            continue;
+        };
+        if container_already_handled {
+            continue;
+        }
+        container_already_handled = true;
+
+        // Query the repo label and enforce against the same object whose
+        // process list produced this violation.
+        let (repo, repo_error) = match read_repo(container_id) {
+            Ok(repo) => (repo, None),
+            Err(error) => {
+                let detail = format!(
+                    "unable to inspect repo label for {container_name} ({container_id}): {error}"
+                );
+                eprintln!("gitrun-scheduler: gsr_poll: {detail}");
+                (None, Some(detail))
+            }
+        };
+        let action_error = enforce(container_id, repo.as_deref(), action, ban_store);
+        let action_error = match (repo_error, action_error) {
+            (Some(repo_error), Some(action_error)) => Some(format!("{repo_error}; {action_error}")),
+            (Some(error), None) | (None, Some(error)) => Some(error),
+            (None, None) => None,
+        };
+        violations.push(PolledViolation {
+            container_name: container_name.to_owned(),
+            repo,
+            command_line: redact_command_line(&command_line),
+            reason,
+            action_taken: action,
+            action_error,
+        });
+    }
+
+    violations
+}
+
+fn apply_violation_action(
+    host: &DockerHost,
+    container_id: &str,
     repo: Option<&str>,
     action: ViolationAction,
     ban_store: &mut BanStore,
 ) -> Option<String> {
     match action {
         ViolationAction::LogOnly => None,
-        ViolationAction::Kill => docker::remove_container_on(host, container_name)
+        ViolationAction::Kill => docker::remove_container_on(host, container_id)
             .err()
-            .map(|error| format!("container kill failed: {error}")),
+            .map(|error| format!("container kill failed for pinned ID {container_id}: {error}")),
         ViolationAction::KillAndBan => {
-            if let Err(error) = docker::remove_container_on(host, container_name) {
-                return Some(format!(
-                    "container kill failed; ban was not applied: {error}"
-                ));
-            }
-            match repo {
+            // Persist the repo ban first: if container removal subsequently
+            // fails, the scheduler still refuses to create a replacement runner.
+            let ban_error = match repo {
                 Some(repo) => ban_store
                     .ban(repo, DEFAULT_BAN_DURATION)
                     .err()
-                    .map(|error| format!("container killed, but ban persistence failed: {error}")),
+                    .map(|error| format!("repository ban persistence failed: {error}")),
                 None => Some(
-                    "container killed, but repository label was unavailable; ban was not applied"
-                        .to_owned(),
+                    "repository label was unavailable; repository ban was not applied".to_owned(),
                 ),
+            };
+            let kill_error = docker::remove_container_on(host, container_id)
+                .err()
+                .map(|error| {
+                    format!("container kill failed for pinned ID {container_id}: {error}")
+                });
+
+            match (ban_error, kill_error) {
+                (Some(ban), Some(kill)) => Some(format!("{ban}; {kill}")),
+                (Some(error), None) | (None, Some(error)) => Some(error),
+                (None, None) => None,
             }
         }
     }
@@ -348,13 +533,14 @@ pub fn run_with_hosts(
     let mut ban_store = match BanStore::load(state_dir) {
         Ok(store) => store,
         Err(error) => {
-            // A corrupt/unreadable ban file must fail closed: continuing with
-            // an empty in-memory store would make KillAndBan ineffective
-            // until the process restarts with a repaired state file.
+            // Do not disable all host-side process enforcement because the
+            // optional ban state is unavailable. Kill/LogOnly remain useful,
+            // and KillAndBan still kills the container while reporting any
+            // persistence failure; the next ban attempt re-reads the file.
             eprintln!(
-                "gitrun-scheduler: gsr_poll could not load ban state; refusing to start enforcement: {error}"
+                "gitrun-scheduler: gsr_poll could not load ban state; continuing enforcement with persistence errors surfaced: {error}"
             );
-            return;
+            BanStore::unavailable(state_dir)
         }
     };
 
@@ -412,6 +598,23 @@ mod tests {
     }
 
     #[test]
+    fn ban_store_first_run_accepts_missing_state_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-gsr-poll-first-run-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut store = BanStore::load(&dir).unwrap();
+        assert!(!store.is_banned("owner/repo"));
+        store.ban("owner/repo", Duration::from_secs(60)).unwrap();
+        assert!(store.is_banned("owner/repo"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn ban_store_round_trips_and_expires() {
         let dir = temp_state_dir("roundtrip");
         let mut store = BanStore::load(&dir).unwrap();
@@ -425,6 +628,54 @@ mod tests {
         assert!(reloaded.is_banned("owner/repo"));
         assert!(!reloaded.is_banned("owner/other-repo"));
 
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ban_store_lock_rejects_symlink_without_modifying_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_state_dir("lock-symlink");
+        let target = dir.join("must-not-be-touched");
+        fs::write(&target, "preserve me").unwrap();
+        symlink(&target, dir.join("gsr-bans.json.lock")).unwrap();
+
+        let mut store = BanStore::load(&dir).unwrap();
+        assert!(store.ban("owner/repo", Duration::from_secs(3600)).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "preserve me");
+        assert!(!dir.join("gsr-bans.json").exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ban_store_load_rejects_symlink_without_reading_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_state_dir("state-symlink");
+        let target = dir.join("external-state.json");
+        fs::write(&target, r#"{"banned_until":{}}"#).unwrap();
+        symlink(&target, dir.join("gsr-bans.json")).unwrap();
+
+        assert!(BanStore::load(&dir).is_err());
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            r#"{"banned_until":{}}"#
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ban_store_load_rejects_hard_linked_state() {
+        let dir = temp_state_dir("state-hardlink");
+        let target = dir.join("external-state.json");
+        let state = dir.join("gsr-bans.json");
+        fs::write(&target, r#"{"banned_until":{}}"#).unwrap();
+        fs::hard_link(&target, &state).unwrap();
+
+        assert!(BanStore::load(&dir).is_err());
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -467,6 +718,66 @@ mod tests {
             None
         );
         assert!(!store.is_banned("owner/repo"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gsr_poll_pins_process_label_and_enforcement_operations_to_one_container_id() {
+        use std::cell::RefCell;
+
+        let dir = temp_state_dir("pinned-container-id");
+        let mut ban_store = BanStore::load(&dir).unwrap();
+        let name = "gitrun-runner-reused";
+        let original_id = "test-container-id-runner-a";
+        let replacement_id = "test-container-id-replacement-b";
+        let targets = RefCell::new(Vec::new());
+
+        let violations = poll_container_with_identity(
+            &DockerHost::Local,
+            name,
+            original_id,
+            &policy_with_baseline(),
+            ViolationAction::Kill,
+            &mut ban_store,
+            PollOperations {
+                read_processes: |target: &str| {
+                    assert_eq!(target, original_id);
+                    assert_ne!(target, replacement_id);
+                    targets.borrow_mut().push(("processes", target.to_owned()));
+                    Ok::<_, &'static str>(vec!["sudo rm -rf /".to_owned()])
+                },
+                read_repo: |target: &str| {
+                    assert_eq!(target, original_id);
+                    assert_ne!(target, replacement_id);
+                    targets.borrow_mut().push(("repo-label", target.to_owned()));
+                    Ok::<_, &'static str>(Some("owner/repo".to_owned()))
+                },
+                enforce: |target: &str,
+                          repo: Option<&str>,
+                          action: ViolationAction,
+                          _store: &mut BanStore| {
+                    assert_eq!(target, original_id);
+                    assert_ne!(target, replacement_id);
+                    assert_eq!(repo, Some("owner/repo"));
+                    assert_eq!(action, ViolationAction::Kill);
+                    targets.borrow_mut().push(("enforce", target.to_owned()));
+                    None
+                },
+            },
+        );
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].container_name, name);
+        assert_eq!(violations[0].repo.as_deref(), Some("owner/repo"));
+        assert!(violations[0].action_error.is_none());
+        assert_eq!(
+            targets.into_inner(),
+            vec![
+                ("processes", original_id.to_owned()),
+                ("repo-label", original_id.to_owned()),
+                ("enforce", original_id.to_owned()),
+            ]
+        );
         fs::remove_dir_all(&dir).ok();
     }
 

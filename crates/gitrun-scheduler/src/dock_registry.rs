@@ -7,11 +7,13 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 const REGISTRY_FILE: &str = "dock-registry.json";
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub enum DockRegistryError {
@@ -19,6 +21,8 @@ pub enum DockRegistryError {
     Io(#[from] std::io::Error),
     #[error("unable to decode dock registry: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("invalid dock registry: {0}")]
+    Invalid(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,19 +49,26 @@ pub struct DockRegistry {
 
 impl DockRegistry {
     pub fn load(state_dir: impl AsRef<Path>) -> Result<Self, DockRegistryError> {
+        let state_dir = state_dir.as_ref();
+        validate_state_directory(state_dir)?;
         let path = path_for(state_dir);
-        match fs::read_to_string(path) {
-            Ok(raw) => Ok(serde_json::from_str(&raw)?),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(error.into()),
-        }
+        let Some(raw) = read_registry_file(&path)? else {
+            return Ok(Self::default());
+        };
+        let registry: Self = serde_json::from_str(&raw)?;
+        registry.validate_unique_bindings()?;
+        Ok(registry)
     }
 
     pub fn save(&self, state_dir: impl AsRef<Path>) -> Result<(), DockRegistryError> {
         let state_dir = state_dir.as_ref();
+        self.validate_unique_bindings()?;
+        validate_state_directory_parent(state_dir)?;
         fs::create_dir_all(state_dir)?;
+        validate_state_directory(state_dir)?;
         let path = path_for(state_dir);
-        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_extension(format!("json.{}.{}.tmp", std::process::id(), sequence));
         let raw = serde_json::to_vec_pretty(self)?;
 
         {
@@ -79,6 +90,46 @@ impl DockRegistry {
             return Err(error.into());
         }
 
+        Ok(())
+    }
+
+    fn validate_unique_bindings(&self) -> Result<(), DockRegistryError> {
+        let mut keys = std::collections::HashSet::with_capacity(self.bindings.len());
+        let mut containers = std::collections::HashSet::with_capacity(self.bindings.len());
+        let mut container_ids = std::collections::HashSet::with_capacity(self.bindings.len());
+        for binding in &self.bindings {
+            if binding.repository.trim().is_empty()
+                || binding.run_id == 0
+                || binding.job.trim().is_empty()
+                || binding.container.trim().is_empty()
+                || binding.requester_runner.trim().is_empty()
+            {
+                return Err(DockRegistryError::Invalid(
+                    "binding contains an empty identity field or zero run ID".into(),
+                ));
+            }
+            if !keys.insert((&binding.repository, binding.run_id, &binding.job)) {
+                return Err(DockRegistryError::Invalid(
+                    "duplicate repository/run/job binding".into(),
+                ));
+            }
+            if !containers.insert(binding.container.as_str()) {
+                return Err(DockRegistryError::Invalid(
+                    "a Docker container is bound to more than one workflow job".into(),
+                ));
+            }
+            // Names can change while the underlying Docker object stays the
+            // same. Never let one immutable container identity authorize more
+            // than one workflow-job binding. Empty IDs remain readable for
+            // legacy records, but execution paths already fail closed on them.
+            if !binding.container_id.is_empty()
+                && !container_ids.insert(binding.container_id.as_str())
+            {
+                return Err(DockRegistryError::Invalid(
+                    "a Docker container ID is bound to more than one workflow job".into(),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -119,6 +170,9 @@ impl DockRegistry {
             !(existing.repository == binding.repository
                 && existing.run_id == binding.run_id
                 && existing.job == binding.job)
+                && existing.container != binding.container
+                && (binding.container_id.is_empty()
+                    || existing.container_id != binding.container_id)
         });
         self.bindings.push(binding);
         self.bindings.sort_by(|a, b| {
@@ -140,6 +194,150 @@ impl DockRegistry {
     }
 }
 
+#[cfg(unix)]
+fn effective_uid() -> u32 {
+    // SAFETY: geteuid has no preconditions and has no side effects.
+    unsafe { libc::geteuid() }
+}
+
+pub(crate) fn validate_state_directory_parent(state_dir: &Path) -> Result<(), DockRegistryError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if !state_dir.is_absolute()
+            || state_dir
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(DockRegistryError::Invalid(
+                "registry state path must be absolute and must not contain parent traversal".into(),
+            ));
+        }
+
+        // Check every existing ancestor, not only the immediate parent. A
+        // root-owned parent nested below a user-writable directory can still
+        // be renamed/replaced through that ancestor, redirecting trusted state.
+        // Root-owned sticky shared directories such as /tmp are permitted;
+        // their child entries cannot be removed by unrelated users.
+        let parent = state_dir.parent().ok_or_else(|| {
+            DockRegistryError::Invalid("registry state path cannot be the filesystem root".into())
+        })?;
+        let mut prefix = PathBuf::from("/");
+        for component in parent.components() {
+            match component {
+                std::path::Component::RootDir => continue,
+                std::path::Component::Normal(name) => prefix.push(name),
+                _ => {
+                    return Err(DockRegistryError::Invalid(
+                        "registry state parent path contains unsupported components".into(),
+                    ))
+                }
+            }
+            let metadata = fs::symlink_metadata(&prefix)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(DockRegistryError::Invalid(format!(
+                    "registry state ancestor {} must be a real directory",
+                    prefix.display()
+                )));
+            }
+            let mode = metadata.permissions().mode();
+            let owner_is_trusted = metadata.uid() == 0 || metadata.uid() == effective_uid();
+            let writable_by_others = mode & 0o022 != 0;
+            let safe_sticky_shared_dir =
+                metadata.uid() == 0 && mode & 0o1000 != 0 && writable_by_others;
+            if !owner_is_trusted || (writable_by_others && !safe_sticky_shared_dir) {
+                return Err(DockRegistryError::Invalid(format!(
+                    "registry state ancestor {} is owned by or writable by an untrusted identity",
+                    prefix.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_state_directory(state_dir: &Path) -> Result<(), DockRegistryError> {
+    validate_state_directory_parent(state_dir)?;
+    match fs::symlink_metadata(state_dir) {
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(DockRegistryError::Invalid(
+                    "registry state path must be a real directory, not a symlink or other file"
+                        .into(),
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::{MetadataExt, PermissionsExt};
+                if metadata.uid() != effective_uid() {
+                    return Err(DockRegistryError::Invalid(
+                        "registry state directory must be owned by the service identity".into(),
+                    ));
+                }
+                if metadata.permissions().mode() & 0o022 != 0 {
+                    return Err(DockRegistryError::Invalid(
+                        "registry state directory must not be group- or world-writable".into(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn read_registry_file(path: &Path) -> Result<Option<String>, DockRegistryError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+        let mut file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(DockRegistryError::Invalid(
+                "registry file must be a regular file without hard links".into(),
+            ));
+        }
+        if metadata.uid() != effective_uid() {
+            return Err(DockRegistryError::Invalid(
+                "registry file must be owned by the service identity".into(),
+            ));
+        }
+        if metadata.permissions().mode() & 0o022 != 0 {
+            return Err(DockRegistryError::Invalid(
+                "registry file must not be group- or world-writable".into(),
+            ));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        Ok(Some(raw))
+    }
+    #[cfg(not(unix))]
+    {
+        let mut file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if !file.metadata()?.is_file() {
+            return Err(DockRegistryError::Invalid(
+                "registry path must be a regular file".into(),
+            ));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        Ok(Some(raw))
+    }
+}
+
 pub fn path_for(state_dir: impl AsRef<Path>) -> PathBuf {
     state_dir.as_ref().join(REGISTRY_FILE)
 }
@@ -147,6 +345,39 @@ pub fn path_for(state_dir: impl AsRef<Path>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlinked_registry_file() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-symlink-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target.json");
+        fs::write(&target, r#"{"bindings":[]}"#).unwrap();
+        symlink(&target, path_for(&dir)).unwrap();
+        assert!(DockRegistry::load(&dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_hard_linked_registry_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-hardlink-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = path_for(&dir);
+        fs::write(&path, r#"{"bindings":[]}"#).unwrap();
+        fs::hard_link(&path, dir.join("alias.json")).unwrap();
+        assert!(DockRegistry::load(&dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn registry_round_trips() {
@@ -172,6 +403,198 @@ mod tests {
         assert_eq!(loaded, registry);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_rejects_duplicate_workflow_job_bindings() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-duplicate-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = path_for(&dir);
+        let duplicate = DockRegistry {
+            bindings: vec![
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build".into(),
+                    container: "runner-a".into(),
+                    container_id: "id-a".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 1,
+                },
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build".into(),
+                    container: "runner-b".into(),
+                    container_id: "id-b".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 2,
+                },
+            ],
+        };
+        fs::write(&path, serde_json::to_vec(&duplicate).unwrap()).unwrap();
+
+        assert!(matches!(
+            DockRegistry::load(&dir),
+            Err(DockRegistryError::Invalid(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upsert_replaces_stale_binding_for_reused_container_name() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 1,
+            job: "old-job".into(),
+            container: "runner-a".into(),
+            container_id: "old-id".into(),
+            dynamic: true,
+            dock_only: false,
+            requester_runner: "runner-main".into(),
+            connected_at: 1,
+        });
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 2,
+            job: "new-job".into(),
+            container: "runner-a".into(),
+            container_id: "new-id".into(),
+            dynamic: false,
+            dock_only: false,
+            requester_runner: "runner-main".into(),
+            connected_at: 2,
+        });
+        assert_eq!(registry.bindings.len(), 1);
+        assert_eq!(registry.bindings[0].run_id, 2);
+        assert_eq!(registry.bindings[0].container_id, "new-id");
+    }
+
+    #[test]
+    fn load_rejects_duplicate_immutable_container_ids() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-duplicate-id-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = path_for(&dir);
+        let duplicate = DockRegistry {
+            bindings: vec![
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build-a".into(),
+                    container: "runner-a".into(),
+                    container_id: "same-immutable-id".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 1,
+                },
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build-b".into(),
+                    container: "runner-b".into(),
+                    container_id: "same-immutable-id".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 2,
+                },
+            ],
+        };
+        fs::write(&path, serde_json::to_vec(&duplicate).unwrap()).unwrap();
+
+        assert!(matches!(
+            DockRegistry::load(&dir),
+            Err(DockRegistryError::Invalid(message))
+                if message.contains("container ID")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_rejects_duplicate_immutable_container_ids() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-save-duplicate-id-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let registry = DockRegistry {
+            bindings: vec![
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build-a".into(),
+                    container: "runner-a".into(),
+                    container_id: "same-immutable-id".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 1,
+                },
+                DockBinding {
+                    repository: "owner/repo".into(),
+                    run_id: 7,
+                    job: "build-b".into(),
+                    container: "runner-b".into(),
+                    container_id: "same-immutable-id".into(),
+                    dynamic: true,
+                    dock_only: false,
+                    requester_runner: "runner-main".into(),
+                    connected_at: 2,
+                },
+            ],
+        };
+
+        assert!(matches!(
+            registry.save(&dir),
+            Err(DockRegistryError::Invalid(message))
+                if message.contains("container ID")
+        ));
+        assert!(!path_for(&dir).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upsert_replaces_stale_binding_for_reused_immutable_container_id() {
+        let mut registry = DockRegistry::default();
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 1,
+            job: "old-job".into(),
+            container: "old-runner-name".into(),
+            container_id: "same-immutable-id".into(),
+            dynamic: true,
+            dock_only: false,
+            requester_runner: "runner-main".into(),
+            connected_at: 1,
+        });
+        registry.upsert(DockBinding {
+            repository: "owner/repo".into(),
+            run_id: 2,
+            job: "new-job".into(),
+            container: "new-runner-name".into(),
+            container_id: "same-immutable-id".into(),
+            dynamic: false,
+            dock_only: false,
+            requester_runner: "runner-main".into(),
+            connected_at: 2,
+        });
+        assert_eq!(registry.bindings.len(), 1);
+        assert_eq!(registry.bindings[0].container, "new-runner-name");
+        assert_eq!(registry.bindings[0].run_id, 2);
     }
 
     #[test]
@@ -207,6 +630,63 @@ mod tests {
 #[cfg(test)]
 mod security_tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn registry_rejects_group_writable_parent_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-unsafe-parent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o770)).unwrap();
+        let state_dir = root.join("state");
+
+        assert!(DockRegistry::load(&state_dir).is_err());
+        assert!(DockRegistry::default().save(&state_dir).is_err());
+
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn registry_rejects_directory_owned_by_another_identity_when_root() {
+        if effective_uid() != 0 {
+            return;
+        }
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-dock-registry-wrong-owner-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let c_path = std::ffi::CString::new(root.as_os_str().as_bytes()).unwrap();
+        // SAFETY: c_path is a valid NUL-terminated path; this test runs only as root.
+        let changed = unsafe { libc::chown(c_path.as_ptr(), 65534, 65534) };
+        if changed != 0 {
+            let _ = fs::remove_dir_all(&root);
+            panic!("could not prepare wrong-owner registry fixture");
+        }
+        assert!(DockRegistry::load(&root).is_err());
+        let _ = std::process::Command::new("/usr/bin/chown")
+            .args(["0:0", root.to_str().unwrap()])
+            .status();
+        fs::remove_dir_all(&root).unwrap();
+    }
 
     fn binding(run_id: u64, runner: &str) -> DockBinding {
         DockBinding {

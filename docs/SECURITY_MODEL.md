@@ -1,4 +1,32 @@
-# Security model — GitRun 1.4.6
+# Security model — GitRun 1.5.0
+
+## Optional Kitty Smart Scheduler
+
+Kitty is a separate, optional statistics-based add-on. A missing Kitty settings
+file means disabled. Invalid configuration, unsafe/corrupt model state, stale
+observations, insufficient history, or persistence failure must not block the
+ordinary scheduler and must never increase its configured runner floor. The
+deterministic reconciler remains the default and the fallback.
+
+Kitty stores only bounded, aggregated per-repository observations: queued-job
+counts, counts of busy/online/managed runners, and optional host-wide CPU,
+memory, and disk percentages. It does not collect secrets, tokens, environment
+values, workflow contents, command strings, or per-job payloads. The historical
+model and decision audit are size-bounded and written via an owner-checked
+private directory and atomic replacement.
+
+The only automated action implemented in this version is an opt-in increase of
+the minimum runner floor. It requires the master switch, the separate predictive
+warm-pool switch, shadow mode disabled, fresh data, sufficient history, forecast
+quality above the operator threshold, and room under the configured global
+maximum. The increase is also capped by an explicit additional-runner bound.
+Existing resource-pressure backpressure suppresses predictive growth. Kitty
+cannot lower the configured minimum, change security policy, authorize an API,
+execute commands, call Docker, read Vault secrets, force-cancel workflows, or
+terminate processes. Adaptive resource management and Smart Fast Stop triggers
+remain reserved and inactive until they have reliable workload-level evidence
+and their own verified safety contracts.
+
 
 This document states plainly what GitRun's design trusts, and what an operator is implicitly granting when they run it. It documents the security properties that exist today and the important limits that remain.
 
@@ -29,11 +57,23 @@ The workflow-facing API is a closed operation set. Policy can disable operations
 
 Authorization is fail-closed. Workflow-visible `GITHUB_*` values are claims only. The host maps the Unix peer to the current Docker runner, rejects stale/PID-reused cgroup identities, requires an in-progress GitHub job, resolves authoritative workflow/run information, and applies repository/resource policy before creating an `AuthorizedOperation`.
 
-GitDockRun adds an exact persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. `connect`/`disconnect` cannot select an arbitrary other job. Read/write/execute/melt operations revalidate the binding immediately before privileged execution, preventing container-name reuse/TOCTOU authorization.
+GitDockRun adds an exact persistent binding over repository, workflow run, job, requester runner and immutable Docker container ID. `connect`/`disconnect` cannot select an arbitrary other job. Disconnect drops the active job's binding without deleting its live runner; normal scheduler lifecycle owns cleanup after the job exits. Read/write/execute/melt/mount/unmount operations revalidate the binding immediately before privileged execution, preventing stale container-name bindings from authorizing a replacement container.
 
 A successful request therefore requires authenticated transport identity **and** authoritative workload binding; policy alone is never treated as proof of identity.
 
+## GitDockRun live host mounts
+
+GitDockRun's `mount` and `unmount` operations are a separate, privileged capability and are implemented only for a local Linux Docker daemon. A mount is accepted only if the global GitDockRun API policy, repository container allowlist, target Logic Container's `mountable` capability and repository host-source `MountPolicy` all allow it. The host source is canonicalized and opened before the namespace operation; explicit matching deny rules win. The default CLI mode is read-only, and a policy marked `read_only: true` cannot be used for a writable mount.
+
+The runtime pins the target using the immutable Docker container ID, checks the host PID against the container cgroup, validates a restricted existing target path, and performs bind/remount/unmount inside that container's mount namespace. Host sources are staged in an isolated private mount namespace, checked against the pinned source inode, cloned into a detached mount tree and attached by descriptor. The containing target mount is isolated from peer propagation without recursively changing the whole container mount tree. Read-only attributes are applied to the detached tree before attachment; unmount rechecks the expected kernel mount ID inside the target namespace. Before live operations, the helper inspects CapEff, CapPrm, CapInh, CapAmb and CapBnd for every visible thread in the bound container cgroup and fails closed if inspection is incomplete or CAP_SYS_ADMIN is present. Mount leases are stored in a private, cross-process-locked registry before the privileged side effect, then updated with the observed kernel mount ID; registry updates are atomically renamed and the directory is synced. Unmount requires the lease ID to match repository, run, job, requester and container identity. A previous full CI run passed the live read-only directory and read-write file bind/unmount smoke test; later adversarial follow-ups remain unverified as recorded in the refactor tracker.
+
+This is not a blanket filesystem sandbox: host paths are highly sensitive, write mounts permit host-file modification, and a runner with direct Docker socket access can exercise separate host-level authority. The helper requires host privileges and must be validated on the deployment's Linux kernel/runtime. Windows, macOS, and remote/VM Docker daemons are not supported by this live-mount implementation and must fail closed. Mount target paths must exist before the request; directory targets must be empty to avoid hiding existing content. If reconciliation preserves a lease, treat it as a recovery journal: inspect the lease ID, immutable container ID, recorded target, source device/inode and kernel mount ID against the live container's mount table before taking action. A `preparing` lease with no kernel ID proves the attach worker was not entered; an `attaching` or later lease without a uniquely verified mount is ambiguous. Do not delete such a registry entry or unmount by pathname alone. Preserve the record and escalate for host-level recovery if the exact original mount cannot be proven; remove the lease only after the exact mount is confirmed absent or safely unmounted.
+
 ## Filesystem isolation
+
+Filesystem operations exposed by GitReadRun, GitWriteRun, GitVerifyRun, GitSaveRun and GitDockRun Read/Write execute inside the container as the unprivileged `runner` identity. Their path checks are enforced twice: a lexical allowlist rejects traversal and limits paths to the checkout/work area, temporary storage and explicitly shared data, while the in-container file helper walks directory components through directory file descriptors using `O_NOFOLLOW`. It rejects symbolic links, non-regular targets and files with multiple hard links rather than following them; reads and writes are capped at 16 MiB, hashing at 1 GiB, and GitSaveRun copies are size-limited during the copy and published with an atomic rename. These controls narrow pathname races but are not a substitute for container isolation or OS permissions. `GitInstallRun` is a separate explicitly policy-gated package-install capability that may execute as container root; it does not imply host root unless the Docker socket is separately exposed.
+
+GitDockRun's dock-only lifecycle marker is stored in a dedicated per-container control volume mounted **read-only** into the runner container. The host scheduler changes it through the Docker volume's validated host mountpoint only after confirming the exact volume is mounted read-only on the bound container. The entrypoint fails closed on a missing/writable control mount, symlink, hard-linked marker, unexpected ownership/mode or invalid marker payload. This distinction matters because container-root APIs (including an administrator-enabled package-install operation) can bypass mode 0700 on any volume mounted writable inside the container. Existing runner containers without the new control-volume mount must be recreated before they can transition into dock-only mode.
 
 Linux runner containers mount their root filesystem read-only by default. Writable state is explicitly provided through:
 
@@ -55,6 +95,8 @@ GSR provides defense-in-depth through command/resource policy, workflow validati
 
 The standalone `gitrun-gsr` process is a watchdog with its own systemd unit. It watches the scheduler PID file and records unexpected scheduler exits as critical security events. The broader GSR hardening scope is still not a substitute for the Docker socket/host boundary, and the standalone service unit still warrants additional systemd sandboxing review.
 
+The shared security-event JSONL queue rotates the active file before it would exceed 16 MiB and retains up to ten archives. On Unix, producers and readers coordinate through a sidecar advisory lock, including during rotation, so current GitRun processes do not append into a renamed file or read across a partial rotation. Readers include retained archives; the newest-event view remains bounded. This is a finite retention policy: oldest archives are deleted when the cap is exceeded, so the queue is not a permanent audit archive. Preserve/export events externally if a longer compliance retention period is required. A single unusually large event can exceed the nominal per-file cap.
+
 ## GitVault and secrets at rest
 
 GitVault stores secrets as AES-256-GCM ciphertext on disk. A randomly generated 32-byte master key is stored separately with owner-only (`0600`) permissions.
@@ -69,7 +111,11 @@ Secret read/write/delete activity can be bridged into GSR security events withou
 
 Runner package caches default to **per-runner Docker volumes**. Repository/global cache scopes are explicit broader trust decisions and should not be used as a substitute for trust-domain isolation when workflows are mutually untrusted.
 
-Managed runners attach to a dedicated GitRun Docker network. GitRun rejects ordinary `bridge`, `host` and `container:*` network modes. The dedicated network is a stable segregation point for deployment firewall/proxy policy; it does **not** itself enforce egress filtering.
+Managed Linux runners attach to the stable, GitRun-owned bridge configured by `GITRUN_RUNNER_NETWORK`. That bridge must be created with `com.docker.network.bridge.enable_icc=false`; a network whose ICC option is missing or true is rejected before GitRun starts another Linux runner. This closes direct runner-to-runner port/DNS connectivity on the shared bridge while retaining outbound NAT and a fixed bridge identity for host firewall/proxy policy. It does **not** enforce egress filtering, and operators still need an explicit egress policy.
+
+**Existing-install migration:** older bridges may have ICC enabled. Drain the workflows, stop/remove or disconnect every runner attached to the network, then remove the now-empty managed network (default name: `gitrun-runner`). The scheduler creates it with ICC disabled on the next Linux runner creation. Do not remove a network with connected containers. GitRun deliberately fails closed rather than using an existing bridge whose isolation it cannot verify.
+
+Windows runner network isolation is a separate deployment boundary: Windows containers use a configured VM-backed Docker daemon and do not use the Linux bridge ICC option. Treat the guest VM firewall and per-VM network policy as required controls until live Windows container-to-container isolation is independently verified.
 
 Docker uses the host's configured seccomp/AppArmor policy. GitRun-specific hardened AppArmor/seccomp profiles are not yet universally shipped because their availability and compatibility are host/deployment dependent. Operators requiring stronger syscall/LSM confinement should provide and enforce suitable profiles explicitly.
 
@@ -117,3 +163,19 @@ Trusted infrastructure: GitRun scheduler, host Docker daemon, GitHub API identit
 Untrusted input: workflow code, workflow-visible environment variables, requested API arguments, logical dock/resource names, repository configuration supplied by workflow code, and downloaded update artifacts until verified.
 
 A successful privileged request therefore requires both authenticated transport identity and authoritative workload binding; policy alone is never treated as proof of identity.
+
+
+## v1.5.0 Phase 7 verification note — 2026-10-19
+
+PR #83 adds regression coverage for updater signature verification and rollback, privileged dashboard executable trust resolution, VM configuration/resolution, and GitDockRun mount cleanup in a privileged Docker namespace. The current CI source baseline passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. Consult the [refactor status tracker](v1.5.0-refactor-status.md) for exact commit/run evidence; documentation-only changes made during Phase 7 need a final-head verification run.
+
+The following are **not** claimed as verified by those automated checks:
+
+- A live desktop `pkexec` authorization dialog and real install/uninstall/reinstall privilege transitions.
+- Full KVM/libvirt and VirtualBox provisioning/recovery on actual hypervisor hosts.
+- Disconnect cleanup initiated through the complete authorized API endpoint (the live namespace test exercises the cleanup helper).
+- Upgrade/migration behavior for every pre-existing or operator-customized runner image and control volume.
+- Serialization of direct privileged policy edits that intentionally bypass GitRun's advisory-lock protocol.
+- Zero open alerts in GitHub's Security tab; successful CodeQL workflow execution proves the scan ran, not the state of all alerts.
+
+These are deployment/evidence limits, not assurances that the behaviors are safe in every environment. Before production release, validate the relevant environment-specific paths or explicitly accept each residual risk with a named scope and rationale.

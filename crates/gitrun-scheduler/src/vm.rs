@@ -83,14 +83,18 @@ pub enum HypervisorKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActivationMode {
-    /// VM starts on first job, stops after the configured idle timeout.
+    /// VM starts on first use and remains running. Automatic idle shutdown is
+    /// not implemented yet because the scheduler does not own a reliable
+    /// cross-backend signal that every guest workload has finished.
     Standard,
-    /// VM stays running always.
+    /// Explicitly opts into the experimental warm-VM behavior: after first
+    /// startup the VM remains running rather than being stopped automatically.
     AlwaysOnExperimental,
-    /// VM is started for a runner lifecycle and rolled back to the named
-    /// clean snapshot before the next workload is admitted.
+    /// Reserved for runner-lifecycle integration. Validation rejects this
+    /// mode until snapshot rollback is tied to an authoritative idle boundary.
     EphemeralSnapshotRollback,
-    /// VM is recreated from the base image for each runner lifecycle.
+    /// Reserved for runner-lifecycle integration. Validation rejects this
+    /// mode until the scheduler can safely recreate VMs between workloads.
     EphemeralVm,
 }
 
@@ -119,8 +123,10 @@ pub struct VmConfig {
     /// Port the Docker daemon inside the VM listens on (commonly 2376 for
     /// TLS-secured remote Docker).
     pub docker_port: u16,
-    /// Directory containing ca.pem, cert.pem, and key.pem for the VM Docker daemon.
-    /// Required for Windows VM runners; an empty value keeps legacy Linux VM configs readable.
+    /// Directory containing ca.pem, cert.pem, and key.pem for authenticated
+    /// Docker TLS to this VM's remote daemon. Provisioning fails closed when
+    /// empty; serde default only keeps legacy config files parseable so the
+    /// operator receives an explicit runtime configuration error.
     #[serde(default)]
     pub docker_tls_cert_dir: String,
     pub activation: ActivationMode,
@@ -188,6 +194,21 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
                 config.name
             )));
         }
+        match config.activation {
+            ActivationMode::EphemeralSnapshotRollback => {
+                return Err(VmError::InvalidConfig(format!(
+                    "VM '{}' requests EphemeralSnapshotRollback, but snapshot reset is not yet wired to an authoritative runner-idle boundary; refusing to risk resetting an active workload",
+                    config.name
+                )));
+            }
+            ActivationMode::EphemeralVm => {
+                return Err(VmError::InvalidConfig(format!(
+                    "VM '{}' requests EphemeralVm, but per-runner VM recreation is not implemented",
+                    config.name
+                )));
+            }
+            ActivationMode::Standard | ActivationMode::AlwaysOnExperimental => {}
+        }
         if config.memory_mb == 0 {
             return Err(VmError::InvalidConfig(format!(
                 "VM '{}' must allocate at least 1 MiB",
@@ -207,22 +228,48 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
             )));
         }
 
-        if config.is_windows && config.docker_tls_cert_dir.trim().is_empty() {
+        if config.docker_tls_cert_dir.trim().is_empty() {
             return Err(VmError::InvalidConfig(format!(
-                "Windows VM '{}' requires docker_tls_cert_dir for mutually authenticated Docker TLS",
+                "VM '{}' requires docker_tls_cert_dir for authenticated Docker TLS",
                 config.name
             )));
         }
         if !config.docker_tls_cert_dir.trim().is_empty() {
             let cert_dir = Path::new(config.docker_tls_cert_dir.trim());
+            if !cert_dir.is_absolute() {
+                return Err(VmError::InvalidConfig(format!(
+                    "VM '{}' Docker TLS credential directory must be an absolute path",
+                    config.name
+                )));
+            }
             for name in ["ca.pem", "cert.pem", "key.pem"] {
                 let path = cert_dir.join(name);
-                if !path.is_file() {
+                let metadata = fs::symlink_metadata(&path).map_err(|error| {
+                    VmError::InvalidConfig(format!(
+                        "VM '{}' Docker TLS credential is missing or unreadable: {} ({error})",
+                        config.name,
+                        path.display()
+                    ))
+                })?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
                     return Err(VmError::InvalidConfig(format!(
-                        "VM '{}' Docker TLS credential is missing: {}",
+                        "VM '{}' Docker TLS credential must be a regular, non-symlink file: {}",
                         config.name,
                         path.display()
                     )));
+                }
+                if name == "key.pem" {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mode = metadata.permissions().mode() & 0o777;
+                        if mode & 0o077 != 0 {
+                            return Err(VmError::InvalidConfig(format!(
+                                "VM '{}' Docker TLS private key must not be group/world-accessible (mode {mode:o})",
+                                config.name
+                            )));
+                        }
+                    }
                 }
             }
         }
@@ -705,7 +752,23 @@ fn ensure_vm_kvm(config: &VmConfig) -> Result<()> {
     let _ = fs::remove_file(&tmp_path);
 
     if let Err(error) = result {
-        cleanup_created_disk(&disk, created_disk);
+        // A timeout/non-zero exit does not prove that libvirt rejected the
+        // definition. Preserve the backing disk unless a fresh query confirms
+        // that no VM was created.
+        match vm_exists(HypervisorKind::Kvm, &config.name) {
+            Ok(false) => cleanup_created_disk(&disk, created_disk),
+            Ok(true) => {
+                return Err(VmError::Command(format!(
+                    "{error}; VM '{}' exists despite the failed define command, so its backing disk was preserved",
+                    config.name
+                )));
+            }
+            Err(check_error) => {
+                return Err(VmError::Command(format!(
+                    "{error}; could not verify VM cleanup ({check_error}), so its backing disk was preserved"
+                )));
+            }
+        }
         return Err(error);
     }
     Ok(())
@@ -718,6 +781,7 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
     }
 
     let (disk, created_disk) = create_virtualbox_disk_clone(config)?;
+    let mut vm_created = false;
     let result = (|| -> Result<()> {
         run_checked(
             HypervisorKind::VirtualBox,
@@ -730,6 +794,7 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
                 "--register",
             ],
         )?;
+        vm_created = true;
 
         run_checked(
             HypervisorKind::VirtualBox,
@@ -785,12 +850,19 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
     })();
 
     if let Err(error) = result {
-        let unregister_args = if created_disk {
-            vec!["unregistervm", config.name.as_str(), "--delete"]
-        } else {
-            vec!["unregistervm", config.name.as_str()]
-        };
-        let _ = run_checked(HypervisorKind::VirtualBox, &unregister_args);
+        if vm_created {
+            let unregister_args = if created_disk {
+                vec!["unregistervm", config.name.as_str(), "--delete"]
+            } else {
+                vec!["unregistervm", config.name.as_str()]
+            };
+            if let Err(rollback_error) = run_checked(HypervisorKind::VirtualBox, &unregister_args) {
+                // Do not remove a disk that a still-registered VM may use.
+                return Err(VmError::Command(format!(
+                    "{error}; VirtualBox rollback failed ({rollback_error}); backing disk was preserved"
+                )));
+            }
+        }
         cleanup_created_disk(&disk, created_disk);
         return Err(error);
     }
@@ -1042,6 +1114,26 @@ mod tests {
     }
 
     fn sample_vm(name: &str, disk: &str) -> VmConfig {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_CERT_DIR: AtomicU64 = AtomicU64::new(0);
+        let cert_dir = std::env::temp_dir().join(format!(
+            "gitrun-vm-test-certs-{}-{}",
+            std::process::id(),
+            NEXT_CERT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&cert_dir).unwrap();
+        for file in ["ca.pem", "cert.pem", "key.pem"] {
+            std::fs::write(cert_dir.join(file), "test certificate fixture").unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                cert_dir.join("key.pem"),
+                std::fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+        }
         VmConfig {
             name: name.to_owned(),
             hypervisor: HypervisorKind::Kvm,
@@ -1051,7 +1143,7 @@ mod tests {
             docker_port: 2376,
             activation: ActivationMode::Standard,
             is_windows: false,
-            docker_tls_cert_dir: String::new(),
+            docker_tls_cert_dir: cert_dir.to_string_lossy().into_owned(),
         }
     }
 
@@ -1126,6 +1218,16 @@ mod tests {
     }
 
     #[test]
+    fn vm_configs_without_docker_tls_credentials_are_rejected() {
+        let mut config = sample_vm("missing-tls", "/vms/base.qcow2");
+        config.docker_tls_cert_dir.clear();
+        assert!(matches!(
+            validate_vm_configs(&[config]),
+            Err(VmError::InvalidConfig(message)) if message.contains("requires docker_tls_cert_dir")
+        ));
+    }
+
+    #[test]
     fn invalid_vm_configs_are_rejected() {
         let mut config = sample_vm("valid", "/vms/base.qcow2");
         config.cpus = 0;
@@ -1139,6 +1241,51 @@ mod tests {
             validate_vm_configs(&[config]),
             Err(VmError::InvalidConfig(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn windows_vm_rejects_group_or_world_readable_docker_private_key() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_state_dir("tls-key-permissions");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["ca.pem", "cert.pem", "key.pem"] {
+            std::fs::write(dir.join(name), "test").unwrap();
+        }
+        std::fs::set_permissions(dir.join("key.pem"), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+
+        let mut config = sample_vm("win-runner", "/vms/base.qcow2");
+        config.is_windows = true;
+        config.docker_tls_cert_dir = dir.to_string_lossy().into_owned();
+        assert!(matches!(
+            validate_vm_configs(&[config.clone()]),
+            Err(VmError::InvalidConfig(message)) if message.contains("private key")
+        ));
+
+        std::fs::set_permissions(dir.join("key.pem"), std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+        assert!(validate_vm_configs(&[config]).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unsupported_ephemeral_activation_modes_fail_closed() {
+        for activation in [
+            ActivationMode::EphemeralSnapshotRollback,
+            ActivationMode::EphemeralVm,
+        ] {
+            let mut config = sample_vm("runner", "/vms/base.qcow2");
+            config.activation = activation;
+            assert!(
+                matches!(
+                    validate_vm_configs(&[config]),
+                    Err(VmError::InvalidConfig(_))
+                ),
+                "activation mode {activation:?} must not silently run as a persistent VM"
+            );
+        }
     }
 
     #[test]

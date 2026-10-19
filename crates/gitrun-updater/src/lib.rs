@@ -281,17 +281,39 @@ impl ReleaseManifest {
     }
 }
 
+fn signature_required_from_env(value: Option<&str>) -> Result<bool, UpdateError> {
+    match value.map(str::trim) {
+        None | Some("") => Ok(true),
+        Some(value) if value.eq_ignore_ascii_case("true") || value == "1" => Ok(true),
+        Some(value) if value.eq_ignore_ascii_case("false") || value == "0" => Ok(false),
+        Some(_) => Err(UpdateError::InvalidManifest(
+            "GITRUN_UPDATE_SIGNATURE_REQUIRED must be true/false or 1/0".into(),
+        )),
+    }
+}
+
 impl ReleaseManifest {
     /// Verifies an Ed25519 signature. Signed manifests are required by
     /// default; setting GITRUN_UPDATE_SIGNATURE_REQUIRED=false is the explicit
     /// compatibility/unsafe opt-out for custom unsigned manifests.
     pub fn verify_signature_from_env(&self) -> Result<(), UpdateError> {
-        let required = std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED")
-            .ok()
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-            .unwrap_or(true);
+        let required = signature_required_from_env(
+            std::env::var("GITRUN_UPDATE_SIGNATURE_REQUIRED")
+                .ok()
+                .as_deref(),
+        )?;
         let key = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_HEX").ok();
-        match (self.signature.as_deref(), key.as_deref()) {
+        let expected_key_id = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_ID").ok();
+        self.verify_signature(required, key.as_deref(), expected_key_id.as_deref())
+    }
+
+    fn verify_signature(
+        &self,
+        required: bool,
+        public_key: Option<&str>,
+        expected_key_id: Option<&str>,
+    ) -> Result<(), UpdateError> {
+        match (self.signature.as_deref(), public_key) {
             (None, _) if required => Err(UpdateError::InvalidManifest(
                 "update manifest signature is required by default; set GITRUN_UPDATE_SIGNATURE_REQUIRED=false only for an explicit unsigned-update opt-out".into(),
             )),
@@ -300,7 +322,7 @@ impl ReleaseManifest {
                 "manifest is signed but no public key is configured".into(),
             )),
             (Some(signature), Some(public_key)) => {
-                if let Ok(expected_id) = std::env::var("GITRUN_UPDATE_PUBLIC_KEY_ID") {
+                if let Some(expected_id) = expected_key_id {
                     if self.signature_key_id.as_deref() != Some(expected_id.trim()) {
                         return Err(UpdateError::InvalidManifest(
                             "update manifest signing key id does not match configured key".into(),
@@ -706,9 +728,111 @@ pub fn apply_update(
     Ok(record)
 }
 
+fn require_backup_path(
+    path: &Path,
+    label: &str,
+    required: bool,
+    directory: Option<bool>,
+) -> Result<(), UpdateError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !required => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(UpdateError::InvalidManifest(format!(
+                "rollback {label} is missing: {}",
+                path.display()
+            )));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(UpdateError::InvalidManifest(format!(
+            "rollback {label} must not be a symlink: {}",
+            path.display()
+        )));
+    }
+    if let Some(expect_directory) = directory {
+        let correct_type = if expect_directory {
+            metadata.is_dir()
+        } else {
+            metadata.is_file()
+        };
+        if !correct_type {
+            return Err(UpdateError::InvalidManifest(format!(
+                "rollback {label} has an unexpected filesystem type: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_backup_record_paths(
+    paths: &UpdatePaths,
+    backup: &BackupRecord,
+) -> Result<PathBuf, UpdateError> {
+    if !is_version(&backup.version) {
+        return Err(UpdateError::InvalidManifest(
+            "rollback record has an invalid version".into(),
+        ));
+    }
+    let transaction_dir = paths
+        .backup_root
+        .join(format!("{}-{}", backup.version, backup.created_at));
+    if backup.install_backup != transaction_dir.join("install") {
+        return Err(UpdateError::InvalidManifest(
+            "rollback install backup is outside its trusted transaction directory".into(),
+        ));
+    }
+    if let Some(state) = backup.state_backup.as_deref() {
+        if state != transaction_dir.join("state") {
+            return Err(UpdateError::InvalidManifest(
+                "rollback state backup is outside its trusted transaction directory".into(),
+            ));
+        }
+    }
+    let expected_config = paths
+        .config_dir
+        .as_ref()
+        .map(|_| transaction_dir.join("config"));
+    if backup.config_backup != expected_config {
+        return Err(UpdateError::InvalidManifest(
+            "rollback config backup does not match the configured transaction path".into(),
+        ));
+    }
+    let expected_service = paths
+        .service_config
+        .as_ref()
+        .map(|_| transaction_dir.join("service-config"));
+    if backup.service_config_backup != expected_service {
+        return Err(UpdateError::InvalidManifest(
+            "rollback service backup does not match the configured transaction path".into(),
+        ));
+    }
+
+    require_backup_path(&paths.backup_root, "backup root", true, Some(true))?;
+    require_backup_path(&transaction_dir, "transaction directory", true, Some(true))?;
+    // The original installation may not have existed when the update ran.
+    require_backup_path(&backup.install_backup, "install backup", false, Some(true))?;
+    if let Some(state) = backup.state_backup.as_deref() {
+        require_backup_path(state, "state backup", true, Some(true))?;
+    }
+    if let Some(config) = backup.config_backup.as_deref() {
+        require_backup_path(config, "config backup", false, Some(true))?;
+    }
+    if let Some(service) = backup.service_config_backup.as_deref() {
+        require_backup_path(service, "service backup", false, None)?;
+    }
+    Ok(transaction_dir)
+}
+
 pub fn rollback(paths: &UpdatePaths, backup: &BackupRecord) -> Result<(), UpdateError> {
     validate_update_paths(paths)?;
+    validate_backup_record_paths(paths, backup)?;
     let _lock = UpdateLock::acquire(&paths.backup_root)?;
+    // Revalidate after acquiring the transaction lock and before any destructive
+    // operation; serialized record paths are never accepted as destinations.
+    validate_backup_record_paths(paths, backup)?;
     rollback_install(
         paths,
         &backup.install_backup,
@@ -847,7 +971,7 @@ pub fn apply_installed_update(
     })();
 
     if let Err(error) = result {
-        if let Err(rollback_error) = rollback_installed_update(&record) {
+        if let Err(rollback_error) = rollback_installed_update_unchecked(&record) {
             return Err(UpdateError::RolledBack(format!(
                 "{error}; rollback also failed: {rollback_error}"
             )));
@@ -863,7 +987,7 @@ pub fn apply_installed_update(
     })();
 
     if let Err(error) = backup_json {
-        let rollback_result = rollback_installed_update(&record);
+        let rollback_result = rollback_installed_update_unchecked(&record);
         if let Err(rollback_error) = rollback_result {
             return Err(UpdateError::RolledBack(format!(
                 "backup record write failed: {error}; rollback also failed: {rollback_error}"
@@ -877,7 +1001,149 @@ pub fn apply_installed_update(
     Ok(record)
 }
 
-pub fn rollback_installed_update(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
+pub fn rollback_installed_update(
+    record: &InstalledBackupRecord,
+    expected_artifacts: &[InstalledArtifact],
+    expected_version_file: &Path,
+    backup_root: &Path,
+) -> Result<(), UpdateError> {
+    validate_installed_rollback_record(
+        record,
+        expected_artifacts,
+        expected_version_file,
+        backup_root,
+    )?;
+    let _lock = UpdateLock::acquire(backup_root)?;
+    // Check again after serialization, before removing or replacing any file.
+    validate_installed_rollback_record(
+        record,
+        expected_artifacts,
+        expected_version_file,
+        backup_root,
+    )?;
+    rollback_installed_update_unchecked(record)
+}
+
+fn validate_installed_rollback_record(
+    record: &InstalledBackupRecord,
+    expected_artifacts: &[InstalledArtifact],
+    expected_version_file: &Path,
+    backup_root: &Path,
+) -> Result<PathBuf, UpdateError> {
+    if !is_version(&record.version) {
+        return Err(UpdateError::InvalidManifest(
+            "installed rollback record has an invalid version".into(),
+        ));
+    }
+    if expected_artifacts.is_empty() || record.artifacts.len() != expected_artifacts.len() {
+        return Err(UpdateError::InvalidManifest(
+            "installed rollback record does not contain the exact expected artifact set".into(),
+        ));
+    }
+    if record.version_file != expected_version_file {
+        return Err(UpdateError::InvalidManifest(
+            "installed rollback version-file path does not match the trusted installation".into(),
+        ));
+    }
+
+    let transaction_dir =
+        backup_root.join(format!("system-{}-{}", record.version, record.created_at));
+    require_backup_path(backup_root, "backup root", true, Some(true))?;
+    require_backup_path(
+        &transaction_dir,
+        "installed transaction directory",
+        true,
+        Some(true),
+    )?;
+
+    for expected in expected_artifacts {
+        let matches: Vec<_> = record
+            .artifacts
+            .iter()
+            .filter(|item| {
+                item.archive_name == expected.archive_name
+                    && item.destination == expected.destination
+            })
+            .collect();
+        if matches.len() != 1 {
+            return Err(UpdateError::InvalidManifest(format!(
+                "installed rollback artifact {:?} does not match the trusted destination",
+                expected.archive_name
+            )));
+        }
+        let item = matches[0];
+        let file_name = expected
+            .destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                UpdateError::InvalidManifest(
+                    "trusted installed artifact has no safe file name".into(),
+                )
+            })?;
+        let expected_backup = transaction_dir.join(format!("artifact-{file_name}"));
+        if let Some(backup) = item.backup.as_deref() {
+            if backup != expected_backup {
+                return Err(UpdateError::InvalidManifest(
+                    "installed artifact backup is outside its trusted transaction directory".into(),
+                ));
+            }
+            require_backup_path(backup, "installed artifact backup", true, Some(false))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if fs::metadata(backup)?.nlink() != 1 {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "installed artifact backup must not be hard-linked: {}",
+                        backup.display()
+                    )));
+                }
+            }
+        }
+        require_backup_path(
+            &expected.destination,
+            "installed artifact destination",
+            false,
+            None,
+        )?;
+        if let Ok(metadata) = fs::symlink_metadata(&expected.destination) {
+            if !metadata.is_file() {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "installed artifact destination is not a regular file: {}",
+                    expected.destination.display()
+                )));
+            }
+        }
+    }
+
+    let expected_version_backup = transaction_dir.join("version.txt");
+    if let Some(backup) = record.version_file_backup.as_deref() {
+        if backup != expected_version_backup {
+            return Err(UpdateError::InvalidManifest(
+                "installed version backup is outside its trusted transaction directory".into(),
+            ));
+        }
+        require_backup_path(backup, "installed version backup", true, Some(false))?;
+    }
+    require_backup_path(
+        expected_version_file,
+        "installed version-file destination",
+        false,
+        None,
+    )?;
+    if let Ok(metadata) = fs::symlink_metadata(expected_version_file) {
+        if !metadata.is_file() {
+            return Err(UpdateError::InvalidManifest(format!(
+                "installed version-file destination is not a regular file: {}",
+                expected_version_file.display()
+            )));
+        }
+    }
+    Ok(transaction_dir)
+}
+
+fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
     for artifact in &record.artifacts {
         if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
             if meta.file_type().is_symlink() || meta.is_dir() {
@@ -1220,18 +1486,34 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
         }
     };
     if command.0 == "apt-get" {
-        let mut apt = Command::new("apt-get");
+        let apt_get = linux_system_command("apt-get")
+            .ok_or_else(|| UpdateError::Command("trusted /usr/bin/apt-get was not found".into()))?;
+        let mut apt = Command::new(apt_get);
         apt.args(["update"]);
         if !is_root() {
-            apt = Command::new("sudo");
-            apt.args(["apt-get", "update"]);
+            let sudo = linux_system_command("sudo").ok_or_else(|| {
+                UpdateError::Command("trusted /usr/bin/sudo was not found".into())
+            })?;
+            apt = Command::new(sudo);
+            apt.args([apt_get, "update"]);
         }
         run_command(&mut apt)?;
     }
-    let mut update = if command.0 == "apt-get" && !is_root() {
-        let mut sudo = Command::new("sudo");
-        sudo.arg("apt-get").args(&command.1);
-        sudo
+    let mut update = if command.0 == "apt-get" {
+        let apt_get = linux_system_command("apt-get")
+            .ok_or_else(|| UpdateError::Command("trusted /usr/bin/apt-get was not found".into()))?;
+        if is_root() {
+            let mut apt = Command::new(apt_get);
+            apt.args(&command.1);
+            apt
+        } else {
+            let sudo = linux_system_command("sudo").ok_or_else(|| {
+                UpdateError::Command("trusted /usr/bin/sudo was not found".into())
+            })?;
+            let mut apt = Command::new(sudo);
+            apt.arg(apt_get).args(&command.1);
+            apt
+        }
     } else {
         let mut cmd = Command::new(command.0);
         cmd.args(&command.1);
@@ -1284,11 +1566,23 @@ fn dependency_command(name: &str) -> Option<&'static str> {
     }
 }
 
+fn linux_system_command(name: &str) -> Option<&'static str> {
+    match name {
+        "apt-get" => Some("/usr/bin/apt-get"),
+        "sudo" => Some("/usr/bin/sudo"),
+        "id" => Some("/usr/bin/id"),
+        _ => None,
+    }
+}
+
 fn is_root() -> bool {
     if cfg!(windows) {
         return false;
     }
-    Command::new("id")
+    let Some(id) = linux_system_command("id") else {
+        return false;
+    };
+    Command::new(id)
         .args(["-u"])
         .output()
         .map(|output| {
@@ -1526,7 +1820,12 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                     "archive contains links or special filesystem entries".into(),
                 ));
             }
-            entry.unpack_in(destination)?;
+            let unpacked = entry.unpack_in(destination)?;
+            if !unpacked {
+                return Err(UpdateError::InvalidManifest(
+                    "archive entry escapes the update staging directory".into(),
+                ));
+            }
         }
     } else if name.ends_with(".zip") {
         let file = fs::File::open(archive)?;
@@ -1676,16 +1975,30 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
 
 fn http_client() -> Result<Client, UpdateError> {
     Ok(Client::builder()
+        // A valid HTTPS starting URL is not enough: an HTTP downgrade during
+        // redirect would still send the updater's request over cleartext.
+        // Keep every redirect on HTTPS, including release-asset redirects.
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if is_https_url(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.error("update redirects must remain on HTTPS")
+            }
+        }))
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(300))
         .user_agent("GitRun-Updater/0.3")
         .build()?)
 }
 
+fn is_https_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+}
+
 fn validate_https_url(value: &str) -> Result<(), UpdateError> {
     let url = reqwest::Url::parse(value)
         .map_err(|_| UpdateError::InvalidManifest(format!("invalid HTTPS URL: {value}")))?;
-    if url.scheme() != "https" {
+    if !is_https_url(&url) {
         return Err(UpdateError::InvalidManifest(format!(
             "update URL must use HTTPS: {value}"
         )));
@@ -2014,6 +2327,29 @@ mod tests {
     }
 
     #[test]
+    fn privileged_linux_package_commands_use_fixed_system_paths() {
+        assert_eq!(linux_system_command("apt-get"), Some("/usr/bin/apt-get"));
+        assert_eq!(linux_system_command("sudo"), Some("/usr/bin/sudo"));
+        assert_eq!(linux_system_command("id"), Some("/usr/bin/id"));
+        assert_eq!(linux_system_command("custom"), None);
+    }
+
+    #[test]
+    fn signature_requirement_defaults_to_required_and_accepts_explicit_values_only() {
+        assert!(signature_required_from_env(None).unwrap());
+        assert!(signature_required_from_env(Some("")).unwrap());
+        assert!(signature_required_from_env(Some("true")).unwrap());
+        assert!(signature_required_from_env(Some("TRUE")).unwrap());
+        assert!(signature_required_from_env(Some("1")).unwrap());
+        assert!(!signature_required_from_env(Some("false")).unwrap());
+        assert!(!signature_required_from_env(Some("FALSE")).unwrap());
+        assert!(!signature_required_from_env(Some("0")).unwrap());
+        assert!(signature_required_from_env(Some("treu")).is_err());
+        assert!(signature_required_from_env(Some("false ")).is_ok());
+        assert!(signature_required_from_env(Some("yes")).is_err());
+    }
+
+    #[test]
     fn canonical_premade_runner_source_is_immutable() {
         let source = canonical_premade_runner_dockerfile();
         assert_eq!(source.repository, CANONICAL_PREMADE_RUNNER_REPOSITORY);
@@ -2027,6 +2363,57 @@ mod tests {
         let mut source = canonical_premade_runner_dockerfile();
         source.reference = "refs/heads/main".into();
         assert!(source.validate().is_err());
+    }
+
+    #[test]
+    fn signature_verification_accepts_valid_signature_and_rejects_tampering() {
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+
+        let seed = [7u8; 32];
+        let key_pair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
+        let mut signed = manifest();
+        signed.signature_key_id = Some("release-key-1".into());
+        let payload = signed.signing_payload().unwrap();
+        signed.signature = Some(
+            key_pair
+                .sign(&payload)
+                .as_ref()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        );
+        let public_key: String = key_pair
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+
+        assert!(signed
+            .verify_signature(true, Some(&public_key), Some("release-key-1"))
+            .is_ok());
+        assert!(signed
+            .verify_signature(true, Some(&public_key), Some("wrong-key"))
+            .is_err());
+
+        let mut tampered = signed.clone();
+        tampered.version = "0.3.1".into();
+        assert!(tampered
+            .verify_signature(true, Some(&public_key), Some("release-key-1"))
+            .is_err());
+    }
+
+    #[test]
+    fn signature_verification_fails_closed_without_key_or_required_signature() {
+        let unsigned = manifest();
+        assert!(unsigned.verify_signature(true, None, None).is_err());
+        assert!(unsigned.verify_signature(false, None, None).is_ok());
+
+        let mut signed_without_key = unsigned;
+        signed_without_key.signature = Some("a".repeat(128));
+        assert!(signed_without_key
+            .verify_signature(false, None, None)
+            .is_err());
     }
 
     #[test]
@@ -2172,9 +2559,20 @@ mod tests {
     }
 
     #[test]
+    fn update_redirect_targets_must_remain_https() {
+        let secure = reqwest::Url::parse("https://github.com/releases/asset").unwrap();
+        let mut downgrade = reqwest::Url::parse("https://example.invalid/asset").unwrap();
+        downgrade.set_scheme("http").unwrap();
+        assert!(is_https_url(&secure));
+        assert!(!is_https_url(&downgrade));
+    }
+
+    #[test]
     fn rejects_http_artifact_url() {
         let mut m = manifest();
-        m.artifacts[0].download_url = Some("http://example.invalid/a".into());
+        let mut insecure = reqwest::Url::parse("https://example.invalid/a").unwrap();
+        insecure.set_scheme("http").unwrap();
+        m.artifacts[0].download_url = Some(insecure.to_string());
         assert!(build_plan(&m, "0.2.0", "x86_64-unknown-linux-gnu", &[]).is_err());
     }
 
@@ -2200,6 +2598,42 @@ mod tests {
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
 
         health_check_binary(&root, None).unwrap();
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_tar_archive_entries_that_escape_staging_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-tar-traversal-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let archive_path = root.join("malicious.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive_path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"must not escape staging";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        // Write the hostile path directly into the tar header. The tar builder's
+        // append_data validates paths and rejects traversal before the extractor
+        // under test ever sees the archive.
+        header.as_mut_bytes()[..14].copy_from_slice(b"../outside.txt");
+        header.set_cksum();
+        archive.append(&header, &payload[..]).unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let destination = root.join("destination");
+        let result = extract_archive(&archive_path, "x86_64-unknown-linux-gnu", &destination);
+        assert!(matches!(result, Err(UpdateError::InvalidManifest(message))
+            if message.contains("escapes the update staging directory")));
+        assert!(!root.join("outside.txt").exists());
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -2262,6 +2696,222 @@ mod tests {
         let result = copy_dir(&root.join("source"), &root.join("dest"));
         assert!(result.is_err());
 
+        let _ = fs::remove_dir_all(&root);
+    }
+    #[test]
+    fn failed_health_check_rolls_back_a_partially_installed_update() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-apply-rollback-{}-{nonce}",
+            std::process::id()
+        ));
+        let install = root.join("install");
+        let state = root.join("state");
+        let backup_root = root.join("backups");
+        fs::create_dir_all(&install).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::write(install.join("version.txt"), b"previous-version").unwrap();
+        fs::write(install.join("keep-me"), b"previous-install").unwrap();
+        fs::write(state.join("settings.json"), b"previous-state").unwrap();
+
+        let archive_path = root.join("broken-update.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive_path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"this archive intentionally omits the gitrun executable";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "unrelated.txt", &payload[..])
+            .unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let paths = UpdatePaths {
+            install_dir: install.clone(),
+            state_dir: state.clone(),
+            config_dir: None,
+            service_config: None,
+            backup_root: backup_root.clone(),
+        };
+        let result = apply_update(
+            &paths,
+            &archive_path,
+            "x86_64-unknown-linux-gnu",
+            "1.2.3",
+            true,
+        );
+        assert!(
+            matches!(result, Err(UpdateError::RolledBack(message))
+                if message.contains("updated binary not found")),
+            "missing updated executable should fail health-check and report rollback"
+        );
+        assert_eq!(
+            fs::read(install.join("version.txt")).unwrap(),
+            b"previous-version"
+        );
+        assert_eq!(
+            fs::read(install.join("keep-me")).unwrap(),
+            b"previous-install"
+        );
+        assert!(!install.join("unrelated.txt").exists());
+        assert_eq!(
+            fs::read(state.join("settings.json")).unwrap(),
+            b"previous-state",
+            "state must survive the failed transaction"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn generic_rollback_restores_the_trusted_install_backup() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-rollback-restore-{}-{nonce}",
+            std::process::id()
+        ));
+        let install = root.join("install");
+        let state = root.join("state");
+        let backup_root = root.join("backups");
+        let transaction = backup_root.join("1.2.3-42");
+        let install_backup = transaction.join("install");
+
+        fs::create_dir_all(&install).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&install_backup).unwrap();
+        fs::write(install.join("version.txt"), b"new-version").unwrap();
+        fs::write(install.join("new-only.txt"), b"new").unwrap();
+        fs::write(install_backup.join("version.txt"), b"previous-version").unwrap();
+        fs::write(state.join("preserve.txt"), b"state-is-not-being-restored").unwrap();
+
+        let paths = UpdatePaths {
+            install_dir: install.clone(),
+            state_dir: state.clone(),
+            config_dir: None,
+            service_config: None,
+            backup_root: backup_root.clone(),
+        };
+        let record = BackupRecord {
+            created_at: 42,
+            version: "1.2.3".into(),
+            install_backup: install_backup.clone(),
+            state_backup: None,
+            config_backup: None,
+            service_config_backup: None,
+        };
+
+        rollback(&paths, &record).expect("rollback should restore the trusted backup");
+
+        assert_eq!(
+            fs::read(install.join("version.txt")).unwrap(),
+            b"previous-version"
+        );
+        assert!(!install.join("new-only.txt").exists());
+        assert!(
+            !install_backup.exists(),
+            "trusted backup should be renamed into place"
+        );
+        assert_eq!(
+            fs::read(state.join("preserve.txt")).unwrap(),
+            b"state-is-not-being-restored"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn generic_rollback_rejects_backup_paths_outside_trusted_transaction() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-rollback-paths-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let install = root.join("install");
+        let state = root.join("state");
+        let backup_root = root.join("backups");
+        let transaction = backup_root.join("1.2.3-42");
+        let attacker_install_backup = root.join("attacker-install");
+        fs::create_dir_all(&install).unwrap();
+        fs::write(install.join("sentinel"), b"keep").unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&transaction).unwrap();
+        fs::create_dir_all(&attacker_install_backup).unwrap();
+        fs::write(attacker_install_backup.join("replacement"), b"untrusted").unwrap();
+
+        let paths = UpdatePaths {
+            install_dir: install.clone(),
+            state_dir: state.clone(),
+            config_dir: None,
+            service_config: None,
+            backup_root: backup_root.clone(),
+        };
+        let record = BackupRecord {
+            created_at: 42,
+            version: "1.2.3".into(),
+            install_backup: attacker_install_backup,
+            state_backup: None,
+            config_backup: None,
+            service_config_backup: None,
+        };
+
+        assert!(rollback(&paths, &record).is_err());
+        assert_eq!(fs::read(install.join("sentinel")).unwrap(), b"keep");
+        assert!(root.join("attacker-install/replacement").is_file());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn installed_rollback_rejects_untrusted_destination_before_side_effects() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-installed-rollback-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let backup_root = root.join("backups");
+        let version = "1.2.3";
+        let timestamp = 77;
+        let transaction = backup_root.join(format!("system-{version}-{timestamp}"));
+        let binary = root.join("trusted-install/gitrun");
+        let version_file = root.join("trusted-share/version.txt");
+        let attacker_target = root.join("attacker-target");
+        fs::create_dir_all(&transaction).unwrap();
+        fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        fs::create_dir_all(version_file.parent().unwrap()).unwrap();
+        fs::write(&binary, b"current binary").unwrap();
+        fs::write(&version_file, b"1.2.3\n").unwrap();
+        fs::write(&attacker_target, b"do not touch").unwrap();
+
+        let expected = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: binary.clone(),
+            required: true,
+        }];
+        let record = InstalledBackupRecord {
+            created_at: timestamp,
+            version: version.into(),
+            artifacts: vec![InstalledArtifactBackup {
+                archive_name: "gitrun".into(),
+                destination: attacker_target.clone(),
+                backup: None,
+            }],
+            version_file: version_file.clone(),
+            version_file_backup: None,
+        };
+
+        assert!(
+            rollback_installed_update(&record, &expected, &version_file, &backup_root).is_err()
+        );
+        assert_eq!(fs::read(&binary).unwrap(), b"current binary");
+        assert_eq!(fs::read(&attacker_target).unwrap(), b"do not touch");
+        assert_eq!(fs::read(&version_file).unwrap(), b"1.2.3\n");
         let _ = fs::remove_dir_all(&root);
     }
 }

@@ -1,6 +1,7 @@
 use clap::Parser;
-use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, Runner};
+use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, GitRunSettings, Runner};
 use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, BootstrapAuth};
+use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
     fetch_manifest, latest_manifest, pin_runner_image, rollback, rollback_installed_update,
@@ -32,6 +33,60 @@ macro_rules! eprintln {
     ($($arg:tt)*) => {
         $crate::presenter::terminal_print(format_args!($($arg)*), true, true)
     };
+}
+
+const TRUSTED_SYSTEM_CONFIG_FILE: &str = "/etc/gitrun/gitrun.env";
+
+fn select_update_config_path(
+    system_install: bool,
+    configured_path: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if system_install {
+        // Installed system updates must never write to an environment-selected
+        // path. systemd's canonical EnvironmentFile is /etc/gitrun/gitrun.env.
+        Some(PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE))
+    } else {
+        configured_path
+    }
+}
+
+fn trusted_system_config_path() -> Option<PathBuf> {
+    let path = PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE);
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // System config can contain credentials. Refuse unsafe ownership or
+        // group/world write access instead of silently reading/updating it.
+        if metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+            return None;
+        }
+    }
+    Some(path)
+}
+
+fn update_config_path(system_install: bool) -> Option<PathBuf> {
+    let configured_path = if system_install {
+        // Validate the fixed path itself before selection. Do not permit a
+        // missing or unsafe trusted file to fall back to an environment path.
+        trusted_system_config_path()?
+    } else {
+        persistent_config_path()?
+    };
+    select_update_config_path(system_install, Some(configured_path))
+}
+
+fn initialize_system_update_config_path(system_install: bool) {
+    if system_install {
+        // load_config() honors these variables for developer installs. Pin the
+        // installed update process to the service's trusted config and discard
+        // an alternate directory that could otherwise redirect root-side work.
+        std::env::set_var("GITRUN_CONFIG_FILE", TRUSTED_SYSTEM_CONFIG_FILE);
+        std::env::remove_var("GITRUN_CONFIG_DIR");
+    }
 }
 
 fn persistent_config_path() -> Option<PathBuf> {
@@ -111,16 +166,15 @@ fn system_install_paths() -> Option<(PathBuf, PathBuf)> {
         return None;
     }
 
-    let version_file = std::env::var("GITRUN_VERSION_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/usr/share/gitrun/version.txt"));
+    // Never let inherited environment variables redirect a privileged update.
+    let version_file = PathBuf::from("/usr/share/gitrun/version.txt");
     Some((executable, version_file))
 }
 
 fn running_as_root() -> bool {
     #[cfg(unix)]
     {
-        std::process::Command::new("id")
+        std::process::Command::new("/usr/bin/id")
             .args(["-u"])
             .output()
             .map(|output| {
@@ -139,59 +193,38 @@ const DEFAULT_UPDATE_PUBLIC_KEY_HEX: &str =
 const DEFAULT_UPDATE_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
 
 fn update_signing_environment() -> Vec<(String, String)> {
-    const KEYS: [&str; 3] = [
-        "GITRUN_UPDATE_PUBLIC_KEY_HEX",
-        "GITRUN_UPDATE_PUBLIC_KEY_ID",
-        "GITRUN_UPDATE_SIGNATURE_REQUIRED",
-    ];
-
-    let mut values = Vec::new();
-    for key in KEYS {
-        if let Ok(value) = std::env::var(key) {
-            if !value.trim().is_empty() {
-                values.push((key.to_owned(), value));
-            }
-        }
-    }
-
-    if let Some(path) = persistent_config_path() {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            for raw in content.lines() {
-                let line = raw.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                let Some((key, value)) = line.split_once('=') else {
-                    continue;
-                };
-                let key = key.trim();
-                if KEYS.contains(&key) && !values.iter().any(|(existing, _)| existing == key) {
-                    let value = value.trim().trim_matches(['"', '\\']);
-                    if !value.is_empty() {
-                        values.push((key.to_owned(), value.to_owned()));
-                    }
-                }
-            }
-        }
-    }
-
-    // The official release verification key is a trust anchor, not a secret.
-    // Keep updates verifiable on existing installs whose generated config
-    // predates the signing settings. Explicit operator values take precedence.
-    for (key, value) in [
+    vec![
         (
-            "GITRUN_UPDATE_PUBLIC_KEY_HEX",
-            DEFAULT_UPDATE_PUBLIC_KEY_HEX,
+            "GITRUN_UPDATE_PUBLIC_KEY_HEX".to_owned(),
+            DEFAULT_UPDATE_PUBLIC_KEY_HEX.to_owned(),
         ),
-        ("GITRUN_UPDATE_PUBLIC_KEY_ID", DEFAULT_UPDATE_PUBLIC_KEY_ID),
-        ("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true"),
-    ] {
-        if !values.iter().any(|(existing, _)| existing == key) {
-            values.push((key.to_owned(), value.to_owned()));
-        }
-    }
+        (
+            "GITRUN_UPDATE_PUBLIC_KEY_ID".to_owned(),
+            DEFAULT_UPDATE_PUBLIC_KEY_ID.to_owned(),
+        ),
+        (
+            "GITRUN_UPDATE_SIGNATURE_REQUIRED".to_owned(),
+            "true".to_owned(),
+        ),
+    ]
+}
 
-    values
+fn update_signing_environment_changes(
+    force_trusted_values: bool,
+    is_set: impl Fn(&str) -> bool,
+) -> Vec<(String, String)> {
+    update_signing_environment()
+        .into_iter()
+        .filter(|(key, _)| force_trusted_values || !is_set(key))
+        .collect()
+}
+
+fn initialize_update_signing_environment(force_trusted_values: bool) {
+    for (key, value) in update_signing_environment_changes(force_trusted_values, |key| {
+        std::env::var_os(key).is_some()
+    }) {
+        std::env::set_var(key, value);
+    }
 }
 
 fn elevate_system_update(
@@ -204,7 +237,7 @@ fn elevate_system_update(
     presenter.prepare_for_external_process();
 
     let executable = std::env::current_exe()?;
-    let mut command = std::process::Command::new("sudo");
+    let mut command = std::process::Command::new("/usr/bin/sudo");
     for (key, value) in update_signing_environment() {
         command.arg("env").arg(format!("{key}={value}"));
     }
@@ -256,7 +289,7 @@ fn run_embedded_privileged_helper(
         file.write_all(script.as_bytes())?;
         file.sync_all()?;
         presenter.prepare_for_external_process();
-        let status = std::process::Command::new("bash")
+        let status = std::process::Command::new("/bin/bash")
             .arg(&script_path)
             .arg(&executable)
             .status()?;
@@ -417,17 +450,22 @@ fn update_command(
         );
     }
 
+    let system_install = system_install_paths();
+    let config_path = update_config_path(system_install.is_some());
+    if system_install.is_some() && config_path.is_none() {
+        return Err(
+            "trusted system config /etc/gitrun/gitrun.env is missing or unsafe; refusing privileged update"
+                .into(),
+        );
+    }
+
     let updated_dependencies = update_incompatible_dependencies(&plan)?;
     if !updated_dependencies.is_empty() {
         println!("dependencies updated: {}", updated_dependencies.join(", "));
     }
 
-    let config_path = persistent_config_path();
-    let system_install = system_install_paths();
     let work_root = match system_install {
-        Some(_) => PathBuf::from(
-            std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| "/var/lib/gitrun/update".into()),
-        ),
+        Some(_) => PathBuf::from("/var/lib/gitrun/update"),
         None => PathBuf::from(
             std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| ".gitrun-update".into()),
         ),
@@ -440,9 +478,8 @@ fn update_command(
     println!("checksum: PASS");
 
     if let Some((gitrun_binary, version_file)) = system_install {
-        let backup_root = PathBuf::from(
-            std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "/var/lib/gitrun/backups".into()),
-        );
+        // System-update backup destinations are fixed even when running as root.
+        let backup_root = PathBuf::from("/var/lib/gitrun/backups");
         let artifacts = [InstalledArtifact {
             archive_name: "gitrun".into(),
             destination: gitrun_binary.clone(),
@@ -461,7 +498,9 @@ fn update_command(
 
         if let Some(image) = &plan.runner_image {
             if let Err(error) = update_runner_image(image) {
-                let rollback_error = rollback_installed_update(&backup).err();
+                let rollback_error =
+                    rollback_installed_update(&backup, &artifacts, &version_file, &backup_root)
+                        .err();
                 return Err(match rollback_error {
                     Some(rollback_error) => format!(
                         "runner update failed: {error}; GitRun rollback also failed: {rollback_error}"
@@ -472,7 +511,9 @@ fn update_command(
             }
             if let Some(config_file) = config_path.as_deref() {
                 if let Err(error) = pin_runner_image(config_file, image) {
-                    let rollback_error = rollback_installed_update(&backup).err();
+                    let rollback_error =
+                        rollback_installed_update(&backup, &artifacts, &version_file, &backup_root)
+                            .err();
                     return Err(match rollback_error {
                         Some(rollback_error) => format!(
                             "runner configuration update failed: {error}; GitRun rollback also failed: {rollback_error}"
@@ -488,7 +529,8 @@ fn update_command(
 
         presenter.transition(presenter::ValidationState::Running);
         if let Err(error) = restart_scheduler_service() {
-            let rollback_result = rollback_installed_update(&backup);
+            let rollback_result =
+                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
             let restore_result = restart_scheduler_service();
             return match (rollback_result, restore_result) {
                 (Ok(()), Ok(())) => Err(format!(
@@ -617,8 +659,59 @@ fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn read_privileged_setup_payload(path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        use std::os::unix::fs::MetadataExt;
+
+        let path = Path::new(path);
+        let before = std::fs::symlink_metadata(path)?;
+        if before.file_type().is_symlink() || !before.is_file() {
+            return Err("setup payload must be a regular, non-symlink file".into());
+        }
+        if before.len() > 1024 * 1024 {
+            return Err("setup payload exceeds the 1 MiB safety limit".into());
+        }
+
+        let expected_uid = match std::env::var("PKEXEC_UID").or_else(|_| std::env::var("SUDO_UID"))
+        {
+            Ok(value) => value.parse::<u32>()?,
+            Err(_) => 0,
+        };
+        let mut file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        // Compare the opened inode with lstat's result to reject path swaps
+        // between validation and open, then enforce owner/mode on the handle.
+        if metadata.dev() != before.dev() || metadata.ino() != before.ino() {
+            return Err("setup payload changed during validation".into());
+        }
+        if !metadata.is_file() || metadata.uid() != expected_uid {
+            return Err("setup payload is not owned by the requesting user".into());
+        }
+        if metadata.mode() & 0o077 != 0 {
+            return Err("setup payload permissions must be 0600 or stricter".into());
+        }
+        if metadata.len() > 1024 * 1024 {
+            return Err("setup payload exceeds the 1 MiB safety limit".into());
+        }
+
+        let mut raw = String::with_capacity(metadata.len() as usize);
+        file.read_to_string(&mut raw)?;
+        if raw.len() as u64 > 1024 * 1024 {
+            return Err("setup payload exceeds the 1 MiB safety limit".into());
+        }
+        Ok(raw)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err("privileged setup payload validation is supported on Unix only".into())
+    }
+}
+
 fn reinstall_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let raw = std::fs::read_to_string(path)?;
+    let raw = read_privileged_setup_payload(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
         .ok()
@@ -644,7 +737,7 @@ fn reinstall_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let raw = std::fs::read_to_string(path)?;
+    let raw = read_privileged_setup_payload(path)?;
     let owner_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
         .ok()
@@ -835,36 +928,55 @@ fn verify_repository_access(
     }
 }
 
-fn write_version_file(path: &Path, version: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn atomic_replace_text(
+    path: &Path,
+    content: &str,
+    mode: u32,
+    prefix: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let temp = parent.join(format!(
-        ".gitrun-version-{}.{}.tmp",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-    ));
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o644)
-            .open(&temp)?;
-        file.write_all(format!("{version}\n").as_bytes())?;
-        file.sync_all()?;
-        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o644))?;
-    }
     #[cfg(not(unix))]
-    {
-        std::fs::write(&temp, format!("{version}\n"))?;
-    }
+    let _ = mode;
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let temp = parent.join(format!(".{prefix}-{}-{nonce}.tmp", std::process::id()));
 
-    if let Err(error) = std::fs::rename(&temp, path) {
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(mode)
+                .open(&temp)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+            std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(mode))?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+        }
+
+        std::fs::rename(&temp, path)?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+
+    if result.is_err() {
         let _ = std::fs::remove_file(&temp);
-        return Err(error.into());
     }
-    Ok(())
+    result
+}
+
+fn write_version_file(path: &Path, version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    atomic_replace_text(path, &format!("{version}\n"), 0o644, "gitrun-version")
 }
 
 fn write_repositories_to_config(
@@ -895,33 +1007,7 @@ fn write_repositories_to_config(
 
     let mut rendered = output.join("\n");
     rendered.push('\n');
-
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let temp = parent.join(format!(
-        ".gitrun-connect-{}.{}.tmp",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-    ));
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)?;
-        file.write_all(rendered.as_bytes())?;
-        file.sync_all()?;
-        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&temp, rendered.as_bytes())?;
-    }
-
-    std::fs::rename(&temp, path)?;
-    Ok(())
+    atomic_replace_text(path, &rendered, 0o600, "gitrun-connect")
 }
 
 fn terminal_setup_command(
@@ -1061,7 +1147,9 @@ fn terminal_setup_command(
         let executable = std::env::current_exe()?;
         println!();
         println!("Installing GitRun with elevated privileges...");
-        let uid = std::process::Command::new("id").arg("-u").output()?;
+        let uid = std::process::Command::new("/usr/bin/id")
+            .arg("-u")
+            .output()?;
         let running_as_root =
             uid.status.success() && String::from_utf8_lossy(&uid.stdout).trim() == "0";
         let status = if running_as_root {
@@ -1070,7 +1158,7 @@ fn terminal_setup_command(
                 .arg(&path)
                 .status()?
         } else {
-            std::process::Command::new("sudo")
+            std::process::Command::new("/usr/bin/sudo")
                 .arg(&executable)
                 .arg("--install-root")
                 .arg(&path)
@@ -1128,10 +1216,29 @@ fn rollback_command(
     presenter.transition(presenter::ValidationState::Recovering);
     let raw = std::fs::read_to_string(path)?;
     if let Ok(backup) = serde_json::from_str::<InstalledBackupRecord>(&raw) {
-        rollback_installed_update(&backup)?;
+        let (gitrun_binary, version_file) = system_install_paths().ok_or(
+            "installed-system rollback records can only be applied by the installed GitRun binary",
+        )?;
+        let backup_root = PathBuf::from("/var/lib/gitrun/backups");
+        let expected_artifacts = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: gitrun_binary,
+            required: true,
+        }];
+        rollback_installed_update(&backup, &expected_artifacts, &version_file, &backup_root)?;
         presenter.transition(presenter::ValidationState::Success);
         println!("GitRun rollback: PASS");
         return Ok(());
+    }
+
+    // System installs exclusively use InstalledBackupRecord with fixed trusted
+    // artifact destinations. Never reinterpret a malformed/system record as a
+    // developer backup whose JSON could select arbitrary restore paths.
+    if system_install_paths().is_some() {
+        return Err(
+            "invalid or unsupported system rollback record; refusing untrusted restore paths"
+                .into(),
+        );
     }
 
     let backup: BackupRecord = serde_json::from_str(&raw)?;
@@ -1140,12 +1247,8 @@ fn rollback_command(
     let state_dir =
         PathBuf::from(std::env::var("GITRUN_STATE_DIR").unwrap_or_else(|_| "./state".into()));
     let config_dir = std::env::var("GITRUN_CONFIG_DIR").ok().map(PathBuf::from);
-    let backup_root = backup
-        .install_backup
-        .parent()
-        .and_then(Path::parent)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("./backups"));
+    let backup_root =
+        PathBuf::from(std::env::var("GITRUN_BACKUP_DIR").unwrap_or_else(|_| "./backups".into()));
     let service_config = std::env::var("GITRUN_SERVICE_CONFIG")
         .ok()
         .map(PathBuf::from);
@@ -1268,6 +1371,11 @@ fn main() {
             queued,
         } => run_desired(min, max, busy, queued),
         Command::Status { runner } => run_status(runner, &mut presenter),
+        Command::FastStop {
+            repository,
+            run_id,
+            yes: _,
+        } => run_fast_stop(&repository, run_id),
         Command::Setup { terminal } => {
             if terminal {
                 match terminal_setup_command(&mut presenter) {
@@ -1345,6 +1453,24 @@ fn main() {
                 1
             }
         },
+        Command::SaveGitRunSettingsRoot { input_path } => {
+            match save_gitrun_settings_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun security settings save: FAIL — {error}");
+                    1
+                }
+            }
+        }
+        Command::SaveKittySettingsRoot { input_path } => {
+            match save_kitty_settings_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun Kitty settings save: FAIL — {error}");
+                    1
+                }
+            }
+        }
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -1370,6 +1496,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
     match command {
         Command::Config | Command::Settings => ValidationState::Reading,
         Command::Desired { .. } => ValidationState::Working,
+        Command::FastStop { .. } => ValidationState::Working,
         Command::Setup { .. } | Command::InstallRoot { .. } => ValidationState::Setup,
         Command::Cat => ValidationState::Ready,
         Command::Connect { .. } => ValidationState::Connecting,
@@ -1386,7 +1513,9 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::ReinstallRoot { .. }
         | Command::ReinstallLatestRoot
         | Command::ReinstallExistingRoot
-        | Command::SaveConfigRoot { .. } => ValidationState::Recovering,
+        | Command::SaveConfigRoot { .. }
+        | Command::SaveGitRunSettingsRoot { .. }
+        | Command::SaveKittySettingsRoot { .. } => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1450,6 +1579,16 @@ enum Command {
         #[arg(long)]
         runner: u64,
     },
+    /// Immediately force-cancel an entire GitHub Actions workflow run (all jobs in that run).
+    FastStop {
+        /// Repository in owner/repository form; must be configured in GitRun.
+        repository: String,
+        /// GitHub Actions workflow run ID.
+        run_id: u64,
+        /// Required acknowledgement that the entire workflow run will be cancelled.
+        #[arg(long, required = true)]
+        yes: bool,
+    },
     /// Check dependencies and prepare config/state/log directories.
     Setup {
         /// Run the complete first-run wizard in the terminal.
@@ -1497,6 +1636,18 @@ enum Command {
     #[command(name = "--save-config-root", hide = true)]
     SaveConfigRoot {
         /// Private JSON file containing a Config object.
+        input_path: String,
+    },
+    /// Internal privileged command to atomically persist the security policy.
+    #[command(name = "--save-gitrun-settings-root", hide = true)]
+    SaveGitRunSettingsRoot {
+        /// Private JSON file containing a GitRunSettings object.
+        input_path: String,
+    },
+    /// Internal privileged command to persist validated optional Kitty settings.
+    #[command(name = "--save-kitty-settings-root", hide = true)]
+    SaveKittySettingsRoot {
+        /// Private JSON file containing a KittySettings object.
         input_path: String,
     },
 
@@ -1600,6 +1751,45 @@ fn build_status_github_client(
             connect_timeout,
             request_timeout,
         )?),
+    }
+}
+
+fn run_fast_stop(repository: &str, run_id: u64) -> i32 {
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("GitRun fast-stop: could not load configuration: {error}");
+            return 2;
+        }
+    };
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == repository)
+    {
+        eprintln!("GitRun fast-stop: refusing repository {repository:?}; it is not in the configured repository allowlist");
+        return 2;
+    }
+    if run_id == 0 {
+        eprintln!("GitRun fast-stop: workflow run ID must be greater than zero");
+        return 2;
+    }
+    let client = match build_status_github_client(&config) {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("GitRun fast-stop: GitHub authentication failed: {error}");
+            return 1;
+        }
+    };
+    match client.force_cancel_workflow_run(repository, run_id) {
+        Ok(()) => {
+            println!("GitRun fast-stop: GitHub accepted force-cancellation for workflow run {run_id} in {repository}. All jobs in that workflow run are affected.");
+            0
+        }
+        Err(error) => {
+            eprintln!("GitRun fast-stop: force-cancellation failed for workflow run {run_id} in {repository}: {error}");
+            1
+        }
     }
 }
 
@@ -2030,10 +2220,14 @@ fn run_doctor() -> i32 {
 }
 
 fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
-    for (key, value) in update_signing_environment() {
-        if std::env::var_os(&key).is_none() {
-            std::env::set_var(key, value);
-        }
+    let system_install = system_install_paths().is_some();
+    initialize_update_signing_environment(system_install);
+    initialize_system_update_config_path(system_install);
+    if system_install && update_config_path(true).is_none() {
+        return Err(
+            "trusted system config /etc/gitrun/gitrun.env is missing or unsafe; refusing runner update"
+                .into(),
+        );
     }
 
     let config = load_config()?;
@@ -2041,7 +2235,7 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = latest_manifest(&repository)?;
     if let Some(image) = &manifest.runner_image {
-        let config_file = persistent_config_path().ok_or(
+        let config_file = update_config_path(system_install).ok_or(
             "GitRun config path is unavailable; cannot safely pin the verified runner image",
         )?;
         update_runner_image(image)?;
@@ -2065,14 +2259,17 @@ fn run_update(
     check_only: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
+    // Installed-system invocations must never inherit caller-selected update
+    // keys, signature policy, or config paths. Direct-root and --only-containers
+    // paths bypass sudo's normal signing-key hand-off, so initialize the fixed
+    // trust anchors and service config before branching.
+    let system_install = system_install_paths().is_some();
+    if system_install || check_only || only_containers {
+        initialize_update_signing_environment(system_install);
+    }
+    initialize_system_update_config_path(system_install);
+
     if check_only {
-        // Signature verification reads these values from the process environment.
-        // Resolve the trusted settings without elevating or writing to the host.
-        for (key, value) in update_signing_environment() {
-            if std::env::var_os(&key).is_none() {
-                std::env::set_var(key, value);
-            }
-        }
         let args: Vec<String> = match manifest_url {
             Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
             None => vec!["update".to_owned(), "--check".to_owned()],
@@ -2291,7 +2488,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         println!("GitRun reinstall: verified latest release metadata for {version}");
         download_and_verify(&url, &artifact_sha256, &package_file)?;
 
-        let package_name = std::process::Command::new("dpkg-deb")
+        let package_name = std::process::Command::new("/usr/bin/dpkg-deb")
             .arg("-f")
             .arg(&package_file)
             .arg("Package")
@@ -2301,7 +2498,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("verified release artifact is not the GitRun Debian package".into());
         }
-        let package_version = std::process::Command::new("dpkg-deb")
+        let package_version = std::process::Command::new("/usr/bin/dpkg-deb")
             .arg("-f")
             .arg(&package_file)
             .arg("Version")
@@ -2313,14 +2510,14 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
             return Err("Debian package version does not match the signed release manifest".into());
         }
 
-        let installed = std::process::Command::new("dpkg-query")
+        let installed = std::process::Command::new("/usr/bin/dpkg-query")
             .args(["-W", "-f=${db:Status-Status}", "gitrun"])
             .output()
             .is_ok_and(|output| {
                 output.status.success()
                     && String::from_utf8_lossy(&output.stdout).trim() == "installed"
             });
-        let mut apt = std::process::Command::new("apt-get");
+        let mut apt = std::process::Command::new("/usr/bin/apt-get");
         apt.args(["install", "--yes", "--no-install-recommends"]);
         if installed {
             apt.arg("--reinstall");
@@ -2462,40 +2659,94 @@ fn reinstall_existing_root_command() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(target_os = "linux")]
+fn read_privileged_user_payload(
+    input_path: &Path,
+    requester_uid: u32,
+    label: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    const MAX_PAYLOAD_BYTES: u64 = 1024 * 1024;
+    let before = std::fs::symlink_metadata(input_path)?;
+    if before.file_type().is_symlink() || !before.is_file() || before.nlink() != 1 {
+        return Err(format!(
+            "{label} payload must be a regular file without symlinks or hard links"
+        )
+        .into());
+    }
+    if before.uid() != requester_uid {
+        return Err(format!("{label} payload is not owned by the requesting user").into());
+    }
+    if before.permissions().mode() & 0o077 != 0 {
+        return Err(format!("{label} payload permissions must be 0600 or stricter").into());
+    }
+    if before.len() > MAX_PAYLOAD_BYTES {
+        return Err(format!("{label} payload exceeds the 1 MiB safety limit").into());
+    }
+
+    // Open the exact non-symlink inode we checked. In a sticky shared directory
+    // such as /tmp, a same-UID process can still race a path-based read by
+    // unlinking/replacing the payload after lstat; fstat must match the checked
+    // inode, and subsequent parsing reads only from this already-open handle.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(input_path)?;
+    let opened = file.metadata()?;
+    if opened.dev() != before.dev()
+        || opened.ino() != before.ino()
+        || opened.file_type().is_symlink()
+        || !opened.is_file()
+        || opened.nlink() != 1
+        || opened.uid() != requester_uid
+        || opened.permissions().mode() & 0o077 != 0
+        || opened.len() > MAX_PAYLOAD_BYTES
+    {
+        return Err(format!("{label} payload changed during validation or is unsafe").into());
+    }
+
+    let mut bytes = Vec::with_capacity(opened.len() as usize);
+    file.take(MAX_PAYLOAD_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_PAYLOAD_BYTES {
+        return Err(format!("{label} payload exceeds the 1 MiB safety limit").into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(target_os = "linux")]
 fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("saving system settings requires administrator privileges".into());
     }
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let input = Path::new(input_path);
-    let metadata = std::fs::symlink_metadata(input)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("settings payload must be a regular, non-symlink file".into());
-    }
-    if metadata.permissions().mode() & 0o077 != 0 {
-        return Err("settings payload permissions must be 0600 or stricter".into());
-    }
-    if let Some(expected_uid) = std::env::var("PKEXEC_UID")
+    let requester_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
-    {
-        if metadata.uid() != expected_uid {
-            return Err("settings payload is not owned by the user who requested elevation".into());
-        }
-    }
-    if metadata.len() > 1024 * 1024 {
-        return Err("settings payload exceeds the 1 MiB safety limit".into());
-    }
-
-    let bytes = std::fs::read(input)?;
+        .ok_or("system config helper requires a verified requesting user UID")?;
+    let bytes = read_privileged_user_payload(Path::new(input_path), requester_uid, "settings")?;
     let config: Config = serde_json::from_slice(&bytes)?;
     config.validate()?;
-    let system_config = Path::new("/etc/gitrun/gitrun.env");
-    if !system_config.is_file() {
-        return Err("system GitRun configuration is missing; run setup first".into());
+    let system_config = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
+    let config_metadata = std::fs::symlink_metadata(system_config)?;
+    let config_parent = system_config
+        .parent()
+        .ok_or("system config has no parent directory")?;
+    let parent_metadata = std::fs::symlink_metadata(config_parent)?;
+    if config_metadata.file_type().is_symlink()
+        || !config_metadata.is_file()
+        || config_metadata.uid() != 0
+        || config_metadata.permissions().mode() & 0o022 != 0
+        || !parent_metadata.is_dir()
+        || parent_metadata.uid() != 0
+        || parent_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("trusted system GitRun config path is missing or unsafe".into());
     }
     gitrun_setup::update_env_file(system_config, &config)?;
+    gitrun_setup::secure_system_config_file(system_config, Some(requester_uid))?;
+    std::fs::File::open(config_parent)?.sync_all()?;
     println!("GitRun settings saved successfully.");
     Ok(())
 }
@@ -2503,6 +2754,300 @@ fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::
 #[cfg(not(target_os = "linux"))]
 fn save_config_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Err("system configuration persistence through the privileged helper is Linux-only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn save_gitrun_settings_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("saving GitRun security settings requires administrator privileges".into());
+    }
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("security-settings helper requires a verified requesting user UID")?;
+    let bytes =
+        read_privileged_user_payload(Path::new(input_path), requester_uid, "security-settings")?;
+    let settings: GitRunSettings = serde_json::from_slice(&bytes)?;
+    if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported GitRun settings schema version {}",
+            settings.schema_version
+        )
+        .into());
+    }
+
+    let config_path = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
+    let config_metadata = std::fs::symlink_metadata(config_path)?;
+    if config_metadata.file_type().is_symlink()
+        || !config_metadata.is_file()
+        || config_metadata.uid() != 0
+        || config_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("trusted system configuration is missing or unsafe".into());
+    }
+    let config = Config::from_env_file(config_path)?;
+    config.validate()?;
+    if settings.repositories.keys().any(|repo| {
+        !config
+            .repositories
+            .iter()
+            .any(|configured| configured == repo)
+    }) {
+        return Err(
+            "security settings include a repository that is not configured in GitRun".into(),
+        );
+    }
+
+    let state_dir = PathBuf::from(&config.state_dir);
+    // Validate every ancestor before writing privileged policy state; an
+    // untrusted ancestor could otherwise rename a trusted-looking child dir.
+    gitrun_setup::validate_system_state_directory(&state_dir)?;
+
+    let destination = GitRunSettings::path_for_state_dir(&state_dir);
+    if let Ok(metadata) = std::fs::symlink_metadata(&destination) {
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err("GitRun settings destination must be a regular non-symlink file".into());
+        }
+    }
+
+    settings.save(&destination)?;
+    // The root scheduler treats this file as authorization policy. Keep it
+    // root-owned and read-only to the desktop user's primary group; the user
+    // must use this authenticated helper rather than editing the policy JSON.
+    gitrun_setup::secure_system_settings_file(&destination, Some(requester_uid))?;
+    std::fs::File::open(&state_dir)?.sync_all()?;
+    println!("GitRun security settings saved successfully.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn save_gitrun_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system security-settings persistence through the privileged helper is Linux-only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn promote_staged_kitty_settings(
+    staged: &Path,
+    destination: &Path,
+    expected_owner: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if staged.parent() != destination.parent() {
+        return Err("staged Kitty settings must share the destination directory".into());
+    }
+    let staged_metadata = std::fs::symlink_metadata(staged)?;
+    if staged_metadata.file_type().is_symlink()
+        || !staged_metadata.is_file()
+        || staged_metadata.uid() != expected_owner
+        || staged_metadata.nlink() != 1
+        || staged_metadata.permissions().mode() & 0o777 != 0o640
+    {
+        return Err("staged Kitty settings failed its ownership/permission postcondition".into());
+    }
+
+    match std::fs::symlink_metadata(destination) {
+        Ok(metadata)
+            if !metadata.file_type().is_symlink()
+                && metadata.is_file()
+                && metadata.uid() == expected_owner
+                && metadata.nlink() == 1
+                && metadata.permissions().mode() & 0o022 == 0 => {}
+        Ok(_) => {
+            return Err(
+                "existing Kitty settings path has unsafe type, owner, or permissions".into(),
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let parent = destination
+        .parent()
+        .ok_or("Kitty settings destination has no parent directory")?;
+    std::fs::rename(staged, destination)?;
+    std::fs::File::open(parent)?.sync_all()?;
+
+    let final_metadata = std::fs::symlink_metadata(destination)?;
+    if final_metadata.file_type().is_symlink()
+        || !final_metadata.is_file()
+        || final_metadata.uid() != expected_owner
+        || final_metadata.gid() != staged_metadata.gid()
+        || final_metadata.nlink() != 1
+        || final_metadata.permissions().mode() & 0o777 != 0o640
+    {
+        return Err("saved Kitty settings failed final ownership/permission verification".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("saving Kitty settings requires administrator privileges".into());
+    }
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("Kitty settings helper requires a verified requesting user UID")?;
+    let bytes =
+        read_privileged_user_payload(Path::new(input_path), requester_uid, "kitty-settings")?;
+    let settings: KittySettings = serde_json::from_slice(&bytes)?;
+    settings.validate()?;
+
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let config_path = Path::new(TRUSTED_SYSTEM_CONFIG_FILE);
+    let config_metadata = std::fs::symlink_metadata(config_path)?;
+    let config_parent = config_path
+        .parent()
+        .ok_or("trusted system config has no parent directory")?;
+    let parent_metadata = std::fs::symlink_metadata(config_parent)?;
+    if config_metadata.file_type().is_symlink()
+        || !config_metadata.is_file()
+        || config_metadata.uid() != 0
+        || config_metadata.permissions().mode() & 0o022 != 0
+        || !parent_metadata.is_dir()
+        || parent_metadata.uid() != 0
+        || parent_metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("trusted system GitRun configuration is missing or unsafe".into());
+    }
+
+    let config = Config::from_env_file(config_path)?;
+    config.validate()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    gitrun_setup::validate_system_state_directory(&state_dir)?;
+    let destination = gitrun_smart_scheduler::KittyRuntime::settings_path(&state_dir);
+    let parent = destination
+        .parent()
+        .ok_or("Kitty settings path has no parent directory")?;
+    if parent != config_parent {
+        return Err(
+            "Kitty settings path does not resolve to the trusted GitRun configuration directory"
+                .into(),
+        );
+    }
+
+    // Stage in the same trusted directory but outside the active settings path.
+    // The scheduler can never observe the new values until ownership and
+    // group-readable permissions have been verified successfully.
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let staged = parent.join(format!(
+        ".kitty-settings-pending-{}-{unique}.tmp",
+        std::process::id()
+    ));
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&staged)?;
+        file.write_all(&serde_json::to_vec(&settings)?)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        drop(file);
+
+        // This performs the existing root:desktop-primary-group chown + 0640
+        // update and validates the postconditions before the active file moves.
+        gitrun_setup::secure_system_settings_file(&staged, Some(requester_uid))?;
+        promote_staged_kitty_settings(&staged, &destination, 0)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        // This only removes the pending file; a previously active settings file
+        // remains intact unless the staged file passed all checks and was renamed.
+        let _ = std::fs::remove_file(&staged);
+    }
+    result?;
+    println!("Kitty settings saved successfully.");
+    Ok(())
+}
+#[cfg(not(target_os = "linux"))]
+fn save_kitty_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system Kitty settings persistence through the privileged helper is Linux-only".into())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod kitty_settings_promotion_tests {
+    use super::promote_staged_kitty_settings;
+    use std::{
+        fs,
+        os::unix::fs::{MetadataExt, PermissionsExt},
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after UNIX epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-kitty-promotion-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&dir).expect("test temp directory should be created");
+        dir
+    }
+
+    fn set_mode(path: &std::path::Path, mode: u32) {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+            .expect("test file permissions should be set");
+    }
+
+    #[test]
+    fn staged_settings_atomically_replace_a_safe_existing_file() {
+        let dir = temp_dir("replace");
+        let destination = dir.join("kitty.json");
+        let staged = dir.join(".kitty-settings-pending.tmp");
+        fs::write(&destination, b"old-settings").unwrap();
+        fs::write(&staged, b"new-settings").unwrap();
+        set_mode(&destination, 0o640);
+        set_mode(&staged, 0o640);
+        let owner = fs::metadata(&staged).unwrap().uid();
+
+        promote_staged_kitty_settings(&staged, &destination, owner).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"new-settings");
+        assert!(!staged.exists());
+        let metadata = fs::symlink_metadata(&destination).unwrap();
+        assert_eq!(metadata.uid(), owner);
+        assert_eq!(metadata.nlink(), 1);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn staged_settings_refuse_a_symlink_destination_and_preserve_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_dir("symlink-destination");
+        let outside = dir.join("outside.json");
+        let destination = dir.join("kitty.json");
+        let staged = dir.join(".kitty-settings-pending.tmp");
+        fs::write(&outside, b"outside-settings").unwrap();
+        fs::write(&staged, b"new-settings").unwrap();
+        set_mode(&staged, 0o640);
+        symlink(&outside, &destination).unwrap();
+        let owner = fs::metadata(&staged).unwrap().uid();
+
+        assert!(promote_staged_kitty_settings(&staged, &destination, owner).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"outside-settings");
+        assert!(fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(staged.is_file());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 fn run_reinstall_root(token_path: &str) -> i32 {
@@ -2550,10 +3095,148 @@ fn run_rollback(backup_path: &str, presenter: &mut presenter::CatPresenter) -> i
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod privileged_payload_tests {
+    use super::read_privileged_user_payload;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gitrun-privileged-payload-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn privileged_payload_reads_only_private_regular_user_owned_files() {
+        let path = temp_path("valid");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(br#"{"schema_version":1}"#).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let uid = std::fs::metadata(&path).unwrap().uid();
+        let payload = read_privileged_user_payload(&path, uid, "test").unwrap();
+        assert_eq!(payload.as_slice(), br#"{"schema_version":1}"#.as_slice());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn privileged_payload_rejects_symlinks_hardlinks_and_broad_permissions() {
+        let original = temp_path("original");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&original)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(b"payload").unwrap();
+        drop(file);
+        let uid = std::fs::metadata(&original).unwrap().uid();
+
+        let link = temp_path("symlink");
+        std::os::unix::fs::symlink(&original, &link).unwrap();
+        assert!(read_privileged_user_payload(&link, uid, "test").is_err());
+        std::fs::remove_file(&link).unwrap();
+
+        let hardlink = temp_path("hardlink");
+        std::fs::hard_link(&original, &hardlink).unwrap();
+        assert!(read_privileged_user_payload(&original, uid, "test").is_err());
+        std::fs::remove_file(&hardlink).unwrap();
+
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_privileged_user_payload(&original, uid, "test").is_err());
+        std::fs::remove_file(&original).unwrap();
+    }
+
+    #[test]
+    fn privileged_payload_enforces_the_size_limit() {
+        let path = temp_path("oversized");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap()
+            .set_len(1024 * 1024 + 1)
+            .unwrap();
+        let uid = std::fs::metadata(&path).unwrap().uid();
+        assert!(read_privileged_user_payload(&path, uid, "test").is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+}
+
 #[cfg(test)]
 mod internal_lifecycle_command_tests {
-    use super::{Cli, Command};
+    use super::{
+        select_update_config_path, update_signing_environment, update_signing_environment_changes,
+        Cli, Command, DEFAULT_UPDATE_PUBLIC_KEY_HEX, DEFAULT_UPDATE_PUBLIC_KEY_ID,
+        TRUSTED_SYSTEM_CONFIG_FILE,
+    };
     use clap::Parser;
+
+    #[test]
+    fn system_update_signing_policy_overrides_every_preexisting_value() {
+        let changes = update_signing_environment_changes(true, |_| true);
+        assert_eq!(changes, update_signing_environment());
+        assert!(changes.iter().any(|(key, value)| {
+            key == "GITRUN_UPDATE_PUBLIC_KEY_HEX" && value == DEFAULT_UPDATE_PUBLIC_KEY_HEX
+        }));
+        assert!(changes.iter().any(|(key, value)| {
+            key == "GITRUN_UPDATE_PUBLIC_KEY_ID" && value == DEFAULT_UPDATE_PUBLIC_KEY_ID
+        }));
+        assert!(changes
+            .iter()
+            .any(|(key, value)| { key == "GITRUN_UPDATE_SIGNATURE_REQUIRED" && value == "true" }));
+    }
+
+    #[test]
+    fn non_system_update_signing_policy_preserves_explicit_custom_values() {
+        assert!(update_signing_environment_changes(false, |_| true).is_empty());
+
+        let missing_key_only =
+            update_signing_environment_changes(false, |key| key != "GITRUN_UPDATE_PUBLIC_KEY_HEX");
+        assert_eq!(
+            missing_key_only,
+            vec![(
+                "GITRUN_UPDATE_PUBLIC_KEY_HEX".to_owned(),
+                DEFAULT_UPDATE_PUBLIC_KEY_HEX.to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn system_update_config_path_ignores_environment_selected_paths() {
+        let result = select_update_config_path(
+            true,
+            Some(std::path::PathBuf::from("/tmp/attacker-selected.env")),
+        );
+        assert_eq!(
+            result,
+            Some(std::path::PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE))
+        );
+    }
+
+    #[test]
+    fn developer_update_config_path_keeps_explicit_custom_path() {
+        let custom = std::path::PathBuf::from("/tmp/developer-selected.env");
+        assert_eq!(
+            select_update_config_path(false, Some(custom.clone())),
+            Some(custom)
+        );
+    }
 
     fn parse_internal_command(arguments: &[&str]) -> Command {
         let cli = Cli::try_parse_from(arguments.iter().copied())
@@ -2563,6 +3246,12 @@ mod internal_lifecycle_command_tests {
             "--no-cat must remain available before internal commands"
         );
         cli.command.expect("internal command must be selected")
+    }
+
+    #[test]
+    fn fast_stop_requires_explicit_confirmation() {
+        assert!(Cli::try_parse_from(["gitrun", "fast-stop", "owner/repo", "123"]).is_err());
+        assert!(Cli::try_parse_from(["gitrun", "fast-stop", "owner/repo", "123", "--yes"]).is_ok());
     }
 
     #[test]
@@ -2592,6 +3281,26 @@ mod internal_lifecycle_command_tests {
             ]),
             Command::SaveConfigRoot { input_path }
                 if input_path == "/tmp/private-settings.json"
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--save-gitrun-settings-root",
+                "/tmp/private-security-settings.json"
+            ]),
+            Command::SaveGitRunSettingsRoot { input_path }
+                if input_path == "/tmp/private-security-settings.json"
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--save-kitty-settings-root",
+                "/tmp/private-kitty-settings.json"
+            ]),
+            Command::SaveKittySettingsRoot { input_path }
+                if input_path == "/tmp/private-kitty-settings.json"
         ));
         assert!(matches!(
             parse_internal_command(&[

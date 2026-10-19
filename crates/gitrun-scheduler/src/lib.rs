@@ -1539,6 +1539,15 @@ fn execute(
                     }
                     state.clear_idle(name);
                     return Ok(());
+                } else {
+                    // Once Automation is opted in for this repository, missing,
+                    // offline, or busy GitHub state must not fall through to the
+                    // legacy un-gated removal path.
+                    eprintln!(
+                        "gitrun-autoscaler: Kitty Stop withheld for {repo}/{name}: runner was not freshly verified online and idle by GitHub"
+                    );
+                    state.clear_idle(name);
+                    return Ok(());
                 }
             }
 

@@ -2599,9 +2599,7 @@ fn record_queued_job_occurrences(
             // Preserve the lifetime job count, but restart this weekday/hour
             // estimator after a long hiatus. A workflow that moved schedules
             // must not keep prewarming its old hour indefinitely.
-            if pattern.slots[slot_index].0 > 0
-                && week.saturating_sub(last_week) > 90 * 86_400
-            {
+            if pattern.slots[slot_index].0 > 0 && week.saturating_sub(last_week) > 90 * 86_400 {
                 pattern.slots[slot_index] = TemporalDemandSlot::default();
                 pattern.slot_last_week[slot_index] = 0;
             }
@@ -2792,7 +2790,8 @@ fn forecast_workload_prewarms(
 }
 
 fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> {
-    let recent_slot_cutoff = weekly_period_start(model.generated_at_epoch.saturating_sub(90 * 86_400));
+    let recent_slot_cutoff =
+        weekly_period_start(model.generated_at_epoch.saturating_sub(90 * 86_400));
     let mut patterns: Vec<_> = model
         .workload_patterns
         .iter()
@@ -2802,9 +2801,7 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                 .iter()
                 .enumerate()
                 .filter(|(index, slot)| {
-                    slot.0 > 0
-                        && slot.3 > 0
-                        && pattern.slot_last_week[*index] >= recent_slot_cutoff
+                    slot.0 > 0 && slot.3 > 0 && pattern.slot_last_week[*index] >= recent_slot_cutoff
                 })
                 .map(|(index, slot)| WorkloadSlotSummary {
                     weekday: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index / 24]

@@ -125,6 +125,22 @@ pub enum Decision {
 /// must remain root-owned; the runner image enforces that for toolchain paths.
 /// Complex scripts should be checked into the workflow/repository and launched
 /// as normal Actions steps, where GSR supervises each actual exec.
+fn is_interpreter_or_command_wrapper(name: &str) -> bool {
+    // GitDockRun Execute is not a shell/script API. Docker exec is started
+    // outside the long-lived runner's GSR ptrace tree, so a script interpreter
+    // or dispatcher here could run unobserved child commands despite the
+    // one-command grammar. Complex scripts belong in normal Actions steps.
+    const BLOCKED: &[&str] = &[
+        "sh", "bash", "dash", "ash", "zsh", "fish", "ksh", "csh", "tcsh",
+        "pwsh", "powershell", "cmd", "command", "builtin", "env",
+        "python", "python2", "python3", "pypy", "perl", "ruby", "node",
+        "deno", "bun", "php", "lua", "awk", "gawk", "mawk", "busybox",
+        "xargs", "find", "sudo", "su", "doas", "pkexec", "runuser",
+        "setpriv", "nsenter", "unshare", "chroot",
+    ];
+    BLOCKED.contains(&name.to_ascii_lowercase().as_str())
+}
+
 pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> {
     if command.trim().is_empty() {
         return Err("command must not be empty");
@@ -154,6 +170,11 @@ pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> 
     if argv[0].contains('/') || argv[0] == "." || argv[0] == ".." {
         return Err(
             "GitDockRun Execute requires a bare executable name; paths in the executable slot are not allowed",
+        );
+    }
+    if is_interpreter_or_command_wrapper(&argv[0]) {
+        return Err(
+            "GitDockRun Execute does not accept shells, interpreters or command-dispatch wrappers; run scripts as normal workflow steps",
         );
     }
     Ok(argv)
@@ -455,6 +476,30 @@ mod tests {
         assert!(parse_simple_command("./cargo build").is_err());
         assert!(parse_simple_command("../bin/cargo build").is_err());
         assert!(parse_simple_command("cargo test; echo injected").is_err());
+    }
+
+    #[test]
+    fn simple_command_parser_rejects_interpreters_and_command_wrappers() {
+        for command in [
+            "sh -c id",
+            "bash -c id",
+            "dash /tmp/payload.sh",
+            "python3 /tmp/payload.py",
+            "node -e console.log",
+            "pwsh -File /tmp/payload.ps1",
+            "env bash -c id",
+            "busybox sh -c id",
+            "xargs sh -c id",
+            "find . -exec id",
+            "sudo id",
+            "nsenter -t 1",
+            "CHROOT /tmp/root",
+        ] {
+            assert!(
+                parse_simple_command(command).is_err(),
+                "interpreter/wrapper unexpectedly accepted: {command:?}"
+            );
+        }
     }
 
     #[test]

@@ -1146,7 +1146,11 @@ impl KittyRuntime {
         let model = self.models.get_mut(&key).ok_or_else(|| {
             KittyError::Invalid("model disappeared during a single-threaded update".into())
         })?;
-        if record_queued_job_occurrences(model, &input.queued_job_occurrences, input.observed_at_epoch) {
+        if record_queued_job_occurrences(
+            model,
+            &input.queued_job_occurrences,
+            input.observed_at_epoch,
+        ) {
             self.dirty_models.insert(key.clone());
         }
         if record_started_job_occurrences(
@@ -2661,7 +2665,9 @@ fn record_queued_job_occurrences(
             if existing.gitrun_job_id.is_empty()
                 || !valid_generated_gitrun_job_id(&existing.gitrun_job_id)
             {
-                let Some(id) = generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence) else {
+                let Some(id) =
+                    generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
+                else {
                     continue;
                 };
                 let Some(next) = model.next_gitrun_job_sequence.checked_add(1) else {
@@ -2687,23 +2693,36 @@ fn record_queued_job_occurrences(
 
         // Register the recurring profile without counting it as completed work;
         // only authoritative job-start observations teach the seasonal model.
-        if !model.workload_patterns.iter().any(|pattern| pattern.workload_id == workload_id) {
+        if !model
+            .workload_patterns
+            .iter()
+            .any(|pattern| pattern.workload_id == workload_id)
+        {
             if model.workload_patterns.len() >= MAX_JOB_PATTERNS {
-                if let Some((index, stale)) = model.workload_patterns.iter()
+                if let Some((index, stale)) = model
+                    .workload_patterns
+                    .iter()
                     .enumerate()
                     .min_by_key(|(_, pattern)| pattern.last_seen_epoch)
                     .map(|(index, pattern)| (index, pattern.workload_id.clone()))
                 {
                     model.workload_patterns.remove(index);
-                    model.recent_job_occurrences.retain(|entry| entry.workload_id != stale);
-                    model.workload_predictions.retain(|prediction| prediction.workload_id != stale);
+                    model
+                        .recent_job_occurrences
+                        .retain(|entry| entry.workload_id != stale);
+                    model
+                        .workload_predictions
+                        .retain(|prediction| prediction.workload_id != stale);
                 }
             }
             if model.workload_patterns.len() >= MAX_JOB_PATTERNS {
                 continue;
             }
-            let mut labels: Vec<String> = job.labels.iter()
-                .map(|label| label.trim().to_ascii_lowercase()).collect();
+            let mut labels: Vec<String> = job
+                .labels
+                .iter()
+                .map(|label| label.trim().to_ascii_lowercase())
+                .collect();
             labels.sort();
             labels.dedup();
             model.workload_patterns.push(WorkloadPattern {
@@ -2719,7 +2738,9 @@ fn record_queued_job_occurrences(
                 slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
             });
         }
-        let Some(gitrun_job_id) = generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence) else {
+        let Some(gitrun_job_id) =
+            generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
+        else {
             continue;
         };
         let Some(next) = model.next_gitrun_job_sequence.checked_add(1) else {

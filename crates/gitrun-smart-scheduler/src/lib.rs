@@ -1171,16 +1171,10 @@ impl KittyRuntime {
             Vec::new()
         };
 
-        // Never prewarm a workload type when a matching job is already queued;
-        // that job is handled by the ordinary planner's live queue path.
-        workload_prewarms.retain(|target| {
-            !input.job_occurrences.iter().any(|job| {
-                valid_queued_job(job) && workload_fingerprint(job) == target.workload_code
-            })
-        });
-
-        // Record one forecast per (workload, target hour). Repeated scheduler
-        // polls must not inflate the self-correction sample count.
+        // Record the profile forecast before checking the live queue. Even when
+        // a job is already queued and therefore needs no prewarm, we must keep
+        // the forecast so its actual occurrence can teach the next prediction.
+        // Repeated polls must not create duplicate samples for the same target.
         for target in &workload_prewarms {
             let exists = model.workload_predictions.iter().any(|record| {
                 record.workload_code == target.workload_code
@@ -1209,6 +1203,16 @@ impl KittyRuntime {
                 self.dirty_models.insert(key.clone());
             }
         }
+
+        // Never prewarm a workload type when a matching job is already queued;
+        // that job is handled by the ordinary planner's live queue path, but
+        // its profile prediction above still participates in self-correction.
+        workload_prewarms.retain(|target| {
+            !input.job_occurrences.iter().any(|job| {
+                valid_queued_job(job) && workload_fingerprint(job) == target.workload_code
+            })
+        });
+
         let capability_note = if self.settings.adaptive_resource_management_enabled {
             " Adaptive Resource Management is reserved and is not executed in this version."
         } else {

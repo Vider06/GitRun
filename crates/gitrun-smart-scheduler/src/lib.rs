@@ -1093,7 +1093,11 @@ impl KittyRuntime {
         let model = self.models.get_mut(&key).ok_or_else(|| {
             KittyError::Invalid("model disappeared during a single-threaded update".into())
         })?;
-        if record_started_job_occurrences(model, &input.started_job_occurrences, input.observed_at_epoch) {
+        if record_started_job_occurrences(
+            model,
+            &input.started_job_occurrences,
+            input.observed_at_epoch,
+        ) {
             self.dirty_models.insert(key.clone());
         }
         if compact_model_history(
@@ -2632,8 +2636,12 @@ fn record_started_job_occurrences(
                     .map(|(index, pattern)| (index, pattern.gitrun_job_id.clone()))
                 {
                     model.workload_patterns.remove(index);
-                    model.recent_job_occurrences.retain(|entry| entry.gitrun_job_id != stale);
-                    model.workload_predictions.retain(|prediction| prediction.gitrun_job_id != stale);
+                    model
+                        .recent_job_occurrences
+                        .retain(|entry| entry.gitrun_job_id != stale);
+                    model
+                        .workload_predictions
+                        .retain(|prediction| prediction.gitrun_job_id != stale);
                 }
             }
 
@@ -2674,9 +2682,7 @@ fn record_started_job_occurrences(
 
             // Preserve lifetime totals but restart a weekday/hour estimator after
             // a long hiatus, so schedule changes don't prewarm a stale time slot.
-            if pattern.slots[slot_index].0 > 0
-                && week.saturating_sub(last_week) > 90 * 86_400
-            {
+            if pattern.slots[slot_index].0 > 0 && week.saturating_sub(last_week) > 90 * 86_400 {
                 pattern.slots[slot_index] = TemporalDemandSlot::default();
                 pattern.slot_last_week[slot_index] = 0;
             }
@@ -2691,19 +2697,19 @@ fn record_started_job_occurrences(
             }
         }
 
-        let counted_prediction_target_epoch =
-            if let Some(prediction) = model.workload_predictions.iter_mut().find(|record| {
+        let counted_prediction_target_epoch = if let Some(prediction) =
+            model.workload_predictions.iter_mut().find(|record| {
                 record.gitrun_job_id == gitrun_job_id
                     && record.actual_occurrences.is_none()
                     && started_at_epoch >= record.target_epoch
                     && started_at_epoch < record.target_epoch.saturating_add(3_600)
             }) {
-                prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
-                changed = true;
-                Some(prediction.target_epoch)
-            } else {
-                None
-            };
+            prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
+            changed = true;
+            Some(prediction.target_epoch)
+        } else {
+            None
+        };
 
         if let Some(index) = existing_index {
             model.recent_job_occurrences[index].counted_prediction_target_epoch =

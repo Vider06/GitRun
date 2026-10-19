@@ -80,8 +80,8 @@ export async function renderAppSettings() {
         : 'No scheduled prediction evaluated yet';
       return '<div class="field-hint mt-8"><strong>' + esc(workload.job_name) + '</strong>' +
         '<small>' + esc(String(workload.workflow_path)) + ' · workload ' +
-        esc(String(workload.workload_code)) + ' · ' + esc(String(workload.occurrence_count)) +
-        ' unique occurrences</small><small>Observed runner labels: ' +
+        esc(String(workload.gitrun_job_id)) + ' · ' + esc(String(workload.occurrence_count)) +
+        ' unique observations</small><small>Observed runner labels: ' +
         esc((workload.labels || []).slice(0, 8).join(', ')) +
         ((workload.labels || []).length > 8 ? ' …' : '') +
         '</small><small>Recurring: ' + esc(recurring) +
@@ -89,7 +89,7 @@ export async function renderAppSettings() {
     }).join("");
     const recentJobs = (entry.recent_job_occurrences || []).slice(-3).reverse().map((job) =>
       '<small>Job occurrence ' + esc(String(job.occurrence_code)) +
-        ' · workload ' + esc(String(job.workload_code)) + '</small>'
+        ' · workload ' + esc(String(job.gitrun_job_id)) + '</small>'
     ).join("");
     return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>' +
       esc(String(entry.sample_count)) + ' recent five-minute samples · last observation ' + esc(formatEpoch(entry.latest_observation_epoch)) +
@@ -104,8 +104,8 @@ export async function renderAppSettings() {
       '<small>Last decision: ' + esc(decisionAt) + ' · planned actions: ' + esc(plannedActions) +
       ' · outcome: ' + esc(outcome) + '</small><small>' +
       esc(decisionText) + ': ' + esc(explanation) + '</small>' +
-      (workloadRows ? '<div class="mt-10"><strong>Recurring workload profiles</strong>' + workloadRows + '</div>' : '') +
-      (recentJobs ? '<div class="mt-10"><strong>Recent unique job IDs</strong>' + recentJobs + '</div>' : '') +
+      (workloadRows ? '<div class="mt-10"><strong>Recurring job profiles</strong>' + workloadRows + '</div>' : '') +
+      (recentJobs ? '<div class="mt-10"><strong>Recent GitRun occurrence IDs</strong>' + recentJobs + '</div>' : '') +
       '</div>' +
       pill(forecastLabel, forecastFresh ? "good" : forecast ? "neutral" : "info") + '</div>';
   }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);

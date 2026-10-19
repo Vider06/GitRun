@@ -2862,6 +2862,10 @@ mod tests {
             sample_count: 24,
             evaluated_forecasts: 0,
             predicted_peak_concurrency: 3,
+            seasonal_target_epoch: 0,
+            seasonal_predicted_peak_concurrency: None,
+            bias_correction: None,
+            seasonal_bias_correction: None,
             mean_absolute_error: None,
             quality_score: 0.8,
             confidence_score: 0.8,
@@ -3087,6 +3091,46 @@ mod tests {
         assert_eq!(percentile(&values, 0.0), 0.0);
         assert_eq!(percentile(&values, 0.9), 20.0);
         assert_eq!(percentile(&values, 0.5), 2.0);
+    }
+
+    #[test]
+    fn tiered_retention_bounds_history_and_preserves_weekday_hour_summaries() {
+        let mut model = WorkflowModel::empty("owner/repo");
+        let total_weeks = (MAX_YEARLY_SUMMARIES as u64 + 3) * 48 + 8;
+        for week in 0..total_weeks {
+            let bucket_epoch = week * WEEK_SECONDS + 3_600;
+            model.history.push(Observation {
+                bucket_epoch,
+                queued_jobs: 2,
+                busy_runners: 1,
+                online_runners: 3,
+                managed_runners: 3,
+                host_cpu_percent: None,
+                host_memory_percent: None,
+                host_disk_percent: None,
+                snapshots_in_bucket: 1,
+            });
+            compact_model_history(&mut model, bucket_epoch, 24);
+        }
+
+        assert!(model.history.len() <= 24);
+        assert!(model.weekly_summaries.len() <= MAX_WEEKLY_SUMMARIES);
+        assert!(model.monthly_summaries.len() <= MAX_MONTHLY_SUMMARIES);
+        assert!(model.yearly_summaries.len() <= MAX_YEARLY_SUMMARIES);
+        assert!(model.lifetime_summary.is_some());
+        let retained = model
+            .weekly_summaries
+            .iter()
+            .chain(&model.monthly_summaries)
+            .chain(&model.yearly_summaries)
+            .chain(model.lifetime_summary.iter())
+            .map(|summary| summary.observation_count)
+            .sum::<u64>();
+        assert!(retained > 0);
+        assert!(model
+            .yearly_summaries
+            .iter()
+            .all(|summary| summary.slots.len() == TEMPORAL_SLOT_COUNT));
     }
 
     #[test]

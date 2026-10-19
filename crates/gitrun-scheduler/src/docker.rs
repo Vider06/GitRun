@@ -2921,22 +2921,22 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn cgroup_parser_rejects_unrelated_hex_text_and_accepts_docker_scope() {
-        let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let id = "0123456789abcdef".repeat(4);
         assert_eq!(
             container_id_from_cgroup(&format!("0::/user.slice/session-{id}-scope")),
             None
         );
         assert_eq!(
             container_id_from_cgroup(&format!("0::/system.slice/docker-{id}.scope")).as_deref(),
-            Some(id)
+            Some(id.as_str())
         );
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn docker_cgroup_parser_extracts_only_full_container_id() {
-        let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let id = "0123456789abcdef".repeat(4);
         let cgroup = format!("0::/system.slice/docker-{id}.scope");
-        assert_eq!(container_id_from_cgroup(&cgroup).as_deref(), Some(id));
+        assert_eq!(container_id_from_cgroup(&cgroup).as_deref(), Some(id.as_str()));
     }
 }

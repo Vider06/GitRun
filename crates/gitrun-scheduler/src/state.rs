@@ -60,7 +60,9 @@ struct StateFile {
     next_job_identity_sequence: u64,
 }
 
-fn default_next_job_identity_sequence() -> u64 { 1 }
+fn default_next_job_identity_sequence() -> u64 {
+    1
+}
 
 impl Default for StateFile {
     fn default() -> Self {
@@ -169,7 +171,10 @@ fn make_gitrun_job_id(repository: &str, sequence: u64) -> Option<String> {
 }
 
 fn valid_gitrun_job_id(code: &str, repository: &str) -> bool {
-    let Some((hash, sequence)) = code.strip_prefix("grj-").and_then(|part| part.split_once('-')) else {
+    let Some((hash, sequence)) = code
+        .strip_prefix("grj-")
+        .and_then(|part| part.split_once('-'))
+    else {
         return false;
     };
     let Ok(sequence) = u64::from_str_radix(sequence, 16) else {
@@ -182,7 +187,10 @@ fn valid_gitrun_job_id(code: &str, repository: &str) -> bool {
 }
 
 fn job_identity_key(repository: &str, run_id: u64, job_id: u64) -> String {
-    format!("{}|{run_id}|{job_id}", repository.trim().to_ascii_lowercase())
+    format!(
+        "{}|{run_id}|{job_id}",
+        repository.trim().to_ascii_lowercase()
+    )
 }
 
 fn validate_state(data: &StateFile) -> Result<(), StateError> {
@@ -365,26 +373,30 @@ impl SchedulerState {
         }
 
         let stale_before = observed_at_epoch.saturating_sub(JOB_ID_RETENTION_SECONDS);
-        self.data.job_identities.retain(|_, identity| {
-            identity.last_seen_epoch >= stale_before
-        });
+        self.data
+            .job_identities
+            .retain(|_, identity| identity.last_seen_epoch >= stale_before);
         while self.data.job_identities.len() >= MAX_JOB_IDENTITIES {
-            let oldest = self.data.job_identities
+            let oldest = self
+                .data
+                .job_identities
                 .iter()
                 .min_by_key(|(_, identity)| identity.last_seen_epoch)
                 .map(|(key, _)| key.clone())
-                .ok_or_else(|| StateError::Invalid(
-                    "GitRun job identity registry could not evict an entry".into()
-                ))?;
+                .ok_or_else(|| {
+                    StateError::Invalid(
+                        "GitRun job identity registry could not evict an entry".into(),
+                    )
+                })?;
             self.data.job_identities.remove(&oldest);
         }
         if self.data.next_job_identity_sequence == 0 {
             self.data.next_job_identity_sequence = 1;
         }
         let sequence = self.data.next_job_identity_sequence;
-        let next_sequence = sequence.checked_add(1).ok_or_else(|| {
-            StateError::Invalid("GitRun job identity sequence exhausted".into())
-        })?;
+        let next_sequence = sequence
+            .checked_add(1)
+            .ok_or_else(|| StateError::Invalid("GitRun job identity sequence exhausted".into()))?;
         let gitrun_job_id = make_gitrun_job_id(&repository, sequence).ok_or_else(|| {
             StateError::Invalid("GitRun could not generate a job identity".into())
         })?;
@@ -620,28 +632,36 @@ mod tests {
 
     #[test]
     fn gitrun_job_identity_is_unique_stable_and_persisted() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-job-identities-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-job-identities-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let mut state = SchedulerState::load(&dir).unwrap();
 
-        let (first, changed) = state.ensure_gitrun_job_id("owner/repo", 41, 410, 10_000).unwrap();
+        let (first, changed) = state
+            .ensure_gitrun_job_id("owner/repo", 41, 410, 10_000)
+            .unwrap();
         assert!(changed);
         assert!(valid_gitrun_job_id(&first, "owner/repo"));
-        let (repeat, changed) = state.ensure_gitrun_job_id("owner/repo", 41, 410, 10_060).unwrap();
+        let (repeat, changed) = state
+            .ensure_gitrun_job_id("owner/repo", 41, 410, 10_060)
+            .unwrap();
         assert!(!changed);
         assert_eq!(repeat, first);
-        let (next, changed) = state.ensure_gitrun_job_id("owner/repo", 41, 411, 10_060).unwrap();
+        let (next, changed) = state
+            .ensure_gitrun_job_id("owner/repo", 41, 411, 10_060)
+            .unwrap();
         assert!(changed);
         assert_ne!(next, first);
-        let (other_repo, _) = state.ensure_gitrun_job_id("other/repo", 41, 410, 10_060).unwrap();
+        let (other_repo, _) = state
+            .ensure_gitrun_job_id("other/repo", 41, 410, 10_060)
+            .unwrap();
         assert_ne!(other_repo, first);
         state.save().unwrap();
 
         let mut reloaded = SchedulerState::load(&dir).unwrap();
-        let (persisted, changed) = reloaded.ensure_gitrun_job_id("owner/repo", 41, 410, 10_120).unwrap();
+        let (persisted, changed) = reloaded
+            .ensure_gitrun_job_id("owner/repo", 41, 410, 10_120)
+            .unwrap();
         assert!(!changed);
         assert_eq!(persisted, first);
         let _ = fs::remove_dir_all(&dir);

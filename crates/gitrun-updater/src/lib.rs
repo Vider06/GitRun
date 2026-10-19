@@ -2375,17 +2375,32 @@ mod tests {
         signed.signature_key_id = Some("release-key-1".into());
         let payload = signed.signing_payload().unwrap();
         signed.signature = Some(
-            key_pair.sign(&payload).as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+            key_pair
+                .sign(&payload)
+                .as_ref()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
         );
-        let public_key: String = key_pair.public_key().as_ref().iter()
-            .map(|byte| format!("{byte:02x}")).collect();
+        let public_key: String = key_pair
+            .public_key()
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
 
-        assert!(signed.verify_signature(true, Some(&public_key), Some("release-key-1")).is_ok());
-        assert!(signed.verify_signature(true, Some(&public_key), Some("wrong-key")).is_err());
+        assert!(signed
+            .verify_signature(true, Some(&public_key), Some("release-key-1"))
+            .is_ok());
+        assert!(signed
+            .verify_signature(true, Some(&public_key), Some("wrong-key"))
+            .is_err());
 
         let mut tampered = signed.clone();
         tampered.version = "0.3.1".into();
-        assert!(tampered.verify_signature(true, Some(&public_key), Some("release-key-1")).is_err());
+        assert!(tampered
+            .verify_signature(true, Some(&public_key), Some("release-key-1"))
+            .is_err());
     }
 
     #[test]
@@ -2396,7 +2411,9 @@ mod tests {
 
         let mut signed_without_key = unsigned;
         signed_without_key.signature = Some("a".repeat(128));
-        assert!(signed_without_key.verify_signature(false, None, None).is_err());
+        assert!(signed_without_key
+            .verify_signature(false, None, None)
+            .is_err());
     }
 
     #[test]

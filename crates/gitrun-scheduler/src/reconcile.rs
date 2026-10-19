@@ -299,9 +299,9 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
 
     // Generic dynamic overflow is used only for queued jobs whose labels are
     // already covered by the global runner label set. Specialized jobs were
-    // reserved above, so they aren't duplicated here. There is no per-job
-    // identity tracked elsewhere in the system, so this remains positional
-    // for the generic overflow path.
+    // reserved above, so they aren't duplicated here. This still pairs jobs
+    // with runners in queue order, carrying run/job IDs for audit and GSR
+    // binding; GitHub dispatch remains label-based and is not an API-level pin.
     let mut dynamic_index = 0usize;
     while current < desired {
         let next = input

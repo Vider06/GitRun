@@ -556,7 +556,7 @@ impl KittyRuntime {
             return Ok(KittyDecision::fallback(
                 &input.repository,
                 configured_min_runners,
-                "repository model failed validation earlier; delete or repair its model file to re-enable Kitty",
+                "repository model failed validation earlier; repair or remove its model file and restart gitrun-autoscaler to re-enable Kitty",
             ));
         }
         if !self.models.contains_key(&key) {
@@ -1672,7 +1672,7 @@ fn read_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
         use std::os::unix::fs::MetadataExt;
         if metadata.nlink() != 1
             || metadata.uid() != unsafe { libc::geteuid() }
-            || metadata.mode() & 0o022 != 0
+            || metadata.mode() & 0o077 != 0
         {
             return Err(KittyError::Invalid(format!(
                 "{} has an unsafe owner, hard-link count, or write permission",
@@ -1700,7 +1700,7 @@ fn read_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
         use std::os::unix::fs::MetadataExt;
         if opened.nlink() != 1
             || opened.uid() != unsafe { libc::geteuid() }
-            || opened.mode() & 0o022 != 0
+            || opened.mode() & 0o077 != 0
         {
             return Err(KittyError::Invalid(format!(
                 "{} has an unsafe opened-file owner, hard-link count, or write permission",
@@ -1762,7 +1762,10 @@ fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if metadata.nlink() != 1 || metadata.uid() != unsafe { libc::geteuid() } {
+            if metadata.nlink() != 1
+                || metadata.uid() != unsafe { libc::geteuid() }
+                || metadata.mode() & 0o077 != 0
+            {
                 return Err(KittyError::Invalid(format!(
                     "{} has an unsafe owner or hard-link count",
                     path.display()
@@ -1883,6 +1886,66 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn private_model_reader_rejects_symlink_hardlink_and_group_readable_files() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let dir = temp_dir("private-file-links");
+        let original = dir.join("model.json");
+        let sym = dir.join("model-symlink.json");
+        let hard = dir.join("model-hardlink.json");
+        fs::write(&original, br#"{}"#).unwrap();
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o600)).unwrap();
+
+        symlink(&original, &sym).unwrap();
+        assert!(read_checked(&sym, 1024).is_err());
+
+        fs::hard_link(&original, &hard).unwrap();
+        assert!(read_checked(&original, 1024).is_err());
+        fs::remove_file(&hard).unwrap();
+
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_checked(&original, 1024).is_err());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn disabling_workflow_model_visibility_hides_repository_forecasts_from_dashboard() {
+        let dir = temp_dir("hide-model");
+        let mut settings = enabled_settings();
+        settings.workflow_model_visible = false;
+        write_settings(&dir, &settings);
+
+        let path = KittyRuntime::dashboard_status_path(&dir);
+        let status = KittyDashboardStatus {
+            schema_version: SETTINGS_SCHEMA_VERSION,
+            generated_at_epoch: 20_000,
+            enabled: true,
+            telemetry_enabled: true,
+            predictive_analytics_enabled: true,
+            workflow_model_visible: true,
+            predictive_warm_pool_enabled: false,
+            shadow_mode: true,
+            repositories: vec![KittyRepositoryStatus {
+                repository: "owner/repo".into(),
+                sample_count: 24,
+                first_observation_epoch: Some(10_000),
+                latest_observation_epoch: Some(20_000),
+                latest_forecast: None,
+                latest_decision: None,
+            }],
+        };
+        atomic_write_private(&path, &serde_json::to_vec(&status).unwrap()).unwrap();
+
+        let loaded = load_dashboard_status(&dir).unwrap();
+        assert!(!loaded.workflow_model_visible);
+        assert!(loaded.repositories.is_empty());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn dashboard_status_reports_off_when_settings_are_missing() {
         let dir = temp_dir("status-default-off");
@@ -1977,13 +2040,34 @@ mod tests {
 
         let mut runtime = KittyRuntime::new(&dir);
         let mut last_decision = None;
+        let mut saw_applied_floor = false;
         let start = 10_000 / BUCKET_SECONDS * BUCKET_SECONDS;
         for step in 0..72u64 {
             let stamp = start + step * BUCKET_SECONDS;
             let decision = runtime.observe(input(stamp + 1, 1, 3), 2, 3, true).unwrap();
+            if decision.status == DecisionStatus::AppliedWarmPoolFloor {
+                saw_applied_floor = true;
+                let model_path = dir
+                    .join("kitty")
+                    .join(format!("model-{}.json", repository_key("owner/repo")));
+                assert!(
+                    model_path.is_file(),
+                    "the model and decision audit must be durable before Kitty returns an applied floor"
+                );
+                let persisted: WorkflowModel =
+                    serde_json::from_slice(&fs::read(&model_path).unwrap()).unwrap();
+                assert!(persisted.decision_audit.iter().any(|audit| {
+                    audit.status == DecisionStatus::AppliedWarmPoolFloor
+                        && audit.effective_min_runners == decision.effective_min_runners
+                }));
+            }
             runtime.finish_cycle(&decision, 0, true).unwrap();
             last_decision = Some(decision);
         }
+        assert!(
+            saw_applied_floor,
+            "stable, accurate observed demand should eventually qualify for the opt-in floor"
+        );
         let decision = last_decision.unwrap();
         assert!(decision.effective_min_runners >= 2);
         assert!(decision.effective_min_runners <= 3);
@@ -1994,6 +2078,35 @@ mod tests {
                 | DecisionStatus::RecommendationOnly
                 | DecisionStatus::InsufficientHistory
         ));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resource_pressure_gate_blocks_predictive_floor_even_with_qualified_history() {
+        let dir = temp_dir("pressure-gate");
+        let mut settings = enabled_settings();
+        settings.predictive_warm_pool_enabled = true;
+        settings.shadow_mode = false;
+        settings.minimum_quality_score = 0.5;
+        settings.minimum_samples = 24;
+        settings.history_buckets = 48;
+        settings.max_additional_warm_runners = 1;
+        write_settings(&dir, &settings);
+
+        let mut runtime = KittyRuntime::new(&dir);
+        let mut saw_pressure_hold = false;
+        let start = 10_000 / BUCKET_SECONDS * BUCKET_SECONDS;
+        for step in 0..72u64 {
+            let stamp = start + step * BUCKET_SECONDS;
+            let decision = runtime
+                .observe(input(stamp + 1, 1, 3), 2, 3, false)
+                .unwrap();
+            assert_ne!(decision.status, DecisionStatus::AppliedWarmPoolFloor);
+            assert_eq!(decision.effective_min_runners, 2);
+            saw_pressure_hold |= decision.status == DecisionStatus::ResourcePressureHold;
+            runtime.finish_cycle(&decision, 0, true).unwrap();
+        }
+        assert!(saw_pressure_hold);
         let _ = fs::remove_dir_all(dir);
     }
 

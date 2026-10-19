@@ -40,10 +40,21 @@ export async function renderAppSettings() {
       : "Not enough evaluated forecasts";
     const decisionText = decision ? String(decision.status).replaceAll("_", " ") : "No decision recorded";
     const explanation = decision ? String(decision.reason || "") : "No decision recorded yet.";
+    const decisionAt = decision ? formatEpoch(decision.bucket_epoch) : "Not recorded";
+    const plannedActions = Number.isInteger(decision?.planned_action_count)
+      ? String(decision.planned_action_count)
+      : "Not recorded";
+    const outcome = decision?.execution_outcome
+      ? String(decision.execution_outcome).replaceAll("_", " ")
+      : "Pending reconciliation";
     return '<div class="list-row"><div class="list-row-main"><strong>' + esc(entry.repository) + '</strong><small>' +
       esc(String(entry.sample_count)) + ' samples · last observation ' + esc(formatEpoch(entry.latest_observation_epoch)) +
       '</small><small>Predicted concurrency: ' + esc(predicted) + ' · readiness: ' + esc(readiness) +
-      ' · forecast quality: ' + esc(quality) + ' · MAE: ' + esc(error) + '</small><small>' +
+      ' · forecast quality: ' + esc(quality) + ' · MAE: ' + esc(error) + '</small>' +
+      (forecast ? '<small>Forecast generated ' + esc(formatEpoch(forecast.generated_at_epoch)) +
+        ' · horizon target ' + esc(formatEpoch(forecast.target_epoch)) + '</small>' : '') +
+      '<small>Last decision: ' + esc(decisionAt) + ' · planned actions: ' + esc(plannedActions) +
+      ' · outcome: ' + esc(outcome) + '</small><small>' +
       esc(decisionText) + ': ' + esc(explanation) + '</small></div>' +
       pill(forecast ? "Forecast" : "Learning", forecast ? "good" : "info") + '</div>';
   }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);
@@ -67,7 +78,7 @@ export async function renderAppSettings() {
       '<div class="field"><label for="kitty-min-quality">Minimum forecast readiness (0.5–1)</label><input id="kitty-min-quality" type="number" min="0.5" max="1" step="0.01" value="' + esc(String(kittySettings.minimum_quality_score)) + '"><small class="field-hint">A heuristic readiness score, not a calibrated probability.</small></div>' +
     '</div>' +
     '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management and Smart Fast Stop triggers are not configurable in this version and cannot be enabled through the settings file. Warm-pool actions remain subordinate to the deterministic scheduler and its global limits.</p></div></div>' +
-    '<div class="toolbar"><span class="field-hint">System installs request administrator authorization to save Kitty settings. Changes are read by the scheduler within 30 seconds.</span><button class="btn btn-primary" id="save-kitty-settings">Save Kitty settings</button></div>' +
+    '<div class="toolbar"><span class="field-hint">System installs request administrator authorization to save Kitty settings. Changes are read by the scheduler within 30 seconds.</span><div class="heading-actions"><button class="btn" id="refresh-kitty-status">Refresh model status</button><button class="btn btn-primary" id="save-kitty-settings">Save Kitty settings</button></div></div>' +
     '<div class="section-heading mt-12"><h3>Workflow Model status</h3>' + pill(kittySettings.enabled ? (kittySettings.shadow_mode ? "Shadow mode" : "Enabled") : "Disabled", kittySettings.enabled ? (kittySettings.shadow_mode ? "info" : "warn") : "neutral") + '</div>' +
     '<div class="card-list mt-10">' + kittyRows + '</div>'
   ) + '</div>';
@@ -95,6 +106,19 @@ export async function renderAppSettings() {
     localStorage.setItem("gitrun-cat-enabled", enabled ? "true" : "false");
     document.body.classList.toggle("cat-hidden", !enabled);
     toast("Mascot preference saved.");
+  });
+  document.getElementById("refresh-kitty-status").addEventListener("click", async () => {
+    const button = document.getElementById("refresh-kitty-status");
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      await renderAppSettings();
+      toast("Kitty status refreshed.");
+    } catch (error) {
+      toast("Kitty status refresh failed: " + error, "error");
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
   });
   document.getElementById("save-kitty-settings").addEventListener("click", async () => {
     const button = document.getElementById("save-kitty-settings");

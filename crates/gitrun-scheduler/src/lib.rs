@@ -564,6 +564,57 @@ fn actions_for_resource_pressure(
 }
 
 /// Runs one reconcile cycle for a single repository: snapshot, plan, execute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KittyObservationCounts {
+    queued_jobs: u32,
+    busy_runners: u32,
+    online_runners: u32,
+    managed_runners: u32,
+}
+
+/// Forecast only the runner pool Kitty can actually influence. GitDockRun
+/// targets are served by a reserved pool and must not inflate demand for the
+/// ordinary pool's predictive minimum.
+fn kitty_observation_counts(
+    queued_job_names: &[String],
+    dock_target_jobs: &[String],
+    runner_views: &[RunnerView],
+    managed_pool_runner_names: &[String],
+) -> KittyObservationCounts {
+    let bounded_count = |count: usize| count.min(u32::MAX as usize) as u32;
+    KittyObservationCounts {
+        queued_jobs: bounded_count(
+            queued_job_names
+                .iter()
+                .filter(|job| !dock_target_jobs.iter().any(|target| target == *job))
+                .count(),
+        ),
+        busy_runners: bounded_count(
+            runner_views
+                .iter()
+                .filter(|runner| {
+                    managed_pool_runner_names
+                        .iter()
+                        .any(|name| name == &runner.name)
+                        && runner.busy
+                })
+                .count(),
+        ),
+        online_runners: bounded_count(
+            runner_views
+                .iter()
+                .filter(|runner| {
+                    managed_pool_runner_names
+                        .iter()
+                        .any(|name| name == &runner.name)
+                        && runner.online
+                })
+                .count(),
+        ),
+        managed_runners: bounded_count(managed_pool_runner_names.len()),
+    }
+}
+
 fn reconcile_repo(
     client: &GitHubClient,
     config: &Config,
@@ -760,6 +811,21 @@ fn reconcile_repo(
 
     let recovery_age = state.recovery_ages();
 
+    // Kitty models only the ordinary pool affected by its minimum-runner floor.
+    // Exclude reserved GitDockRun workloads and containers that reconciliation
+    // intentionally keeps outside the ordinary managed pool.
+    let managed_pool_runner_names: Vec<String> = plan_containers
+        .iter()
+        .filter(|container| !container.status.eq_ignore_ascii_case("exited"))
+        .map(|container| container.name.clone())
+        .collect();
+    let kitty_counts = kitty_observation_counts(
+        &queued_job_names,
+        &dock_target_jobs,
+        &planner_runners,
+        &managed_pool_runner_names,
+    );
+
     let observed_at_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -768,22 +834,10 @@ fn reconcile_repo(
         gitrun_smart_scheduler::ObservationInput {
             repository: repo.to_owned(),
             observed_at_epoch,
-            queued_jobs,
-            busy_runners: planner_runners
-                .iter()
-                .filter(|runner| runner.busy)
-                .count()
-                .min(u32::MAX as usize) as u32,
-            online_runners: planner_runners
-                .iter()
-                .filter(|runner| runner.online)
-                .count()
-                .min(u32::MAX as usize) as u32,
-            managed_runners: containers
-                .iter()
-                .filter(|container| !container.status.eq_ignore_ascii_case("exited"))
-                .count()
-                .min(u32::MAX as usize) as u32,
+            queued_jobs: kitty_counts.queued_jobs,
+            busy_runners: kitty_counts.busy_runners,
+            online_runners: kitty_counts.online_runners,
+            managed_runners: kitty_counts.managed_runners,
             host_cpu_percent: host_resources.map(|snapshot| f64::from(snapshot.cpu_percent)),
             host_memory_percent: host_resources.map(|snapshot| f64::from(snapshot.memory_percent)),
             host_disk_percent: host_resources.map(|snapshot| f64::from(snapshot.disk_percent)),
@@ -2436,6 +2490,70 @@ mod resource_pressure_reconciliation_tests {
 #[cfg(test)]
 mod reconcile_identity_pin_tests {
     use super::*;
+
+    #[test]
+    fn kitty_observation_excludes_reserved_dock_pool_and_jobs() {
+        let queue = vec![
+            "build".to_owned(),
+            "docker-special".to_owned(),
+            "release".to_owned(),
+        ];
+        let dock_targets = vec!["docker-special".to_owned()];
+        let runner_views = vec![
+            RunnerView {
+                name: "ordinary-busy".into(),
+                online: true,
+                busy: true,
+            },
+            RunnerView {
+                name: "ordinary-idle".into(),
+                online: true,
+                busy: false,
+            },
+            RunnerView {
+                name: "gitdock-reserved".into(),
+                online: true,
+                busy: true,
+            },
+        ];
+        let ordinary_managed = vec!["ordinary-busy".into(), "ordinary-idle".into()];
+        let counts = kitty_observation_counts(
+            &queue,
+            &dock_targets,
+            &runner_views,
+            &ordinary_managed,
+        );
+        assert_eq!(
+            counts,
+            KittyObservationCounts {
+                queued_jobs: 2,
+                busy_runners: 1,
+                online_runners: 2,
+                managed_runners: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn kitty_observation_keeps_busy_orphan_in_pool_when_still_owned() {
+        let queue = Vec::new();
+        let dock_targets: Vec<String> = Vec::new();
+        let runner_views = vec![RunnerView {
+            name: "ordinary-orphan".into(),
+            online: false,
+            busy: true,
+        }];
+        let ordinary_managed = vec!["ordinary-orphan".into()];
+        let counts = kitty_observation_counts(
+            &queue,
+            &dock_targets,
+            &runner_views,
+            &ordinary_managed,
+        );
+        assert_eq!(counts.busy_runners, 1);
+        assert_eq!(counts.online_runners, 0);
+        assert_eq!(counts.managed_runners, 1);
+    }
 
     #[test]
     fn destructive_action_requires_id_from_original_inventory() {

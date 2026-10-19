@@ -649,15 +649,15 @@ impl WorkflowModel {
                 || pattern.slot_last_week.len() != TEMPORAL_SLOT_COUNT
                 || pattern.job_name.len() > 256
                 || pattern.workflow_path.len() > 512
-                || pattern.labels.len() > 32
+                || pattern.labels.len() > 8
                 || pattern
                     .labels
                     .iter()
-                    .any(|label| label.is_empty() || label.chars().any(char::is_control))
+                    .any(|label| label.is_empty() || label.len() > 48 || label.chars().any(char::is_control))
                 || pattern.first_seen_epoch == 0
                 || pattern.first_seen_epoch > pattern.last_seen_epoch
                 || pattern.occurrence_count == 0
-                || pattern.labels.iter().any(|label| label.len() > 128)
+                || pattern.labels.iter().any(|label| label.len() > 48)
                 || !workload_codes.insert(pattern.workload_code.as_str())
             {
                 return Err(KittyError::Invalid(
@@ -2456,11 +2456,11 @@ fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
         && !job.name.trim().is_empty()
         && job.name.len() <= 256
         && job.workflow_path.len() <= 512
-        && job.labels.len() <= 32
+        && job.labels.len() <= 8
         && !job.name.chars().any(char::is_control)
         && !job.workflow_path.chars().any(char::is_control)
         && job.labels.iter().all(|label| {
-            !label.is_empty() && label.len() <= 128 && !label.chars().any(char::is_control)
+            !label.is_empty() && label.len() <= 48 && !label.chars().any(char::is_control)
         })
 }
 

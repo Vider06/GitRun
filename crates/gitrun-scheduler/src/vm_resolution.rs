@@ -469,6 +469,7 @@ mod tests {
             "8.8.8.8",
             "172.15.255.255",
             "172.32.0.1",
+            // DevSkim: ignore DS162092 — loopback is an intentional rejected input in this security regression test.
             "127.0.0.1",
             "169.254.1.2",
             "::1",

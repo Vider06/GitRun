@@ -213,6 +213,7 @@ export async function renderAppSettings() {
         updated.minimum_quality_score > 1 ||
         updated.automation_allowed_repositories.length > 64 ||
         updated.automation_allowed_repositories.some((repo) => !/^[A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/.test(repo)) ||
+        (updated.automation_mode && !updated.enabled) ||
         (updated.automation_mode && updated.automation_allowed_repositories.length === 0) ||
         (updated.smart_fast_stop_enabled && (!updated.automation_mode ||
           updated.automation_allowed_repositories.length === 0 ||

@@ -4009,6 +4009,45 @@ mod tests {
     }
 
     #[test]
+    fn recurring_workload_prewarm_targets_exact_hour_with_configured_lead() {
+        let mut settings = enabled_settings();
+        settings.predictive_warm_pool_enabled = true;
+        settings.warm_pool_lead_seconds = 300;
+        settings.warm_pool_min_hold_seconds = 900;
+        settings.max_additional_warm_runners = 4;
+
+        // At 15:55 the five-minute lead must target exactly 16:00.
+        let bucket = 10 * WEEK_SECONDS + 15 * 3_600 + 55 * 60;
+        let target = bucket + settings.warm_pool_lead_seconds;
+        let workload_code = "wk-0123456789abcdef";
+        let mut pattern = WorkloadPattern {
+            workload_code: workload_code.into(),
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            job_name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            first_seen_epoch: bucket - 4 * WEEK_SECONDS,
+            last_seen_epoch: bucket,
+            occurrence_count: 8,
+            slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
+            slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
+        };
+        let slot = weekday_hour_slot(target);
+        pattern.slots[slot] = TemporalDemandSlot(8, 8, 8, 4);
+        pattern.slot_last_week[slot] = weekly_period_start(bucket);
+        let mut model = WorkflowModel::empty("owner/repo");
+        model.workload_patterns.push(pattern);
+
+        let prewarms = forecast_workload_prewarms(&model, bucket, &settings);
+        assert_eq!(prewarms.len(), 1);
+        assert_eq!(prewarms[0].target_epoch, target);
+        assert_eq!(prewarms[0].runner_count, 2);
+        assert_eq!(prewarms[0].hold_until_epoch, target + 900);
+        assert_eq!(prewarms[0].observed_distinct_weeks, 4);
+        assert_eq!(prewarms[0].workload_code, workload_code);
+    }
+
+    #[test]
     fn workload_predictions_learn_from_unique_jobs_and_close_empty_windows() {
         let mut model = WorkflowModel::empty("owner/repo");
         let target = 80_000 / 3_600 * 3_600;

@@ -25,9 +25,21 @@ export async function renderAppSettings() {
   const formatEpoch = (value) => value ? new Date(value * 1000).toLocaleString() : "Not recorded";
   const hiddenModelPlaceholder = '<div class="notice"><div><strong>Workflow Model details are hidden</strong><p>Historical predictions remain stored privately. Re-enable model visibility to show the summarized history and latest decision.</p></div></div>';
   const emptyModelPlaceholder = '<div class="notice"><div><strong>No Workflow Model history yet</strong><p>No observations are recorded yet. Kitty must be enabled for aggregate telemetry, and forecasts require sufficient history and evaluated outcomes.</p></div></div>';
+  const kittyStatusNow = Date.now() / 1000;
+  const kittyCanForecast = kittySettings.enabled &&
+    kittySettings.telemetry_enabled && kittySettings.predictive_analytics_enabled;
   const kittyRows = (kittyStatus.repositories || []).map((entry) => {
     const forecast = entry.latest_forecast;
     const decision = entry.latest_decision;
+    const observationAge = entry.latest_observation_epoch
+      ? kittyStatusNow - entry.latest_observation_epoch
+      : Number.POSITIVE_INFINITY;
+    const forecastFresh = !!forecast && kittyCanForecast &&
+      observationAge >= 0 && observationAge <= 600 &&
+      Number.isFinite(forecast.generated_at_epoch) &&
+      kittyStatusNow >= forecast.generated_at_epoch &&
+      kittyStatusNow - forecast.generated_at_epoch <= 600;
+    const forecastLabel = !forecast ? "Learning" : forecastFresh ? "Forecast" : "Historical";
     const readiness = forecast && Number.isFinite(forecast.confidence_score)
       ? (forecast.confidence_score * 100).toFixed(1) + "%"
       : "Not ready";
@@ -56,7 +68,7 @@ export async function renderAppSettings() {
       '<small>Last decision: ' + esc(decisionAt) + ' · planned actions: ' + esc(plannedActions) +
       ' · outcome: ' + esc(outcome) + '</small><small>' +
       esc(decisionText) + ': ' + esc(explanation) + '</small></div>' +
-      pill(forecast ? "Forecast" : "Learning", forecast ? "good" : "info") + '</div>';
+      pill(forecastLabel, forecastFresh ? "good" : forecast ? "neutral" : "info") + '</div>';
   }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);
   const kittyPanel = '<div class="section">' + panel("Kitty Smart Scheduler",
     '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. It is disabled by default; recommendations never authorize themselves.</p>' +
@@ -151,14 +163,21 @@ export async function renderAppSettings() {
       toast("Kitty settings are outside the supported bounds.", "error");
       return;
     }
-    if (updated.enabled && updated.telemetry_enabled && updated.predictive_analytics_enabled &&
-        updated.predictive_warm_pool_enabled && !updated.shadow_mode &&
-        (!kittySettings.enabled || !kittySettings.predictive_warm_pool_enabled || kittySettings.shadow_mode)) {
+    const warmPoolRiskChanged = updated.enabled && updated.telemetry_enabled &&
+      updated.predictive_analytics_enabled && updated.predictive_warm_pool_enabled && !updated.shadow_mode &&
+      (!kittySettings.enabled || !kittySettings.telemetry_enabled ||
+        !kittySettings.predictive_analytics_enabled || !kittySettings.predictive_warm_pool_enabled ||
+        kittySettings.shadow_mode ||
+        updated.max_additional_warm_runners > kittySettings.max_additional_warm_runners ||
+        updated.minimum_quality_score < kittySettings.minimum_quality_score ||
+        updated.minimum_samples < kittySettings.minimum_samples ||
+        updated.warm_pool_min_hold_seconds < kittySettings.warm_pool_min_hold_seconds);
+    if (warmPoolRiskChanged) {
       const confirmed = await confirmModal(
-        "Enable predictive runner prewarming?",
+        "Enable or relax predictive runner prewarming?",
         "Kitty may raise the minimum runner pool by at most " + updated.max_additional_warm_runners +
-          " runners, only after enough recent observations and evaluated forecasts meet the quality threshold. The existing global runner maximum and resource-pressure gate remain in force. Kitty will not terminate runners or change security policy.",
-        "Enable Predictive Warm Pool",
+          " runners, only after enough recent observations and evaluated forecasts meet the quality threshold. This change may make predictive prewarming more permissive. The existing global runner maximum and resource-pressure gate remain in force. Kitty will not terminate runners or change security policy.",
+        "Confirm Predictive Warm Pool",
         true
       );
       if (!confirmed) return;

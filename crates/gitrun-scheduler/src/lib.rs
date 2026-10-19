@@ -586,7 +586,21 @@ fn kitty_observation_counts(
         queued_jobs: bounded_count(
             queued_job_names
                 .iter()
-                .filter(|job| !dock_target_jobs.iter().any(|target| target == *job))
+                .filter(|job| {
+                    let is_known_dock_target =
+                        dock_target_jobs.iter().any(|target| target == *job);
+                    // The current shared routing contract identifies dock
+                    // targets by job name, not by workflow/run ID. If multiple
+                    // queued jobs have the same name, do not guess which one
+                    // owns the reserved slot: count all of them conservatively.
+                    let name_is_unique = queued_job_names
+                        .iter()
+                        .filter(|candidate| *candidate == *job)
+                        .take(2)
+                        .count()
+                        == 1;
+                    !is_known_dock_target || !name_is_unique
+                })
                 .count(),
         ),
         busy_runners: bounded_count(
@@ -2528,6 +2542,19 @@ mod reconcile_identity_pin_tests {
                 managed_runners: 2,
             }
         );
+    }
+
+    #[test]
+    fn kitty_observation_does_not_guess_when_target_job_names_are_duplicated() {
+        let queue = vec![
+            "docker-special".to_owned(),
+            "docker-special".to_owned(),
+        ];
+        let dock_targets = vec!["docker-special".to_owned()];
+        let counts = kitty_observation_counts(&queue, &dock_targets, &[], &[]);
+        // Without a workflow/run identity in the routing contract, excluding
+        // just one copy would be an unsupported guess. Conservative demand is 2.
+        assert_eq!(counts.queued_jobs, 2);
     }
 
     #[test]

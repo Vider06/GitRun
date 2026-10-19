@@ -363,7 +363,10 @@ impl WorkflowModel {
         for audit in &self.decision_audit {
             if audit.bucket_epoch % BUCKET_SECONDS != 0
                 || audit.model_version != self.model_version
-                || audit.sample_count > history_limit
+                // Audit counts describe the history size at decision time; they
+                // can legitimately exceed a later reduced retention setting.
+                // The hard on-disk cap still rejects implausible/corrupt counts.
+                || audit.sample_count > MAX_HISTORY_BUCKETS
                 || audit
                     .source_window_start
                     .zip(audit.source_window_end)
@@ -603,12 +606,19 @@ impl KittyRuntime {
             ));
         }
 
-        if let Some(last) = model
+        // Use this timestamp for in-memory recency as well as the persisted
+        // source-window metadata. Otherwise an evicted/reloaded repository can
+        // remain "oldest" forever when its samples are merged into the same
+        // five-minute bucket.
+        model.generated_at_epoch = input.observed_at_epoch;
+        let (demand_peak_increased, new_bucket) = if let Some(last) = model
             .history
             .last_mut()
             .filter(|last| last.bucket_epoch == bucket)
         {
+            let old_peak = last.demand();
             last.merge_snapshot(&observation);
+            (last.demand() > old_peak, false)
         } else {
             model.history.push(observation);
             if model.history.len() > self.settings.history_buckets {
@@ -616,7 +626,6 @@ impl KittyRuntime {
                 model.history.drain(0..excess);
             }
             evaluate_matured_predictions(model, bucket);
-            model.generated_at_epoch = input.observed_at_epoch;
             if self.settings.predictive_analytics_enabled {
                 model.latest_forecast =
                     compute_forecast(model, &self.settings, input.observed_at_epoch);
@@ -636,6 +645,12 @@ impl KittyRuntime {
                 let excess = model.predictions.len() - MAX_EVALUATED_FORECASTS;
                 model.predictions.drain(0..excess);
             }
+            (true, true)
+        };
+        if new_bucket || demand_peak_increased {
+            // Persist a newly observed peak in the current bucket. Without
+            // this, a restart before the next bucket could lose the queue
+            // burst that the forecast history is intended to preserve.
             self.dirty_models.insert(key.clone());
         }
 
@@ -849,6 +864,10 @@ impl KittyRuntime {
                     || last.status != audit.status
                     || last.effective_min_runners != audit.effective_min_runners
                     || last.reason != audit.reason
+                    // Record a subsequent retry separately after an action
+                    // failed; a later successful reconcile must not be hidden
+                    // by the failed outcome of the first attempt.
+                    || last.execution_outcome.as_deref() == Some("action_failure")
             })
             .unwrap_or(true);
         if should_add_audit {
@@ -998,12 +1017,10 @@ impl KittyRuntime {
             None => Ok(WorkflowModel::empty(repository)),
             Some(bytes) => {
                 let mut model: WorkflowModel = serde_json::from_slice(&bytes)?;
-                if model.history.len() > self.settings.history_buckets {
-                    let excess = model.history.len() - self.settings.history_buckets;
-                    model.history.drain(0..excess);
-                    model.latest_forecast = None;
-                }
-                model.validate_for(repository, self.settings.history_buckets)?;
+                // Validate against the hard storage bound first. The active
+                // operator history window is applied in observe(), where the
+                // truncation is marked dirty and then durably saved.
+                model.validate_for(repository, MAX_HISTORY_BUCKETS)?;
                 model.history.shrink_to_fit();
                 model.predictions.shrink_to_fit();
                 Ok(model)
@@ -2102,6 +2119,103 @@ mod tests {
         let decision = runtime.observe(input(1_800, 0, 1), 3, 8, true).unwrap();
         assert_eq!(decision.status, DecisionStatus::SafeFallback);
         assert_eq!(decision.effective_min_runners, 3);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reduced_operator_history_window_is_persisted_after_trimming() {
+        let dir = temp_dir("history-window-trim");
+        let mut settings = enabled_settings();
+        settings.history_buckets = 24;
+        settings.minimum_samples = 24;
+        write_settings(&dir, &settings);
+
+        let key = repository_key("owner/repo");
+        let model_dir = dir.join("kitty");
+        fs::create_dir_all(&model_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&model_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let start = 50_000 / BUCKET_SECONDS * BUCKET_SECONDS;
+        let mut model = WorkflowModel::empty("owner/repo");
+        for index in 0..30u64 {
+            model.history.push(Observation {
+                bucket_epoch: start + index * BUCKET_SECONDS,
+                queued_jobs: 0,
+                busy_runners: 1,
+                online_runners: 1,
+                managed_runners: 2,
+                host_cpu_percent: None,
+                host_memory_percent: None,
+                host_disk_percent: None,
+                snapshots_in_bucket: 1,
+            });
+        }
+        model.generated_at_epoch = start + 29 * BUCKET_SECONDS;
+        model.decision_audit.push(DecisionAudit {
+            bucket_epoch: start + 29 * BUCKET_SECONDS,
+            model_version: MODEL_VERSION,
+            source_window_start: Some(start),
+            source_window_end: Some(start + 29 * BUCKET_SECONDS),
+            status: DecisionStatus::RecommendationOnly,
+            reason: "sample audit from wider prior history window".into(),
+            configured_min_runners: 2,
+            proposed_min_runners: 2,
+            effective_min_runners: 2,
+            predicted_peak_concurrency: Some(1),
+            confidence_score: Some(0.7),
+            sample_count: 30,
+            planned_action_count: Some(0),
+            execution_outcome: Some("no_actions_required".into()),
+        });
+        let path = model_dir.join(format!("model-{key}.json"));
+        fs::write(&path, serde_json::to_vec(&model).unwrap()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        let mut runtime = KittyRuntime::new(&dir);
+        let current = start + 29 * BUCKET_SECONDS;
+        let decision = runtime
+            .observe(input(current + 1, 0, 1), 2, 4, true)
+            .unwrap();
+        runtime.finish_cycle(&decision, 0, true).unwrap();
+
+        let stored: WorkflowModel =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(stored.history.len(), 24);
+        assert_eq!(
+            stored.history.first().unwrap().bucket_epoch,
+            start + 6 * BUCKET_SECONDS
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn same_bucket_queue_peak_is_persisted_before_the_next_bucket() {
+        let dir = temp_dir("same-bucket-peak");
+        write_settings(&dir, &enabled_settings());
+        let mut runtime = KittyRuntime::new(&dir);
+
+        let first = runtime.observe(input(1_800, 1, 1), 2, 4, true).unwrap();
+        runtime.finish_cycle(&first, 0, true).unwrap();
+
+        let burst = runtime.observe(input(1_801, 8, 1), 2, 4, true).unwrap();
+        runtime.finish_cycle(&burst, 0, true).unwrap();
+
+        let path = dir
+            .join("kitty")
+            .join(format!("model-{}.json", repository_key("owner/repo")));
+        let stored: WorkflowModel =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(stored.history.len(), 1);
+        assert_eq!(stored.history[0].queued_jobs, 8);
+        assert_eq!(stored.history[0].demand(), 9);
+
         let _ = fs::remove_dir_all(dir);
     }
 

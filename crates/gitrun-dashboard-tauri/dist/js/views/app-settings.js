@@ -80,19 +80,19 @@ export async function renderAppSettings() {
         : 'No scheduled prediction evaluated yet';
       return '<div class="field-hint mt-8"><strong>' + esc(workload.job_name) + '</strong>' +
         '<small>' + esc(String(workload.workflow_path)) + ' · workload ' +
-        esc(String(workload.gitrun_job_id)) + ' · ' + esc(String(workload.occurrence_count)) +
+        esc(String(workload.workload_id)) + ' · ' + esc(String(workload.occurrence_count)) +
         ' actual job starts · last seen ' + esc(formatEpoch(workload.last_seen_epoch)) +
         '</small><small>Optional workflow runs-on family label: ' +
-        esc('gitrun-job-' + String(workload.gitrun_job_id)) +
-        ' · this targets the workload family, not a future run/job ID</small><small>Observed runner labels: '
+        esc('gitrun-job-' + String(workload.workload_id)) +
+        ' · this targets the workload family, not a future run/job ID</small><small>Observed runner labels: ' +
         esc((workload.labels || []).slice(0, 8).join(', ')) +
         ((workload.labels || []).length > 8 ? ' …' : '') +
         '</small><small>Recurring: ' + esc(recurring) +
         '</small><small>' + esc(predictionText) + '</small></div>';
     }).join("");
     const recentJobs = (entry.recent_job_occurrences || []).slice(-3).reverse().map((job) =>
-      '<small>Job occurrence ' + esc(String(job.occurrence_code)) +
-        ' · workload ' + esc(String(job.gitrun_job_id)) +
+      '<small>GitRun job ' + esc(String(job.gitrun_job_id)) +
+        ' · workload ' + esc(String(job.workload_id)) +
         (job.started_at_epoch ? ' · started ' + esc(formatEpoch(job.started_at_epoch)) : ' · start time unavailable') +
         '</small>'
     ).join("");

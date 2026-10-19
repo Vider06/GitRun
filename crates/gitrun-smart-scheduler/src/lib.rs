@@ -280,11 +280,14 @@ impl PeriodSummary {
 
     /// Merge aggregate values without changing this summary's period bounds.
     fn merge_values(&mut self, other: &Self) {
-        self.observation_count = self.observation_count.saturating_add(other.observation_count);
+        self.observation_count = self
+            .observation_count
+            .saturating_add(other.observation_count);
         self.demand_sum = self.demand_sum.saturating_add(other.demand_sum);
         self.peak_demand = self.peak_demand.max(other.peak_demand);
         if self.slots.len() != TEMPORAL_SLOT_COUNT {
-            self.slots.resize(TEMPORAL_SLOT_COUNT, TemporalDemandSlot::default());
+            self.slots
+                .resize(TEMPORAL_SLOT_COUNT, TemporalDemandSlot::default());
         }
         for (slot, other_slot) in self.slots.iter_mut().zip(&other.slots) {
             slot.0 = slot.0.saturating_add(other_slot.0);
@@ -502,7 +505,9 @@ impl WorkflowModel {
                     .is_some_and(|value| !value.is_finite() || value < 0.0)
                 || forecast.seasonal_target_epoch < forecast.generated_at_epoch
                 || forecast.seasonal_target_epoch
-                    > forecast.generated_at_epoch.saturating_add(FORECAST_HORIZON_SECONDS)
+                    > forecast
+                        .generated_at_epoch
+                        .saturating_add(FORECAST_HORIZON_SECONDS)
                 || forecast
                     .bias_correction
                     .is_some_and(|value| !value.is_finite())
@@ -799,8 +804,7 @@ impl KittyRuntime {
                         actual_demand: None,
                         skipped_missing_observation: false,
                     });
-                    if let Some(seasonal_prediction) =
-                        forecast.seasonal_predicted_peak_concurrency
+                    if let Some(seasonal_prediction) = forecast.seasonal_predicted_peak_concurrency
                     {
                         model.predictions.push(PredictionRecord {
                             issued_at_bucket: bucket,
@@ -850,7 +854,8 @@ impl KittyRuntime {
                     && f.confidence_score >= self.settings.minimum_quality_score
             })
             .map(|f| {
-                let desired = f.seasonal_predicted_peak_concurrency
+                let desired = f
+                    .seasonal_predicted_peak_concurrency
                     .unwrap_or(f.predicted_peak_concurrency);
                 let additional = desired
                     .saturating_sub(configured_min_runners)
@@ -1693,7 +1698,10 @@ fn validate_period_summary(
     if summary.period_end_epoch <= summary.period_start_epoch
         || summary.slots.len() != TEMPORAL_SLOT_COUNT
         || expected_period_seconds.is_some_and(|seconds| {
-            summary.period_end_epoch.saturating_sub(summary.period_start_epoch) != seconds
+            summary
+                .period_end_epoch
+                .saturating_sub(summary.period_start_epoch)
+                != seconds
                 || summary.period_start_epoch % seconds != 0
         })
     {
@@ -1733,11 +1741,7 @@ fn weekly_period_start(epoch: u64) -> u64 {
     days.saturating_sub(weekday).saturating_mul(86_400)
 }
 
-fn compact_model_history(
-    model: &mut WorkflowModel,
-    now_epoch: u64,
-    history_limit: usize,
-) -> bool {
+fn compact_model_history(model: &mut WorkflowModel, now_epoch: u64, history_limit: usize) -> bool {
     let history_limit = history_limit.clamp(24, MAX_HISTORY_BUCKETS);
     let raw_window_seconds = (history_limit as u64).saturating_mul(BUCKET_SECONDS);
     let cutoff = now_epoch.saturating_sub(raw_window_seconds);
@@ -1761,8 +1765,11 @@ fn compact_model_history(
             {
                 &mut model.weekly_summaries[index]
             } else {
-                model.weekly_summaries.push(PeriodSummary::new(start, WEEK_SECONDS));
-                model.weekly_summaries
+                model
+                    .weekly_summaries
+                    .push(PeriodSummary::new(start, WEEK_SECONDS));
+                model
+                    .weekly_summaries
                     .sort_by_key(|entry| entry.period_start_epoch);
                 let index = model
                     .weekly_summaries
@@ -1809,7 +1816,8 @@ fn compact_model_history(
             } else {
                 model.monthly_summaries.push(summary);
             }
-            model.monthly_summaries
+            model
+                .monthly_summaries
                 .sort_by_key(|entry| entry.period_start_epoch);
             changed = true;
         }
@@ -1840,7 +1848,8 @@ fn compact_model_history(
         model.monthly_summaries = retained;
         if found {
             model.yearly_summaries.push(summary);
-            model.yearly_summaries
+            model
+                .yearly_summaries
                 .sort_by_key(|entry| entry.period_start_epoch);
             changed = true;
         }
@@ -1963,11 +1972,7 @@ fn compute_forecast(
     // Keep the forecast peak-sensitive without allowing one outlier to dominate:
     // the recent 90th percentile is a floor, combined with EWMA and short trend.
     let corrected = ewma + trend + bias_correction.unwrap_or(0.0);
-    let predicted = corrected
-        .max(recent_mean)
-        .max(recent_p90)
-        .max(0.0)
-        .ceil();
+    let predicted = corrected.max(recent_mean).max(recent_p90).max(0.0).ceil();
     let predicted_peak_concurrency = predicted.min(u32::MAX as f64) as u32;
 
     let seasonal_target_epoch = now_epoch.saturating_add(settings.warm_pool_lead_seconds);
@@ -1977,8 +1982,7 @@ fn compute_forecast(
     let seasonal_prediction = if seasonal_occurrences >= MIN_SEASONAL_OCCURRENCES
         && seasonal_stats.weighted_samples > 0.0
     {
-        let seasonal_mean =
-            seasonal_stats.weighted_demand_sum / seasonal_stats.weighted_samples;
+        let seasonal_mean = seasonal_stats.weighted_demand_sum / seasonal_stats.weighted_samples;
         let schedule_correction = model
             .predictions
             .iter()
@@ -1995,8 +1999,8 @@ fn compute_forecast(
                     .map(|actual| f64::from(actual) - f64::from(record.predicted_demand))
             })
             .collect::<Vec<_>>();
-        let seasonal_bias_correction = (schedule_correction.len() >= 4)
-            .then(|| mean(&schedule_correction));
+        let seasonal_bias_correction =
+            (schedule_correction.len() >= 4).then(|| mean(&schedule_correction));
         let corrected = (seasonal_mean + seasonal_bias_correction.unwrap_or(0.0))
             .max(0.0)
             .ceil()
@@ -2026,8 +2030,7 @@ fn compute_forecast(
                 .map(|actual| f64::from(actual) - f64::from(record.predicted_demand))
         })
         .collect();
-    let bias_correction = (correction_samples.len() >= 8)
-        .then(|| mean(&correction_samples));
+    let bias_correction = (correction_samples.len() >= 8).then(|| mean(&correction_samples));
     let (mae, quality_score) = if evaluated.len() >= 24 {
         let errors: Vec<f64> = evaluated
             .iter()

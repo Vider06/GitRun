@@ -1290,7 +1290,9 @@ impl KittyRuntime {
             .rev()
             .find(|audit| audit.bucket_epoch == bucket)
             .ok_or_else(|| {
-                KittyError::Invalid("GSR authorization result has no matching decision audit".into())
+                KittyError::Invalid(
+                    "GSR authorization result has no matching decision audit".into(),
+                )
             })?;
 
         if authorized {

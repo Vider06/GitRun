@@ -293,7 +293,9 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                 if let Some(workload_id) =
                     gitrun_smart_scheduler::workload_id_from_routing_labels(labels)
                 {
-                    let ordinal = routed_family_ordinals.entry(workload_id.clone()).or_default();
+                    let ordinal = routed_family_ordinals
+                        .entry(workload_id.clone())
+                        .or_default();
                     *ordinal = ordinal.saturating_add(1);
                     let already_available = input
                         .routed_workload_capacity

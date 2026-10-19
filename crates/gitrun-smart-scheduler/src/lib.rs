@@ -771,7 +771,7 @@ impl WorkflowModel {
             }
         }
         for audit in &self.decision_audit {
-            if audit.bucket_epoch % BUCKET_SECONDS != 0
+            if !audit.bucket_epoch.is_multiple_of(BUCKET_SECONDS)
                 || audit.model_version != self.model_version
                 // Audit counts describe the history size at decision time; they
                 // can legitimately exceed a later reduced retention setting.

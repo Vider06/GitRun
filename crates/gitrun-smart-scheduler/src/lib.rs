@@ -2183,7 +2183,11 @@ mod tests {
         fs::set_permissions(&kitty_dir, fs::Permissions::from_mode(0o700)).unwrap();
 
         let outside = dir.join("settings-target.json");
-        fs::write(&outside, serde_json::to_vec(&KittySettings::default()).unwrap()).unwrap();
+        fs::write(
+            &outside,
+            serde_json::to_vec(&KittySettings::default()).unwrap(),
+        )
+        .unwrap();
         fs::set_permissions(&outside, fs::Permissions::from_mode(0o600)).unwrap();
 
         let settings_path = KittyRuntime::settings_path(&dir);
@@ -2191,7 +2195,11 @@ mod tests {
         assert!(read_settings(&settings_path).is_err());
 
         fs::remove_file(&settings_path).unwrap();
-        fs::write(&settings_path, serde_json::to_vec(&KittySettings::default()).unwrap()).unwrap();
+        fs::write(
+            &settings_path,
+            serde_json::to_vec(&KittySettings::default()).unwrap(),
+        )
+        .unwrap();
         fs::set_permissions(&settings_path, fs::Permissions::from_mode(0o600)).unwrap();
         let hard_link = dir.join("settings-hard-link.json");
         fs::hard_link(&settings_path, &hard_link).unwrap();

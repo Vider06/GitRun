@@ -715,38 +715,57 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
         model.next_gitrun_job_sequence = 1;
         changed = true;
     }
+
+    // Backwards compatibility: the original implementation used this field
+    // for the workload profile ID rather than the unique occurrence ID.
     for occurrence in &mut model.recent_job_occurrences {
-        // Older models stored the stable workload/profile key in this field.
         if occurrence.workload_id.is_empty() && valid_workload_id(&occurrence.gitrun_job_id) {
             occurrence.workload_id = std::mem::take(&mut occurrence.gitrun_job_id);
             changed = true;
         }
-        if let Some(sequence) = generated_gitrun_job_sequence_for_repository(
+    }
+
+    // Only sequence values in this repository's namespace count toward the
+    // high-water mark. A foreign ID must never poison this repository's counter.
+    let max_sequence = model.recent_job_occurrences.iter().filter_map(|occurrence| {
+        generated_gitrun_job_sequence_for_repository(
             &occurrence.gitrun_job_id,
             &model.repository,
-        ) {
-            if let Some(next) = sequence.checked_add(1) {
-                model.next_gitrun_job_sequence = model.next_gitrun_job_sequence.max(next);
-            } else {
-                model.next_gitrun_job_sequence = u64::MAX;
+        )
+    }).max();
+    if let Some(sequence) = max_sequence {
+        let next = sequence.checked_add(1).unwrap_or(u64::MAX);
+        if model.next_gitrun_job_sequence < next {
+            model.next_gitrun_job_sequence = next;
+            changed = true;
+        }
+    }
+
+    // Repair foreign-namespace, malformed, and duplicate IDs. Allocation is
+    // monotonic and checked; if the sequence is exhausted, model validation
+    // fails closed instead of reusing an identity.
+    let mut seen_ids = HashSet::new();
+    for index in 0..model.recent_job_occurrences.len() {
+        let old_id = model.recent_job_occurrences[index].gitrun_job_id.clone();
+        if valid_generated_gitrun_job_id_for_repository(&old_id, &model.repository)
+            && seen_ids.insert(old_id)
+        {
+            continue;
+        }
+        while model.next_gitrun_job_sequence < u64::MAX {
+            let sequence = model.next_gitrun_job_sequence;
+            let Some(next) = sequence.checked_add(1) else { break };
+            let Some(candidate) = generate_occurrence_id(&model.repository, sequence) else { break };
+            model.next_gitrun_job_sequence = next;
+            if seen_ids.insert(candidate.clone()) {
+                model.recent_job_occurrences[index].gitrun_job_id = candidate;
+                changed = true;
+                break;
             }
         }
     }
+
     for occurrence in &mut model.recent_job_occurrences {
-        if !valid_generated_gitrun_job_id_for_repository(
-            &occurrence.gitrun_job_id,
-            &model.repository,
-        ) {
-            if let Some(id) =
-                generate_occurrence_id(&model.repository, model.next_gitrun_job_sequence)
-            {
-                if let Some(next) = model.next_gitrun_job_sequence.checked_add(1) {
-                    occurrence.gitrun_job_id = id;
-                    model.next_gitrun_job_sequence = next;
-                    changed = true;
-                }
-            }
-        }
         if valid_workload_id(&occurrence.workload_id) {
             let expected = provider_occurrence_key(
                 &occurrence.workload_id,

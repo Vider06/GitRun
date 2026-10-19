@@ -151,6 +151,8 @@ pub struct QueuedJobInfo {
     pub workflow_path: String,
     pub name: String,
     pub labels: Vec<String>,
+    /// GitHub's authoritative start timestamp; None while the job is only queued.
+    pub started_at_epoch: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,6 +174,8 @@ struct Job {
     runner_name: Option<String>,
     #[serde(default)]
     conclusion: Option<String>,
+    #[serde(default)]
+    started_at: Option<String>,
 }
 
 /// Public job identity needed by GitDockRun to resolve a named job in the
@@ -957,6 +961,98 @@ impl GitHubClient {
         Ok(jobs)
     }
 
+    /// Samples jobs that actually started in a small set of recent runs.
+    /// This is intentionally rate-bounded and called on Kitty's slower history
+    /// cadence, not on every 30-second reconciliation tick.
+    pub fn recent_self_hosted_job_starts(
+        &self,
+        repo: &str,
+        max_runs: usize,
+    ) -> Result<Vec<QueuedJobInfo>> {
+        let (owner, name) = split_repo(repo)?;
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs?per_page=100",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        let parsed: WorkflowRunsResponse = self.request(reqwest::Method::GET, &url)?.json()?;
+        let recent_runs: Vec<_> = parsed
+            .workflow_runs
+            .into_iter()
+            .filter(|run| {
+                run.status.eq_ignore_ascii_case("in_progress")
+                    || run.status.eq_ignore_ascii_case("completed")
+            })
+            .take(max_runs.clamp(1, 5))
+            .collect();
+
+        let mut jobs = Vec::new();
+        for run in recent_runs {
+            jobs.extend(self.started_self_hosted_job_info_for_run(
+                owner,
+                name,
+                run.id,
+                run.workflow_id,
+                &run.path,
+            )?);
+        }
+        jobs.sort_by_key(|job| (job.started_at_epoch.unwrap_or(u64::MAX), job.run_id, job.job_id));
+        Ok(jobs)
+    }
+
+    fn started_self_hosted_job_info_for_run(
+        &self,
+        owner: &str,
+        name: &str,
+        run_id: u64,
+        workflow_id: u64,
+        workflow_path: &str,
+    ) -> Result<Vec<QueuedJobInfo>> {
+        let mut jobs = Vec::new();
+        let mut url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        let mut seen_pages = HashSet::new();
+
+        loop {
+            record_page_url(&mut seen_pages, &url)?;
+            let response = self.request(reqwest::Method::GET, &url)?;
+            let next_url = parse_next_link(response.headers());
+            let parsed: JobsResponse = response.json()?;
+            jobs.extend(parsed.jobs.into_iter().filter_map(|job| {
+                if !job
+                    .labels
+                    .iter()
+                    .any(|label| label.eq_ignore_ascii_case("self-hosted"))
+                {
+                    return None;
+                }
+                let started_at_epoch = job
+                    .started_at
+                    .as_deref()
+                    .and_then(parse_github_timestamp_epoch)?;
+                Some(QueuedJobInfo {
+                    run_id,
+                    job_id: job.id,
+                    workflow_id,
+                    workflow_path: workflow_path.to_owned(),
+                    name: job.name,
+                    labels: job.labels,
+                    started_at_epoch: Some(started_at_epoch),
+                })
+            }));
+
+            match next_url {
+                Some(next) => url = next,
+                None => break,
+            }
+        }
+
+        Ok(jobs)
+    }
+
     fn queued_self_hosted_job_info_for_run(
         &self,
         owner: &str,
@@ -997,6 +1093,10 @@ impl GitHubClient {
                         workflow_path: workflow_path.to_owned(),
                         name: job.name,
                         labels: job.labels,
+                        started_at_epoch: job
+                            .started_at
+                            .as_deref()
+                            .and_then(parse_github_timestamp_epoch),
                     }),
             );
 

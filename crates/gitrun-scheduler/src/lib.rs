@@ -1300,6 +1300,25 @@ fn reconcile_repo(
             action_execution_succeeded = false;
             break;
         }
+        if let Action::PrewarmWorkload {
+            workload_code,
+            target_epoch,
+            ..
+        } = &action
+        {
+            if let Err(error) = kitty_runtime.record_workload_prewarm_created(
+                &kitty_decision.repository,
+                workload_code,
+                *target_epoch,
+                1,
+            ) {
+                eprintln!(
+                    "gitrun-autoscaler: failed to persist completed Kitty prewarm {workload_code}@{target_epoch} for {repo}: {error}"
+                );
+                action_execution_succeeded = false;
+                break;
+            }
+        }
     }
 
     // Kitty audit persistence is deliberately non-fatal: if its storage fails,
@@ -1395,7 +1414,7 @@ fn execute(
             job_run_id,
             job_id,
         } => {
-            create_runner(
+            if !create_runner(
                 client,
                 config,
                 state_dir,
@@ -1411,7 +1430,12 @@ fn execute(
                     prewarm_target_epoch: None,
                     prewarm_hold_until_epoch: None,
                 },
-            )?;
+            )? {
+                return Err(std::io::Error::other(
+                    "runner creation was skipped by GSR policy or backend readiness",
+                )
+                .into());
+            }
         }
         Action::PrewarmWorkload {
             workload_code,
@@ -1420,7 +1444,7 @@ fn execute(
             job_name,
             job_labels,
         } => {
-            create_runner(
+            if !create_runner(
                 client,
                 config,
                 state_dir,
@@ -1439,7 +1463,12 @@ fn execute(
                     prewarm_target_epoch: Some(*target_epoch),
                     prewarm_hold_until_epoch: Some(*hold_until_epoch),
                 },
-            )?;
+            )? {
+                return Err(std::io::Error::other(
+                    "Kitty prewarm runner creation was skipped by GSR policy or backend readiness",
+                )
+                .into());
+            }
             eprintln!(
                 "gitrun-autoscaler: prewarmed workload {} ({}) for {} at target epoch {}",
                 workload_code, job_name, repo, target_epoch
@@ -1453,7 +1482,7 @@ fn execute(
             // Recreation isn't tied to a specific queued job (it's replacing
             // a container GitHub lost track of, not opening new capacity),
             // so it keeps the pre-existing behavior of an empty label set.
-            create_runner(
+            if !create_runner(
                 client,
                 config,
                 state_dir,
@@ -1469,7 +1498,12 @@ fn execute(
                     prewarm_target_epoch: None,
                     prewarm_hold_until_epoch: None,
                 },
-            )?;
+            )? {
+                return Err(std::io::Error::other(
+                    "orphaned runner replacement was skipped by GSR policy or backend readiness",
+                )
+                .into());
+            }
             state.clear_recovery(name);
         }
         Action::RestartUnresponsive { name } => {
@@ -1740,7 +1774,7 @@ fn create_runner(
     vm_registry: &VmResolutionRegistry,
     repo: &str,
     context: RunnerCreateContext<'_>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error>> {
     let RunnerCreateContext {
         permanent,
         job_name,
@@ -1758,7 +1792,7 @@ fn create_runner(
     })?;
     if ban_store.is_banned(repo) {
         println!("gitrun-autoscaler: skipping runner creation for {repo}: temporarily banned by GSR after a policy violation");
-        return Ok(());
+        return Ok(false);
     }
 
     let registration_token = client.registration_token(repo)?;
@@ -1782,7 +1816,7 @@ fn create_runner(
     else {
         // Never create a VM-targeted job runner on the local host while VM
         // resolution is pending; doing so could let it claim the wrong job.
-        return Ok(());
+        return Ok(false);
     };
 
     let runner_labels = runner_labels_for_job(&config.runner_labels, permanent, job_labels);
@@ -1827,7 +1861,7 @@ fn create_runner(
             windows_hyperv_isolation: config.runner_windows_hyperv_isolation,
         },
     )?;
-    Ok(())
+    Ok(true)
 }
 
 fn load_dock_target_jobs(

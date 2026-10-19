@@ -1488,14 +1488,22 @@ fn execute(
             // destructive work. The normal deterministic idle cleanup remains
             // unchanged outside this explicit automation scope.
             let kitty_settings =
-                gitrun_smart_scheduler::load_settings_for_dashboard(state_dir).ok();
-            let automation_scope = kitty_settings.as_ref().is_some_and(|settings| {
-                settings.automation_mode
-                    && settings
-                        .automation_allowed_repositories
-                        .iter()
-                        .any(|allowed| allowed.eq_ignore_ascii_case(repo))
-            });
+                match gitrun_smart_scheduler::load_settings_for_dashboard(state_dir) {
+                    Ok(settings) => settings,
+                    Err(error) => {
+                        // A malformed/untrusted policy must not silently turn
+                        // an automatic destructive path into the legacy path.
+                        eprintln!(
+                            "gitrun-autoscaler: preserving idle runner {name} for {repo}; Kitty settings could not be verified before removal: {error}"
+                        );
+                        return Ok(());
+                    }
+                };
+            let automation_scope = kitty_settings.automation_mode
+                && kitty_settings
+                    .automation_allowed_repositories
+                    .iter()
+                    .any(|allowed| allowed.eq_ignore_ascii_case(repo));
             if automation_scope {
                 let registered_runner = client
                     .list_runners(repo)?
@@ -1504,8 +1512,7 @@ fn execute(
                 if let Some(runner) =
                     registered_runner.filter(|runner| runner.is_online() && !runner.busy)
                 {
-                    let settings = kitty_settings.as_ref().expect("automation scope checked");
-                    let policy = kitty_automation_policy(config, settings);
+                    let policy = kitty_automation_policy(config, &kitty_settings);
                     let intent = gitrun_gsr::automation_gate::AutomationIntent {
                         action: gitrun_gsr::automation_gate::AutomationAction::StopIdleRunner,
                         repository: repo.to_owned(),

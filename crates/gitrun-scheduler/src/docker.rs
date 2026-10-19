@@ -2600,6 +2600,67 @@ fn ensure_label(labels: &str, extra: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn workload_family_runner_must_have_one_exclusive_matching_label() {
+        let id = "wk-0123456789abcdef";
+        let label = format!("gitrun-job-{id}");
+        assert!(validate_workload_routing_contract(
+            &label,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false,
+        ).is_ok());
+
+        assert!(validate_workload_routing_contract(
+            "self-hosted,linux",
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false,
+        ).is_err());
+        assert!(validate_workload_routing_contract(
+            &label,
+            Some(id),
+            Some("wk-fedcba9876543210"),
+            true,
+            false,
+            false,
+            false,
+        ).is_err());
+        assert!(validate_workload_routing_contract(
+            &label,
+            Some(id),
+            None,
+            false,
+            false,
+            false,
+            false,
+        ).is_err());
+    }
+
+    #[test]
+    fn workload_family_routing_rejects_unsupported_backend_and_lifecycle_owners() {
+        let id = "wk-0123456789abcdef";
+        let label = format!("gitrun-job-{id}");
+        assert!(validate_workload_routing_contract(
+            &label, Some(id), None, true, false, false, true
+        ).is_err());
+        assert!(validate_workload_routing_contract(
+            &label, Some(id), None, true, true, false, false
+        ).is_err());
+        assert!(validate_workload_routing_contract(
+            &label, Some(id), None, true, false, true, false
+        ).is_err());
+        assert!(validate_workload_routing_contract(
+            "self-hosted", None, None, true, false, false, false
+        ).is_err());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn melt_exclusions_cover_root_relative_and_dot_prefixed_tar_members() {

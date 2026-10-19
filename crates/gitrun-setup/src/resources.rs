@@ -209,6 +209,11 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
         0o644,
     ),
     (
+        "crates/gitrun-gsr/src/automation_gate.rs",
+        include_str!("../../../crates/gitrun-gsr/src/automation_gate.rs"),
+        0o644,
+    ),
+    (
         "crates/gitrun-gsr/src/events.rs",
         include_str!("../../../crates/gitrun-gsr/src/events.rs"),
         0o644,

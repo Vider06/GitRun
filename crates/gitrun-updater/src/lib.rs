@@ -2699,6 +2699,77 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
     #[test]
+    fn failed_health_check_rolls_back_a_partially_installed_update() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-apply-rollback-{}-{nonce}",
+            std::process::id()
+        ));
+        let install = root.join("install");
+        let state = root.join("state");
+        let backup_root = root.join("backups");
+        fs::create_dir_all(&install).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::write(install.join("version.txt"), b"previous-version").unwrap();
+        fs::write(install.join("keep-me"), b"previous-install").unwrap();
+        fs::write(state.join("settings.json"), b"previous-state").unwrap();
+
+        let archive_path = root.join("broken-update.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive_path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"this archive intentionally omits the gitrun executable";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "unrelated.txt", &payload[..])
+            .unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let paths = UpdatePaths {
+            install_dir: install.clone(),
+            state_dir: state.clone(),
+            config_dir: None,
+            service_config: None,
+            backup_root: backup_root.clone(),
+        };
+        let result = apply_update(
+            &paths,
+            &archive_path,
+            "x86_64-unknown-linux-gnu",
+            "1.2.3",
+            true,
+        );
+        assert!(
+            matches!(result, Err(UpdateError::RolledBack(message))
+                if message.contains("updated binary not found")),
+            "missing updated executable should fail health-check and report rollback"
+        );
+        assert_eq!(
+            fs::read(install.join("version.txt")).unwrap(),
+            b"previous-version"
+        );
+        assert_eq!(
+            fs::read(install.join("keep-me")).unwrap(),
+            b"previous-install"
+        );
+        assert!(!install.join("unrelated.txt").exists());
+        assert_eq!(
+            fs::read(state.join("settings.json")).unwrap(),
+            b"previous-state",
+            "state must survive the failed transaction"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn generic_rollback_restores_the_trusted_install_backup() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -782,7 +782,7 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
         })
         .max();
     if let Some(sequence) = max_sequence {
-        let next = sequence.checked_add(1).unwrap_or(u64::MAX);
+        let next = sequence.saturating_add(1);
         if model.next_gitrun_job_sequence < next {
             model.next_gitrun_job_sequence = next;
             changed = true;
@@ -2570,7 +2570,8 @@ fn validate_period_summary(
                 .period_end_epoch
                 .saturating_sub(summary.period_start_epoch)
                 != seconds
-                || summary.period_start_epoch % seconds != 0
+                || seconds == 0
+                || !summary.period_start_epoch.is_multiple_of(seconds)
         })
     {
         return Err(KittyError::Invalid(
@@ -3024,6 +3025,7 @@ fn record_queued_job_occurrences(
     changed
 }
 
+#[cfg(test)]
 fn record_started_job_occurrences(
     model: &mut WorkflowModel,
     jobs: &[QueuedJobOccurrence],

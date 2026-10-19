@@ -1312,12 +1312,30 @@ fn reconcile_repo(
     };
 
     let actions = actions_for_resource_pressure(reconcile::plan(&input), allow_new_runner_creation);
+    let has_explicit_workload_route = input
+        .queued_job_labels
+        .iter()
+        .any(|labels| gitrun_smart_scheduler::has_workload_routing_marker(labels));
+    let workload_routing_profiles = if has_explicit_workload_route {
+        match kitty_runtime.workload_routing_profiles(repo) {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                eprintln!(
+                    "gitrun-autoscaler: cannot load the validated Kitty workload profile map for routed jobs in {repo}: {error}"
+                );
+                std::collections::HashMap::new()
+            }
+        }
+    } else {
+        std::collections::HashMap::new()
+    };
     let execution_context = ExecuteContext {
         client,
         config,
         state_dir,
         vm_registry,
         repo,
+        workload_routing_profiles: &workload_routing_profiles,
     };
     let planned_action_count = actions.len();
     let mut action_execution_succeeded = true;
@@ -1401,6 +1419,7 @@ struct ExecuteContext<'a> {
     state_dir: &'a std::path::Path,
     vm_registry: &'a VmResolutionRegistry,
     repo: &'a str,
+    workload_routing_profiles: &'a std::collections::HashMap<String, Vec<String>>,
 }
 
 fn execute(
@@ -1415,6 +1434,7 @@ fn execute(
         state_dir,
         vm_registry,
         repo,
+        workload_routing_profiles,
     } = *context;
     match action {
         Action::RemoveExited { name } => {
@@ -1450,6 +1470,7 @@ fn execute(
                 state_dir,
                 vm_registry,
                 repo,
+                workload_routing_profiles,
                 RunnerCreateContext {
                     permanent: *permanent,
                     job_name: job_name.as_deref(),
@@ -1480,6 +1501,7 @@ fn execute(
                 state_dir,
                 vm_registry,
                 repo,
+                workload_routing_profiles,
                 RunnerCreateContext {
                     permanent: false,
                     // Do not turn a predictive profile into a GitDockRun
@@ -1519,6 +1541,7 @@ fn execute(
                 state_dir,
                 vm_registry,
                 repo,
+                workload_routing_profiles,
                 RunnerCreateContext {
                     permanent: *permanent,
                     job_name: None,
@@ -1811,6 +1834,7 @@ fn create_runner(
     state_dir: &std::path::Path,
     vm_registry: &VmResolutionRegistry,
     repo: &str,
+    workload_routing_profiles: &std::collections::HashMap<String, Vec<String>>,
     context: RunnerCreateContext<'_>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let RunnerCreateContext {
@@ -1823,6 +1847,26 @@ fn create_runner(
         prewarm_target_epoch,
         prewarm_hold_until_epoch,
     } = context;
+    let explicit_workload_id = explicit_workload_routing_id(job_labels)?;
+    if explicit_workload_id.is_some() && prewarm_workload_id.is_some() {
+        return Err(std::io::Error::other(
+            "a runner cannot mix an explicit queued workload route with a predictive prewarm reservation",
+        ).into());
+    }
+    let routed_workload_id = prewarm_workload_id
+        .map(str::to_owned)
+        .or(explicit_workload_id.clone());
+    let backend_labels: &[String] = match explicit_workload_id.as_deref() {
+        Some(workload_id) => workload_routing_profiles
+            .get(workload_id)
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "no validated Kitty workload profile exists for routed workload {workload_id}; refusing to guess a backend or image"
+                ))
+            })?,
+        None => job_labels,
+    };
     let ban_store = gsr_poll::BanStore::load(state_dir).map_err(|error| {
         std::io::Error::other(format!(
             "cannot safely create runner for {repo}: GSR ban state is unreadable: {error}"
@@ -1832,8 +1876,6 @@ fn create_runner(
         println!("gitrun-autoscaler: skipping runner creation for {repo}: temporarily banned by GSR after a policy violation");
         return Ok(false);
     }
-
-    let registration_token = client.registration_token(repo)?;
 
     let gsr_policy_env = gsr_policy_env(config);
     let name = format!("{}{}", docker::runner_name_prefix(repo), uuid_like_suffix());
@@ -1850,15 +1892,23 @@ fn create_runner(
     let secret_env = vault_env_for_repo(config, repo)?;
 
     let Some((backend, image, is_windows)) =
-        resolve_backend_and_image(config, state_dir, vm_registry, job_labels)
+        resolve_backend_and_image(config, state_dir, vm_registry, backend_labels)
     else {
         // Never create a VM-targeted job runner on the local host while VM
         // resolution is pending; doing so could let it claim the wrong job.
         return Ok(false);
     };
+    if routed_workload_id.is_some() && is_windows {
+        return Err(std::io::Error::other(
+            "exclusive workload-family routing is not supported by the configured Windows runner bootstrap; use a managed Linux runner profile",
+        ).into());
+    }
 
-    let runner_labels = runner_labels_for_job(&config.runner_labels, permanent, job_labels);
-    let runner_labels = append_workload_routing_label(&runner_labels, prewarm_workload_id)?;
+    let runner_labels = match routed_workload_id.as_deref() {
+        Some(workload_id) => exclusive_workload_routing_label(workload_id)?,
+        None => runner_labels_for_job(&config.runner_labels, permanent, job_labels),
+    };
+    let registration_token = client.registration_token(repo)?;
 
     docker::create_runner_on(
         &backend,
@@ -1869,6 +1919,7 @@ fn create_runner(
             registration_token: &registration_token,
             image: &image,
             labels: &runner_labels,
+            no_default_labels: routed_workload_id.is_some(),
             ephemeral: config.ephemeral || (is_windows && !permanent),
             disable_update: config.runner_disable_update,
             cpus: &config.container_cpus,
@@ -2029,38 +2080,41 @@ fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String
 /// Adds the stable workload-family routing label to predictive prewarm runners.
 /// Workflows must explicitly request this label in `runs-on` to prefer the
 /// family. It does not and cannot hard-pin a future GitHub run/job ID.
-fn append_workload_routing_label(
-    configured_labels: &str,
-    workload_id: Option<&str>,
-) -> Result<String, std::io::Error> {
-    let Some(workload_id) = workload_id else {
-        return Ok(configured_labels.to_owned());
-    };
-    let Some(digest) = workload_id.strip_prefix("wk-") else {
+fn explicit_workload_routing_id(
+    job_labels: &[String],
+) -> Result<Option<String>, std::io::Error> {
+    if !gitrun_smart_scheduler::has_workload_routing_marker(job_labels) {
+        return Ok(None);
+    }
+    let Some(workload_id) = gitrun_smart_scheduler::workload_id_from_routing_labels(job_labels)
+    else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "invalid Kitty workload-family identifier",
+            "queued job contains a malformed or conflicting GitRun workload-family label",
         ));
     };
-    if digest.len() != 16 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    let expected = format!("gitrun-job-{workload_id}");
+    if job_labels.len() != 1 || !job_labels[0].eq_ignore_ascii_case(&expected) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "invalid Kitty workload-family identifier",
+            "exclusive GitRun routing requires runs-on to contain only the gitrun-job workload-family label",
         ));
     }
+    Ok(Some(workload_id))
+}
+
+fn exclusive_workload_routing_label(workload_id: &str) -> Result<String, std::io::Error> {
     let label = format!("gitrun-job-{workload_id}");
-    if configured_labels
-        .split(',')
-        .any(|existing| existing.trim().eq_ignore_ascii_case(&label))
+    if gitrun_smart_scheduler::workload_id_from_routing_labels(std::slice::from_ref(&label))
+        .as_deref()
+        != Some(workload_id)
     {
-        return Ok(configured_labels.to_owned());
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid Kitty workload-family identifier",
+        ));
     }
-    let mut labels = configured_labels.trim().to_owned();
-    if !labels.is_empty() {
-        labels.push(',');
-    }
-    labels.push_str(&label);
-    Ok(labels)
+    Ok(label)
 }
 
 #[cfg(test)]
@@ -2068,26 +2122,23 @@ mod workload_routing_label_tests {
     use super::*;
 
     #[test]
-    fn family_label_is_added_once_and_rejects_untrusted_ids() {
-        let label = "gitrun-job-wk-0123456789abcdef";
+    fn family_label_is_exclusive_and_rejects_untrusted_ids() {
         assert_eq!(
-            append_workload_routing_label("self-hosted,linux", Some("wk-0123456789abcdef"))
-                .unwrap(),
-            format!("self-hosted,linux,{label}")
+            exclusive_workload_routing_label("wk-0123456789abcdef").unwrap(),
+            "gitrun-job-wk-0123456789abcdef"
         );
-        assert_eq!(
-            append_workload_routing_label(
-                &format!("self-hosted,{label}"),
-                Some("wk-0123456789abcdef")
-            )
-            .unwrap(),
-            format!("self-hosted,{label}")
-        );
-        assert_eq!(
-            append_workload_routing_label("self-hosted,linux", None).unwrap(),
-            "self-hosted,linux"
-        );
-        assert!(append_workload_routing_label("self-hosted", Some("wk-../../bad")).is_err());
+        assert!(exclusive_workload_routing_label("wk-../../bad").is_err());
+        assert!(explicit_workload_routing_id(&[
+            "gitrun-job-wk-0123456789abcdef".into()
+        ]).unwrap().is_some());
+        assert!(explicit_workload_routing_id(&[
+            "self-hosted".into(),
+            "gitrun-job-wk-0123456789abcdef".into()
+        ]).is_err());
+        assert!(explicit_workload_routing_id(&[
+            "gitrun-job-wk-0123456789abcdef".into(),
+            "gitrun-job-wk-fedcba9876543210".into()
+        ]).is_err());
     }
 }
 

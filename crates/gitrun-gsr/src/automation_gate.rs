@@ -50,6 +50,9 @@ pub struct AutomationIntent {
     pub job_id: Option<u64>,
     pub runner_name: Option<String>,
     pub readiness_score: Option<f64>,
+    /// True only when Kitty's persisted decision audit identifies a previously
+    /// GSR-authorized warm-pool floor still inside its hold window.
+    pub retaining_previously_authorized_floor: bool,
     pub configured_min_runners: Option<u32>,
     pub proposed_min_runners: Option<u32>,
     pub max_runners: Option<u32>,
@@ -215,13 +218,6 @@ fn validate(
     {
         return Err("repository is not configured in GitRun".into());
     }
-    if !policy
-        .allowed_repositories
-        .iter()
-        .any(|repo| repo.eq_ignore_ascii_case(&intent.repository))
-    {
-        return Err("repository is not on Kitty's explicit automation allowlist".into());
-    }
     if intent.reason.trim().is_empty() || intent.reason.len() > 1024 {
         return Err("automation intent has no bounded explanation".into());
     }
@@ -236,14 +232,15 @@ fn validate(
             {
                 return Err("predictive warm pool is not enabled for active decisions".into());
             }
-            let readiness = intent
+            let readiness_sufficient = intent
                 .readiness_score
                 .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
-                .ok_or_else(|| "forecast readiness is missing or invalid".to_owned())?;
-            if !policy.minimum_readiness_score.is_finite()
-                || !(0.5..=1.0).contains(&policy.minimum_readiness_score)
-                || readiness < policy.minimum_readiness_score
-            {
+                .is_some_and(|readiness| {
+                    policy.minimum_readiness_score.is_finite()
+                        && (0.5..=1.0).contains(&policy.minimum_readiness_score)
+                        && readiness >= policy.minimum_readiness_score
+                });
+            if !readiness_sufficient && !intent.retaining_previously_authorized_floor {
                 return Err("forecast readiness is below the operator threshold".into());
             }
             let configured = intent
@@ -260,6 +257,13 @@ fn validate(
             }
         }
         AutomationAction::StopIdleRunner => {
+            if !policy
+                .allowed_repositories
+                .iter()
+                .any(|repo| repo.eq_ignore_ascii_case(&intent.repository))
+            {
+                return Err("repository is not on Kitty's explicit automation allowlist".into());
+            }
             if !policy.automation_mode {
                 return Err("Automation mode is disabled".into());
             }
@@ -274,6 +278,13 @@ fn validate(
             }
         }
         AutomationAction::FastStopWorkflowRun => {
+            if !policy
+                .allowed_repositories
+                .iter()
+                .any(|repo| repo.eq_ignore_ascii_case(&intent.repository))
+            {
+                return Err("repository is not on Kitty's explicit automation allowlist".into());
+            }
             if !policy.automation_mode || !policy.smart_fast_stop_enabled {
                 return Err("Automation mode or Smart Fast Stop is disabled".into());
             }
@@ -342,6 +353,7 @@ mod tests {
             job_id: None,
             runner_name: None,
             readiness_score: Some(0.95),
+            retaining_previously_authorized_floor: false,
             configured_min_runners: Some(2),
             proposed_min_runners: Some(3),
             max_runners: Some(8),

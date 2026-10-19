@@ -453,6 +453,14 @@ pub struct WorkloadSlotSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkloadPredictionStatus {
+    pub target_epoch: u64,
+    pub predicted_occurrences: u32,
+    pub actual_occurrences: Option<u32>,
+    pub mean_error_correction: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkloadPatternStatus {
     pub workload_code: String,
     pub workflow_id: u64,
@@ -463,6 +471,8 @@ pub struct WorkloadPatternStatus {
     pub first_seen_epoch: u64,
     pub last_seen_epoch: u64,
     pub recurring_slots: Vec<WorkloadSlotSummary>,
+    #[serde(default)]
+    pub latest_prediction: Option<WorkloadPredictionStatus>,
 }
 
 /// A bounded suggestion to reserve compatible runner capacity for a recurring
@@ -2622,6 +2632,20 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                 first_seen_epoch: pattern.first_seen_epoch,
                 last_seen_epoch: pattern.last_seen_epoch,
                 recurring_slots,
+                latest_prediction: model
+                    .workload_predictions
+                    .iter()
+                    .filter(|record| record.workload_code == pattern.workload_code)
+                    .max_by_key(|record| record.target_epoch)
+                    .map(|record| WorkloadPredictionStatus {
+                        target_epoch: record.target_epoch,
+                        predicted_occurrences: record.predicted_occurrences,
+                        actual_occurrences: record.actual_occurrences,
+                        mean_error_correction: workload_prediction_bias(
+                            model,
+                            &pattern.workload_code,
+                        ),
+                    }),
             }
         })
         .collect();

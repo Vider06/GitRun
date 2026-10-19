@@ -1858,6 +1858,10 @@ fn create_runner(
     };
 
     let runner_labels = runner_labels_for_job(&config.runner_labels, permanent, job_labels);
+    let runner_labels = append_workload_routing_label(
+        &runner_labels,
+        prewarm_gitrun_job_id,
+    )?;
 
     docker::create_runner_on(
         &backend,
@@ -2023,6 +2027,68 @@ fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String
     }
 
     labels.join(",")
+}
+
+/// Adds the stable workload-family routing label to predictive prewarm runners.
+/// Workflows must explicitly request this label in `runs-on` to prefer the
+/// family. It does not and cannot hard-pin a future GitHub run/job ID.
+fn append_workload_routing_label(
+    configured_labels: &str,
+    gitrun_job_id: Option<&str>,
+) -> Result<String, std::io::Error> {
+    let Some(gitrun_job_id) = gitrun_job_id else {
+        return Ok(configured_labels.to_owned());
+    };
+    let Some(digest) = gitrun_job_id.strip_prefix("wk-") else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid Kitty workload-family identifier",
+        ));
+    };
+    if digest.len() != 16 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid Kitty workload-family identifier",
+        ));
+    }
+    let label = format!("gitrun-job-{gitrun_job_id}");
+    if configured_labels
+        .split(',')
+        .any(|existing| existing.trim().eq_ignore_ascii_case(&label))
+    {
+        return Ok(configured_labels.to_owned());
+    }
+    let mut labels = configured_labels.trim().to_owned();
+    if !labels.is_empty() {
+        labels.push(',');
+    }
+    labels.push_str(&label);
+    Ok(labels)
+}
+
+#[cfg(test)]
+mod workload_routing_label_tests {
+    use super::*;
+
+    #[test]
+    fn family_label_is_added_once_and_rejects_untrusted_ids() {
+        let label = "gitrun-job-wk-0123456789abcdef";
+        assert_eq!(
+            append_workload_routing_label("self-hosted,linux", Some("wk-0123456789abcdef"))
+                .unwrap(),
+            format!("self-hosted,linux,{label}")
+        );
+        assert_eq!(
+            append_workload_routing_label(&format!("self-hosted,{label}"), Some("wk-0123456789abcdef"))
+                .unwrap(),
+            format!("self-hosted,{label}")
+        );
+        assert_eq!(
+            append_workload_routing_label("self-hosted,linux", None).unwrap(),
+            "self-hosted,linux"
+        );
+        assert!(append_workload_routing_label("self-hosted", Some("wk-../../bad")).is_err());
+    }
 }
 
 /// Refreshes required GitDockRun routing metadata and optionally performs

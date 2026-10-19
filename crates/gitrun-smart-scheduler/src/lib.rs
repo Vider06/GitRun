@@ -149,7 +149,10 @@ impl KittySettings {
             ));
         }
         if self.automation_allowed_repositories.len() > MAX_DASHBOARD_REPOSITORIES
-            || self.automation_allowed_repositories.iter().any(|repo| !valid_repository(repo))
+            || self
+                .automation_allowed_repositories
+                .iter()
+                .any(|repo| !valid_repository(repo))
         {
             return Err(KittyError::Invalid(
                 "automation_allowed_repositories must contain at most 64 valid owner/repo entries"

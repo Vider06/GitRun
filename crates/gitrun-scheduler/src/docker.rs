@@ -591,7 +591,11 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
         let raw_prewarm_target = container_label_on(host, &id, "gitrun.prewarm_target_epoch")?;
         let raw_prewarm_hold = container_label_on(host, &id, "gitrun.prewarm_hold_until_epoch")?;
         let (prewarm_workload_id, prewarm_target_epoch, prewarm_hold_until_epoch) =
-            match (raw_prewarm_code, raw_prewarm_target, raw_prewarm_hold) {
+            match (
+                raw_prewarm_code.clone(),
+                raw_prewarm_target,
+                raw_prewarm_hold,
+            ) {
                 (None, None, None) => (None, None, None),
                 (Some(code), Some(target), Some(hold)) => {
                     let target = target.parse::<u64>().map_err(|_| {

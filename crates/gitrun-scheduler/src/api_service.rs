@@ -5819,10 +5819,63 @@ mod secure_runner_file_helper_tests {
         );
     }
 
-    #[test]
-    fn secure_file_helper_rejects_symlink_components_and_out_of_scope_paths() {
+    fn exercise_secure_file_helper(
+        directory: &std::path::Path,
+    ) -> Result<(), String> {
         use std::os::unix::fs::symlink;
 
+        let file = directory.join("safe.txt");
+        let file_arg = file.to_str().expect("UTF-8 test path");
+        let written = invoke("write", &[file_arg], b"safe contents");
+        assert!(
+            written.status.success(),
+            "write failed: {}",
+            String::from_utf8_lossy(&written.stderr)
+        );
+        let read = invoke("read", &[file_arg], b"");
+        assert!(
+            read.status.success(),
+            "read failed: {}",
+            String::from_utf8_lossy(&read.stderr)
+        );
+        assert_eq!(read.stdout, b"safe contents");
+
+        let file_link = directory.join("file-link");
+        symlink("/etc/passwd", &file_link).expect("create file symlink");
+        let linked = invoke("read", &[file_link.to_str().unwrap()], b"");
+        assert!(
+            !linked.status.success(),
+            "final symlink unexpectedly accepted"
+        );
+        assert!(linked.stdout.is_empty(), "rejected read returned file data");
+
+        let directory_link = directory.join("directory-link");
+        symlink("/etc", &directory_link).expect("create directory symlink");
+        let nested = directory_link.join("passwd");
+        let linked_parent = invoke("read", &[nested.to_str().unwrap()], b"");
+        assert!(
+            !linked_parent.status.success(),
+            "parent symlink unexpectedly accepted"
+        );
+        assert!(
+            linked_parent.stdout.is_empty(),
+            "rejected read returned file data"
+        );
+
+        let out_of_scope = invoke("read", &["/etc/passwd"], b"");
+        assert!(
+            !out_of_scope.status.success(),
+            "out-of-scope path unexpectedly accepted"
+        );
+        assert!(
+            out_of_scope.stdout.is_empty(),
+            "rejected read returned file data"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn secure_file_helper_rejects_symlink_components_and_out_of_scope_paths() {
         let directory = std::env::temp_dir().join(format!(
             "gitrun-secure-file-helper-{}-{}",
             std::process::id(),
@@ -5832,56 +5885,7 @@ mod secure_runner_file_helper_tests {
                 .as_nanos()
         ));
         std::fs::create_dir(&directory).expect("create test directory");
-        let result = (|| {
-            let file = directory.join("safe.txt");
-            let file_arg = file.to_str().expect("UTF-8 test path");
-            let written = invoke("write", &[file_arg], b"safe contents");
-            assert!(
-                written.status.success(),
-                "write failed: {}",
-                String::from_utf8_lossy(&written.stderr)
-            );
-            let read = invoke("read", &[file_arg], b"");
-            assert!(
-                read.status.success(),
-                "read failed: {}",
-                String::from_utf8_lossy(&read.stderr)
-            );
-            assert_eq!(read.stdout, b"safe contents");
-
-            let file_link = directory.join("file-link");
-            symlink("/etc/passwd", &file_link).expect("create file symlink");
-            let linked = invoke("read", &[file_link.to_str().unwrap()], b"");
-            assert!(
-                !linked.status.success(),
-                "final symlink unexpectedly accepted"
-            );
-            assert!(linked.stdout.is_empty(), "rejected read returned file data");
-
-            let directory_link = directory.join("directory-link");
-            symlink("/etc", &directory_link).expect("create directory symlink");
-            let nested = directory_link.join("passwd");
-            let linked_parent = invoke("read", &[nested.to_str().unwrap()], b"");
-            assert!(
-                !linked_parent.status.success(),
-                "parent symlink unexpectedly accepted"
-            );
-            assert!(
-                linked_parent.stdout.is_empty(),
-                "rejected read returned file data"
-            );
-
-            let out_of_scope = invoke("read", &["/etc/passwd"], b"");
-            assert!(
-                !out_of_scope.status.success(),
-                "out-of-scope path unexpectedly accepted"
-            );
-            assert!(
-                out_of_scope.stdout.is_empty(),
-                "rejected read returned file data"
-            );
-            Ok::<(), String>(())
-        })();
+        let result = exercise_secure_file_helper(&directory);
         let _ = std::fs::remove_dir_all(&directory);
         result.expect("secure file helper regression checks");
     }

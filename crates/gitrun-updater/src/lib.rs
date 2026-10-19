@@ -2699,6 +2699,61 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
     #[test]
+    fn generic_rollback_restores_the_trusted_install_backup() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-rollback-restore-{}-{nonce}",
+            std::process::id()
+        ));
+        let install = root.join("install");
+        let state = root.join("state");
+        let backup_root = root.join("backups");
+        let transaction = backup_root.join("1.2.3-42");
+        let install_backup = transaction.join("install");
+
+        fs::create_dir_all(&install).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&install_backup).unwrap();
+        fs::write(install.join("version.txt"), b"new-version").unwrap();
+        fs::write(install.join("new-only.txt"), b"new").unwrap();
+        fs::write(install_backup.join("version.txt"), b"previous-version").unwrap();
+        fs::write(state.join("preserve.txt"), b"state-is-not-being-restored").unwrap();
+
+        let paths = UpdatePaths {
+            install_dir: install.clone(),
+            state_dir: state.clone(),
+            config_dir: None,
+            service_config: None,
+            backup_root: backup_root.clone(),
+        };
+        let record = BackupRecord {
+            created_at: 42,
+            version: "1.2.3".into(),
+            install_backup: install_backup.clone(),
+            state_backup: None,
+            config_backup: None,
+            service_config_backup: None,
+        };
+
+        rollback(&paths, &record).expect("rollback should restore the trusted backup");
+
+        assert_eq!(
+            fs::read(install.join("version.txt")).unwrap(),
+            b"previous-version"
+        );
+        assert!(!install.join("new-only.txt").exists());
+        assert!(!install_backup.exists(), "trusted backup should be renamed into place");
+        assert_eq!(
+            fs::read(state.join("preserve.txt")).unwrap(),
+            b"state-is-not-being-restored"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn generic_rollback_rejects_backup_paths_outside_trusted_transaction() {
         let root = std::env::temp_dir().join(format!(
             "gitrun-updater-rollback-paths-{}",

@@ -2411,6 +2411,27 @@ fn compute_forecast(
     for value in recent.iter().skip(1) {
         ewma = 0.35 * value + 0.65 * ewma;
     }
+    let evaluated: Vec<&PredictionRecord> = model
+        .predictions
+        .iter()
+        .filter(|record| {
+            record.horizon_seconds == FORECAST_HORIZON_SECONDS
+                && record.actual_demand.is_some()
+                && !record.skipped_missing_observation
+        })
+        .rev()
+        .take(288)
+        .collect();
+    let correction_samples: Vec<f64> = evaluated
+        .iter()
+        .take(48)
+        .filter_map(|record| {
+            record
+                .actual_demand
+                .map(|actual| f64::from(actual) - f64::from(record.predicted_demand))
+        })
+        .collect();
+    let bias_correction = (correction_samples.len() >= 8).then(|| mean(&correction_samples));
     // Keep the forecast peak-sensitive without allowing one outlier to dominate:
     // the recent 90th percentile is a floor, combined with EWMA and short trend.
     let corrected = ewma + trend + bias_correction.unwrap_or(0.0);
@@ -2452,27 +2473,6 @@ fn compute_forecast(
         None
     };
 
-    let evaluated: Vec<&PredictionRecord> = model
-        .predictions
-        .iter()
-        .filter(|record| {
-            record.horizon_seconds == FORECAST_HORIZON_SECONDS
-                && record.actual_demand.is_some()
-                && !record.skipped_missing_observation
-        })
-        .rev()
-        .take(288)
-        .collect();
-    let correction_samples: Vec<f64> = evaluated
-        .iter()
-        .take(48)
-        .filter_map(|record| {
-            record
-                .actual_demand
-                .map(|actual| f64::from(actual) - f64::from(record.predicted_demand))
-        })
-        .collect();
-    let bias_correction = (correction_samples.len() >= 8).then(|| mean(&correction_samples));
     let (mae, quality_score) = if evaluated.len() >= 24 {
         let errors: Vec<f64> = evaluated
             .iter()

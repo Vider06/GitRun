@@ -1913,12 +1913,12 @@ jobs:
           set -euo pipefail
           source "$RUNNER_TEMP/ci-lib.sh"
           if ! command -v docker >/dev/null 2>&1 || [ ! -S /var/run/docker.sock ] || ! docker info >/dev/null 2>&1; then
-            ci_warn "GitDockRun privileged mount integration test skipped: this runner has no usable local Docker daemon."
-            exit 0
+            ci_err "GitDockRun privileged mount integration test requires a usable local Docker daemon; refusing to report a skipped security gate as green."
+            exit 1
           fi
           if ! sudo -n true >/dev/null 2>&1; then
-            ci_warn "GitDockRun privileged mount integration test skipped: this runner cannot run the test as root."
-            exit 0
+            ci_err "GitDockRun privileged mount integration test requires passwordless sudo on the configured self-hosted runner; refusing to skip."
+            exit 1
           fi
           ci_run "Build scheduler mount integration test" cargo test --locked -p gitrun-scheduler --lib --no-run
           test_bin="$(find "${CARGO_TARGET_DIR:-target}/debug/deps" -maxdepth 1 -type f -executable -name 'gitrun_scheduler-*' -print -quit)"

@@ -3032,6 +3032,7 @@ mod resource_pressure_reconciliation_tests {
                 target_epoch: 7_200,
                 hold_until_epoch: 8_100,
                 runner_count,
+                prewarm_runners_created: 0,
                 observed_distinct_weeks: 6,
                 historical_occurrences_per_week: f64::from(runner_count),
             };

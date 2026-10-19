@@ -928,10 +928,10 @@ impl GitHubClient {
             .collect())
     }
 
-    /// Returns each queued self-hosted job with its workflow run, job ID,
-    /// logical job name and labels. The run/job identity is what lets
-    /// GitDockRun reserve the exact runner container rather than relying on
-    /// positional label matching alone.
+    /// Returns queued GitHub Actions jobs with their workflow/run/job metadata.
+    /// Queued jobs can live in either a queued run or an already in-progress run
+    /// whose earlier jobs have started. Both run states are paginated and
+    /// de-duplicated before the job list is returned.
     pub fn queued_self_hosted_jobs_with_info(&self, repo: &str) -> Result<Vec<QueuedJobInfo>> {
         let (owner, name) = split_repo(repo)?;
         let mut jobs = Vec::new();
@@ -940,28 +940,34 @@ impl GitHubClient {
             encode_path_segment(owner),
             encode_path_segment(name)
         );
-        let mut url = format!("{API_BASE}{runs_path}?status=queued&per_page=100");
-        let mut seen_pages = HashSet::new();
+        let mut seen_run_ids = HashSet::new();
 
-        loop {
-            record_page_url(&mut seen_pages, &url)?;
-            let response = self.request(reqwest::Method::GET, &url)?;
-            let next_url = parse_next_link(response.headers());
-            let parsed: WorkflowRunsResponse = response.json()?;
+        for status in ["queued", "in_progress"] {
+            let mut url = format!("{API_BASE}{runs_path}?status={status}&per_page=100");
+            let mut seen_pages = HashSet::new();
+            loop {
+                record_page_url(&mut seen_pages, &url)?;
+                let response = self.request(reqwest::Method::GET, &url)?;
+                let next_url = parse_next_link(response.headers());
+                let parsed: WorkflowRunsResponse = response.json()?;
 
-            for run in parsed.workflow_runs {
-                jobs.extend(self.queued_self_hosted_job_info_for_run(
-                    owner,
-                    name,
-                    run.id,
-                    run.workflow_id,
-                    &run.path,
-                )?);
-            }
+                for run in parsed.workflow_runs {
+                    if !seen_run_ids.insert(run.id) {
+                        continue;
+                    }
+                    jobs.extend(self.queued_self_hosted_job_info_for_run(
+                        owner,
+                        name,
+                        run.id,
+                        run.workflow_id,
+                        &run.path,
+                    )?);
+                }
 
-            match next_url {
-                Some(next) => url = next,
-                None => break,
+                match next_url {
+                    Some(next) => url = next,
+                    None => break,
+                }
             }
         }
 
@@ -1406,6 +1412,21 @@ mod tests {
             client.force_cancel_workflow_run("owner/repo", 0),
             Err(GitHubError::InvalidWorkflowRunId)
         ));
+    }
+
+    #[test]
+    fn custom_workload_route_is_a_runner_request_without_self_hosted_label() {
+        assert!(job_targets_gitrun_runner(&[
+            "gitrun-job-wk-0123456789abcdef".to_owned()
+        ]));
+        assert!(job_targets_gitrun_runner(&[
+            "self-hosted".to_owned(),
+            "linux".to_owned()
+        ]));
+        assert!(!job_targets_gitrun_runner(&["ubuntu-latest".to_owned()]));
+        assert!(job_targets_gitrun_runner(&[
+            "GitRun-Job-WK-0123456789ABCDEF".to_owned()
+        ]));
     }
 
     #[test]

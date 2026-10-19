@@ -4156,8 +4156,7 @@ mod tests {
 
         for index in 0..repositories {
             let repository = format!("owner/repo-{index}");
-            let stamp = latest_stamp
-                .saturating_sub((repositories - index) as u64 * BUCKET_SECONDS);
+            let stamp = latest_stamp.saturating_sub((repositories - index) as u64 * BUCKET_SECONDS);
             let decision = runtime
                 .observe(
                     ObservationInput {

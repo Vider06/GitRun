@@ -1618,7 +1618,7 @@ impl KittyRuntime {
                         held,
                         format!(
                             "Forecast readiness {:.3} is below the configured threshold {:.3}; retaining the previously approved warm-pool floor at {} only until its bounded hold expires.",
-                            f.confidence_score, self.settings.minimum_quality_score, held
+                            forecast_actionable_quality(f), self.settings.minimum_quality_score, held
                         ),
                     )
                 } else {
@@ -1627,7 +1627,7 @@ impl KittyRuntime {
                         configured_min_runners,
                         format!(
                             "Forecast readiness {:.3} is below the configured threshold {:.3}; no predictive action.",
-                            f.confidence_score, self.settings.minimum_quality_score
+                            forecast_actionable_quality(f), self.settings.minimum_quality_score
                         ),
                     )
                 }
@@ -1679,7 +1679,7 @@ impl KittyRuntime {
                             target,
                             f.seasonal_predicted_peak_concurrency
                                 .unwrap_or(f.predicted_peak_concurrency),
-                            f.confidence_score,
+                            forecast_actionable_quality(f),
                             self.settings.warm_pool_min_hold_seconds
                         ),
                     )
@@ -4894,6 +4894,8 @@ mod tests {
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
             slot_first_week: vec![0; TEMPORAL_SLOT_COUNT],
         });
+        // Simulate an older serialized WorkflowModel without the new recurrence-span field.
+        model.workload_patterns[0].slot_first_week = Vec::new();
         let foreign_id = generate_occurrence_id("other/repo", 1).unwrap();
         let duplicate_id = generate_occurrence_id("owner/repo", 2).unwrap();
         model.next_gitrun_job_sequence = 3;
@@ -4930,6 +4932,7 @@ mod tests {
             },
         ];
         assert!(migrate_job_identity(&mut model));
+        assert_eq!(model.workload_patterns[0].slot_first_week.len(), TEMPORAL_SLOT_COUNT);
         let mut ids = HashSet::new();
         for occurrence in &model.recent_job_occurrences {
             assert!(valid_generated_gitrun_job_id_for_repository(
@@ -5629,6 +5632,31 @@ mod tests {
             forecast.seasonal_quality_score, None,
             "seasonal automation must wait for independent evaluated outcomes"
         );
+    }
+
+    #[test]
+    fn seasonal_capacity_uses_seasonal_quality_not_aggregate_quality() {
+        let forecast = Forecast {
+            model_version: MODEL_VERSION,
+            generated_at_epoch: 1_800,
+            target_epoch: 5_400,
+            horizon_seconds: FORECAST_HORIZON_SECONDS,
+            sample_count: 48,
+            evaluated_forecasts: 48,
+            predicted_peak_concurrency: 1,
+            seasonal_target_epoch: 3_600,
+            seasonal_predicted_peak_concurrency: Some(7),
+            bias_correction: None,
+            seasonal_bias_correction: None,
+            seasonal_quality_score: Some(0.42),
+            mean_absolute_error: Some(0.1),
+            quality_score: 0.99,
+            confidence_score: 0.99,
+        };
+        assert_eq!(forecast_actionable_quality(&forecast), 0.42);
+        let mut non_seasonal = forecast;
+        non_seasonal.seasonal_predicted_peak_concurrency = None;
+        assert_eq!(forecast_actionable_quality(&non_seasonal), 0.99);
     }
 
     #[test]

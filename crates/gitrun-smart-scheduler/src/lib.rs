@@ -1837,6 +1837,12 @@ pub struct KittyRepositoryStatus {
     pub latest_observation_epoch: Option<u64>,
     pub latest_forecast: Option<Forecast>,
     pub latest_decision: Option<DecisionAudit>,
+    /// Bounded recurring-workload profiles only; detailed observation samples
+    /// and raw prediction history stay private in the model file.
+    #[serde(default)]
+    pub workload_patterns: Vec<WorkloadPatternStatus>,
+    #[serde(default)]
+    pub recent_job_occurrences: Vec<RecentJobOccurrence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -3421,6 +3427,8 @@ mod tests {
                 latest_observation_epoch: Some(20_000),
                 latest_forecast: None,
                 latest_decision: None,
+                workload_patterns: Vec::new(),
+                recent_job_occurrences: Vec::new(),
             }],
         };
         atomic_write_private(&path, &serde_json::to_vec(&status).unwrap()).unwrap();

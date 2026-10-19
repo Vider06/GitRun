@@ -1246,7 +1246,7 @@ impl KittyRuntime {
             !input
                 .job_occurrences
                 .iter()
-                .any(|job| valid_queued_job(job) && gitrun_job_id_for(job) == target.gitrun_job_id)
+                .any(|job| valid_queued_job(job) && gitrun_job_id_for(&model.repository, job) == target.gitrun_job_id)
         });
 
         let capability_note = if self.settings.adaptive_resource_management_enabled {
@@ -2461,19 +2461,44 @@ fn seasonal_slot_stats(
     stats
 }
 
-fn gitrun_job_id_for(job: &QueuedJobOccurrence) -> String {
-    let mut labels: Vec<String> = job
-        .labels
+/// Generate a stable logical-job identity from GitRun's workflow metadata.
+///
+/// This ID does not depend on GitHub's per-run or per-job IDs, which are absent
+/// until a concrete workflow execution exists. It can be generated as soon as
+/// repository, workflow path, job name and runner labels are known.
+pub fn generate_gitrun_job_id(
+    repository: &str,
+    workflow_path: &str,
+    job_name: &str,
+    labels: &[String],
+) -> Option<String> {
+    if !valid_repository(repository)
+        || workflow_path.trim().is_empty()
+        || workflow_path.len() > 512
+        || workflow_path.chars().any(char::is_control)
+        || job_name.trim().is_empty()
+        || job_name.len() > 256
+        || job_name.chars().any(char::is_control)
+        || labels.len() > 32
+        || labels.iter().any(|label| {
+            label.trim().is_empty() || label.len() > 128 || label.chars().any(char::is_control)
+        })
+    {
+        return None;
+    }
+    let mut labels: Vec<String> = labels
         .iter()
         .map(|label| label.trim().to_ascii_lowercase())
         .collect();
     labels.sort();
     labels.dedup();
+    // Paths and job names remain case-sensitive to avoid collisions between
+    // distinct workflow definitions; runner labels are normalized.
     let canonical = format!(
         "{}|{}|{}|{}",
-        job.workflow_id,
-        job.workflow_path.trim().to_ascii_lowercase(),
-        job.name.trim().to_ascii_lowercase(),
+        repository.trim().to_ascii_lowercase(),
+        workflow_path.trim(),
+        job_name.trim(),
         labels.join(",")
     );
     let mut hash = 0xcbf29ce484222325u64;
@@ -2481,7 +2506,11 @@ fn gitrun_job_id_for(job: &QueuedJobOccurrence) -> String {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    format!("wk-{hash:016x}")
+    Some(format!("wk-{hash:016x}"))
+}
+
+fn gitrun_job_id_for(repository: &str, job: &QueuedJobOccurrence) -> Option<String> {
+    generate_gitrun_job_id(repository, &job.workflow_path, &job.name, &job.labels)
 }
 
 fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
@@ -2511,7 +2540,9 @@ fn record_queued_job_occurrences(
         if !valid_queued_job(job) {
             continue;
         }
-        let gitrun_job_id = gitrun_job_id_for(job);
+        let Some(gitrun_job_id) = gitrun_job_id_for(&model.repository, job) else {
+            continue;
+        };
         let occurrence_code = generated_occurrence_id(&gitrun_job_id, job.run_id, job.job_id);
         if !jobs_seen_this_poll.insert(occurrence_code.clone()) {
             continue;
@@ -4299,15 +4330,19 @@ mod tests {
         let mut later = first.clone();
         later.run_id = 99;
         later.job_id = 990;
+        later.workflow_id = 999;
         later.labels.reverse();
 
-        assert_eq!(gitrun_job_id_for(&first), gitrun_job_id_for(&later));
+        assert_eq!(
+            gitrun_job_id_for("owner/repo", &first).unwrap(),
+            gitrun_job_id_for("owner/repo", &later).unwrap()
+        );
 
         // This is a GitRun-generated logical-job identity. GitHub occurrence
         // IDs distinguish executions, but cannot change the recurring profile.
         assert_ne!(
-            generated_occurrence_id(&gitrun_job_id_for(&first), first.run_id, first.job_id),
-            generated_occurrence_id(&gitrun_job_id_for(&later), later.run_id, later.job_id)
+            generated_occurrence_id(&gitrun_job_id_for("owner/repo", &first).unwrap(), first.run_id, first.job_id),
+            generated_occurrence_id(&gitrun_job_id_for("owner/repo", &later).unwrap(), later.run_id, later.job_id)
         );
     }
 
@@ -4373,7 +4408,7 @@ mod tests {
             name: "build-linux".into(),
             labels: vec!["self-hosted".into(), "linux".into()],
         };
-        let gitrun_job_id = gitrun_job_id_for(&job);
+        let gitrun_job_id = gitrun_job_id_for("owner/repo", &job).unwrap();
         let slot_index = weekday_hour_slot(now);
         let mut pattern = WorkloadPattern {
             gitrun_job_id: gitrun_job_id.clone(),
@@ -4497,7 +4532,7 @@ mod tests {
             name: "build-linux".into(),
             labels: vec!["self-hosted".into(), "linux".into()],
         };
-        let gitrun_job_id = gitrun_job_id_for(&job);
+        let gitrun_job_id = gitrun_job_id_for("owner/repo", &job).unwrap();
         let mut pattern = WorkflowPattern {
             gitrun_job_id: gitrun_job_id.clone(),
             workflow_id: job.workflow_id,

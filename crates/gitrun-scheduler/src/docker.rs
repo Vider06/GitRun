@@ -2612,7 +2612,8 @@ mod tests {
             false,
             false,
             false,
-        ).is_ok());
+        )
+        .is_ok());
 
         assert!(validate_workload_routing_contract(
             "self-hosted,linux",
@@ -2622,7 +2623,8 @@ mod tests {
             false,
             false,
             false,
-        ).is_err());
+        )
+        .is_err());
         assert!(validate_workload_routing_contract(
             &label,
             Some(id),
@@ -2631,7 +2633,8 @@ mod tests {
             false,
             false,
             false,
-        ).is_err());
+        )
+        .is_err());
         assert!(validate_workload_routing_contract(
             &label,
             Some(id),
@@ -2640,7 +2643,8 @@ mod tests {
             false,
             false,
             false,
-        ).is_err());
+        )
+        .is_err());
     }
 
     #[test]
@@ -2648,17 +2652,45 @@ mod tests {
         let id = "wk-0123456789abcdef";
         let label = format!("gitrun-job-{id}");
         assert!(validate_workload_routing_contract(
-            &label, Some(id), None, true, false, false, true
-        ).is_err());
+            &label,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            true
+        )
+        .is_err());
         assert!(validate_workload_routing_contract(
-            &label, Some(id), None, true, true, false, false
-        ).is_err());
+            &label,
+            Some(id),
+            None,
+            true,
+            true,
+            false,
+            false
+        )
+        .is_err());
         assert!(validate_workload_routing_contract(
-            &label, Some(id), None, true, false, true, false
-        ).is_err());
+            &label,
+            Some(id),
+            None,
+            true,
+            false,
+            true,
+            false
+        )
+        .is_err());
         assert!(validate_workload_routing_contract(
-            "self-hosted", None, None, true, false, false, false
-        ).is_err());
+            "self-hosted",
+            None,
+            None,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_err());
     }
 
     #[cfg(target_os = "linux")]

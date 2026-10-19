@@ -1243,9 +1243,10 @@ impl KittyRuntime {
         // that job is handled by the ordinary planner's live queue path, but
         // its profile prediction above still participates in self-correction.
         workload_prewarms.retain(|target| {
-            !input.job_occurrences.iter().any(|job| {
-                valid_queued_job(job) && gitrun_job_id_for(job) == target.gitrun_job_id
-            })
+            !input
+                .job_occurrences
+                .iter()
+                .any(|job| valid_queued_job(job) && gitrun_job_id_for(job) == target.gitrun_job_id)
         });
 
         let capability_note = if self.settings.adaptive_resource_management_enabled {

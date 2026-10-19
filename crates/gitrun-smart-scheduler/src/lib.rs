@@ -646,14 +646,18 @@ fn generate_occurrence_id(repository: &str, sequence: u64) -> Option<String> {
 }
 
 fn valid_generated_gitrun_job_id(code: &str) -> bool {
-    let Some((repo_hash, sequence)) = code.strip_prefix("grj-").and_then(|value| value.split_once('-')) else {
+    let Some((repo_hash, sequence)) = code
+        .strip_prefix("grj-")
+        .and_then(|value| value.split_once('-'))
+    else {
         return false;
     };
     repo_hash.len() == 16
         && sequence.len() == 16
-        && repo_hash.bytes().chain(sequence.bytes()).all(|byte| {
-            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
-        })
+        && repo_hash
+            .bytes()
+            .chain(sequence.bytes())
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         && sequence.bytes().any(|byte| byte != b'0')
 }
 
@@ -4464,10 +4468,7 @@ mod tests {
             &["self-hosted".into(), "linux".into()],
         )
         .unwrap();
-        assert_eq!(
-            internal_id,
-            workload_id_for("owner/repo", &first).unwrap()
-        );
+        assert_eq!(internal_id, workload_id_for("owner/repo", &first).unwrap());
         assert_eq!(
             workload_id_for("owner/repo", &first).unwrap(),
             workload_id_for("owner/repo", &later).unwrap()

@@ -26,11 +26,11 @@ const MAX_HISTORY_BUCKETS: usize = 2016; // Seven days, sampled every five minut
 const MAX_MODELS: usize = 64;
 const MAX_DASHBOARD_REPOSITORIES: usize = 64;
 const MAX_JOB_PATTERNS: usize = 24;
-const MAX_JOB_OCCURRENCES: usize = 512;
-const MAX_WORKLOAD_PREDICTIONS: usize = 512;
+const MAX_JOB_OCCURRENCES: usize = 256;
+const MAX_WORKLOAD_PREDICTIONS: usize = 256;
 const MAX_DASHBOARD_JOB_OCCURRENCES: usize = 32;
 const MAX_AUDIT_RECORDS: usize = 128;
-const MAX_EVALUATED_FORECASTS: usize = 1024;
+const MAX_EVALUATED_FORECASTS: usize = 768;
 const FORECAST_HORIZON_SECONDS: u64 = 3600;
 const WEEK_SECONDS: u64 = 7 * 24 * 60 * 60;
 const COMPACT_MONTH_SECONDS: u64 = WEEK_SECONDS * 4;
@@ -628,7 +628,6 @@ impl WorkflowModel {
                 || pattern.job_name.chars().any(char::is_control)
                 || pattern.slots.len() != TEMPORAL_SLOT_COUNT
                 || pattern.slot_last_week.len() != TEMPORAL_SLOT_COUNT
-                || pattern.job_name.is_empty()
                 || pattern.job_name.len() > 256
                 || pattern.workflow_path.len() > 512
                 || pattern.labels.len() > 32

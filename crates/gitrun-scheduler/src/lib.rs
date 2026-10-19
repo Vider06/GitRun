@@ -2984,8 +2984,8 @@ mod resource_pressure_reconciliation_tests {
 
     #[test]
     fn recurring_workload_prewarms_share_the_global_predictive_runner_budget() {
-        let target = |workload_code: &str, runner_count: u32| {
-            gitrun_smart_scheduler::WorkloadPrewarm {
+        let target =
+            |workload_code: &str, runner_count: u32| gitrun_smart_scheduler::WorkloadPrewarm {
                 workload_code: workload_code.into(),
                 workflow_id: 9,
                 workflow_path: ".github/workflows/build.yml".into(),
@@ -2996,8 +2996,7 @@ mod resource_pressure_reconciliation_tests {
                 runner_count,
                 observed_distinct_weeks: 6,
                 historical_occurrences_per_week: f64::from(runner_count),
-            }
-        };
+            };
         let mut targets = vec![
             target("wk-0123456789abcdef", 3),
             target("wk-fedcba9876543210", 4),
@@ -3005,7 +3004,10 @@ mod resource_pressure_reconciliation_tests {
 
         assert_eq!(bound_workload_prewarms_to_budget(&mut targets, 5), 5);
         assert_eq!(
-            targets.iter().map(|target| target.runner_count).collect::<Vec<_>>(),
+            targets
+                .iter()
+                .map(|target| target.runner_count)
+                .collect::<Vec<_>>(),
             vec![3, 2],
             "a warm-pool floor increase and workload warmups must share one cap"
         );

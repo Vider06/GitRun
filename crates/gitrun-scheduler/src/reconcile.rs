@@ -1220,9 +1220,14 @@ mod tests {
                 && *target == 7_200
                 && *hold == 8_100
                 && name.as_str() == "build-linux"
-                && labels.iter().map(String::as_str).eq(["self-hosted", "linux"])
+                && labels
+                    .iter()
+                    .map(String::as_str)
+                    .eq(["self-hosted", "linux"])
         }));
-        assert!(!actions.iter().any(|action| matches!(action, Action::RemoveIdle { .. })));
+        assert!(!actions
+            .iter()
+            .any(|action| matches!(action, Action::RemoveIdle { .. })));
     }
 
     #[test]

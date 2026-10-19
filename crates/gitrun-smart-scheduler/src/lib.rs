@@ -1245,7 +1245,8 @@ impl KittyRuntime {
         workload_prewarms.retain(|target| {
             !input.job_occurrences.iter().any(|job| {
                 valid_queued_job(job)
-                    && gitrun_job_id_for(&model.repository, job) == target.gitrun_job_id
+                    && gitrun_job_id_for(&input.repository, job).as_deref()
+                        == Some(target.gitrun_job_id.as_str())
             })
         });
 
@@ -4333,9 +4334,27 @@ mod tests {
         later.workflow_id = 999;
         later.labels.reverse();
 
+        let internal_id = generate_gitrun_job_id(
+            "owner/repo",
+            ".github/workflows/build.yml",
+            "build-linux",
+            &["self-hosted".into(), "linux".into()],
+        )
+        .unwrap();
+        assert_eq!(internal_id, gitrun_job_id_for("owner/repo", &first).unwrap());
         assert_eq!(
             gitrun_job_id_for("owner/repo", &first).unwrap(),
             gitrun_job_id_for("owner/repo", &later).unwrap()
+        );
+        assert_ne!(
+            generate_gitrun_job_id(
+                "owner/repo",
+                ".github/workflows/build.yml",
+                "Build-linux",
+                &["self-hosted".into(), "linux".into()],
+            ),
+            Some(internal_id.clone()),
+            "case-sensitive workflow job names must not collide"
         );
 
         // This is a GitRun-generated logical-job identity. GitHub occurrence

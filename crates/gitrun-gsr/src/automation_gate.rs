@@ -295,6 +295,19 @@ mod tests {
         }
     }
 
+    fn audit_path() -> (std::path::PathBuf, std::path::PathBuf) {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-gsr-automation-test-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        (dir.clone(), dir.join("events.jsonl"))
+    }
+
     fn intent(action: AutomationAction) -> AutomationIntent {
         AutomationIntent {
             action,
@@ -317,28 +330,34 @@ mod tests {
 
     #[test]
     fn active_warm_pool_requires_explicit_bounds_and_readiness() {
-        let permit = authorize_action(&policy(), intent(AutomationAction::PredictiveWarmPool), Path::new("/tmp")).unwrap();
+        let (dir, path) = audit_path();
+        let permit = authorize_action(&policy(), intent(AutomationAction::PredictiveWarmPool), &path).unwrap();
         assert_eq!(permit.action(), AutomationAction::PredictiveWarmPool);
+        drop(permit);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn fast_stop_requires_a_whitelisted_verified_run_and_expired_threshold() {
-        let permit = authorize_action(&policy(), intent(AutomationAction::FastStopWorkflowRun), Path::new("/tmp")).unwrap();
+        let (dir, path) = audit_path();
+        let permit = authorize_action(&policy(), intent(AutomationAction::FastStopWorkflowRun), &path).unwrap();
         assert_eq!(permit.intent().run_id, Some(42));
         let mut denied = intent(AutomationAction::FastStopWorkflowRun);
         denied.job_id = Some(7);
-        assert!(authorize_action(&policy(), denied, Path::new("/tmp")).is_err());
+        assert!(authorize_action(&policy(), denied, &path).is_err());
+        drop(permit);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn automation_cannot_stop_a_busy_or_dock_bound_runner() {
-        let mut policy = policy();
+        let (dir, path) = audit_path();
         let mut request = intent(AutomationAction::StopIdleRunner);
         request.runner_name = Some("runner-1".into());
-        assert!(authorize_action(&policy, request.clone(), Path::new("/tmp")).is_err());
+        assert!(authorize_action(&policy(), request.clone(), &path).is_err());
         request.runner_is_verified_idle = true;
         request.runner_is_dock_bound = true;
-        assert!(authorize_action(&policy, request, Path::new("/tmp")).is_err());
-        policy.automation_mode = false;
+        assert!(authorize_action(&policy(), request, &path).is_err());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

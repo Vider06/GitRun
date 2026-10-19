@@ -4125,7 +4125,9 @@ mod tests {
             .join(format!("model-{}.json", repository_key("owner/repo")));
         let stored: WorkflowModel = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(stored.workload_predictions[0].prewarm_runners_created, 1);
-        assert!(stored.validate_for("owner/repo", MAX_HISTORY_BUCKETS).is_ok());
+        assert!(stored
+            .validate_for("owner/repo", MAX_HISTORY_BUCKETS)
+            .is_ok());
 
         assert!(
             runtime
@@ -4248,8 +4250,7 @@ mod tests {
             .record_workload_prewarm_created("owner/repo", workload_code, target_epoch, 1)
             .is_err());
         assert_eq!(
-            runtime.models[&key].workload_predictions[0].prewarm_runners_created,
-            2,
+            runtime.models[&key].workload_predictions[0].prewarm_runners_created, 2,
             "the same target cannot claim more fulfilled slots than its predicted count"
         );
 

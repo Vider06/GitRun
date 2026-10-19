@@ -1022,9 +1022,9 @@ impl WorkflowModel {
                 || forecast
                     .seasonal_bias_correction
                     .is_some_and(|value| !value.is_finite())
-                || forecast.seasonal_quality_score.is_some_and(|value| {
-                    !value.is_finite() || !(0.0..=1.0).contains(&value)
-                })
+                || forecast
+                    .seasonal_quality_score
+                    .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
             {
                 return Err(KittyError::Invalid(
                     "stored forecast record is outside supported bounds".into(),
@@ -3532,7 +3532,9 @@ fn compute_forecast(
                 .collect::<Vec<_>>();
             let seasonal_bias_correction =
                 (schedule_correction.len() >= 4).then(|| mean(&schedule_correction));
-            let recent_slot_demands: Vec<f64> = model.history.iter()
+            let recent_slot_demands: Vec<f64> = model
+                .history
+                .iter()
                 .filter(|observation| weekday_hour_slot(observation.bucket_epoch) == seasonal_slot)
                 .map(|observation| f64::from(observation.demand()))
                 .collect();
@@ -3583,22 +3585,33 @@ fn compute_forecast(
     let confidence_score =
         (sample_factor * evaluation_factor * quality_score * freshness_factor).clamp(0.0, 1.0);
 
-    let seasonal_evaluated: Vec<&PredictionRecord> = model.predictions.iter()
+    let seasonal_evaluated: Vec<&PredictionRecord> = model
+        .predictions
+        .iter()
         .filter(|record| {
             record.is_seasonal
                 && record.horizon_seconds == settings.warm_pool_lead_seconds
                 && record.actual_demand.is_some()
                 && !record.skipped_missing_observation
         })
-        .rev().take(48).collect();
+        .rev()
+        .take(48)
+        .collect();
     let seasonal_quality_score = if seasonal_evaluated.len() >= 24 {
-        let errors: Vec<f64> = seasonal_evaluated.iter().filter_map(|record| {
-            record.actual_demand.map(|actual| {
-                (f64::from(record.predicted_demand) - f64::from(actual)).abs()
+        let errors: Vec<f64> = seasonal_evaluated
+            .iter()
+            .filter_map(|record| {
+                record
+                    .actual_demand
+                    .map(|actual| (f64::from(record.predicted_demand) - f64::from(actual)).abs())
             })
-        }).collect();
-        let actual_mean = mean(&seasonal_evaluated.iter()
-            .filter_map(|record| record.actual_demand.map(f64::from)).collect::<Vec<_>>());
+            .collect();
+        let actual_mean = mean(
+            &seasonal_evaluated
+                .iter()
+                .filter_map(|record| record.actual_demand.map(f64::from))
+                .collect::<Vec<_>>(),
+        );
         let accuracy = (1.0 - mean(&errors) / actual_mean.max(1.0)).clamp(0.0, 1.0);
         let evaluation_factor = (seasonal_evaluated.len() as f64 / 48.0).clamp(0.0, 1.0);
         Some((sample_factor * evaluation_factor * accuracy * freshness_factor).clamp(0.0, 1.0))
@@ -4816,10 +4829,14 @@ mod tests {
         let mut model = WorkflowModel::empty("owner/repo");
         let workload_id = "wk-0123456789abcdef".to_owned();
         model.workload_patterns.push(WorkloadPattern {
-            workload_id: workload_id.clone(), workflow_id: 9,
-            workflow_path: ".github/workflows/build.yml".into(), job_name: "build-linux".into(),
+            workload_id: workload_id.clone(),
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            job_name: "build-linux".into(),
             labels: vec!["self-hosted".into(), "linux".into()],
-            first_seen_epoch: 1_800, last_seen_epoch: 1_800, occurrence_count: 2,
+            first_seen_epoch: 1_800,
+            last_seen_epoch: 1_800,
+            occurrence_count: 2,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
         });
@@ -4827,23 +4844,49 @@ mod tests {
         let duplicate_id = generate_occurrence_id("owner/repo", 2).unwrap();
         model.next_gitrun_job_sequence = 3;
         model.recent_job_occurrences = vec![
-            RecentJobOccurrence { gitrun_job_id: foreign_id, workload_id: workload_id.clone(),
-                occurrence_code: String::new(), run_id: 1, job_id: 11, observed_at_epoch: 1_900,
-                started_at_epoch: Some(1_850), counted_prediction_target_epoch: None },
-            RecentJobOccurrence { gitrun_job_id: duplicate_id.clone(), workload_id: workload_id.clone(),
-                occurrence_code: String::new(), run_id: 2, job_id: 22, observed_at_epoch: 2_000,
-                started_at_epoch: Some(1_950), counted_prediction_target_epoch: None },
-            RecentJobOccurrence { gitrun_job_id: duplicate_id, workload_id,
-                occurrence_code: String::new(), run_id: 3, job_id: 33, observed_at_epoch: 2_100,
-                started_at_epoch: Some(2_050), counted_prediction_target_epoch: None },
+            RecentJobOccurrence {
+                gitrun_job_id: foreign_id,
+                workload_id: workload_id.clone(),
+                occurrence_code: String::new(),
+                run_id: 1,
+                job_id: 11,
+                observed_at_epoch: 1_900,
+                started_at_epoch: Some(1_850),
+                counted_prediction_target_epoch: None,
+            },
+            RecentJobOccurrence {
+                gitrun_job_id: duplicate_id.clone(),
+                workload_id: workload_id.clone(),
+                occurrence_code: String::new(),
+                run_id: 2,
+                job_id: 22,
+                observed_at_epoch: 2_000,
+                started_at_epoch: Some(1_950),
+                counted_prediction_target_epoch: None,
+            },
+            RecentJobOccurrence {
+                gitrun_job_id: duplicate_id,
+                workload_id,
+                occurrence_code: String::new(),
+                run_id: 3,
+                job_id: 33,
+                observed_at_epoch: 2_100,
+                started_at_epoch: Some(2_050),
+                counted_prediction_target_epoch: None,
+            },
         ];
         assert!(migrate_job_identity(&mut model));
         let mut ids = HashSet::new();
         for occurrence in &model.recent_job_occurrences {
-            assert!(valid_generated_gitrun_job_id_for_repository(&occurrence.gitrun_job_id, "owner/repo"));
+            assert!(valid_generated_gitrun_job_id_for_repository(
+                &occurrence.gitrun_job_id,
+                "owner/repo"
+            ));
             assert!(ids.insert(occurrence.gitrun_job_id.clone()));
         }
-        model.validate_for("owner/repo", MAX_HISTORY_BUCKETS).unwrap();
+        model
+            .validate_for("owner/repo", MAX_HISTORY_BUCKETS)
+            .unwrap();
     }
 
     #[test]
@@ -4851,19 +4894,32 @@ mod tests {
         let mut model = WorkflowModel::empty("owner/repo");
         let workload_id = "wk-0123456789abcdef".to_owned();
         model.workload_patterns.push(WorkloadPattern {
-            workload_id: workload_id.clone(), workflow_id: 9,
-            workflow_path: ".github/workflows/build.yml".into(), job_name: "build-linux".into(),
+            workload_id: workload_id.clone(),
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            job_name: "build-linux".into(),
             labels: vec!["self-hosted".into(), "linux".into()],
-            first_seen_epoch: 1_800, last_seen_epoch: 1_800, occurrence_count: 4,
+            first_seen_epoch: 1_800,
+            last_seen_epoch: 1_800,
+            occurrence_count: 4,
             slots: vec![TemporalDemandSlot::default(); TEMPORAL_SLOT_COUNT],
             slot_last_week: vec![0; TEMPORAL_SLOT_COUNT],
         });
         model.workload_predictions.push(WorkloadPredictionRecord {
-            workload_id, issued_at_bucket: 3_600, target_epoch: 7_200,
-            predicted_occurrences: 2, observed_occurrences: 0,
-            actual_occurrences: None, prewarm_runners_created: 0,
+            workload_id,
+            issued_at_bucket: 3_600,
+            target_epoch: 7_200,
+            predicted_occurrences: 2,
+            observed_occurrences: 0,
+            actual_occurrences: None,
+            prewarm_runners_created: 0,
         });
-        assert!(!record_started_job_occurrences_with_coverage(&mut model, &[], 10_800, false));
+        assert!(!record_started_job_occurrences_with_coverage(
+            &mut model,
+            &[],
+            10_800,
+            false
+        ));
         assert_eq!(model.workload_predictions[0].actual_occurrences, None);
     }
 
@@ -5277,9 +5333,12 @@ mod tests {
         assert_eq!(pattern.slot_last_week[slot_index], weekly_period_start(now));
         assert!(
             forecast_workload_prewarms(
-                &model, now / BUCKET_SECONDS * BUCKET_SECONDS, &settings, BUCKET_SECONDS,
+                &model,
+                now / BUCKET_SECONDS * BUCKET_SECONDS,
+                &settings,
+                BUCKET_SECONDS,
             )
-                .is_empty(),
+            .is_empty(),
             "one fresh occurrence cannot immediately reactivate an old weekly schedule"
         );
     }
@@ -5466,8 +5525,12 @@ mod tests {
         }
         // Forecast is held back when no evaluated forecast quality exists.
         let forecast = compute_forecast(
-            &model, &settings, start + 23 * BUCKET_SECONDS, BUCKET_SECONDS,
-        ).unwrap();
+            &model,
+            &settings,
+            start + 23 * BUCKET_SECONDS,
+            BUCKET_SECONDS,
+        )
+        .unwrap();
         assert_eq!(forecast.predicted_peak_concurrency, 3);
         assert_eq!(forecast.confidence_score, 0.0);
         assert_eq!(forecast.evaluated_forecasts, 0);

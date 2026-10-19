@@ -11,8 +11,8 @@
 
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
 use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
-use gitrun_smart_scheduler::{KittyDashboardStatus, KittyRuntime, KittySettings};
 use gitrun_setup::BootstrapAuth;
+use gitrun_smart_scheduler::{KittyDashboardStatus, KittyRuntime, KittySettings};
 use gitrun_vault::{Scope, Vault};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
@@ -2264,8 +2264,8 @@ struct KittyDashboardData {
 fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
     let config = load_config()?;
     let state_dir = Path::new(&config.state_dir);
-    let settings =
-        gitrun_smart_scheduler::load_settings_for_dashboard(state_dir).map_err(|e| e.to_string())?;
+    let settings = gitrun_smart_scheduler::load_settings_for_dashboard(state_dir)
+        .map_err(|e| e.to_string())?;
     let status =
         gitrun_smart_scheduler::load_dashboard_status(state_dir).map_err(|e| e.to_string())?;
     Ok(KittyDashboardData { settings, status })

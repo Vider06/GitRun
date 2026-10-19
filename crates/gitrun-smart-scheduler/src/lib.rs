@@ -880,9 +880,7 @@ impl KittyRuntime {
             // Dashboard status is an informational, best-effort projection;
             // failure to refresh it must never disable deterministic scheduling.
             if let Err(error) = self.persist_dashboard_snapshot() {
-                eprintln!(
-                    "gitrun-smart-scheduler: dashboard status persistence failed: {error}"
-                );
+                eprintln!("gitrun-smart-scheduler: dashboard status persistence failed: {error}");
             }
         }
         Ok(())
@@ -1026,7 +1024,6 @@ impl KittyRuntime {
     }
 }
 
-
 /// Privacy-minimized model status suitable for the operator dashboard. Raw
 /// five-minute history and per-forecast records never leave the private files.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1071,8 +1068,8 @@ impl KittyDashboardStatus {
 pub fn load_settings_for_dashboard(state_dir: &Path) -> Result<KittySettings> {
     let path = KittyRuntime::settings_path(state_dir);
     if KittyRuntime::uses_system_settings_path(state_dir) {
-        let settings = read_system_json::<KittySettings>(&path, MAX_SETTINGS_BYTES)?
-            .unwrap_or_default();
+        let settings =
+            read_system_json::<KittySettings>(&path, MAX_SETTINGS_BYTES)?.unwrap_or_default();
         settings.validate()?;
         Ok(settings)
     } else {
@@ -1080,10 +1077,7 @@ pub fn load_settings_for_dashboard(state_dir: &Path) -> Result<KittySettings> {
     }
 }
 
-pub fn save_settings_for_local_state_dir(
-    state_dir: &Path,
-    settings: &KittySettings,
-) -> Result<()> {
+pub fn save_settings_for_local_state_dir(state_dir: &Path, settings: &KittySettings) -> Result<()> {
     settings.validate()?;
     if KittyRuntime::uses_system_settings_path(state_dir) {
         return Err(KittyError::Invalid(
@@ -1092,7 +1086,9 @@ pub fn save_settings_for_local_state_dir(
     }
     let bytes = serde_json::to_vec(settings)?;
     if bytes.len() as u64 > MAX_SETTINGS_BYTES {
-        return Err(KittyError::Invalid("Kitty settings exceed the size limit".into()));
+        return Err(KittyError::Invalid(
+            "Kitty settings exceed the size limit".into(),
+        ));
     }
     atomic_write_private(&KittyRuntime::settings_path(state_dir), &bytes)
 }
@@ -1114,7 +1110,9 @@ pub fn save_settings_as_root(state_dir: &Path, settings: &KittySettings) -> Resu
     }
     let bytes = serde_json::to_vec(settings)?;
     if bytes.len() as u64 > MAX_SETTINGS_BYTES {
-        return Err(KittyError::Invalid("Kitty settings exceed the size limit".into()));
+        return Err(KittyError::Invalid(
+            "Kitty settings exceed the size limit".into(),
+        ));
     }
     atomic_write_system_private(&KittyRuntime::settings_path(state_dir), &bytes)
 }
@@ -1151,8 +1149,8 @@ pub fn load_dashboard_status(state_dir: &Path) -> Result<KittyDashboardStatus> {
 
 fn read_settings(path: &Path) -> Result<KittySettings> {
     if is_system_settings_path(path) {
-        let settings = read_system_json::<KittySettings>(path, MAX_SETTINGS_BYTES)?
-            .unwrap_or_default();
+        let settings =
+            read_system_json::<KittySettings>(path, MAX_SETTINGS_BYTES)?.unwrap_or_default();
         settings.validate()?;
         return Ok(settings);
     }
@@ -1315,7 +1313,8 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
         )));
     }
     let mut bytes = Vec::with_capacity(opened.len().min(max_bytes) as usize);
-    file.take(max_bytes.saturating_add(1)).read_to_end(&mut bytes)?;
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > max_bytes {
         return Err(KittyError::Invalid(format!(
             "{} exceeded its read-size bound",

@@ -1,7 +1,7 @@
 use clap::Parser;
 use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, GitRunSettings, Runner};
-use gitrun_smart_scheduler::KittySettings;
 use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, BootstrapAuth};
+use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
     fetch_manifest, latest_manifest, pin_runner_image, rollback, rollback_installed_update,
@@ -2838,7 +2838,8 @@ fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std:
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         .ok_or("Kitty settings helper requires a verified requesting user UID")?;
-    let bytes = read_privileged_user_payload(Path::new(input_path), requester_uid, "kitty-settings")?;
+    let bytes =
+        read_privileged_user_payload(Path::new(input_path), requester_uid, "kitty-settings")?;
     let settings: KittySettings = serde_json::from_slice(&bytes)?;
     settings.validate()?;
 

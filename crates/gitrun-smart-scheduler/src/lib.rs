@@ -2667,8 +2667,7 @@ fn forecast_workload_prewarms(
                 .clamp(1.0, f64::from(settings.max_additional_warm_runners))
                 as u32;
             let existing_prediction = model.workload_predictions.iter().find(|record| {
-                record.workload_code == pattern.workload_code
-                    && record.target_epoch == target_epoch
+                record.workload_code == pattern.workload_code && record.target_epoch == target_epoch
             });
             // Once a prediction exists, preserve its original target count for
             // the entire hour. Repeated polls must not amplify or shrink it.

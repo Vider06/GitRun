@@ -2499,9 +2499,7 @@ fn record_queued_job_occurrences(
             let heartbeat_bucket = observed_at_epoch / BUCKET_SECONDS * BUCKET_SECONDS;
             let heartbeat_changed = {
                 let existing = &mut model.recent_job_occurrences[existing_index];
-                if existing.observed_at_epoch / BUCKET_SECONDS
-                    < heartbeat_bucket / BUCKET_SECONDS
-                {
+                if existing.observed_at_epoch / BUCKET_SECONDS < heartbeat_bucket / BUCKET_SECONDS {
                     existing.observed_at_epoch = heartbeat_bucket;
                     changed = true;
                     true
@@ -2536,8 +2534,8 @@ fn record_queued_job_occurrences(
                     let target = prediction.target_epoch;
                     prediction.observed_occurrences =
                         prediction.observed_occurrences.saturating_add(1);
-                    model.recent_job_occurrences[existing_index]
-                        .counted_prediction_target_epoch = Some(target);
+                    model.recent_job_occurrences[existing_index].counted_prediction_target_epoch =
+                        Some(target);
                     changed = true;
                 }
             }
@@ -2610,19 +2608,19 @@ fn record_queued_job_occurrences(
         // count it and pin the count to that target. A later queue poll can
         // count a previously-seen job if it first remains queued into the
         // predicted hour.
-        let counted_prediction_target_epoch =
-            if let Some(prediction) = model.workload_predictions.iter_mut().find(|record| {
+        let counted_prediction_target_epoch = if let Some(prediction) =
+            model.workload_predictions.iter_mut().find(|record| {
                 record.workload_code == workload_code
                     && record.actual_occurrences.is_none()
                     && observed_at_epoch >= record.target_epoch
                     && observed_at_epoch < record.target_epoch.saturating_add(3_600)
             }) {
-                prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
-                changed = true;
-                Some(prediction.target_epoch)
-            } else {
-                None
-            };
+            prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
+            changed = true;
+            Some(prediction.target_epoch)
+        } else {
+            None
+        };
 
         model.recent_job_occurrences.push(RecentJobOccurrence {
             occurrence_code,

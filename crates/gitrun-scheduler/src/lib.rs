@@ -1106,8 +1106,7 @@ fn reconcile_repo(
         .saturating_sub(floor_extra);
     for target in &mut pending_workload_prewarms {
         target.runner_count = target.runner_count.min(remaining_prewarm_budget);
-        remaining_prewarm_budget =
-            remaining_prewarm_budget.saturating_sub(target.runner_count);
+        remaining_prewarm_budget = remaining_prewarm_budget.saturating_sub(target.runner_count);
     }
     pending_workload_prewarms.retain(|target| target.runner_count > 0);
     let prewarm_runner_count = pending_workload_prewarms

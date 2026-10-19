@@ -2484,7 +2484,7 @@ fn record_queued_job_occurrences(
         for prediction in &mut model.workload_predictions {
             if prediction.workload_code == workload_code
                 && prediction.actual_occurrences.is_none()
-                && observed_at_epoch >= prediction.issued_at_bucket
+                && observed_at_epoch >= prediction.target_epoch
                 && observed_at_epoch < prediction.target_epoch.saturating_add(3_600)
             {
                 prediction.observed_occurrences = prediction.observed_occurrences.saturating_add(1);
@@ -4011,20 +4011,38 @@ mod tests {
             actual_occurrences: None,
         });
 
+        // A job already queued before the target window must not inflate this
+        // target-hour forecast, even if it remains visible through later polls.
+        let mut early_job = job.clone();
+        early_job.job_id = 409;
+        record_queued_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&early_job),
+            issued + 30,
+        );
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
+        record_queued_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&early_job),
+            target + 30,
+        );
+        assert_eq!(model.workload_predictions[0].observed_occurrences, 0);
+
+        // A distinct job first observed inside the target window counts once.
         assert!(record_queued_job_occurrences(
             &mut model,
             std::slice::from_ref(&job),
-            issued + 30,
+            target + 30,
         ));
         assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
-
-        // Repeated queue polling for the same exact run/job ID is not a second
-        // workload occurrence.
-        record_queued_job_occurrences(&mut model, std::slice::from_ref(&job), issued + 60);
+        record_queued_job_occurrences(
+            &mut model,
+            std::slice::from_ref(&job),
+            target + 60,
+        );
         assert_eq!(model.workload_predictions[0].observed_occurrences, 1);
 
-        // When the target hour completes with no further job occurrence, the
-        // current count is finalized rather than leaving an unevaluable record.
+        // When the target hour completes, the observed occurrence count is finalized.
         record_queued_job_occurrences(&mut model, &[], target + 3_600);
         assert_eq!(model.workload_predictions[0].actual_occurrences, Some(1));
         assert_eq!(

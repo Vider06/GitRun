@@ -1050,6 +1050,8 @@ pub struct RunnerSpec<'a> {
     pub workflow_job_name: Option<&'a str>,
     /// Workflow run ID paired with workflow_job_name.
     pub workflow_run_id: Option<u64>,
+    /// GitHub's unique workflow job ID paired with the run ID.
+    pub workflow_job_id: Option<u64>,
     /// Whether this container is a GitDockRun target that must survive the
     /// normal Dynamic-runner cleanup until the dock binding is released.
     pub dock_target: bool,
@@ -1337,6 +1339,9 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
     if let Some(run_id) = spec.workflow_run_id {
         args.extend(["--label".into(), format!("gitrun.workflow_run={run_id}")]);
+    }
+    if let Some(job_id) = spec.workflow_job_id {
+        args.extend(["--label".into(), format!("gitrun.workflow_job_id={job_id}")]);
     }
 
     if spec.is_windows {

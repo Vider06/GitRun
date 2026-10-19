@@ -964,6 +964,32 @@ impl KittyRuntime {
         &self.settings
     }
 
+    /// Rate-limit optional historical start sampling per repository. It is
+    /// disabled unless Kitty telemetry and predictive analytics are enabled.
+    /// The timestamp advances only when the caller is actually allowed to query.
+    pub fn should_poll_workload_history(&mut self, repository: &str, now_epoch: u64) -> bool {
+        self.reload_settings_if_due();
+        if self.settings_error.is_some()
+            || !self.settings.enabled
+            || !self.settings.telemetry_enabled
+            || !self.settings.predictive_analytics_enabled
+            || !valid_repository(repository)
+            || now_epoch == 0
+        {
+            return false;
+        }
+        let key = repository_key(repository);
+        if self
+            .last_workload_history_poll
+            .get(&key)
+            .is_some_and(|last| now_epoch.saturating_sub(*last) < BUCKET_SECONDS)
+        {
+            return false;
+        }
+        self.last_workload_history_poll.insert(key, now_epoch);
+        true
+    }
+
     pub fn observe(
         &mut self,
         input: ObservationInput,

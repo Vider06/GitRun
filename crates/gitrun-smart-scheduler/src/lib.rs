@@ -2185,8 +2185,7 @@ mod tests {
             .unwrap();
         runtime.finish_cycle(&decision, 0, true).unwrap();
 
-        let stored: WorkflowModel =
-            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let stored: WorkflowModel = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(stored.history.len(), 24);
         assert_eq!(
             stored.history.first().unwrap().bucket_epoch,
@@ -2210,8 +2209,7 @@ mod tests {
         let path = dir
             .join("kitty")
             .join(format!("model-{}.json", repository_key("owner/repo")));
-        let stored: WorkflowModel =
-            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        let stored: WorkflowModel = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(stored.history.len(), 1);
         assert_eq!(stored.history[0].queued_jobs, 8);
         assert_eq!(stored.history[0].demand(), 9);

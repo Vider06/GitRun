@@ -587,8 +587,7 @@ fn kitty_observation_counts(
             queued_job_names
                 .iter()
                 .filter(|job| {
-                    let is_known_dock_target =
-                        dock_target_jobs.iter().any(|target| target == *job);
+                    let is_known_dock_target = dock_target_jobs.iter().any(|target| target == *job);
                     // The current shared routing contract identifies dock
                     // targets by job name, not by workflow/run ID. If multiple
                     // queued jobs have the same name, do not guess which one
@@ -2546,10 +2545,7 @@ mod reconcile_identity_pin_tests {
 
     #[test]
     fn kitty_observation_does_not_guess_when_target_job_names_are_duplicated() {
-        let queue = vec![
-            "docker-special".to_owned(),
-            "docker-special".to_owned(),
-        ];
+        let queue = vec!["docker-special".to_owned(), "docker-special".to_owned()];
         let dock_targets = vec!["docker-special".to_owned()];
         let counts = kitty_observation_counts(&queue, &dock_targets, &[], &[]);
         // Without a workflow/run identity in the routing contract, excluding

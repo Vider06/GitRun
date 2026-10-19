@@ -48,6 +48,7 @@ pub struct AutomationIntent {
     pub repository: String,
     pub run_id: Option<u64>,
     pub job_id: Option<u64>,
+    pub runner_id: Option<u64>,
     pub runner_name: Option<String>,
     pub readiness_score: Option<f64>,
     /// True only when Kitty's persisted decision audit identifies a previously
@@ -267,8 +268,10 @@ fn validate(
             if !policy.automation_mode {
                 return Err("Automation mode is disabled".into());
             }
-            if intent.runner_name.as_deref().is_none_or(str::is_empty) {
-                return Err("runner identity is missing".into());
+            if intent.runner_name.as_deref().is_none_or(str::is_empty)
+                || intent.runner_id.is_none_or(|runner_id| runner_id == 0)
+            {
+                return Err("verified runner name and numeric ID are required".into());
             }
             if !intent.runner_is_verified_idle {
                 return Err("runner is not verified idle".into());
@@ -351,6 +354,7 @@ mod tests {
             repository: "owner/repo".into(),
             run_id: Some(42),
             job_id: None,
+            runner_id: None,
             runner_name: None,
             readiness_score: Some(0.95),
             retaining_previously_authorized_floor: false,

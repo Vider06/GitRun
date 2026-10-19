@@ -2760,6 +2760,16 @@ fn record_queued_job_occurrences(
         let Some(workload_id) = workload_id_for(&model.repository, job) else {
             continue;
         };
+        // Explicit family labels may reference only a known profile. Never
+        // synthesize backend/image metadata from an opaque or forged ID.
+        if has_workload_routing_marker(&job.labels)
+            && !model
+                .workload_patterns
+                .iter()
+                .any(|pattern| pattern.workload_id == workload_id)
+        {
+            continue;
+        }
         let provider_key = provider_occurrence_key(&workload_id, job.run_id, job.job_id);
         if !seen_provider_keys.insert(provider_key.clone()) {
             continue;
@@ -2900,6 +2910,14 @@ fn record_started_job_occurrences(
         let Some(workload_id) = workload_id_for(&model.repository, job) else {
             continue;
         };
+        if has_workload_routing_marker(&job.labels)
+            && !model
+                .workload_patterns
+                .iter()
+                .any(|pattern| pattern.workload_id == workload_id)
+        {
+            continue;
+        }
         let occurrence_code = provider_occurrence_key(&workload_id, job.run_id, job.job_id);
         if !jobs_seen_this_poll.insert(occurrence_code.clone()) {
             continue;
@@ -4878,6 +4896,49 @@ mod tests {
                 later.run_id,
                 later.job_id
             )
+        );
+    }
+
+    #[test]
+    fn explicit_family_label_is_stable_and_conflicts_fail_closed() {
+        let base_labels = vec![
+            "self-hosted".to_owned(),
+            "linux".to_owned(),
+            "x64".to_owned(),
+        ];
+        let workload_id = generate_workload_id(
+            "owner/repo",
+            ".github/workflows/build.yml",
+            "build",
+            &base_labels,
+        )
+        .unwrap();
+        let family_label = format!("gitrun-job-{workload_id}");
+        assert_eq!(
+            generate_workload_id(
+                "owner/repo",
+                ".github/workflows/build.yml",
+                "build",
+                &[base_labels.clone(), vec![family_label.clone()]].concat(),
+            ),
+            Some(workload_id.clone()),
+        );
+        assert_eq!(
+            workload_id_from_routing_labels(&[family_label.clone()]),
+            Some(workload_id),
+        );
+        assert!(has_workload_routing_marker(&[family_label.clone()]));
+        assert_eq!(
+            workload_id_from_routing_labels(&[
+                family_label,
+                "gitrun-job-wk-fedcba9876543210".to_owned(),
+            ]),
+            None,
+            "conflicting family IDs must not choose a backend or runner",
+        );
+        assert_eq!(
+            workload_id_from_routing_labels(&["gitrun-job-wk-../../bad".to_owned()]),
+            None,
         );
     }
 

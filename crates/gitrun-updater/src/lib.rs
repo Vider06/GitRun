@@ -1810,7 +1810,12 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                     "archive contains links or special filesystem entries".into(),
                 ));
             }
-            entry.unpack_in(destination)?;
+            let unpacked = entry.unpack_in(destination)?;
+            if !unpacked {
+                return Err(UpdateError::InvalidManifest(
+                    "archive entry escapes the update staging directory".into(),
+                ));
+            }
         }
     } else if name.ends_with(".zip") {
         let file = fs::File::open(archive)?;
@@ -2507,6 +2512,44 @@ mod tests {
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
 
         health_check_binary(&root, None).unwrap();
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_tar_archive_entries_that_escape_staging_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-tar-traversal-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let archive_path = root.join("malicious.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive_path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"must not escape staging";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "../outside.txt", &payload[..])
+            .unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let destination = root.join("destination");
+        let result = extract_archive(
+            &archive_path,
+            "x86_64-unknown-linux-gnu",
+            &destination,
+        );
+        assert!(matches!(result, Err(UpdateError::InvalidManifest(message))
+            if message.contains("escapes the update staging directory")));
+        assert!(!root.join("outside.txt").exists());
 
         let _ = fs::remove_dir_all(&root);
     }

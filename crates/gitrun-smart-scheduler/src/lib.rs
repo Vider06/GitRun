@@ -126,7 +126,7 @@ impl KittySettings {
             ));
         }
         if !(300..=3600).contains(&self.warm_pool_min_hold_seconds)
-            || self.warm_pool_min_hold_seconds % 300 != 0
+            || !self.warm_pool_min_hold_seconds.is_multiple_of(300)
         {
             return Err(KittyError::Invalid(
                 "warm_pool_min_hold_seconds must be between 300 and 3600".into(),
@@ -183,7 +183,7 @@ impl Observation {
                 )));
             }
         }
-        if self.bucket_epoch % BUCKET_SECONDS != 0 {
+        if !self.bucket_epoch.is_multiple_of(BUCKET_SECONDS) {
             return Err(KittyError::Invalid(
                 "observation timestamp is not aligned to a five-minute bucket".into(),
             ));

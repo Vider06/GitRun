@@ -5874,7 +5874,9 @@ mod secure_runner_file_helper_tests {
 
     #[test]
     fn secure_file_helper_rejects_symlink_components_and_out_of_scope_paths() {
-        let directory = std::env::temp_dir().join(format!(
+        // The helper intentionally allows /tmp, not arbitrary TMPDIR locations.
+        // Keep this test independent of runner-specific TMPDIR configuration.
+        let directory = std::path::Path::new("/tmp").join(format!(
             "gitrun-secure-file-helper-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

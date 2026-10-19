@@ -1172,6 +1172,60 @@ mod tests {
     }
 
     #[test]
+    fn recurring_workload_prewarms_respect_global_maximum_and_hold_metadata() {
+        let mut input = base_input();
+        input.min_runners = 1;
+        input.max_runners = 3;
+        input.queued_jobs = 0;
+        input.workload_prewarms = vec![gitrun_smart_scheduler::WorkloadPrewarm {
+            workload_code: "wk-0123456789abcdef".into(),
+            workflow_id: 9,
+            workflow_path: ".github/workflows/build.yml".into(),
+            job_name: "build-linux".into(),
+            labels: vec!["self-hosted".into(), "linux".into()],
+            target_epoch: 7_200,
+            hold_until_epoch: 8_100,
+            runner_count: 5,
+            observed_distinct_weeks: 6,
+            historical_occurrences_per_week: 5.0,
+        }];
+
+        let actions = plan(&input);
+        let prewarms: Vec<_> = actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::PrewarmWorkload {
+                    workload_code,
+                    target_epoch,
+                    hold_until_epoch,
+                    job_name,
+                    job_labels,
+                } => Some((
+                    workload_code,
+                    *target_epoch,
+                    *hold_until_epoch,
+                    job_name,
+                    job_labels,
+                )),
+                _ => None,
+            })
+            .collect();
+
+        // One permanent runner plus no more than two warmups fits the
+        // configured three-runner maximum even when the forecast asks for five.
+        assert_eq!(prewarms.len(), 2);
+        assert!(actions.len() <= input.max_runners as usize);
+        assert!(prewarms.iter().all(|(code, target, hold, name, labels)| {
+            code == &"wk-0123456789abcdef"
+                && *target == 7_200
+                && *hold == 8_100
+                && name == &"build-linux"
+                && labels == &vec!["self-hosted".to_owned(), "linux".to_owned()]
+        }));
+        assert!(!actions.iter().any(|action| matches!(action, Action::RemoveIdle { .. })));
+    }
+
+    #[test]
     fn dynamic_runners_carry_their_triggering_job_labels() {
         // Logic Containers integration: dynamic (non-permanent) overflow
         // runners should carry the labels of the queued job they're being

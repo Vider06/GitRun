@@ -1379,7 +1379,9 @@ impl ApiExecutionBackend {
                     logs.as_bytes(),
                 )?;
                 if !output.status.success() {
-                    return Err(failed("unable to safely save GitRun logs into shared storage"));
+                    return Err(failed(
+                        "unable to safely save GitRun logs into shared storage",
+                    ));
                 }
 
                 Ok(success(format!(
@@ -1483,10 +1485,8 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker_secure_file_operation_as_runner(
-            &self.caller_container_id,
-            &["read", path],
-        )?;
+        let output =
+            docker_secure_file_operation_as_runner(&self.caller_container_id, &["read", path])?;
         command_output(output)
     }
 
@@ -1507,10 +1507,8 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker_secure_file_operation_as_runner(
-            &self.caller_container_id,
-            &["sha256", path],
-        )?;
+        let output =
+            docker_secure_file_operation_as_runner(&self.caller_container_id, &["sha256", path])?;
         command_output(output)
     }
 
@@ -1794,10 +1792,7 @@ impl ApiExecutionBackend {
         let path = arg(request, "path")?;
         ensure_safe_runner_path(path)?;
 
-        let output = docker_secure_file_operation_as_runner(
-            container.as_str(),
-            &["read", path],
-        )?;
+        let output = docker_secure_file_operation_as_runner(container.as_str(), &["read", path])?;
         command_output(output)
     }
 
@@ -5735,8 +5730,7 @@ fn docker_secure_file_operation_as_runner(
 ) -> Result<std::process::Output, ExecutionError> {
     let mut args = vec!["python3", "-I", "-S", "-c", GITRUN_SAFE_FILE_HELPER];
     args.extend_from_slice(operation_args);
-    docker::exec_container_as_runner(container, &args)
-        .map_err(|error| failed(error.to_string()))
+    docker::exec_container_as_runner(container, &args).map_err(|error| failed(error.to_string()))
 }
 
 fn docker_secure_file_operation_with_stdin_as_runner(
@@ -5792,8 +5786,6 @@ fn ensure_safe_runner_path(path: &str) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-
-
 #[cfg(target_os = "linux")]
 #[cfg(test)]
 mod secure_runner_file_helper_tests {
@@ -5809,14 +5801,18 @@ mod secure_runner_file_helper_tests {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = command.spawn().expect("python3 should be installed in the Linux CI environment");
+        let mut child = command
+            .spawn()
+            .expect("python3 should be installed in the Linux CI environment");
         child
             .stdin
             .take()
             .expect("stdin is piped")
             .write_all(input)
             .expect("write helper input");
-        child.wait_with_output().expect("wait for secure file helper")
+        child
+            .wait_with_output()
+            .expect("wait for secure file helper")
     }
 
     #[test]
@@ -5827,7 +5823,9 @@ mod secure_runner_file_helper_tests {
         assert!(ensure_safe_runner_path("/home/runner/actions-runner/.credentials").is_err());
         assert!(ensure_safe_runner_path("/home/runner/actions-runner/.runner").is_err());
         assert!(ensure_safe_runner_path("/etc/passwd").is_err());
-        assert!(ensure_safe_runner_path("/tmp/../home/runner/actions-runner/.credentials").is_err());
+        assert!(
+            ensure_safe_runner_path("/tmp/../home/runner/actions-runner/.credentials").is_err()
+        );
     }
 
     #[test]
@@ -5847,27 +5845,50 @@ mod secure_runner_file_helper_tests {
             let file = directory.join("safe.txt");
             let file_arg = file.to_str().expect("UTF-8 test path");
             let written = invoke("write", &[file_arg], b"safe contents");
-            assert!(written.status.success(), "write failed: {}", String::from_utf8_lossy(&written.stderr));
+            assert!(
+                written.status.success(),
+                "write failed: {}",
+                String::from_utf8_lossy(&written.stderr)
+            );
             let read = invoke("read", &[file_arg], b"");
-            assert!(read.status.success(), "read failed: {}", String::from_utf8_lossy(&read.stderr));
+            assert!(
+                read.status.success(),
+                "read failed: {}",
+                String::from_utf8_lossy(&read.stderr)
+            );
             assert_eq!(read.stdout, b"safe contents");
 
             let file_link = directory.join("file-link");
             symlink("/etc/passwd", &file_link).expect("create file symlink");
             let linked = invoke("read", &[file_link.to_str().unwrap()], b"");
-            assert!(!linked.status.success(), "final symlink unexpectedly accepted");
+            assert!(
+                !linked.status.success(),
+                "final symlink unexpectedly accepted"
+            );
             assert!(linked.stdout.is_empty(), "rejected read returned file data");
 
             let directory_link = directory.join("directory-link");
             symlink("/etc", &directory_link).expect("create directory symlink");
             let nested = directory_link.join("passwd");
             let linked_parent = invoke("read", &[nested.to_str().unwrap()], b"");
-            assert!(!linked_parent.status.success(), "parent symlink unexpectedly accepted");
-            assert!(linked_parent.stdout.is_empty(), "rejected read returned file data");
+            assert!(
+                !linked_parent.status.success(),
+                "parent symlink unexpectedly accepted"
+            );
+            assert!(
+                linked_parent.stdout.is_empty(),
+                "rejected read returned file data"
+            );
 
             let out_of_scope = invoke("read", &["/etc/passwd"], b"");
-            assert!(!out_of_scope.status.success(), "out-of-scope path unexpectedly accepted");
-            assert!(out_of_scope.stdout.is_empty(), "rejected read returned file data");
+            assert!(
+                !out_of_scope.status.success(),
+                "out-of-scope path unexpectedly accepted"
+            );
+            assert!(
+                out_of_scope.stdout.is_empty(),
+                "rejected read returned file data"
+            );
             Ok::<(), String>(())
         })();
         let _ = std::fs::remove_dir_all(&directory);

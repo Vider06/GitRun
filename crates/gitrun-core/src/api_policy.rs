@@ -35,10 +35,12 @@ pub enum GitRunApi {
     GitWriteRun,
     GitVerifyRun,
     GitStatusRun,
+    /// Opt-in controller request that selects a unique per-occurrence runner route.
+    GitDispatchRun,
 }
 
 impl GitRunApi {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::GitVaultRun,
         Self::GitDockRun,
         Self::GitSaveRun,
@@ -48,6 +50,7 @@ impl GitRunApi {
         Self::GitWriteRun,
         Self::GitVerifyRun,
         Self::GitStatusRun,
+        Self::GitDispatchRun,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -61,6 +64,7 @@ impl GitRunApi {
             Self::GitWriteRun => "GitWriteRun",
             Self::GitVerifyRun => "GitVerifyRun",
             Self::GitStatusRun => "GitStatusRun",
+            Self::GitDispatchRun => "GitDispatchRun",
         }
     }
 
@@ -98,6 +102,7 @@ impl GitRunApi {
             Self::GitWriteRun => matches!(operation, GitRunOperation::Write),
             Self::GitVerifyRun => matches!(operation, GitRunOperation::Verify),
             Self::GitStatusRun => matches!(operation, GitRunOperation::Status),
+            Self::GitDispatchRun => matches!(operation, GitRunOperation::Plan),
         }
     }
 }
@@ -155,6 +160,10 @@ fn argument_contract(
             (&["path", "value"], &["path", "value"])
         }
         (GitRunApi::GitStatusRun, GitRunOperation::Status) => (&[], &[]),
+        (GitRunApi::GitDispatchRun, GitRunOperation::Plan) => (
+            &["target_job", "target_workflow", "target_labels"],
+            &["target_job", "target_workflow", "target_labels"],
+        ),
         _ => return None,
     })
 }
@@ -185,6 +194,31 @@ pub fn validate_arguments(
         let mode = arguments.get("read_only").map(String::as_str).unwrap_or("");
         if mode != "true" && mode != "false" {
             return Err("read_only must be true or false".into());
+        }
+    }
+
+    if (api, operation) == (GitRunApi::GitDispatchRun, GitRunOperation::Plan) {
+        let workflow = arguments.get("target_workflow").map(String::as_str).unwrap_or("");
+        if !workflow.starts_with(".github/workflows/")
+            || workflow.contains("..")
+            || workflow.contains('\\')
+            || workflow.chars().any(char::is_control)
+            || !workflow.ends_with(".yml") && !workflow.ends_with(".yaml")
+        {
+            return Err("target_workflow must be a safe path beneath .github/workflows".into());
+        }
+        let job = arguments.get("target_job").map(String::as_str).unwrap_or("");
+        if job.is_empty() || job.len() > 128 || !job.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')) {
+            return Err("target_job must be a valid GitHub Actions job identifier".into());
+        }
+        let labels = arguments.get("target_labels").map(String::as_str).unwrap_or("");
+        let labels: Vec<_> = labels.split(',').map(str::trim).collect();
+        if labels.is_empty() || labels.len() > 32 || labels.iter().any(|label| {
+            label.is_empty() || label.len() > 128 || !label.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                || label.to_ascii_lowercase().starts_with("gitrun-route-")
+                || label.to_ascii_lowercase().starts_with("gitrun-job-")
+        }) {
+            return Err("target_labels must be a comma-separated list of safe, non-reserved runner labels".into());
         }
     }
 
@@ -226,6 +260,8 @@ pub enum GitRunOperation {
     Update,
     Verify,
     Status,
+    /// Ask the local Kitty controller for a validated route or GitHub fallback.
+    Plan,
 }
 
 impl GitRunOperation {
@@ -250,6 +286,7 @@ impl GitRunOperation {
             Self::Update => "update",
             Self::Verify => "verify",
             Self::Status => "status",
+            Self::Plan => "plan",
         }
     }
 }
@@ -388,7 +425,7 @@ impl PolicyMatrix {
 mod tests {
     use super::*;
 
-    const ALL_OPERATIONS: [GitRunOperation; 19] = [
+    const ALL_OPERATIONS: [GitRunOperation; 20] = [
         GitRunOperation::Read,
         GitRunOperation::Write,
         GitRunOperation::Exists,
@@ -408,6 +445,7 @@ mod tests {
         GitRunOperation::Update,
         GitRunOperation::Verify,
         GitRunOperation::Status,
+        GitRunOperation::Plan,
     ];
 
     fn expected_operations(api: GitRunApi) -> &'static [GitRunOperation] {
@@ -440,6 +478,7 @@ mod tests {
             GitRunApi::GitWriteRun => &[GitRunOperation::Write],
             GitRunApi::GitVerifyRun => &[GitRunOperation::Verify],
             GitRunApi::GitStatusRun => &[GitRunOperation::Status],
+            GitRunApi::GitDispatchRun => &[GitRunOperation::Plan],
         }
     }
 
@@ -485,6 +524,11 @@ mod tests {
             (GitRunApi::GitWriteRun, GitRunOperation::Write) => {
                 &[("path", "/workspace/file"), ("value", "value")]
             }
+            (GitRunApi::GitDispatchRun, GitRunOperation::Plan) => &[
+                ("target_job", "build"),
+                ("target_workflow", ".github/workflows/ci.yml"),
+                ("target_labels", "self-hosted,linux,x64"),
+            ],
             _ => &[],
         };
 

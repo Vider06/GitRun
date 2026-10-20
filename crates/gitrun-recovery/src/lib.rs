@@ -464,12 +464,13 @@ fn is_protected_state_permission(error: &StateError) -> bool {
 }
 
 fn unit_matches_contract(installed: &str, packaged: &str) -> bool {
-    let normalized_lines = |content: &str| {
+    let normalized_lines = |content: &str| -> Vec<String> {
         content
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect::<Vec<_>>()
+            .map(str::to_owned)
+            .collect()
     };
     normalized_lines(installed) == normalized_lines(packaged)
 }

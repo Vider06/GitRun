@@ -491,16 +491,16 @@ pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceU
 /// Host CPU/memory probes account for current use. Docker's Linux CLI stats subtract
 /// page cache from displayed memory, so RAM reserves the entire existing hard limit.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ManagedContainerResourceHeadroom {
+pub struct ManagedContainerResourceReservation {
     pub name: String,
-    pub cpu_cores: f64,
-    pub memory_bytes: u64,
+    pub cpu_headroom_cores: f64,
+    pub memory_limit_bytes: u64,
 }
 
 /// Return unused CPU capacity and committed RAM limits for running GitRun-managed runners.
 /// Missing limits, ambiguous identities, or failed measurements are errors so
 /// Adaptive Resource Management defers creation instead of guessing capacity.
-pub fn running_managed_container_resource_headroom() -> Result<Vec<ManagedContainerResourceHeadroom>> {
+pub fn running_managed_container_resource_reservations() -> Result<Vec<ManagedContainerResourceReservation>> {
     const MAX_CONTAINERS: usize = 512;
     const NANO_CPUS_PER_CORE: f64 = 1_000_000_000.0;
     const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
@@ -640,7 +640,7 @@ pub fn running_managed_container_resource_headroom() -> Result<Vec<ManagedContai
         ));
     }
 
-    let mut headroom = Vec::with_capacity(identities.len());
+    let mut reservations = Vec::with_capacity(identities.len());
     for (id, name) in identities {
         let (cpu_limit, memory_limit) = *limits.get(&id).ok_or_else(|| {
             DockerError::Command("verified runner limit disappeared from snapshot".into())
@@ -648,15 +648,15 @@ pub fn running_managed_container_resource_headroom() -> Result<Vec<ManagedContai
         let cpu_usage = usages.get(&id).ok_or_else(|| {
             DockerError::Command("verified runner usage disappeared from snapshot".into())
         })?;
-        headroom.push(ManagedContainerResourceHeadroom {
+        reservations.push(ManagedContainerResourceReservation {
             name,
-            cpu_cores: (cpu_limit - cpu_usage).max(0.0),
+            cpu_headroom_cores: (cpu_limit - cpu_usage).max(0.0),
             // Reserve the full hard limit. Docker's Linux CLI subtracts page
             // cache from MemUsage, so that figure is not safe for RAM headroom.
-            memory_bytes: memory_limit,
+            memory_limit_bytes: memory_limit,
         });
     }
-    Ok(headroom)
+    Ok(reservations)
 }
 
 #[derive(Debug, Clone)]

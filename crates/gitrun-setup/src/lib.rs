@@ -175,7 +175,7 @@ fn setup_flag_contents_are_valid(content: Result<String, std::io::Error>) -> boo
         // Metadata and parent ownership have already established that an
         // unprivileged reader is looking at a trusted root-only flag. Its
         // nonce is verified by root-run setup/startup paths.
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => true,
+        Err(error) if cfg!(unix) && error.kind() == std::io::ErrorKind::PermissionDenied => true,
         Err(_) => false,
     }
 }

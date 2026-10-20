@@ -3997,13 +3997,13 @@ mod resource_pressure_reconciliation_tests {
         )
         .is_ok());
         assert!(ensure_adaptive_allocation_backend_is_local(
-            &docker::DockerHost::Remote("tcp://127.0.0.1:2376".into()),
+            &docker::DockerHost::Remote("tcp://docker.example.invalid:2376".into()),
             Some(&allocation),
         )
         .is_err());
         assert!(ensure_adaptive_allocation_backend_is_local(
             &docker::DockerHost::RemoteTls {
-                endpoint: "tcp://127.0.0.1:2376".into(),
+                endpoint: "tcp://docker.example.invalid:2376".into(),
                 cert_dir: "/tmp/gitrun-test-certs".into(),
             },
             Some(&allocation),
@@ -4011,7 +4011,7 @@ mod resource_pressure_reconciliation_tests {
         .is_err());
         assert!(
             ensure_adaptive_allocation_backend_is_local(
-                &docker::DockerHost::Remote("tcp://127.0.0.1:2376".into()),
+                &docker::DockerHost::Remote("tcp://docker.example.invalid:2376".into()),
                 None,
             )
             .is_ok(),

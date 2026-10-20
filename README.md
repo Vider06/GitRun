@@ -4,9 +4,11 @@
 [![Latest release](https://img.shields.io/github/v/release/Vider06/GitRun)](https://github.com/Vider06/GitRun/releases)
 [![License](https://img.shields.io/github/license/Vider06/GitRun)](LICENSE)
 
-**GitRun 1.5.1** is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, signed updates and the Tauri operator dashboard.
+**GitRun** is a Rust-native control plane for self-hosted GitHub Actions runners. It brings runner autoscaling, VM-backed targets, encrypted secrets, recovery, security policy and a desktop operator dashboard into one system—without requiring Kubernetes.
 
-GitRun is designed for administrators running repositories they trust on dedicated infrastructure. It does not require Kubernetes.
+It is built for people who want control over their own runner infrastructure without giving every workflow unrestricted access to the host. Bring a dedicated Linux machine, Docker and the repositories you trust; GitRun handles the runner lifecycle while keeping privileged operations behind an explicit API and policy checks.
+
+> **Version note:** this branch targets source version **1.5.1**. That is not a promise that a 1.5.1 release artifact is published yet; use [GitHub Releases](https://github.com/Vider06/GitRun/releases) for published builds.
 
 ## Architecture at a glance
 
@@ -35,8 +37,7 @@ The workflow-facing Git*Run API is a **closed, explicit API surface**, not a gen
 
 See:
 - [GitRun 1.5.1 release and recovery notes](docs/v1.5.1-release-notes.md) — protected-state diagnostics, guarded legacy installation repair, version boundaries and deployment verification.
-- [v1.5.0 refactor status and verification report](docs/v1.5.0-refactor-status.md) — historical phase status, source-head evidence and known limitations.
-- [v1.5.0 contract inventory](docs/v1.5.0-contract-inventory.md) — source-to-test evidence and contract gaps.
+- [Historical 1.5.0 audit summary](docs/v1.5.0-refactor-status.md) — concise history and the limits of the old verification results.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component and data-flow architecture.
 - [docs/GITRUN_API.md](docs/GITRUN_API.md) — Git*Run API reference and authorization boundary.
 - [docs/VM.md](docs/VM.md) — VM-backed runner architecture and lifecycle modes.
@@ -99,7 +100,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install-windows.ps1
 ```
 
-See the directory READMEs under `scripts/`, `packaging/` and `release/` for the purpose of each installation/release component.
+For installation prerequisites and platform-specific details, see [the installation scripts](scripts/README.md) and [release process](release/README.md).
 
 ## Configuration
 
@@ -188,7 +189,7 @@ gitrun cat
 
 ## Repository map
 
-The repository is documented at directory level, with local `README.md` files in most major source/configuration directories describing their responsibilities.
+The repository map is intentionally compact; the documents linked above are the primary starting points.
 
 At the top level:
 
@@ -221,8 +222,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [SUPPORT.
 ## License
 
 GitRun is distributed under the Apache License 2.0.
-
-
-## Version and verification
-
-The source version targeted by this branch is **1.5.1**, recorded in `version.txt` and the shipped dashboard metadata. This branch is a proposed source/version-alignment change, not evidence that an official 1.5.1 release artifact exists; check [GitHub Releases](https://github.com/Vider06/GitRun/releases) for published artifacts. PR [#83](https://github.com/Vider06/GitRun/pull/83) was merged to `main` on 2026-10-19. Its source HEAD, [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c), passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance at that historical 1.5.0 commit. Those checks do not replace environment-specific validation of desktop privilege prompts, real KVM/VirtualBox lifecycles, the complete authorized disconnect endpoint, or migration of every customized runner image. The v1.5.0 report is a historical refactor/audit record; 1.5.1 recovery behavior and its deployment boundaries are documented in [the 1.5.1 release notes](docs/v1.5.1-release-notes.md).

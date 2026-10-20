@@ -5073,10 +5073,16 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_resource_management_requires_telemetry_and_automation_requires_master_switch() {
+    fn adaptive_resource_management_and_dispatch_require_telemetry_and_master_switch() {
         let mut settings = enabled_settings();
         settings.adaptive_resource_management_enabled = true;
         assert!(settings.validate().is_ok());
+
+        settings.kitty_dispatch_enabled = true;
+        assert!(settings.validate().is_ok());
+        settings.adaptive_resource_management_enabled = false;
+        assert!(settings.validate().is_err());
+        settings.adaptive_resource_management_enabled = true;
 
         settings.telemetry_enabled = false;
         assert!(settings.validate().is_err());
@@ -5084,6 +5090,7 @@ mod tests {
         assert!(settings.validate().is_ok());
 
         settings.adaptive_resource_management_enabled = false;
+        settings.kitty_dispatch_enabled = false;
         settings.automation_mode = true;
         settings.automation_allowed_repositories = vec!["owner/repo".into()];
         assert!(settings.validate().is_ok());

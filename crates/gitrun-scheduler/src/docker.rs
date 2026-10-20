@@ -396,13 +396,38 @@ fn validate_workload_routing_contract(
                         .into(),
                 );
             }
-            let route_labels = vec![labels.to_owned()];
+            let route_labels: Vec<String> = labels
+                .split(',')
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned)
+                .collect();
             if gitrun_smart_scheduler::workload_id_from_routing_labels(&route_labels).as_deref()
                 != Some(workload_id)
             {
                 return Err(
                     "exclusive runner must expose exactly its matching gitrun-job workload label"
                         .into(),
+                );
+            }
+            let family_label = format!("gitrun-job-{workload_id}");
+            let family_count = route_labels
+                .iter()
+                .filter(|label| label.eq_ignore_ascii_case(&family_label))
+                .count();
+            let has_route = gitrun_smart_scheduler::has_dispatch_routing_marker(&route_labels);
+            let route_count = route_labels
+                .iter()
+                .filter(|label| label.to_ascii_lowercase().starts_with("gitrun-route-"))
+                .count();
+            let valid_route = gitrun_smart_scheduler::dispatch_route_id_from_labels(&route_labels);
+            if family_count != 1
+                || route_labels.len() != 1 + usize::from(has_route)
+                || route_count != usize::from(has_route)
+                || (has_route && valid_route.is_none())
+            {
+                return Err(
+                    "exclusive runner labels must contain one workload-family label and at most one canonical per-occurrence route label".into(),
                 );
             }
             Ok(())
@@ -3122,6 +3147,32 @@ mod tests {
             false,
         )
         .is_err());
+    }
+
+    #[test]
+    fn dispatch_runner_accepts_only_one_valid_occurrence_route() {
+        let id = "wk-0123456789abcdef";
+        let family = format!("gitrun-job-{id}");
+        let route_id = "0123456789abcdef0123456789abcdef";
+        let routed = format!("{family},gitrun-route-{route_id}");
+        assert!(validate_workload_routing_contract(
+            &routed, Some(id), None, true, false, false, false
+        ).is_ok());
+
+        let duplicate_route = format!("{routed},gitrun-route-{route_id}");
+        assert!(validate_workload_routing_contract(
+            &duplicate_route, Some(id), None, true, false, false, false
+        ).is_err());
+
+        let malformed_route = format!("{family},gitrun-route-short");
+        assert!(validate_workload_routing_contract(
+            &malformed_route, Some(id), None, true, false, false, false
+        ).is_err());
+
+        let generic_label = format!("{routed},self-hosted");
+        assert!(validate_workload_routing_contract(
+            &generic_label, Some(id), None, true, false, false, false
+        ).is_err());
     }
 
     #[test]

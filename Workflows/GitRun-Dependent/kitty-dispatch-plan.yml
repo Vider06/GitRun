@@ -67,6 +67,16 @@ jobs:
             exit 2
           fi
 
+          # Some runner images may have gitrun-api but not the convenience alias yet.
+          # The API client dispatches based on argv[0], so a private temp symlink is sufficient.
+          if ! command -v GitDispatchRun >/dev/null 2>&1 && [[ -x /usr/local/bin/gitrun-api ]]; then
+            api_shim_dir="${RUNNER_TEMP:-/tmp}/gitrun-api-shims"
+            mkdir -p -- "$api_shim_dir"
+            ln -sf /usr/local/bin/gitrun-api "$api_shim_dir/GitDispatchRun"
+            PATH="$api_shim_dir:$PATH"
+            export PATH
+          fi
+
           # Defaults are safe: any controller error uses the caller's ordinary labels.
           mode="github"
           status="degraded"
@@ -85,7 +95,7 @@ jobs:
             case "$raw" in
               *"cannot connect to GitRun API service"*) reason="gitrun-controller-offline" ;;
               *"GSR validation failed"*|*"GSR authorization"*) reason="gsr-policy-denied" ;;
-              *"command not found"*|*"GitDispatchRun: not found"*) reason="gitdispatchrun-api-not-installed" ;;
+              *"command not found"*|*"GitDispatchRun: not found"*|*"unknown GitRun API command GitDispatchRun"*) reason="gitdispatchrun-api-not-installed" ;;
             esac
           else
             api_mode="$(sed -n 's/^GITRUN_DISPATCH_MODE=//p' <<<"$raw" | tail -n 1)"

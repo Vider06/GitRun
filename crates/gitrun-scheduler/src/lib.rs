@@ -1737,7 +1737,7 @@ impl AdaptiveResourceBudget {
             if reservation.name.trim().is_empty()
                 || !reservation.cpu_headroom_cores.is_finite()
                 || reservation.cpu_headroom_cores < 0.0
-                || reservation.memory_limit_bytes > (1_u64 << 60)
+                || reservation.memory_headroom_bytes > (1_u64 << 60)
             {
                 return None;
             }
@@ -1745,13 +1745,13 @@ impl AdaptiveResourceBudget {
             if !reserved_cpu_cores.is_finite() {
                 return None;
             }
-            reserved_memory_bytes = reserved_memory_bytes.checked_add(reservation.memory_limit_bytes)?;
+            reserved_memory_bytes = reserved_memory_bytes.checked_add(reservation.memory_headroom_bytes)?;
             if reserved_memory_bytes > (1_u64 << 62)
                 || reservations_by_name.insert(
                     reservation.name,
                     ContainerResourceReservation {
                         cpu_cores: reservation.cpu_headroom_cores,
-                        memory_bytes: reservation.memory_limit_bytes,
+                        memory_bytes: reservation.memory_headroom_bytes,
                     },
                 ).is_some()
             {
@@ -3839,7 +3839,7 @@ mod resource_pressure_reconciliation_tests {
             vec![docker::ManagedContainerResourceReservation {
                 name: "runner-a".into(),
                 cpu_headroom_cores: 2.0,
-                memory_limit_bytes: 4 * GIB,
+                memory_headroom_bytes: 4 * GIB,
             }],
         ).unwrap();
         assert_eq!(budget.available_cpu_cores(), 1.0);

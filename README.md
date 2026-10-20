@@ -37,13 +37,11 @@ The workflow-facing Git*Run API is a **closed, explicit API surface**, not a gen
 
 See:
 - [GitRun 1.5.1 release and recovery notes](docs/v1.5.1-release-notes.md) — protected-state diagnostics, guarded legacy installation repair, version boundaries and deployment verification.
-- [Historical 1.5.0 audit summary](docs/v1.5.0-refactor-status.md) — concise history and the limits of the old verification results.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component and data-flow architecture.
 - [docs/GITRUN_API.md](docs/GITRUN_API.md) — Git*Run API reference and authorization boundary.
 - [docs/VM.md](docs/VM.md) — VM-backed runner architecture and lifecycle modes.
 - [docs/IPC.md](docs/IPC.md) — local API socket and GSR/executor trust boundary.
 - [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) — security model, enforcement and limitations.
-- [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md) — Rust runtime architecture.
 
 ## Core capabilities
 

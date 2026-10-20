@@ -1,7 +1,7 @@
 # Fast Stop and Kitty Smart Scheduler
 
 Updated: 2026-10-20  
-Working source line: GitRun 1.6.0 (PR #105; not yet released; Fast Stop and Kitty originated in 1.5.0)
+Working source line: GitRun 1.6.0 (feature branch; not yet released; Fast Stop and Kitty originated in 1.5.0)
 
 Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and continue in the 1.6.0 working branch. Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The 1.5.1 legacy-recovery changes are documented separately in [the 1.5.1 release notes](v1.5.1-release-notes.md).
 

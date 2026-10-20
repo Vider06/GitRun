@@ -435,13 +435,13 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
             .or_insert_with(|| "false".into());
     }
 
-    if api == GitRunApi::GitDispatchRun && operation == Some(GitRunOperation::Plan) {
-        if !values.contains_key("target_job")
+    if api == GitRunApi::GitDispatchRun
+        && operation == Some(GitRunOperation::Plan)
+        && (!values.contains_key("target_job")
             || !values.contains_key("target_workflow")
-            || !values.contains_key("target_labels")
-        {
-            return Err("GitDispatchRun --plan requires --target-job, --target-workflow and --target-labels".into());
-        }
+            || !values.contains_key("target_labels"))
+    {
+        return Err("GitDispatchRun --plan requires --target-job, --target-workflow and --target-labels".into());
     }
 
     if api == GitRunApi::GitSaveRun

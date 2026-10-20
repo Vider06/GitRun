@@ -4134,7 +4134,7 @@ mod resource_pressure_reconciliation_tests {
             explicit_dispatch_route_id(&[family.clone(), route.clone()]).unwrap(),
             Some(concat!("0123456789abcdef", "0123456789abcdef").to_owned())
         );
-        assert!(explicit_workload_routing_id(&[route.clone()]).is_err());
+        assert!(explicit_workload_routing_id(std::slice::from_ref(&route)).is_err());
         assert!(
             explicit_dispatch_route_id(&[family.clone(), "gitrun-route-short".into()]).is_err()
         );

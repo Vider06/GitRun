@@ -28,6 +28,7 @@ jobs:
       - name: Show the selected route mode
         env:
           ROUTE_MODE: ${{ needs.plan.outputs.mode }}
+          KITTY_ONLINE: ${{ needs.plan.outputs.kitty_online }}
           ROUTE_STATUS: ${{ needs.plan.outputs.status }}
           ROUTE_REASON: ${{ needs.plan.outputs.reason }}
         run: |

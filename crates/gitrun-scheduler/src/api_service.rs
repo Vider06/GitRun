@@ -1246,10 +1246,6 @@ impl ApiExecutionBackend {
             .map(str::trim)
             .map(str::to_owned)
             .collect();
-        let fallback = |status: &str, reason: &str| {
-            kitty_dispatch_plan_result("github", status, reason, &target_labels)
-        };
-
         // Dispatch is opt-in and deliberately falls back to normal GitHub label
         // matching for every disabled, stale, unsupported or ambiguous state.
         let mut kitty = gitrun_smart_scheduler::KittyRuntime::new(&self.state_dir);
@@ -1263,6 +1259,18 @@ impl ApiExecutionBackend {
             &target_labels,
         );
         let settings = kitty.settings().clone();
+        // Report Kitty availability independently from the selected route:
+        // Kitty can be enabled while a prerequisite or shadow mode keeps this
+        // job on ordinary GitHub label matching.
+        let fallback = |status: &str, reason: &str| {
+            kitty_dispatch_plan_result(
+                "github",
+                settings.enabled,
+                status,
+                reason,
+                &target_labels,
+            )
+        };
         if !settings.enabled {
             return fallback("disabled", "kitty-disabled-or-settings-invalid");
         }
@@ -1320,6 +1328,7 @@ impl ApiExecutionBackend {
         ];
         kitty_dispatch_plan_result(
             "kitty",
+            true,
             "online",
             "validated-profile-and-exclusive-route-issued",
             &runs_on,
@@ -5106,6 +5115,7 @@ mod mount_runtime_tests {
 
 fn kitty_dispatch_plan_result(
     mode: &str,
+    kitty_online: bool,
     status: &str,
     reason: &str,
     runs_on: &[String],
@@ -5113,7 +5123,7 @@ fn kitty_dispatch_plan_result(
     let encoded_runs_on = serde_json::to_string(runs_on)
         .map_err(|error| failed(format!("encode Kitty dispatch runs-on labels: {error}")))?;
     Ok(success(format!(
-        "GITRUN_DISPATCH_STATUS={status}\nGITRUN_DISPATCH_MODE={mode}\nGITRUN_DISPATCH_RUNS_ON={encoded_runs_on}\nGITRUN_DISPATCH_REASON={reason}\n"
+        "GITRUN_DISPATCH_STATUS={status}\nGITRUN_DISPATCH_MODE={mode}\nGITRUN_KITTY_ONLINE={kitty_online}\nGITRUN_DISPATCH_RUNS_ON={encoded_runs_on}\nGITRUN_DISPATCH_REASON={reason}\n"
     )))
 }
 
@@ -7340,18 +7350,22 @@ mod kitty_dispatch_contract_tests {
             ("github", "degraded", vec!["self-hosted", "linux", "x64"]),
         ] {
             let labels: Vec<String> = labels.into_iter().map(str::to_owned).collect();
-            let result = kitty_dispatch_plan_result(mode, status, "test-reason", &labels).unwrap();
+            let kitty_online = mode == "kitty";
+            let result =
+                kitty_dispatch_plan_result(mode, kitty_online, status, "test-reason", &labels)
+                    .unwrap();
             let output: Vec<&str> = result.stdout.lines().collect();
             assert_eq!(output[0], format!("GITRUN_DISPATCH_STATUS={status}"));
             assert_eq!(output[1], format!("GITRUN_DISPATCH_MODE={mode}"));
+            assert_eq!(output[2], format!("GITRUN_KITTY_ONLINE={kitty_online}"));
             assert_eq!(
-                output[2].split_once('=').unwrap().0,
+                output[3].split_once('=').unwrap().0,
                 "GITRUN_DISPATCH_RUNS_ON"
             );
             let decoded: Vec<String> =
-                serde_json::from_str(output[2].split_once('=').unwrap().1).unwrap();
+                serde_json::from_str(output[3].split_once('=').unwrap().1).unwrap();
             assert_eq!(decoded, labels);
-            assert_eq!(output[3], "GITRUN_DISPATCH_REASON=test-reason");
+            assert_eq!(output[4], "GITRUN_DISPATCH_REASON=test-reason");
         }
     }
 

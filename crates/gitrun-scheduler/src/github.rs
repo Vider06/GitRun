@@ -143,6 +143,14 @@ pub struct WorkflowRunSummary {
     pub cancelled: u32,
 }
 
+/// An active self-hosted job paired with the exact registered runner name
+/// reported by GitHub. Used only for optional per-container resource telemetry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveJobOnRunner {
+    pub runner_name: String,
+    pub job: QueuedJobInfo,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueuedJobInfo {
     pub run_id: u64,
@@ -1028,6 +1036,81 @@ impl GitHubClient {
             )
         });
         Ok(jobs)
+    }
+
+    /// Returns active self-hosted jobs with authoritative runner names.
+    /// This is an optional telemetry path: it samples at most 100 active workflow
+    /// runs per call and never changes scheduling if history is incomplete.
+    pub fn active_self_hosted_jobs_on_runners(
+        &self,
+        repo: &str,
+    ) -> Result<Vec<ActiveJobOnRunner>> {
+        let (owner, name) = split_repo(repo)?;
+        let runs_url = format!(
+            "{API_BASE}/repos/{}/{}/actions/runs?status=in_progress&per_page=100",
+            encode_path_segment(owner),
+            encode_path_segment(name)
+        );
+        // Deliberately one page: high-cardinality repositories should skip
+        // unsampled jobs rather than turn 30-second telemetry into unbounded API work.
+        let parsed: WorkflowRunsResponse = self.request(reqwest::Method::GET, &runs_url)?.json()?;
+        let mut results = Vec::new();
+        for run in parsed.workflow_runs.into_iter().take(100) {
+            let mut url = format!(
+                "{API_BASE}/repos/{}/{}/actions/runs/{}/jobs?filter=latest&per_page=100",
+                encode_path_segment(owner),
+                encode_path_segment(name),
+                run.id
+            );
+            let mut seen_pages = HashSet::new();
+            loop {
+                record_page_url(&mut seen_pages, &url)?;
+                let response = self.request(reqwest::Method::GET, &url)?;
+                let next_url = parse_next_link(response.headers());
+                let jobs: JobsResponse = response.json()?;
+                for job in jobs.jobs {
+                    if !job.status.eq_ignore_ascii_case("in_progress")
+                        || job.conclusion.is_some()
+                        || !job_targets_gitrun_runner(&job.labels)
+                    {
+                        continue;
+                    }
+                    let Some(runner_name) = job.runner_name.filter(|value| !value.trim().is_empty()) else {
+                        continue;
+                    };
+                    let Some(started_at_epoch) = job.started_at.as_deref()
+                        .and_then(parse_github_timestamp_epoch) else {
+                        // Unknown start times cannot provide a valid observed resource sample.
+                        continue;
+                    };
+                    results.push(ActiveJobOnRunner {
+                        runner_name,
+                        job: QueuedJobInfo {
+                            run_id: run.id,
+                            job_id: job.id,
+                            workflow_id: run.workflow_id,
+                            workflow_path: run.path.clone(),
+                            name: job.name,
+                            labels: job.labels,
+                            started_at_epoch: Some(started_at_epoch),
+                        },
+                    });
+                }
+                match next_url {
+                    Some(next) => url = next,
+                    None => break,
+                }
+                if results.len() >= 256 {
+                    results.truncate(256);
+                    return Ok(results);
+                }
+            }
+            if results.len() >= 256 {
+                results.truncate(256);
+                break;
+            }
+        }
+        Ok(results)
     }
 
     fn started_self_hosted_job_info_for_run(

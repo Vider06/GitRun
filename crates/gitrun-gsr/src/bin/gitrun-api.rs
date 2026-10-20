@@ -212,19 +212,25 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
             }
             "--target-job" => {
                 i += 1;
-                if i >= args.len() { return Err("--target-job requires a job identifier".into()); }
+                if i >= args.len() {
+                    return Err("--target-job requires a job identifier".into());
+                }
                 insert_argument(&mut values, "target_job", args[i].clone())?;
                 i += 1;
             }
             "--target-workflow" => {
                 i += 1;
-                if i >= args.len() { return Err("--target-workflow requires a workflow path".into()); }
+                if i >= args.len() {
+                    return Err("--target-workflow requires a workflow path".into());
+                }
                 insert_argument(&mut values, "target_workflow", args[i].clone())?;
                 i += 1;
             }
             "--target-labels" => {
                 i += 1;
-                if i >= args.len() { return Err("--target-labels requires comma-separated runner labels".into()); }
+                if i >= args.len() {
+                    return Err("--target-labels requires comma-separated runner labels".into());
+                }
                 insert_argument(&mut values, "target_labels", args[i].clone())?;
                 i += 1;
             }
@@ -430,7 +436,10 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
     }
 
     if api == GitRunApi::GitDispatchRun && operation == Some(GitRunOperation::Plan) {
-        if !values.contains_key("target_job") || !values.contains_key("target_workflow") || !values.contains_key("target_labels") {
+        if !values.contains_key("target_job")
+            || !values.contains_key("target_workflow")
+            || !values.contains_key("target_labels")
+        {
             return Err("GitDispatchRun --plan requires --target-job, --target-workflow and --target-labels".into());
         }
     }

@@ -422,8 +422,8 @@ fn validate_workload_routing_contract(
                 .count();
             let valid_route = gitrun_smart_scheduler::dispatch_route_id_from_labels(&route_labels);
             if family_count != 1
-                || route_labels.len() != 1 + usize::from(has_route)
-                || route_count != usize::from(has_route)
+                || route_labels.len() != if has_route { 2 } else { 1 }
+                || route_count != if has_route { 1 } else { 0 }
                 || (has_route && valid_route.is_none())
             {
                 return Err(

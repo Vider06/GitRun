@@ -4,7 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/Vider06/GitRun)](https://github.com/Vider06/GitRun/releases)
 [![License](https://img.shields.io/github/license/Vider06/GitRun)](LICENSE)
 
-**GitRun 1.5.0** is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, signed updates and the Tauri operator dashboard.
+**GitRun 1.5.1** is a Rust-native control plane for self-hosted GitHub Actions runners. It manages Docker runner pools, GitHub authentication, autoscaling, recovery, security enforcement, encrypted secrets, VM-backed runner targets, signed updates and the Tauri operator dashboard.
 
 GitRun is designed for administrators running repositories they trust on dedicated infrastructure. It does not require Kubernetes.
 
@@ -34,7 +34,8 @@ GitRun host service / GSR authorization
 The workflow-facing Git*Run API is a **closed, explicit API surface**, not a generic shell wrapper. Requests are validated against the API/operation contract, checked against effective repository policy and GSR command/resource policy, and only then handed to the internal execution layer.
 
 See:
-- [v1.5.0 refactor status and verification report](docs/v1.5.0-refactor-status.md) — phase status, current-head evidence and known limitations.
+- [GitRun 1.5.1 release and recovery notes](docs/v1.5.1-release-notes.md) — protected-state diagnostics, guarded legacy installation repair, version boundaries and deployment verification.
+- [v1.5.0 refactor status and verification report](docs/v1.5.0-refactor-status.md) — historical phase status, source-head evidence and known limitations.
 - [v1.5.0 contract inventory](docs/v1.5.0-contract-inventory.md) — source-to-test evidence and contract gaps.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component and data-flow architecture.
 - [docs/GITRUN_API.md](docs/GITRUN_API.md) — Git*Run API reference and authorization boundary.
@@ -224,4 +225,4 @@ GitRun is distributed under the Apache License 2.0.
 
 ## Version and verification
 
-The source tree version is **1.5.0**. PR [#83](https://github.com/Vider06/GitRun/pull/83) was merged to `main` on 2026-10-19. Its source HEAD, [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c), passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. Those checks do not replace environment-specific validation of desktop privilege prompts, real KVM/VirtualBox lifecycles, the complete authorized disconnect endpoint, or migration of every customized runner image. Current evidence and limits are tracked in [the v1.5.0 status report](docs/v1.5.0-refactor-status.md).
+The source tree version is **1.5.0**. PR [#83](https://github.com/Vider06/GitRun/pull/83) was merged to `main` on 2026-10-19. Its source HEAD, [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c), passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. Those checks do not replace environment-specific validation of desktop privilege prompts, real KVM/VirtualBox lifecycles, the complete authorized disconnect endpoint, or migration of every customized runner image. The v1.5.0 report is a historical refactor/audit record; 1.5.1 recovery behavior and its deployment boundaries are documented in [the 1.5.1 release notes](docs/v1.5.1-release-notes.md).

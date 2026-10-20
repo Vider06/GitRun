@@ -172,3 +172,13 @@ The API is an authorization boundary, not a replacement for host isolation. A Li
 The CI result linked from PR [#83](https://github.com/Vider06/GitRun/pull/83) is historical evidence for the 1.5.0 source-head checks only. It does not certify later recovery/version-alignment commits or prove an end-to-end adversarial test of every API operation.
 
 PR [#103](https://github.com/Vider06/GitRun/pull/103) changed recovery diagnostics and repair of the host runtime/systemd installation; it does not change the closed Git*Run API operation set described above. Follow the [1.5.1 release notes](v1.5.1-release-notes.md) and check the exact workflow results for the commit being deployed. The complete authorized disconnect API path and real host/hypervisor lifecycle tests remain environment-specific verification obligations.
+
+### GitDispatchRun
+
+`GitDispatchRun --plan --target-job <job-id> --target-workflow <path> --target-labels <csv>` asks the host-side GitRun controller for an optional Kitty Dispatch plan.
+
+The response contains machine-readable `GITRUN_DISPATCH_STATUS`, `GITRUN_DISPATCH_MODE`, `GITRUN_DISPATCH_RUNS_ON` (JSON array) and `GITRUN_DISPATCH_REASON` lines. `MODE=kitty` means the controller validated Kitty settings and a saved workload profile and issued a unique route label; the workflow must use the returned JSON array as `runs-on`. `MODE=github` means the plan has deliberately fallen back to the caller's ordinary labels.
+
+Dispatch requires explicit GSR authorization for `GitDispatchRun/Plan`, Kitty enabled, aggregate telemetry, Adaptive Resource Management, a known workload profile and Shadow mode OFF. Unknown profiles, unsupported VM-backed workloads, invalid settings and other verified non-ready states return an ordinary GitHub fallback instead of fabricating a route. The pre-made planner itself must run on an online dedicated `gitrun-control` runner to reach the local Unix-socket service; if that control runner is unavailable, the planner remains queued and cannot choose a fallback.
+
+GitHub does not expose an API for pinning a queued job directly to a `runner_id`. Kitty Dispatch therefore creates a per-occurrence label that a GitRun-managed ephemeral runner alone carries (in addition to the workload-family label) and relies on GitHub's supported label/group matching. The scheduler verifies the resulting job/container identity. This cannot re-route a job that was already queued with a different `runs-on` selector. A capacity change between planning and runner creation can still cause GitRun to defer creation; operator host limits and GSR checks remain authoritative.

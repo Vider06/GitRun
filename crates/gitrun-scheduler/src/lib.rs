@@ -2833,6 +2833,7 @@ mod workload_routing_label_tests {
         assert_eq!(
             runner_workflow_binding(
                 Some("wk-0123456789abcdef"),
+                None,
                 Some("build"),
                 Some(41),
                 Some(410),
@@ -2840,7 +2841,7 @@ mod workload_routing_label_tests {
             (None, None, None),
         );
         assert_eq!(
-            runner_workflow_binding(None, Some("build"), Some(41), Some(410)),
+            runner_workflow_binding(None, None, Some("build"), Some(41), Some(410)),
             (Some("build"), Some(41), Some(410)),
         );
     }

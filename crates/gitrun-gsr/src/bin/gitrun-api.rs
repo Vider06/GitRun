@@ -441,7 +441,10 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
             || !values.contains_key("target_workflow")
             || !values.contains_key("target_labels"))
     {
-        return Err("GitDispatchRun --plan requires --target-job, --target-workflow and --target-labels".into());
+        return Err(
+            "GitDispatchRun --plan requires --target-job, --target-workflow and --target-labels"
+                .into(),
+        );
     }
 
     if api == GitRunApi::GitSaveRun

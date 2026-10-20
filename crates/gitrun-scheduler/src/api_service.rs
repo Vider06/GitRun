@@ -1235,7 +1235,10 @@ impl ExecutionBackend for ApiExecutionBackend {
 }
 
 impl ApiExecutionBackend {
-    fn dispatch_plan(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+    fn dispatch_plan(
+        &self,
+        request: &AuthorizedOperation,
+    ) -> Result<ExecutionResult, ExecutionError> {
         let target_job = arg(request, "target_job")?;
         let target_workflow = arg(request, "target_workflow")?;
         let target_labels: Vec<String> = arg(request, "target_labels")?
@@ -1289,7 +1292,9 @@ impl ApiExecutionBackend {
         // Adaptive host accounting is currently local-Linux only. Never return
         // a Kitty route for a family whose Logic Containers rule resolves to a
         // VM or unreadable configuration, because that budget cannot be proven.
-        let rules = match crate::logic_containers::load_rules(&self.state_dir.join("logic-containers.json")) {
+        let rules = match crate::logic_containers::load_rules(
+            &self.state_dir.join("logic-containers.json"),
+        ) {
             Ok(rules) => rules,
             Err(_) => return fallback("degraded", "logic-container-backend-could-not-be-verified"),
         };
@@ -1297,7 +1302,10 @@ impl ApiExecutionBackend {
             crate::logic_containers::resolve(&rules, profile_labels),
             Some((crate::logic_containers::Backend::Vm { .. }, _))
         ) {
-            return fallback("unsupported", "vm-resource-probing-is-not-supported-for-dispatch");
+            return fallback(
+                "unsupported",
+                "vm-resource-probing-is-not-supported-for-dispatch",
+            );
         }
         let route_id = match new_kitty_dispatch_route_id() {
             Some(route_id) => route_id,

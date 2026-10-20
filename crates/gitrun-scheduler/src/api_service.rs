@@ -1191,6 +1191,7 @@ impl ExecutionBackend for ApiExecutionBackend {
     fn execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         match request.api {
             GitRunApi::GitStatusRun => self.status(request),
+            GitRunApi::GitDispatchRun => self.dispatch_plan(request),
             GitRunApi::GitVaultRun => self.vault(request),
             GitRunApi::GitSaveRun => self.save(request),
             GitRunApi::GitRegisterRun => self.register(request),
@@ -1234,6 +1235,86 @@ impl ExecutionBackend for ApiExecutionBackend {
 }
 
 impl ApiExecutionBackend {
+    fn dispatch_plan(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
+        let target_job = arg(request, "target_job")?;
+        let target_workflow = arg(request, "target_workflow")?;
+        let target_labels: Vec<String> = arg(request, "target_labels")?
+            .split(',')
+            .map(str::trim)
+            .map(str::to_owned)
+            .collect();
+        let fallback = |status: &str, reason: &str| {
+            kitty_dispatch_plan_result("github", status, reason, &target_labels)
+        };
+
+        // Dispatch is opt-in and deliberately falls back to normal GitHub label
+        // matching for every disabled, stale, unsupported or ambiguous state.
+        let mut kitty = gitrun_smart_scheduler::KittyRuntime::new(&self.state_dir);
+        let settings = kitty.settings().clone();
+        if !settings.enabled {
+            return fallback("disabled", "kitty-disabled-or-settings-invalid");
+        }
+        if !settings.telemetry_enabled {
+            return fallback("degraded", "aggregate-telemetry-disabled");
+        }
+        if !settings.adaptive_resource_management_enabled {
+            return fallback("disabled", "adaptive-resource-management-disabled");
+        }
+        if !settings.kitty_dispatch_enabled {
+            return fallback("disabled", "kitty-dispatch-opt-in-disabled");
+        }
+        if settings.shadow_mode {
+            return fallback("shadow", "shadow-mode-keeps-routing-observational");
+        }
+
+        let estimate = match kitty.resource_demand_estimate(
+            &request.repository,
+            &target_workflow,
+            &target_job,
+            &target_labels,
+        ) {
+            Some(estimate) => estimate,
+            None => return fallback("degraded", "resource-estimate-unavailable"),
+        };
+        let profiles = match kitty.workload_routing_profiles(&request.repository) {
+            Ok(profiles) => profiles,
+            Err(_) => return fallback("degraded", "validated-workload-profiles-unavailable"),
+        };
+        let Some(profile_labels) = profiles.get(&estimate.workload_id) else {
+            // Do not invent a family route for a job Kitty has not observed and
+            // validated yet. Let GitHub choose a conventional compatible runner.
+            return fallback("learning", "workload-family-not-yet-learned");
+        };
+
+        // Adaptive host accounting is currently local-Linux only. Never return
+        // a Kitty route for a family whose Logic Containers rule resolves to a
+        // VM or unreadable configuration, because that budget cannot be proven.
+        let rules = match crate::logic_containers::load_rules(&self.state_dir.join("logic-containers.json")) {
+            Ok(rules) => rules,
+            Err(_) => return fallback("degraded", "logic-container-backend-could-not-be-verified"),
+        };
+        if matches!(
+            crate::logic_containers::resolve(&rules, profile_labels),
+            Some((crate::logic_containers::Backend::Vm { .. }, _))
+        ) {
+            return fallback("unsupported", "vm-resource-probing-is-not-supported-for-dispatch");
+        }
+        let route_id = match new_kitty_dispatch_route_id() {
+            Some(route_id) => route_id,
+            None => return fallback("degraded", "secure-route-id-generation-failed"),
+        };
+        let runs_on = vec![
+            format!("gitrun-job-{}", estimate.workload_id),
+            format!("gitrun-route-{route_id}"),
+        ];
+        kitty_dispatch_plan_result(
+            "kitty",
+            "online",
+            "validated-profile-and-exclusive-route-issued",
+            &runs_on,
+        )
+    }
+
     fn status(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
         Ok(success(format!(
             "GitRun API STATUS\nrunner={}\nrepository={}\nworkflow={}\njob={}\n",
@@ -5009,6 +5090,39 @@ mod mount_runtime_tests {
         drop(_nested_overlay_guard);
         drop(container_guard);
         drop(source_guard);
+    }
+}
+
+fn kitty_dispatch_plan_result(
+    mode: &str,
+    status: &str,
+    reason: &str,
+    runs_on: &[String],
+) -> Result<ExecutionResult, ExecutionError> {
+    let encoded_runs_on = serde_json::to_string(runs_on)
+        .map_err(|error| failed(format!("encode Kitty dispatch runs-on labels: {error}")))?;
+    Ok(success(format!(
+        "GITRUN_DISPATCH_STATUS={status}\\nGITRUN_DISPATCH_MODE={mode}\\nGITRUN_DISPATCH_RUNS_ON={encoded_runs_on}\\nGITRUN_DISPATCH_REASON={reason}\\n"
+    )))
+}
+
+fn new_kitty_dispatch_route_id() -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::fmt::Write as _;
+        let mut bytes = [0u8; 16];
+        std::fs::File::open("/dev/urandom")
+            .and_then(|mut file| file.read_exact(&mut bytes))
+            .ok()?;
+        let mut encoded = String::with_capacity(32);
+        for byte in bytes {
+            write!(&mut encoded, "{byte:02x}").ok()?;
+        }
+        Some(encoded)
+    }
+    #[cfg(not(unix))]
+    {
+        None
     }
 }
 

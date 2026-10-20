@@ -1749,7 +1749,8 @@ impl AdaptiveResourceBudget {
             if !reserved_cpu_cores.is_finite() {
                 return None;
             }
-            reserved_memory_bytes = reserved_memory_bytes.checked_add(reservation.memory_headroom_bytes)?;
+            reserved_memory_bytes = reserved_memory_bytes
+                .checked_add(reservation.memory_headroom_bytes)?;
             if reserved_memory_bytes > (1_u64 << 62)
                 || reservations_by_name.insert(
                     reservation.name,
@@ -2467,8 +2468,12 @@ fn create_runner(
             no_default_labels: routed_workload_id.is_some(),
             ephemeral: config.ephemeral || (is_windows && !permanent),
             disable_update: config.runner_disable_update,
-            cpus: resource_allocation.map(|allocation| allocation.cpus.as_str()).unwrap_or(&config.container_cpus),
-            memory: resource_allocation.map(|allocation| allocation.memory.as_str()).unwrap_or(&config.container_memory),
+            cpus: resource_allocation
+                .map(|allocation| allocation.cpus.as_str())
+                .unwrap_or(&config.container_cpus),
+            memory: resource_allocation
+                .map(|allocation| allocation.memory.as_str())
+                .unwrap_or(&config.container_memory),
             pids_limit: &config.container_pids_limit,
             shared_cache_volume: &config.shared_cache_volume,
             cache_scope: &config.shared_cache_scope,
@@ -3886,10 +3891,20 @@ mod resource_pressure_reconciliation_tests {
         logic_containers::save_rules(&path.join("logic-containers.json"), &rules).unwrap();
         let vm_labels = vec!["self-hosted".into(), "Windows".into()];
         let empty_profiles = std::collections::HashMap::new();
-        let error = ensure_adaptive_resource_backend_is_local(&path, &vm_labels, &empty_profiles).unwrap_err();
+        let error = ensure_adaptive_resource_backend_is_local(
+            &path,
+            &vm_labels,
+            &empty_profiles,
+        )
+        .unwrap_err();
         assert!(error.contains("per-VM resource probe"));
         let local_labels = vec!["self-hosted".into(), "Linux".into()];
-        assert!(ensure_adaptive_resource_backend_is_local(&path, &local_labels, &empty_profiles).is_ok());
+        assert!(ensure_adaptive_resource_backend_is_local(
+            &path,
+            &local_labels,
+            &empty_profiles,
+        )
+        .is_ok());
         let workload_id = "wk-0123456789abcdef".to_owned();
         let routed_label = format!("gitrun-job-{workload_id}");
         let mut profiles = std::collections::HashMap::new();

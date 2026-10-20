@@ -1415,9 +1415,9 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
         return Err(SetupError::NotRoot);
     }
 
-    let parent = config_path.parent().ok_or_else(|| {
-        SetupError::Command("system config path has no parent directory".into())
-    })?;
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| SetupError::Command("system config path has no parent directory".into()))?;
     validate_root_owned_directory_chain(parent)?;
 
     let config_metadata = fs::symlink_metadata(config_path)?;
@@ -1499,11 +1499,7 @@ fn repair_system_runtime_directory(directory: &Path) -> Result<(), SetupError> {
     // directories are deliberately left untouched; in particular, user-owned
     // vault/settings payloads and crash-recovery records are not recursively
     // chowned or deleted.
-    run_command(
-        Command::new("/usr/bin/chown")
-            .args(["0:0"])
-            .arg(directory),
-    )?;
+    run_command(Command::new("/usr/bin/chown").args(["0:0"]).arg(directory))?;
     fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
 
     let metadata = fs::symlink_metadata(directory)?;
@@ -2229,7 +2225,9 @@ mod tests {
         assert!(!setup_flag_contents_are_valid(Err(std::io::Error::from(
             std::io::ErrorKind::NotFound
         ))));
-        assert!(!setup_flag_contents_are_valid(Ok("not-a-valid-flag".into())));
+        assert!(!setup_flag_contents_are_valid(
+            Ok("not-a-valid-flag".into())
+        ));
         assert!(setup_flag_contents_are_valid(Ok(
             "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\\n".into()
         )));

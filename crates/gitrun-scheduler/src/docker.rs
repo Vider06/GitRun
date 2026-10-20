@@ -9,7 +9,7 @@
 //! directly, so it stays testable without Docker installed.
 
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -468,17 +468,8 @@ fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
 /// learning peak RAM requirements. The scheduler runs on the same Linux host as
 /// this local Docker daemon; if host PID/cgroup visibility is missing, sampling
 /// fails and Kitty falls back to its workload-class prior instead of guessing.
-fn container_cgroup_memory_usage_bytes(container_id: &str) -> Result<u64> {
+fn container_cgroup_memory_usage_bytes_from_pid(pid: u32) -> Result<u64> {
     const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
-    let pid_output = run_checked(&[
-        "inspect",
-        "--format",
-        "{{.State.Pid}}",
-        container_id,
-    ])?;
-    let pid = pid_output.trim().parse::<u32>().map_err(|_| {
-        DockerError::Command("docker inspect returned an invalid container PID".into())
-    })?;
     if pid == 0 {
         return Err(DockerError::Command(
             "container has no running host PID for cgroup memory measurement".into(),
@@ -512,27 +503,135 @@ fn container_cgroup_memory_usage_bytes(container_id: &str) -> Result<u64> {
     Ok(memory_bytes)
 }
 
-/// Query usage by immutable full Docker ID, never by a mutable name or prefix.
-pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceUsage> {
-    if container_id.len() != 64
-        || !container_id.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
+/// Batch CPU/PID queries to keep telemetry process-spawning bounded even on hosts
+/// with many runner containers. Memory comes from cgroup-v2 memory.current, which
+/// includes page cache unlike Docker CLI displayed MemUsage on Linux. If host
+/// PID/cgroup visibility is missing, sampling fails instead of guessing.
+pub fn container_resource_usages(
+    container_ids: &[String],
+) -> Result<HashMap<String, ContainerResourceUsage>> {
+    const MAX_CONTAINERS_PER_SAMPLE: usize = 256;
+    if container_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    if container_ids.len() > MAX_CONTAINERS_PER_SAMPLE {
         return Err(DockerError::Command(
-            "refusing resource query for a malformed or non-immutable Docker container ID".into(),
+            "too many containers in one bounded resource telemetry query".into(),
         ));
     }
-    let output = run_checked(&[
-        "stats",
-        "--no-stream",
-        "--format",
-        "{{.CPUPerc}}",
-        container_id,
-    ])?;
-    let cpu_cores = parse_docker_percent(&output).ok_or_else(|| {
-        DockerError::Command("docker stats returned an invalid CPU percentage".into())
-    })?;
-    let memory_bytes = container_cgroup_memory_usage_bytes(container_id)?;
-    Ok(ContainerResourceUsage { cpu_cores, memory_bytes })
+
+    let mut expected_ids = HashSet::new();
+    for id in container_ids {
+        if id.len() != 64
+            || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !expected_ids.insert(id.clone())
+        {
+            return Err(DockerError::Command(
+                "refusing resource query for malformed or duplicate immutable Docker IDs".into(),
+            ));
+        }
+    }
+
+    let mut inspect_args = vec![
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{.Id}}|{{.State.Pid}}".to_owned(),
+    ];
+    inspect_args.extend(container_ids.iter().cloned());
+    let inspect_refs: Vec<&str> = inspect_args.iter().map(String::as_str).collect();
+    let inspect_output = run_checked(&inspect_refs)?;
+    let mut pids = HashMap::<String, u32>::new();
+    for line in inspect_output.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let (id, raw_pid) = line.split_once('|').ok_or_else(|| {
+            DockerError::Command("docker inspect returned malformed ID/PID data".into())
+        })?;
+        let id = id.trim().to_owned();
+        if !expected_ids.contains(&id) {
+            return Err(DockerError::Command(
+                "docker inspect returned an unexpected container identity".into(),
+            ));
+        }
+        let pid = raw_pid.trim().parse::<u32>().map_err(|_| {
+            DockerError::Command("docker inspect returned an invalid container PID".into())
+        })?;
+        if pid == 0 || pids.insert(id, pid).is_some() {
+            return Err(DockerError::Command(
+                "docker inspect returned a stopped or duplicated container PID".into(),
+            ));
+        }
+    }
+    if pids.len() != expected_ids.len() {
+        return Err(DockerError::Command(
+            "could not verify the host PID for every sampled container".into(),
+        ));
+    }
+
+    let mut stats_args = vec![
+        "stats".to_owned(),
+        "--no-stream".to_owned(),
+        "--format".to_owned(),
+        "{{.ID}}|{{.CPUPerc}}".to_owned(),
+    ];
+    stats_args.extend(container_ids.iter().cloned());
+    let stats_refs: Vec<&str> = stats_args.iter().map(String::as_str).collect();
+    let stats_output = run_checked(&stats_refs)?;
+    let mut cpu_usage = HashMap::<String, f64>::new();
+    for line in stats_output.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let (short_id, raw_cpu) = line.split_once('|').ok_or_else(|| {
+            DockerError::Command("docker stats returned malformed CPU usage".into())
+        })?;
+        let short_id = short_id.trim();
+        if short_id.len() < 12 || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(DockerError::Command(
+                "docker stats returned an invalid container ID".into(),
+            ));
+        }
+        let mut matches = container_ids.iter().filter(|id| id.starts_with(short_id));
+        let Some(full_id) = matches.next() else {
+            return Err(DockerError::Command(
+                "docker stats returned an unknown container ID".into(),
+            ));
+        };
+        if matches.next().is_some() {
+            return Err(DockerError::Command(
+                "docker stats returned an ambiguous container ID".into(),
+            ));
+        }
+        let usage = parse_docker_percent(raw_cpu).ok_or_else(|| {
+            DockerError::Command("docker stats returned an invalid CPU percentage".into())
+        })?;
+        if cpu_usage.insert(full_id.clone(), usage).is_some() {
+            return Err(DockerError::Command(
+                "docker stats returned duplicate container usage".into(),
+            ));
+        }
+    }
+    if cpu_usage.len() != expected_ids.len() {
+        return Err(DockerError::Command(
+            "could not measure CPU usage for every sampled container".into(),
+        ));
+    }
+
+    let mut result = HashMap::with_capacity(container_ids.len());
+    for id in container_ids {
+        let pid = *pids.get(id).ok_or_else(|| {
+            DockerError::Command("verified container PID disappeared from sample".into())
+        })?;
+        let cpu_cores = *cpu_usage.get(id).ok_or_else(|| {
+            DockerError::Command("verified container CPU usage disappeared from sample".into())
+        })?;
+        let memory_bytes = container_cgroup_memory_usage_bytes_from_pid(pid)?;
+        result.insert(id.clone(), ContainerResourceUsage { cpu_cores, memory_bytes });
+    }
+    Ok(result)
+}
+
+/// Query usage by immutable full Docker ID, never by a mutable name or prefix.
+pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceUsage> {
+    let mut usages = container_resource_usages(&[container_id.to_owned()])?;
+    usages.remove(container_id).ok_or_else(|| {
+        DockerError::Command("Docker resource sample did not contain the requested container".into())
+    })
 }
 
 /// Remaining CPU headroom and the full RAM limit already committed to a running runner.

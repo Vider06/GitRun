@@ -19,8 +19,11 @@ on:
       mode:
         description: kitty when a unique route was issued; github when ordinary label matching is used.
         value: ${{ jobs.plan.outputs.mode }}
+      controller_online:
+        description: True when the local GitRun controller responded; a GSR denial still proves the controller is reachable.
+        value: ${{ jobs.plan.outputs.controller_online }}
       kitty_online:
-        description: True only when Kitty is route-ready and returned a validated per-occurrence selector.
+        description: true when Kitty's master setting is enabled, false when disabled/invalid, unknown when the controller cannot verify it.
         value: ${{ jobs.plan.outputs.kitty_online }}
       status:
         description: Kitty/controller state or degraded fallback state.
@@ -44,6 +47,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       mode: ${{ steps.dispatch.outputs.mode }}
+      controller_online: ${{ steps.dispatch.outputs.controller_online }}
       kitty_online: ${{ steps.dispatch.outputs.kitty_online }}
       status: ${{ steps.dispatch.outputs.status }}
       runs_on: ${{ steps.dispatch.outputs.runs_on }}
@@ -83,7 +87,8 @@ jobs:
 
           # Defaults are safe: any controller error uses the caller's ordinary labels.
           mode="github"
-          kitty_online="false"
+          controller_online="false"
+          kitty_online="unknown"
           status="degraded"
           runs_on="$fallback_json"
           reason="gitrun-controller-unavailable-or-not-authorized"
@@ -99,16 +104,24 @@ jobs:
           if [[ "$command_status" -ne 0 ]]; then
             case "$raw" in
               *"cannot connect to GitRun API service"*) reason="gitrun-controller-offline" ;;
-              *"GSR validation failed"*|*"GSR authorization"*) reason="gsr-policy-denied" ;;
+              *"GSR validation failed"*|*"GSR authorization"*)
+                controller_online="true"
+                reason="gsr-policy-denied"
+                ;;
               *"command not found"*|*"GitDispatchRun: not found"*|*"unknown GitRun API command GitDispatchRun"*) reason="gitdispatchrun-api-not-installed" ;;
             esac
           else
             api_mode="$(sed -n 's/^GITRUN_DISPATCH_MODE=//p' <<<"$raw" | tail -n 1)"
             api_status="$(sed -n 's/^GITRUN_DISPATCH_STATUS=//p' <<<"$raw" | tail -n 1)"
+            api_kitty_online="$(sed -n 's/^GITRUN_KITTY_ONLINE=//p' <<<"$raw" | tail -n 1)"
             api_runs_on="$(sed -n 's/^GITRUN_DISPATCH_RUNS_ON=//p' <<<"$raw" | tail -n 1)"
             api_reason="$(sed -n 's/^GITRUN_DISPATCH_REASON=//p' <<<"$raw" | tail -n 1)"
+            controller_online="true"
+            if [[ "$api_kitty_online" == "true" || "$api_kitty_online" == "false" ]]; then
+              kitty_online="$api_kitty_online"
+            fi
 
-            if [[ "$api_mode" == "kitty" ]] && jq -e '
+            if [[ "$api_mode" == "kitty" && "$kitty_online" == "true" ]] && jq -e '
               type == "array" and length == 2 and
               all(.[]; type == "string" and test("^[A-Za-z0-9_.-]+$")) and
               (any(.[]; test("^gitrun-job-wk-[0-9a-f]{16}$"))) and
@@ -116,23 +129,23 @@ jobs:
               (all(.[]; ((ascii_downcase | startswith("self-hosted")) | not)))
             ' <<<"$api_runs_on" >/dev/null 2>&1; then
               mode="kitty"
-              kitty_online="true"
               status="$api_status"
               runs_on="$api_runs_on"
               reason="${api_reason:-validated-exclusive-route-issued}"
-            elif [[ "$api_mode" == "github" ]]; then
+            elif [[ "$api_mode" == "github" && ( "$kitty_online" == "true" || "$kitty_online" == "false" ) ]]; then
               mode="github"
-              kitty_online="false"
               status="${api_status:-fallback}"
               runs_on="$fallback_json"
               reason="${api_reason:-kitty-selected-github-fallback}"
             else
+              kitty_online="unknown"
               reason="invalid-or-unsupported-controller-response"
             fi
           fi
 
           {
             echo "mode=$mode"
+            echo "controller_online=$controller_online"
             echo "kitty_online=$kitty_online"
             echo "status=$status"
             echo "runs_on=$runs_on"
@@ -142,7 +155,8 @@ jobs:
           {
             echo "### GitRun Kitty Dispatch"
             echo "- **Mode:** $mode"
-            echo "- **Kitty route-ready:** $kitty_online"
+            echo "- **Controller online:** $controller_online"
+            echo "- **Kitty online:** $kitty_online"
             echo "- **Status:** $status"
             echo "- **Reason:** $reason"
             echo "- **runs-on:** $runs_on"

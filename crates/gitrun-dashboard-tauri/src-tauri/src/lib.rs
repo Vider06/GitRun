@@ -2614,8 +2614,7 @@ fn gitrun_settings_for_dashboard(config: &Config) -> Result<GitRunSettings, Stri
             if error.kind() == std::io::ErrorKind::PermissionDenied =>
         {
             #[cfg(target_os = "linux")]
-            if trusted_system_cli_path().is_some()
-                && Path::new("/etc/gitrun/gitrun.env").is_file()
+            if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file()
             {
                 let raw = run_privileged_cli_helper("--read-gitrun-settings-root", &[])?;
                 return serde_json::from_str(raw.trim()).map_err(|error| {

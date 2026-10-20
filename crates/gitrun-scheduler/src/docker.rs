@@ -470,11 +470,8 @@ fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
     Ok(path.to_path_buf())
 }
 
-/// Read total memory charged to the container's cgroup, including page cache.
-/// Docker CLI's displayed MemUsage subtracts cache on Linux and is not safe for
-/// learning peak RAM requirements. The scheduler runs on the same Linux host as
-/// this local Docker daemon; if host PID/cgroup visibility is missing, sampling
-/// fails and Kitty falls back to its workload-class prior instead of guessing.
+/// Verify that a PID's cgroup still identifies the immutable Docker container
+/// whose resource limits were inspected, before attributing memory to it.
 fn ensure_cgroup_matches_container_id(
     cgroup_path: &str,
     expected_container_id: &str,

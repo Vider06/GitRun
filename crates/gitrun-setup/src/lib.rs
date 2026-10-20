@@ -1421,9 +1421,13 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
     validate_root_owned_directory_chain(parent)?;
 
     let config_metadata = fs::symlink_metadata(config_path)?;
-    if config_metadata.file_type().is_symlink() || !config_metadata.is_file() {
+    if config_metadata.file_type().is_symlink()
+        || !config_metadata.is_file()
+        || config_metadata.nlink() != 1
+    {
         return Err(SetupError::Command(
-            "system config must be a regular, non-symlink file before migration".into(),
+            "system config must be a regular, non-symlink file without hard links before migration"
+                .into(),
         ));
     }
     if config_metadata.uid() == 0 && config_metadata.permissions().mode() & 0o022 != 0 {
@@ -1448,21 +1452,25 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
                 .into(),
         ));
     }
-    repair_system_runtime_directory(&state_dir)?;
+    repair_system_runtime_directory(&state_dir, desktop_uid)?;
 
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
     match fs::symlink_metadata(&settings_path) {
         Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || metadata.nlink() != 1
+            {
                 return Err(SetupError::Command(
-                    "GitRun security settings must be a regular, non-symlink file".into(),
+                    "GitRun security settings must be a regular, non-symlink file without hard links"
+                        .into(),
                 ));
             }
-            if desktop_uid.is_none() && metadata.uid() != 0 {
-                desktop_uid = Some(metadata.uid());
-                // Keep the desktop's intended read-only access after moving
-                // the settings file back under root control.
-                secure_system_config_file(config_path, desktop_uid)?;
+            if metadata.uid() != 0 && desktop_uid != Some(metadata.uid()) {
+                return Err(SetupError::Command(
+                    "GitRun security settings ownership does not match the trusted system config; refusing automatic migration"
+                        .into(),
+                ));
             }
             secure_system_settings_file(&settings_path, desktop_uid)?;
         }
@@ -1473,7 +1481,10 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
     Ok(())
 }
 
-fn repair_system_runtime_directory(directory: &Path) -> Result<(), SetupError> {
+fn repair_system_runtime_directory(
+    directory: &Path,
+    expected_legacy_owner: Option<u32>,
+) -> Result<(), SetupError> {
     validate_runtime_directory_path(directory)?;
 
     let parent = directory.parent().ok_or_else(|| {
@@ -1491,6 +1502,12 @@ fn repair_system_runtime_directory(directory: &Path) -> Result<(), SetupError> {
             if metadata.permissions().mode() & 0o022 != 0 {
                 return Err(SetupError::Command(
                     "runtime state directory is group/world-writable; refusing ownership migration"
+                        .into(),
+                ));
+            }
+            if !trusted_legacy_state_owner(metadata.uid(), expected_legacy_owner) {
+                return Err(SetupError::Command(
+                    "runtime state directory is not owned by root or the desktop identity from the legacy system config; refusing ownership migration"
                         .into(),
                 ));
             }
@@ -1521,6 +1538,10 @@ fn repair_system_runtime_directory(directory: &Path) -> Result<(), SetupError> {
         ));
     }
     Ok(())
+}
+
+fn trusted_legacy_state_owner(actual_uid: u32, expected_legacy_owner: Option<u32>) -> bool {
+    actual_uid == 0 || expected_legacy_owner == Some(actual_uid)
 }
 
 fn validate_runtime_directory_path(directory: &Path) -> Result<(), SetupError> {
@@ -2237,6 +2258,14 @@ mod tests {
         assert!(setup_flag_contents_are_valid(Ok(
             "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\n".into()
         )));
+    }
+
+    #[test]
+    fn runtime_directory_migration_only_accepts_root_or_known_legacy_owner() {
+        assert!(trusted_legacy_state_owner(0, None));
+        assert!(trusted_legacy_state_owner(1000, Some(1000)));
+        assert!(!trusted_legacy_state_owner(1001, Some(1000)));
+        assert!(!trusted_legacy_state_owner(1000, None));
     }
 
     #[test]

@@ -7355,6 +7355,7 @@ mod kitty_dispatch_contract_tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn dispatch_route_ids_are_random_canonical_selectors() {
         let first = new_kitty_dispatch_route_id().expect("Linux/Unix route entropy");

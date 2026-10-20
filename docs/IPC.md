@@ -1,4 +1,4 @@
-# GitRun IPC and socket architecture — 1.5.0
+# GitRun IPC and socket architecture — 1.5.1
 
 GitRun has two distinct communication concepts: the workflow-facing API socket and the internal GSR/executor authentication protocol.
 
@@ -79,6 +79,8 @@ The socket does not make an untrusted process privileged. The host-side authoriz
 The Docker socket remains a separate host-level trust boundary on Linux.
 
 
-## Verification status
+## Verification and deployment boundaries
 
-The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. These tests cover configured protocol and runtime contracts; they do not constitute an end-to-end adversarial test of every API operation across real runner disconnects, container replacement and cross-process races. See the [contract inventory](v1.5.0-contract-inventory.md) and [status report](v1.5.0-refactor-status.md) for exact scope.
+The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed the listed 1.5.0 CI/security/format checks before merge. That is historical commit-scoped evidence, not a blanket guarantee for later changes or an end-to-end adversarial test of every runner disconnect, container replacement and cross-process race.
+
+PR [#103](https://github.com/Vider06/GitRun/pull/103) repairs legacy runtime ownership and canonical systemd unit installation; the workflow socket and GSR/executor protocol remain the separate boundaries described here. Check current commit status and use the [1.5.1 release notes](v1.5.1-release-notes.md) for recovery and deployment requirements.

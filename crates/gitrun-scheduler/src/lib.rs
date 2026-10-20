@@ -197,6 +197,17 @@ pub fn run() {
                 }
             }
         }
+        // One budget is shared by every configured repository in this poll
+        // tick, so separate repo reconciliations cannot each consume the full
+        // host headroom independently.
+        let mut adaptive_resource_budget = AdaptiveResourceBudgetState::for_cycle(&state_dir);
+        if adaptive_resource_budget.enabled {
+            if let Some(error) = adaptive_resource_budget.unavailable_reason.as_deref() {
+                eprintln!(
+                    "gitrun-autoscaler: Kitty Adaptive Resource Management could not verify host capacity: {error}; runner creation will be deferred"
+                );
+            }
+        }
         for repo in &config.repositories {
             if let Some(remaining) = rate_limits.remaining_cooldown(repo) {
                 // Skip this repo entirely for this tick rather than making
@@ -218,6 +229,7 @@ pub fn run() {
                 &mut kitty_runtime,
                 repo,
                 resource_context,
+                &mut adaptive_resource_budget,
             ) {
                 if let Some(GitHubError::RateLimited { retry_after }) =
                     error.downcast_ref::<GitHubError>()
@@ -786,6 +798,7 @@ fn reconcile_repo(
     kitty_runtime: &mut gitrun_smart_scheduler::KittyRuntime,
     repo: &str,
     resource_context: ResourcePressureContext,
+    adaptive_resource_budget: &mut AdaptiveResourceBudgetState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ResourcePressureContext {
         allow_new_runner_creation,
@@ -1048,6 +1061,73 @@ fn reconcile_repo(
     );
 
     let observed_at_epoch = wall_clock_epoch;
+    // Per-job resource learning is a separate, bounded telemetry cadence. Only
+    // jobs that GitHub says are actively assigned to a known GitRun container
+    // are measured; stats failures are ignored for scheduling purposes.
+    if kitty_runtime.should_poll_job_resources(repo, observed_at_epoch) {
+        match client.active_self_hosted_jobs_on_runners(repo) {
+            Ok(active_jobs) => {
+                let mut runner_assignments = std::collections::HashMap::<String, usize>::new();
+                for active in &active_jobs {
+                    let count = runner_assignments.entry(active.runner_name.clone()).or_default();
+                    *count = count.saturating_add(1);
+                }
+                let mut resource_samples = Vec::new();
+                for active in active_jobs {
+                    // GitHub snapshots can briefly disagree during retries;
+                    // never attribute one container's stats to two active jobs.
+                    if runner_assignments.get(&active.runner_name) != Some(&1) {
+                        continue;
+                    }
+                    let Some(container) = containers.iter().find(|container| {
+                        container.name == active.runner_name
+                            && container.status.eq_ignore_ascii_case("running")
+                    }) else {
+                        continue;
+                    };
+                    let usage = match docker::container_resource_usage(&container.id) {
+                        Ok(usage) => usage,
+                        Err(error) => {
+                            eprintln!(
+                                "gitrun-autoscaler: Kitty skipped resource sample for {repo}/{}: {error}",
+                                active.runner_name
+                            );
+                            continue;
+                        }
+                    };
+                    resource_samples.push(
+                        gitrun_smart_scheduler::ActiveJobResourceSample {
+                            job: gitrun_smart_scheduler::QueuedJobOccurrence {
+                                run_id: active.job.run_id,
+                                job_id: active.job.job_id,
+                                workflow_id: active.job.workflow_id,
+                                workflow_path: active.job.workflow_path,
+                                name: active.job.name,
+                                labels: active.job.labels,
+                                started_at_epoch: active.job.started_at_epoch,
+                            },
+                            cpu_cores: usage.cpu_cores,
+                            memory_bytes: usage.memory_bytes,
+                            sampled_at_epoch: observed_at_epoch,
+                        },
+                    );
+                }
+                if let Err(error) = kitty_runtime.record_resource_samples(
+                    repo,
+                    &resource_samples,
+                    observed_at_epoch,
+                ) {
+                    eprintln!(
+                        "gitrun-autoscaler: Kitty resource sample persistence failed for {repo}; runner scheduling remains unchanged: {error}"
+                    );
+                }
+            }
+            Err(error) => eprintln!(
+                "gitrun-autoscaler: Kitty active-job resource telemetry unavailable for {repo}: {error}"
+            ),
+        }
+    }
+
     // Historical job-start sampling is deliberately slower than queue
     // reconciliation. API failures affect only Kitty's learning, not scheduling.
     let started_job_occurrences: Vec<gitrun_smart_scheduler::QueuedJobOccurrence> = if kitty_runtime
@@ -1370,15 +1450,67 @@ fn reconcile_repo(
         repo,
         workload_routing_profiles: &workload_routing_profiles,
     };
+    let adaptive_resources_enabled = adaptive_resource_budget.enabled;
+
     let planned_action_count = actions.len();
     let mut action_execution_succeeded = true;
     for action in actions {
+        // Resolve a per-workload envelope before any runner-creating action.
+        // A failed measurement, invalid estimate or exhausted host budget
+        // prevents creation; the static scheduler remains unchanged when the
+        // operator has not enabled Adaptive Resource Management.
+        let allocation_attempt: Result<Option<RunnerResourceAllocation>, String> =
+            if adaptive_resources_enabled {
+                match adaptive_resource_identity(&action, &containers) {
+                    None => Ok(None),
+                    Some((job_name, job_labels)) => {
+                        let attempt = (|| {
+                            let estimate = kitty_runtime
+                                .resource_demand_estimate(repo, "", &job_name, &job_labels)
+                                .ok_or_else(|| {
+                                    "Kitty could not produce a validated resource estimate; refusing to guess CPU/RAM".to_owned()
+                                })?;
+                            adaptive_resource_budget.allocate(estimate, config).map(Some)
+                        })();
+                        attempt
+                    }
+                }
+            } else {
+                Ok(None)
+            };
+        let resource_allocation = match allocation_attempt {
+            Ok(allocation) => allocation,
+            Err(error) => {
+                eprintln!(
+                    "gitrun-autoscaler: Kitty Adaptive Resource Management deferred {action:?} for {repo}: {error}"
+                );
+                action_execution_succeeded = false;
+                break;
+            }
+        };
+        if let Some(allocation) = resource_allocation.as_ref() {
+            eprintln!(
+                "gitrun-autoscaler: Kitty allocated {} CPU and {} bytes RAM to workload {} for {repo} (learned={}, reason={})",
+                allocation.cpus,
+                allocation.memory,
+                allocation.workload_id,
+                allocation.learned,
+                allocation.reason
+            );
+        }
+
         // The plan is ordered and later actions may rely on earlier removals
         // or creations having succeeded (for example, RemoveExited followed
         // by CreateRunner assumes the exited container was actually removed).
         // Stop this repo's plan at the first failure and re-snapshot/replan on
         // the next tick; continuing can exceed capacity or act on stale state.
-        match execute(&execution_context, &containers, &action, &mut state) {
+        match execute(
+            &execution_context,
+            &containers,
+            &action,
+            &mut state,
+            resource_allocation.as_ref(),
+        ) {
             Ok(Some((workload_id, target_epoch))) => {
                 if let Err(error) = kitty_runtime.record_workload_prewarm_created(
                     repo,
@@ -1445,6 +1577,167 @@ fn to_container_view(container: &ManagedContainer) -> ContainerView {
     }
 }
 
+struct AdaptiveResourceBudgetState {
+    enabled: bool,
+    budget: Option<AdaptiveResourceBudget>,
+    unavailable_reason: Option<String>,
+}
+
+impl AdaptiveResourceBudgetState {
+    fn for_cycle(state_dir: &std::path::Path) -> Self {
+        let settings = match gitrun_smart_scheduler::load_settings_for_dashboard(state_dir) {
+            Ok(settings) => settings,
+            Err(_) => {
+                // Invalid/unreadable optional settings never enable adaptive
+                // behavior; Kitty's validated runtime will report the error.
+                return Self { enabled: false, budget: None, unavailable_reason: None };
+            }
+        };
+        if !settings.adaptive_resource_management_enabled {
+            return Self { enabled: false, budget: None, unavailable_reason: None };
+        }
+        match resource_pressure::available_capacity() {
+            Ok(capacity) => Self {
+                enabled: true,
+                budget: Some(AdaptiveResourceBudget::from_capacity(capacity)),
+                unavailable_reason: None,
+            },
+            Err(error) => Self {
+                enabled: true,
+                budget: None,
+                unavailable_reason: Some(error.to_string()),
+            },
+        }
+    }
+
+    fn allocate(
+        &mut self,
+        estimate: gitrun_smart_scheduler::ResourceDemandEstimate,
+        config: &Config,
+    ) -> Result<RunnerResourceAllocation, String> {
+        if self.budget.is_none() {
+            return Err(format!(
+                "host capacity unavailable{}",
+                self.unavailable_reason
+                    .as_deref()
+                    .map(|error| format!(": {error}"))
+                    .unwrap_or_default()
+            ));
+        }
+        let budget = self.budget.as_mut().ok_or_else(|| {
+            "host resource budget disappeared unexpectedly".to_owned()
+        })?;
+        budget.allocate(estimate, config).ok_or_else(|| {
+            "safe host CPU/RAM budget or operator ceilings are too small for another runner; deferring creation".to_owned()
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RunnerResourceAllocation {
+    cpus: String,
+    memory: String,
+    workload_id: String,
+    learned: bool,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AdaptiveResourceBudget {
+    remaining_cpu_cores: f64,
+    remaining_memory_bytes: u64,
+}
+
+impl AdaptiveResourceBudget {
+    fn from_capacity(capacity: resource_pressure::ResourceCapacity) -> Self {
+        Self {
+            remaining_cpu_cores: capacity.cpu_cores,
+            remaining_memory_bytes: capacity.memory_bytes,
+        }
+    }
+
+    fn allocate(
+        &mut self,
+        estimate: gitrun_smart_scheduler::ResourceDemandEstimate,
+        config: &Config,
+    ) -> Option<RunnerResourceAllocation> {
+        const MIN_CPU_CORES: f64 = 0.25;
+        const MIN_MEMORY_BYTES: u64 = 512 * 1024 * 1024;
+        let operator_cpu_cap = config.container_cpus.parse::<f64>().ok()?;
+        let operator_memory_cap = docker::parse_docker_bytes(&config.container_memory)?;
+        if !operator_cpu_cap.is_finite() || operator_cpu_cap <= 0.0 || operator_memory_cap == 0 {
+            return None;
+        }
+
+        // GITRUN_CONTAINER_CPUS / GITRUN_CONTAINER_MEMORY are hard operator
+        // ceilings. Kitty may request less than those ceilings and the host
+        // budget may reduce the request further, but it can never raise a cap.
+        let cpu_cores = estimate
+            .cpu_cores
+            .min(operator_cpu_cap)
+            .min(self.remaining_cpu_cores);
+        let memory_bytes = estimate
+            .memory_bytes
+            .min(operator_memory_cap)
+            .min(self.remaining_memory_bytes);
+        if !cpu_cores.is_finite()
+            || cpu_cores < MIN_CPU_CORES
+            || memory_bytes < MIN_MEMORY_BYTES
+        {
+            return None;
+        }
+
+        self.remaining_cpu_cores =
+            (self.remaining_cpu_cores - cpu_cores).max(0.0);
+        self.remaining_memory_bytes =
+            self.remaining_memory_bytes.saturating_sub(memory_bytes);
+        let cpu_limit = format!("{cpu_cores:.3}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_owned();
+        Some(RunnerResourceAllocation {
+            cpus: cpu_limit,
+            // Docker accepts an integer byte count. Avoid unit rounding that
+            // could inadvertently cross the memory ceiling.
+            memory: memory_bytes.to_string(),
+            workload_id: estimate.workload_id,
+            learned: estimate.learned,
+            reason: estimate.reason,
+        })
+    }
+}
+
+fn adaptive_resource_identity(
+    action: &Action,
+    inventory: &[docker::ManagedContainer],
+) -> Option<(String, Vec<String>)> {
+    match action {
+        Action::CreateRunner { job_name, job_labels, .. } => Some((
+            job_name.clone().unwrap_or_else(|| "general runner".into()),
+            job_labels.clone(),
+        )),
+        Action::PrewarmWorkload { job_name, job_labels, .. } => {
+            Some((job_name.clone(), job_labels.clone()))
+        }
+        Action::RecreateOrphaned { name, .. } => {
+            let container = inventory.iter().find(|container| container.name == *name)?;
+            let labels = container
+                .workload_routing_id
+                .as_ref()
+                .map(|id| vec![format!("gitrun-job-{id}")])
+                .unwrap_or_default();
+            Some((
+                container
+                    .workflow_job
+                    .clone()
+                    .unwrap_or_else(|| "recovered runner".into()),
+                labels,
+            ))
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ExecuteContext<'a> {
     client: &'a GitHubClient,
@@ -1460,6 +1753,7 @@ fn execute(
     inventory: &[docker::ManagedContainer],
     action: &Action,
     state: &mut SchedulerState,
+    resource_allocation: Option<&RunnerResourceAllocation>,
 ) -> Result<Option<(String, u64)>, Box<dyn std::error::Error>> {
     let ExecuteContext {
         client,
@@ -1513,6 +1807,7 @@ fn execute(
                     prewarm_workload_id: None,
                     prewarm_target_epoch: None,
                     prewarm_hold_until_epoch: None,
+                    resource_allocation,
                 },
             )? {
                 return Err(std::io::Error::other(
@@ -1547,6 +1842,7 @@ fn execute(
                     prewarm_workload_id: Some(workload_id),
                     prewarm_target_epoch: Some(*target_epoch),
                     prewarm_hold_until_epoch: Some(*hold_until_epoch),
+                    resource_allocation,
                 },
             )? {
                 return Err(std::io::Error::other(
@@ -1593,6 +1889,7 @@ fn execute(
                     prewarm_workload_id,
                     prewarm_target_epoch,
                     prewarm_hold_until_epoch,
+                    resource_allocation,
                 },
             )? {
                 return Err(std::io::Error::other(
@@ -1868,6 +2165,7 @@ struct RunnerCreateContext<'a> {
     prewarm_workload_id: Option<&'a str>,
     prewarm_target_epoch: Option<u64>,
     prewarm_hold_until_epoch: Option<u64>,
+    resource_allocation: Option<&'a RunnerResourceAllocation>,
 }
 
 fn create_runner(
@@ -1888,6 +2186,7 @@ fn create_runner(
         prewarm_workload_id,
         prewarm_target_epoch,
         prewarm_hold_until_epoch,
+        resource_allocation,
     } = context;
     let explicit_workload_id = explicit_workload_routing_id(job_labels)?;
     if let (Some(explicit_id), Some(prewarm_id)) =
@@ -1980,8 +2279,8 @@ fn create_runner(
             no_default_labels: routed_workload_id.is_some(),
             ephemeral: config.ephemeral || (is_windows && !permanent),
             disable_update: config.runner_disable_update,
-            cpus: &config.container_cpus,
-            memory: &config.container_memory,
+            cpus: resource_allocation.map(|allocation| allocation.cpus.as_str()).unwrap_or(&config.container_cpus),
+            memory: resource_allocation.map(|allocation| allocation.memory.as_str()).unwrap_or(&config.container_memory),
             pids_limit: &config.container_pids_limit,
             shared_cache_volume: &config.shared_cache_volume,
             cache_scope: &config.shared_cache_scope,
@@ -3301,6 +3600,63 @@ mod resource_pressure_reconciliation_tests {
 
         assert_eq!(bound_workload_prewarms_to_budget(&mut targets, 0), 0);
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn adaptive_resource_budget_respects_operator_caps_and_shared_host_budget() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let config = Config {
+            container_cpus: "2".into(),
+            container_memory: "4g".into(),
+            ..Config::default()
+        };
+        let mut budget = AdaptiveResourceBudget {
+            remaining_cpu_cores: 3.0,
+            remaining_memory_bytes: 8 * GIB,
+        };
+        let estimate = |workload_id: &str| gitrun_smart_scheduler::ResourceDemandEstimate {
+            workload_id: workload_id.into(),
+            cpu_cores: 4.0,
+            memory_bytes: 8 * GIB,
+            sample_count: 0,
+            learned: false,
+            reason: "test prior".into(),
+        };
+
+        let first = budget.allocate(estimate("wk-0123456789abcdef"), &config).unwrap();
+        assert_eq!(first.cpus, "2");
+        assert_eq!(first.memory, (4 * GIB).to_string());
+        assert_eq!(budget.remaining_cpu_cores, 1.0);
+        assert_eq!(budget.remaining_memory_bytes, 4 * GIB);
+
+        let second = budget.allocate(estimate("wk-fedcba9876543210"), &config).unwrap();
+        assert_eq!(second.cpus, "1");
+        assert_eq!(second.memory, (4 * GIB).to_string());
+        assert!(budget
+            .allocate(estimate("wk-aaaaaaaaaaaaaaaa"), &config)
+            .is_none());
+    }
+
+    #[test]
+    fn adaptive_resource_budget_fails_closed_below_minimum_allocation() {
+        let config = Config {
+            container_cpus: "2".into(),
+            container_memory: "4g".into(),
+            ..Config::default()
+        };
+        let mut budget = AdaptiveResourceBudget {
+            remaining_cpu_cores: 0.2,
+            remaining_memory_bytes: 4 * 1024 * 1024 * 1024,
+        };
+        let estimate = gitrun_smart_scheduler::ResourceDemandEstimate {
+            workload_id: "wk-0123456789abcdef".into(),
+            cpu_cores: 2.0,
+            memory_bytes: 2 * 1024 * 1024 * 1024,
+            sample_count: 0,
+            learned: false,
+            reason: "test prior".into(),
+        };
+        assert!(budget.allocate(estimate, &config).is_none());
     }
 
     #[test]

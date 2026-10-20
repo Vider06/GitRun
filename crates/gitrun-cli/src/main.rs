@@ -2041,6 +2041,7 @@ fn run_api_policy(api_name: &str, operation: Option<&str>, enabled: Option<bool>
             gitrun_core::GitRunOperation::Update,
             gitrun_core::GitRunOperation::Verify,
             gitrun_core::GitRunOperation::Status,
+            gitrun_core::GitRunOperation::Plan,
         ]
         .into_iter()
         .find(|op| op.as_str().eq_ignore_ascii_case(operation));

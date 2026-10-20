@@ -1,9 +1,9 @@
 # Fast Stop and Kitty Smart Scheduler
 
 Updated: 2026-10-20  
-Version: GitRun 1.5.0
+Current source line: GitRun 1.5.1 (Fast Stop and Kitty behavior originated in 1.5.0)
 
-Fast Stop and Kitty are included in the v1.5.0 source merged through [PR #83](https://github.com/Vider06/GitRun/pull/83). Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation.
+Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and remain part of the 1.5.1 source line. Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The 1.5.1 legacy-recovery changes are documented separately in [the 1.5.1 release notes](v1.5.1-release-notes.md).
 
 ## Fast Stop
 
@@ -31,7 +31,7 @@ Weekday/hour forecasts are evaluated separately from the aggregate forecast. Pre
 
 ### Retention and data
 
-High-resolution history is capped at 2,016 five-minute buckets (seven days). Older history is reduced to bounded weekly, four-week and 48-week/lifetime summaries. These are fixed-duration windows, not calendar-month arithmetic. The implementation also caps loaded repository models, forecast outcomes, workload predictions, occurrences and decision-audit records.
+High-resolution history is capped at 2,016 five-minute buckets (seven days); this is not a seven-day lifetime limit. Older completed samples are compacted into bounded weekly aggregates. Four-week blocks form compact logical months, and twelve such months (48 weeks) form compact logical years, with lifetime summaries retaining long-term workload shape. These fixed-duration tiers are not calendar-month arithmetic. Model count, forecast outcomes, workload predictions, recent occurrences and decision-audit records are also capped to bound memory and JSON size.
 
 Kitty does not store workflow contents, command strings, job payloads, environment values, tokens or secret values. It stores bounded workflow paths, job names, runner labels and GitHub run/job IDs to identify and deduplicate workloads. The recent-job-start sampler is bounded, not an exhaustive ledger; missing starts remain unknown and are not used as fabricated zero outcomes. This limits per-workload error correction until a complete coverage source exists.
 
@@ -55,6 +55,6 @@ Adaptive Resource Management and Smart Fast Stop triggers are reserved settings,
 
 ## Verification and deployment limits
 
-The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. Those checks cover the committed test suite; they are not evidence of calibrated real-world prediction accuracy or complete historical job-start coverage. Review Kitty in shadow mode before enabling predictive capacity changes.
+The PR #83 source-head checks are historical evidence for the 1.5.0 implementation commit, not proof of calibrated real-world prediction accuracy or complete historical job-start coverage. Review Kitty in shadow mode before enabling predictive capacity changes, and check the exact CI results for the source commit being deployed.
 
-The separate deployment checks still include the actual desktop privilege/install flows, provisioning and recovery on real KVM/VirtualBox hosts, a complete authorized disconnect API request, and migration of customized or pre-existing runner images. See [the v1.5.0 status report](v1.5.0-refactor-status.md).
+The 1.5.1 source includes the guarded legacy recovery path from [PR #103](https://github.com/Vider06/GitRun/pull/103); real desktop privilege/install flows, repair on the target legacy host, provisioning and recovery on real KVM/VirtualBox hosts, a complete authorized disconnect API request, and migration of customized/pre-existing runner images still require environment-specific validation. See [the 1.5.1 release notes](v1.5.1-release-notes.md) and the [historical v1.5.0 status report](v1.5.0-refactor-status.md).

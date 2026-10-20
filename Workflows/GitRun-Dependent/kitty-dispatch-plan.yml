@@ -1,0 +1,136 @@
+name: GitRun Premade - Kitty Dispatch Plan
+
+on:
+  workflow_call:
+    inputs:
+      target_job:
+        description: Exact historical GitHub Actions job name/ID used by the Kitty workload profile.
+        required: true
+        type: string
+      target_workflow:
+        description: Workflow path used for the learned workload identity, e.g. .github/workflows/ci.yml.
+        required: true
+        type: string
+      target_labels:
+        description: Ordinary fallback runner labels as comma-separated values.
+        required: true
+        type: string
+    outputs:
+      mode:
+        description: kitty when a unique route was issued; github when ordinary label matching is used.
+        value: ${{ jobs.plan.outputs.mode }}
+      status:
+        description: Kitty/controller state or degraded fallback state.
+        value: ${{ jobs.plan.outputs.status }}
+      runs_on:
+        description: JSON array ready for fromJSON() in the caller's runs-on.
+        value: ${{ jobs.plan.outputs.runs_on }}
+      reason:
+        description: Machine-readable explanation for the selected mode.
+        value: ${{ jobs.plan.outputs.reason }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Ask the GitRun controller for a Kitty route
+    # At least one managed GitRun runner needs this additional custom label.
+    # The planner cannot execute a fallback when no compatible control runner is online.
+    runs-on: [self-hosted, linux, x64, gitrun-control]
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.dispatch.outputs.mode }}
+      status: ${{ steps.dispatch.outputs.status }}
+      runs_on: ${{ steps.dispatch.outputs.runs_on }}
+      reason: ${{ steps.dispatch.outputs.reason }}
+    steps:
+      - name: Validate fallback labels and query Kitty
+        id: dispatch
+        shell: bash
+        env:
+          TARGET_JOB: ${{ inputs.target_job }}
+          TARGET_WORKFLOW: ${{ inputs.target_workflow }}
+          TARGET_LABELS: ${{ inputs.target_labels }}
+        run: |
+          set -euo pipefail
+
+          fallback_json="$(jq -cn --arg csv "$TARGET_LABELS" '$csv | split(",") | map(gsub("^\\s+|\\s+$"; ""))')"
+          if ! jq -e '
+            type == "array" and length > 0 and length <= 32 and
+            all(.[]; type == "string" and length > 0 and length <= 128 and
+              test("^[A-Za-z0-9_.-]+$") and
+              ((ascii_downcase | startswith("gitrun-job-")) | not) and
+              ((ascii_downcase | startswith("gitrun-route-")) | not))
+          ' <<<"$fallback_json" >/dev/null; then
+            echo "target_labels must contain 1–32 ordinary labels; reserved GitRun routing labels are not allowed." >&2
+            exit 2
+          fi
+
+          # Defaults are safe: any controller error uses the caller's ordinary labels.
+          mode="github"
+          status="degraded"
+          runs_on="$fallback_json"
+          reason="gitrun-controller-unavailable-or-not-authorized"
+
+          set +e
+          raw="$(GitDispatchRun --plan \
+            --target-job "$TARGET_JOB" \
+            --target-workflow "$TARGET_WORKFLOW" \
+            --target-labels "$TARGET_LABELS" 2>&1)"
+          command_status=$?
+          set -e
+
+          if [[ "$command_status" -ne 0 ]]; then
+            case "$raw" in
+              *"cannot connect to GitRun API service"*) reason="gitrun-controller-offline" ;;
+              *"GSR validation failed"*|*"GSR authorization"*) reason="gsr-policy-denied" ;;
+              *"command not found"*|*"GitDispatchRun: not found"*) reason="gitdispatchrun-api-not-installed" ;;
+            esac
+          else
+            api_mode="$(sed -n 's/^GITRUN_DISPATCH_MODE=//p' <<<"$raw" | tail -n 1)"
+            api_status="$(sed -n 's/^GITRUN_DISPATCH_STATUS=//p' <<<"$raw" | tail -n 1)"
+            api_runs_on="$(sed -n 's/^GITRUN_DISPATCH_RUNS_ON=//p' <<<"$raw" | tail -n 1)"
+            api_reason="$(sed -n 's/^GITRUN_DISPATCH_REASON=//p' <<<"$raw" | tail -n 1)"
+
+            if [[ "$api_mode" == "kitty" ]] && jq -e '
+              type == "array" and length == 2 and
+              all(.[]; type == "string" and test("^[A-Za-z0-9_.-]+$")) and
+              (any(.[]; test("^gitrun-job-wk-[0-9a-f]{16}$"))) and
+              (any(.[]; test("^gitrun-route-[0-9a-f]{32}$"))) and
+              (all(.[]; ((ascii_downcase | startswith("self-hosted")) | not)))
+            ' <<<"$api_runs_on" >/dev/null 2>&1; then
+              mode="kitty"
+              status="$api_status"
+              runs_on="$api_runs_on"
+              reason="${api_reason:-validated-exclusive-route-issued}"
+            elif [[ "$api_mode" == "github" ]]; then
+              mode="github"
+              status="${api_status:-fallback}"
+              runs_on="$fallback_json"
+              reason="${api_reason:-kitty-selected-github-fallback}"
+            else
+              reason="invalid-or-unsupported-controller-response"
+            fi
+          fi
+
+          {
+            echo "mode=$mode"
+            echo "status=$status"
+            echo "runs_on=$runs_on"
+            echo "reason=$reason"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### GitRun Kitty Dispatch"
+            echo "- **Mode:** `$mode`"
+            echo "- **Status:** `$status`"
+            echo "- **Reason:** `$reason`"
+            echo "- **runs-on:** `$runs_on`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$mode" == "github" ]]; then
+            echo "::notice title=GitRun Kitty Dispatch::Using GitHub label matching ($reason)."
+          else
+            echo "::notice title=GitRun Kitty Dispatch::Kitty issued a unique per-occurrence route."
+          fi

@@ -6154,6 +6154,27 @@ mod tests {
             workload_id_from_routing_labels(&["gitrun-job-wk-../../bad".to_owned()]),
             None,
         );
+
+        let route_id = "0123456789abcdef0123456789abcdef";
+        let route_label = format!("gitrun-route-{route_id}");
+        assert!(has_dispatch_routing_marker(std::slice::from_ref(&route_label)));
+        assert_eq!(
+            dispatch_route_id_from_labels(std::slice::from_ref(&route_label)),
+            Some(route_id.to_owned())
+        );
+        assert_eq!(
+            dispatch_route_id_from_labels(&[
+                route_label.clone(),
+                "gitrun-route-fedcba9876543210fedcba9876543210".to_owned(),
+            ]),
+            None,
+            "conflicting per-occurrence route IDs must fail closed"
+        );
+        assert_eq!(
+            dispatch_route_id_from_labels(&["gitrun-route-short".to_owned()]),
+            None,
+            "malformed route IDs must never become runner selectors"
+        );
     }
 
     #[test]

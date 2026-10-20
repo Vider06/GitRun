@@ -1470,6 +1470,13 @@ impl KittyRuntime {
             let model = self.models.get_mut(&key).ok_or_else(|| {
                 KittyError::Invalid("resource model disappeared during update".into())
             })?;
+            let resource_cutoff = observed_at_epoch.saturating_sub(180 * 86_400);
+            let resource_observations_before = model.resource_observations.len();
+            model.resource_observations.retain(|entry| {
+                entry.last_sample_at_epoch >= resource_cutoff
+                    && entry.last_sample_at_epoch <= observed_at_epoch
+            });
+            changed |= model.resource_observations.len() != resource_observations_before;
             changed |= record_queued_job_occurrences(model, &job_metadata, observed_at_epoch);
             changed |= record_started_job_occurrences_with_coverage(
                 model,

@@ -4098,7 +4098,13 @@ mod resource_pressure_reconciliation_tests {
     fn dispatch_route_binds_exact_job_but_family_route_does_not() {
         let job_name = Some("build");
         assert_eq!(
-            runner_workflow_binding(Some("wk-0123456789abcdef"), None, job_name, Some(42), Some(420)),
+            runner_workflow_binding(
+                Some("wk-0123456789abcdef"),
+                None,
+                job_name,
+                Some(42),
+                Some(420)
+            ),
             (None, None, None),
             "family routes may not claim one arbitrary job occurrence"
         );
@@ -4128,12 +4134,15 @@ mod resource_pressure_reconciliation_tests {
             Some("0123456789abcdef0123456789abcdef".to_owned())
         );
         assert!(explicit_workload_routing_id(&[route.clone()]).is_err());
-        assert!(explicit_dispatch_route_id(&[family.clone(), "gitrun-route-short".into()]).is_err());
+        assert!(
+            explicit_dispatch_route_id(&[family.clone(), "gitrun-route-short".into()]).is_err()
+        );
         assert!(explicit_workload_routing_id(&[
             family.clone(),
             route.clone(),
             "self-hosted".to_owned(),
-        ]).is_err());
+        ])
+        .is_err());
     }
 
     #[test]

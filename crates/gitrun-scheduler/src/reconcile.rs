@@ -770,10 +770,7 @@ mod tests {
         input.min_runners = 0;
         input.max_runners = 8;
         input.queued_jobs = 1;
-        input.queued_job_labels = vec![vec![
-            format!("gitrun-job-{family}"),
-            route.to_owned(),
-        ]];
+        input.queued_job_labels = vec![vec![format!("gitrun-job-{family}"), route.to_owned()]];
         input.queued_job_names = vec!["build".into()];
         input.queued_job_run_ids = vec![41];
         input.queued_job_ids = vec![410];
@@ -781,18 +778,21 @@ mod tests {
 
         let actions = plan(&input);
         assert_eq!(actions.len(), 1);
-        assert!(matches!(
-            &actions[0],
-            Action::CreateRunner {
-                permanent: false,
-                job_id: Some(410),
-                job_labels,
-                ..
-            } if job_labels == &vec![
-                format!("gitrun-job-{family}"),
-                route.to_owned(),
-            ]
-        ), "a family runner does not satisfy a unique per-occurrence reservation");
+        assert!(
+            matches!(
+                &actions[0],
+                Action::CreateRunner {
+                    permanent: false,
+                    job_id: Some(410),
+                    job_labels,
+                    ..
+                } if job_labels == &vec![
+                    format!("gitrun-job-{family}"),
+                    route.to_owned(),
+                ]
+            ),
+            "a family runner does not satisfy a unique per-occurrence reservation"
+        );
     }
 
     #[test]

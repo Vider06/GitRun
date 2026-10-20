@@ -7319,7 +7319,6 @@ mod api_socket_identity_integration_tests {
     }
 }
 
-
 #[cfg(test)]
 mod kitty_dispatch_contract_tests {
     use super::*;
@@ -7327,7 +7326,14 @@ mod kitty_dispatch_contract_tests {
     #[test]
     fn kitty_dispatch_plan_outputs_machine_readable_route_or_fallback() {
         for (mode, status, labels) in [
-            ("kitty", "online", vec!["gitrun-job-wk-0123456789abcdef", "gitrun-route-0123456789abcdef0123456789abcdef"]),
+            (
+                "kitty",
+                "online",
+                vec![
+                    "gitrun-job-wk-0123456789abcdef",
+                    "gitrun-route-0123456789abcdef0123456789abcdef",
+                ],
+            ),
             ("github", "degraded", vec!["self-hosted", "linux", "x64"]),
         ] {
             let labels: Vec<String> = labels.into_iter().map(str::to_owned).collect();
@@ -7335,7 +7341,10 @@ mod kitty_dispatch_contract_tests {
             let output: Vec<&str> = result.stdout.lines().collect();
             assert_eq!(output[0], format!("GITRUN_DISPATCH_STATUS={status}"));
             assert_eq!(output[1], format!("GITRUN_DISPATCH_MODE={mode}"));
-            assert_eq!(output[2].split_once('=').unwrap().0, "GITRUN_DISPATCH_RUNS_ON");
+            assert_eq!(
+                output[2].split_once('=').unwrap().0,
+                "GITRUN_DISPATCH_RUNS_ON"
+            );
             let decoded: Vec<String> =
                 serde_json::from_str(output[2].split_once('=').unwrap().1).unwrap();
             assert_eq!(decoded, labels);
@@ -7348,7 +7357,12 @@ mod kitty_dispatch_contract_tests {
         let first = new_kitty_dispatch_route_id().expect("Linux/Unix route entropy");
         let second = new_kitty_dispatch_route_id().expect("Linux/Unix route entropy");
         assert_eq!(first.len(), 32);
-        assert!(first.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
-        assert_ne!(first, second, "two concurrent dispatches must use different route labels");
+        assert!(first
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+        assert_ne!(
+            first, second,
+            "two concurrent dispatches must use different route labels"
+        );
     }
 }

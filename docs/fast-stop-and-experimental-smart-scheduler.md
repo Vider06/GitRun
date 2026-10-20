@@ -1,215 +1,60 @@
-# Fast Stop and Experimental Smart Scheduler
+# Fast Stop and Kitty Smart Scheduler
 
-**Status:** Fast Stop implementation and tests are included in PR #83. Kitty, the optional Smart Scheduler core, is now implemented as a disabled-by-default statistical workload model with shadow recommendations and guarded Predictive Warm Pool support. Adaptive Resource Management and Smart Fast Stop triggers remain inactive pending reliable telemetry and separate safety verification.  
-**Target:** Fast Stop is reviewed as part of v1.5.0; Smart Scheduler release placement remains TBD  
-**Scope:** Workflow-run force cancellation, workflow telemetry, predictive workflow models, and bounded adaptive scheduling  
-**Verification:** PR #83 CI is a gate for the committed source and test suite. Passing CI does not by itself validate every live cancellation race or qualify the Smart Scheduler proposal for release.
+Updated: 2026-10-20  
+Version: GitRun 1.5.0
 
-## Goals
+Fast Stop and Kitty are included in the v1.5.0 source merged through [PR #83](https://github.com/Vider06/GitRun/pull/83). Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation.
 
-This proposal adds two related but independently deployable capabilities:
+## Fast Stop
 
-1. **Fast Stop:** make a cancellation request trigger immediate cancellation handling, rather than waiting for a later polling/reconciliation cycle or for the runner to notice cancellation late.
-2. **Experimental Smart Scheduler:** learn from actual workflow execution history and use transparent predictions to prepare and size runner capacity more intelligently.
+The CLI command is:
 
-The existing deterministic scheduler remains the baseline and safe fallback. These features must not weaken runner isolation, authorization, Docker/GitDockRun protections, configured capacity limits, or existing policy enforcement.
+```text
+gitrun fast-stop <owner/repo> <workflow-run-id> --yes
+```
 
-## 1. Fast Stop
+The dashboard exposes the same operation with a confirmation dialog. The repository must already be configured in GitRun and the run ID must be non-zero. The required `--yes` flag prevents accidental execution from a terminal or script.
 
-### Observed problem
+GitRun calls GitHub's workflow-run force-cancellation endpoint. **The request cancels the workflow run, not an individual job.** A successful API response means GitHub accepted the cancellation request; it does not confirm that every runner process has exited. GitRun does not kill Docker containers locally as a side effect of this command. The normal runner lifecycle and reconciliation path remain responsible for runner state and cleanup.
 
-When a job is cancelled, the job can continue for a noticeable period before the self-hosted runner reacts. The observed runner log sequence appears to show a delay before the runner evaluates running/cancellation conditions and stops the work.
+API errors and permission failures are returned to the caller. Cancellation latency depends on GitHub and runner behavior; the command does not promise a fixed completion time.
 
-The exact source of the delay must be verified with timestamped logs. Possible contributors include GitHub's cancellation propagation, the runner's processing of the cancellation message, step/job condition evaluation, a GitRun polling interval, a process that does not handle termination, or a container cleanup path. Do not assume that shortening GitRun's polling interval alone will solve a delay that occurs inside the GitHub Actions runner.
+## Kitty Smart Scheduler
 
-### Implemented path in PR #83
+Kitty lives in `gitrun-smart-scheduler`. It is a bounded, deterministic-statistics model, not an LLM or an execution engine. It has no GitHub client, Docker authority, shell execution, Vault access or ability to bypass GSR authorization. The existing deterministic reconciler remains authoritative.
 
-- The dashboard lists active workflow runs and exposes a **Fast Stop** action with an explicit confirmation dialog.
-- The CLI exposes `gitrun fast-stop <owner/repo> <run_id> --yes`; `--yes` is required so the destructive action is never triggered accidentally in a script or terminal.
-- Both entry points accept only repositories already present in GitRun's configured repository allowlist and reject a zero run ID.
-- The scheduler's GitHub client uses GitHub's supported `POST /repos/{owner}/{repo}/actions/runs/{run_id}/force-cancel` endpoint. This is designed for runs that remain stuck in cancellation, including workflows whose conditions delay ordinary cancellation.
-- **Important scope boundary:** GitHub exposes this force-cancel API at *workflow-run* scope, not individual-job scope. Fast Stop therefore cancels every job in the selected run. The dashboard says this before the user confirms; it must not be described as a single-job kill.
-- A successful API response means GitHub accepted the force-cancel request; it does **not** prove every runner process has exited. GitRun does not directly kill Docker containers in this first implementation, avoiding unsafe guesses about job-to-container identity and permanent-runner lifecycle. The UI refreshes the snapshot and surfaces API failures.
+### Inputs and forecast
 
-### Remaining behavior and safety invariants
+Kitty samples aggregate per-repository counts in five-minute buckets: queued self-hosted jobs, busy/online/managed runners and optional host-wide CPU, memory and disk readings. Its one-hour forecast estimates aggregate demand from busy managed runners plus queued jobs. It evaluates forecasts against later observations; missing target data are skipped rather than counted as zero.
 
-- Cancellation begins directly from the user action and does not wait for the ordinary scheduler polling interval.
-- If the GitHub API is unavailable or permissions are insufficient, the request fails visibly; GitRun must not claim that cancellation succeeded.
-- Do not claim a fixed cancellation latency independent of GitHub's own propagation and runner behavior. Capture timestamps and measure p50/p95/max before promising latency improvements.
-- Preserve cleanup, event/log delivery, and state reconciliation. A cancelled job must not leave a runner incorrectly marked busy or permanently block capacity.
-- Never remove or restart a permanent runner container merely because a workflow was cancelled. Local process/container termination would require a separate, verified job-to-container binding and lifecycle protocol.
-- Repeated force-cancel requests should remain safe; races with run completion, GTUU updates, and scheduler reconciliation must be covered by tests.
+Weekday/hour forecasts are evaluated separately from the aggregate forecast. Predictive Warm Pool candidates are workload-specific only when there is recent evidence, at least four active weeks and activity in at least 80% of the observed span. Quality scores are heuristic readiness measures, not calibrated probabilities.
 
-### Investigation and implementation plan
+### Retention and data
 
-1. Trace the complete path from the UI/API cancellation request through GitRun, GitHub's job/workflow cancellation endpoint, runner state updates, and container process termination.
-2. Capture timestamps for request received, GitHub cancellation submitted/acknowledged, runner cancellation observed, process termination requested, process exit, and final state update.
-3. Reproduce the delay and identify which interval dominates. Include a running step, a step with a long-running child process, a job completing during cancellation, and an unavailable GitHub API.
-4. Select the fastest supported runner-notification mechanism. Prefer supported GitHub/runner behavior; use a local process/container signal only when the exact job-to-process mapping is reliable.
-5. Add tests for authorization, isolation, duplicate requests, graceful termination, forced termination, partial failures, and races.
-6. Report cancellation latency using p50/p95 and maximum observed values, with the measurement boundaries stated explicitly.
+High-resolution history is capped at 2,016 five-minute buckets (seven days). Older history is reduced to bounded weekly, four-week and 48-week/lifetime summaries. These are fixed-duration windows, not calendar-month arithmetic. The implementation also caps loaded repository models, forecast outcomes, workload predictions, occurrences and decision-audit records.
 
-### Safety invariants
+Kitty does not store workflow contents, command strings, job payloads, environment values, tokens or secret values. It stores bounded workflow paths, job names, runner labels and GitHub run/job IDs to identify and deduplicate workloads. The recent-job-start sampler is bounded, not an exhaustive ledger; missing starts remain unknown and are not used as fabricated zero outcomes. This limits per-workload error correction until a complete coverage source exists.
 
-- Cancellation applies only to the targeted workflow/job and its owned execution context.
-- A request being accepted is not proof that execution has stopped.
-- If the GitHub API is unavailable, local termination behavior must follow an explicit policy and must not falsely report remote cancellation success.
-- Forced termination is bounded and logged; cleanup failures remain visible.
-- No cancellation shortcut may bypass GitRun authorization or Docker/GitDockRun ownership checks.
+### Settings and activation
 
-## 2. Experimental Smart Scheduler
+Settings are stored at:
 
-### Kitty implementation status
+```text
+/var/lib/gitrun/kitty/settings.json
+```
 
-The first Kitty implementation lives in the separate `gitrun-smart-scheduler` crate and integrates as an optional policy hint to the existing deterministic scheduler. It is not an LLM, does not execute actions, and cannot replace the baseline planner. Missing settings mean off. The installed default remains shadow mode, and the baseline path is used when Kitty fails.
+A missing file means Kitty is disabled. Store the directory with mode 0700 and the settings/model files with mode 0600, owned by the GitRun service identity. The example settings and full field list are in [the crate README](../crates/gitrun-smart-scheduler/README.md).
 
-The current Workflow Model stores bounded five-minute aggregates for queued jobs, busy/online/managed runners and optional host-wide resource readings. It produces a one-hour concurrency-demand forecast and evaluates previous forecasts against subsequently observed demand. It deliberately does not claim workload-specific runtime or queue-wait predictions because this integration does not yet collect reliable per-job timing histories. The current model's readiness score is a heuristic, not a calibrated probability.
+By default, Kitty uses shadow mode and does not change runner capacity. Predictive Warm Pool requires the master switch, its own `predictive_warm_pool_enabled` switch, `shadow_mode: false`, fresh/sufficient history and an acceptable forecast-quality score. It may only raise the configured runner floor within both the extra-runner cap and the global maximum. Resource-pressure backpressure still wins, and Kitty cannot lower the operator's configured floor.
 
-Predictive Warm Pool is the sole active automation capability: it can only raise the configured runner floor, after explicit enablement, shadow mode is disabled, data are fresh and sufficient, forecast quality meets the configured threshold, and the change remains within both a configured additional-runner cap and the global maximum. Resource-pressure backpressure always wins. The model cannot lower the configured floor or bypass GSR, Docker ownership, authorization, or other existing policies.
+Malformed settings, stale data, corrupt/unsafe model state or persistence errors fall back to deterministic scheduling.
 
-Adaptive Resource Management and Smart Fast Stop triggers remain reserved, disabled capabilities. They are not considered implemented until job/container-attributed resource measurements and active-job cancellation outcomes are reliable enough to support them. Settings and storage formats are documented in `crates/gitrun-smart-scheduler/README.md`.
+### Capabilities not active
 
-### Objective
+Adaptive Resource Management and Smart Fast Stop triggers are reserved settings, not active automation. They remain disabled until GitRun has reliable per-job resource attribution and verified job-level cancellation-outcome evidence. This does not disable the operator-triggered Fast Stop command described above.
 
-Move beyond scaling based only on the current busy-runner count and queued self-hosted jobs. GitRun should learn from actual workload history, forecast likely demand and startup latency, and recommend or perform bounded adaptations while keeping deterministic policies in charge.
+## Verification and deployment limits
 
-Smart Scheduler must be optional, separately configurable by capability, and disabled by default initially.
+The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. Those checks cover the committed test suite; they are not evidence of calibrated real-world prediction accuracy or complete historical job-start coverage. Review Kitty in shadow mode before enabling predictive capacity changes.
 
-### Telemetry: requested versus actual work
-
-Collect enough data to distinguish demand from execution:
-
-- Jobs queued/requested, started, completed, failed, cancelled, skipped where observable, and retried.
-- Effective concurrency over time, not only queue length or requested parallelism.
-- Queue wait time, runner provisioning/startup time, execution duration, and end-to-end duration.
-- Repository, workflow, job name/class, branch/event category, and relevant runner labels, subject to data-minimization rules.
-- CPU, memory, disk, and other resource measurements available at job/container level.
-- Runner online/offline/busy transitions and container lifecycle events.
-- Failures, timeouts, cancellations, and discrepancies between GitHub and Docker inventories.
-- Previous predictions, confidence, actions taken, and observed outcomes, so prediction quality can be measured.
-
-Do not collect secrets, environment-variable values, tokens, job payloads, or arbitrary workflow contents as telemetry. Define retention, aggregation, and deletion behavior. Keep metric collection resource-light and avoid unbounded per-job history.
-
-### Workflow Model
-
-Maintain a versioned, machine-readable JSON model derived from observed history. The model is a description of workload characteristics and operational recommendations, not an authority that can override policy.
-
-A model may be scoped by repository, workflow, and job class, with a fallback to broader classes when samples are insufficient. Candidate fields include:
-
-- Schema/model version, generation time, observation window, and sample count.
-- Runtime distribution (for example p50/p90/p95), queue-wait and runner-startup distributions.
-- Effective concurrency and forecast peak concurrency over named time horizons.
-- Resource profiles or distributions derived from measured usage.
-- Prediction confidence, model freshness, and known limitations.
-- Recommendations such as warm-pool target or prewarming window.
-- Prediction-versus-actual history and model quality metrics.
-
-Illustrative shape only; values below are examples, not measured GitRun data:
-
-    {
-      "schema_version": 1,
-      "model_version": 1,
-      "updated_at": "2026-10-15T10:00:00Z",
-      "scope": {
-        "repository": "owner/repo",
-        "workflow": "CI",
-        "job_class": "docker-build"
-      },
-      "observations": {
-        "sample_count": 240,
-        "window_days": 30
-      },
-      "runtime": {
-        "p50_seconds": 180,
-        "p95_seconds": 420
-      },
-      "demand": {
-        "predicted_peak_concurrency": 4,
-        "confidence": 0.82
-      },
-      "recommendations": {
-        "prewarm_runners": true,
-        "target_warm_pool": 2
-      }
-    }
-
-Separate four concepts in the implementation and UI:
-
-1. **Observed facts** — what actually happened.
-2. **Predictions** — what the model estimates will happen, including uncertainty.
-3. **Recommendations** — what action is proposed.
-4. **Applied decisions** — what the scheduler actually did and why.
-
-Never let the model silently change hard safety limits, authorization, security policies, or the configured global maximum. Recommendations must be explainable and auditable.
-
-### Prediction and adaptive behavior
-
-Potential capabilities, introduced incrementally:
-
-- Forecast queue arrivals and effective concurrency by time horizon.
-- Predict likely job duration and runner startup delay from comparable historical jobs.
-- Prewarm runners before predictable peaks.
-- Adjust the desired permanent warm pool within operator-defined lower and upper bounds.
-- Recommend or apply bounded resource profiles based on measured CPU/memory behavior.
-- Detect workload drift, outliers, sustained resource pressure, and degraded prediction accuracy.
-- Compare forecast against actual demand and update the model over time.
-- Fall back to the classic scheduler when samples are insufficient, the model is stale, or prediction quality degrades.
-
-Forecasting must not be confused with certainty. Real-time observations and resource-pressure safety controls take precedence over predictions. Predicted capacity must never bypass global limits or protected-container accounting.
-
-## 3. Settings and rollout
-
-Add an **Experimental — Smart Scheduler** section. Keep individual capabilities independently switchable:
-
-- **Predictive Analytics:** collect/aggregate telemetry and show forecasts without changing scheduling decisions.
-- **Predictive Warm Pool:** prewarm capacity based on forecasts.
-- **Adaptive Resource Management:** adjust permitted targets within explicit bounds.
-- **Workflow Model:** inspect model scope, freshness, samples, confidence, forecasts, and recommendations.
-- **Safety Limits:** show effective minimum/maximum, resource-pressure gates, fallback state, and recent decisions.
-
-Initial default: disabled. Start with observation-only mode, then recommendations, then opt-in automation. Disabling Smart Scheduler must return operation to the classic deterministic scheduler without deleting the historical data by surprise.
-
-Each automatic action should have a reason, source data window, model version, confidence, before/after state, and result. Keep a clear path to disable the feature and revert to classic behavior.
-
-## 4. Delivery sequence
-
-1. **Stabilize and map the existing scheduler.** Verify runner inventory, effective capacity, protected GitDockRun accounting, concurrency, recovery, and global maximum invariants.
-2. **Harden Fast Stop independently.** The initial run-level force-cancel path is wired in the dashboard and CLI; add timestamped end-to-end measurements and exercise permission failures, already-completed runs, and cancellation races before release.
-3. **Add telemetry and model schema.** Observation-only, bounded resource cost, retention rules, and no automatic scaling changes.
-4. **Add passive predictions.** Report accuracy and confidence against real outcomes.
-5. **Enable predictive prewarming.** Opt-in, bounded by existing hard limits, with clear fallback.
-6. **Evaluate adaptive resource management.** Add only after reliable resource measurements and tests prove that policy and capacity invariants remain enforced.
-
-Keep Fast Stop independent of Smart Scheduler so either feature can ship, be tested, or be disabled without requiring the other.
-
-## 5. Acceptance criteria
-
-### Fast Stop
-- [x] Dashboard exposes Fast Stop for active workflow runs with an explicit whole-run confirmation.
-- [x] CLI exposes `gitrun fast-stop <owner/repo> <run_id> --yes`; repository allowlist and positive run ID are enforced.
-- [x] Uses GitHub's force-cancel run endpoint directly, without waiting for scheduler polling; failures are returned to the caller.
-- [x] Does not locally kill or remove runner containers, and explicitly documents that force-cancel affects every job in the selected workflow run.
-- [ ] End-to-end timing identifies where latency is spent.
-- [ ] API permission failures, already-completed runs, repeated requests, and cancellation races are exercised.
-- [ ] p50/p95/max latency is recorded for a documented test workload; no fixed-latency promise is made before this evidence exists.
-
-### Smart Scheduler
-- Requested jobs and actually executed jobs are represented separately.
-- Effective concurrency and resource usage are derived from observed events/metrics, not inferred from queue count alone.
-- Workflow Model JSON is schema-versioned, bounded, validated, and inspectable.
-- Predictions are evaluated against actual outcomes and include confidence/sample information.
-- Insufficient or stale data triggers classic behavior.
-- All automated actions obey global capacity, resource-pressure, security, and ownership policies.
-- Every automatic action is explainable and auditable.
-
-## Non-goals
-
-- Replacing deterministic safety/policy checks with an opaque model.
-- Claiming that GitRun can force an internal GitHub Actions runner condition evaluation without a supported mechanism.
-- Guaranteeing a fixed cancellation latency independent of GitHub API/network behavior or workload signal handling.
-- Allowing predictive logic to override hard limits or security controls.
-
-
-## v1.5.0 review boundary
-
-Fast Stop implementation and its included tests are evaluated by the current PR checks; any behavior not exercised by those tests remains unverified rather than implicitly accepted. The Experimental Smart Scheduler remains a proposal and must not be represented as a shipped, production-ready scheduling capability unless separately implemented, tested and approved. See the [refactor status tracker](v1.5.0-refactor-status.md).
+The separate deployment checks still include the actual desktop privilege/install flows, provisioning and recovery on real KVM/VirtualBox hosts, a complete authorized disconnect API request, and migration of customized or pre-existing runner images. See [the v1.5.0 status report](v1.5.0-refactor-status.md).

@@ -1,6 +1,6 @@
 # Dashboard redesign roadmap
 
-Status: dashboard changes are being reviewed as part of PR [#83](https://github.com/Vider06/GitRun/pull/83), branch `refactor/v1.5.0-total-cleanup`.
+Status: the v1.5.0 dashboard baseline was merged through [PR #83](https://github.com/Vider06/GitRun/pull/83) on 2026-10-19. This file records the implemented behavior and remaining environment-specific checks.
 
 ## Goals
 
@@ -27,7 +27,8 @@ Rebuild the GitRun desktop experience as an operational control plane rather tha
 | Stars, forks, open PRs and merged PRs | GitHub repository metadata and Search API | 300 s | Partial/stale data is disclosed; Search API totals can be capped |
 | CPU, memory and critical-filesystem utilization | Existing local scheduler resource-pressure sampler | 15 s | Host-wide only; never label it per-job resource usage |
 | Critical GSR events | Local event queue | Read on overview refresh | Empty event queue is not proof that enforcement is healthy |
-| Job duration, per-job CPU/memory, queue item identity and cost | Not yet supplied by a complete dashboard contract | Not applicable | Do not fabricate values; add only after an authoritative event/history source exists |
+| Bounded recent job-start/workload metadata | Recent GitHub job/run sampling and Kitty's repository model | Bounded by sampler/model limits | Coverage is incomplete; missing starts remain unknown, not zero. This is not an exhaustive occurrence ledger. |
+| Per-job duration, CPU/memory attribution and cost | No complete authoritative source is wired into the dashboard | Not applicable | Do not infer per-job measurements from host-wide resource data. |
 
 Refresh windows are defaults, not a reason to poll on every component render. Views should reuse snapshots within a process, show sample time and stale state, and avoid duplicating equivalent calls when navigation changes.
 
@@ -78,7 +79,7 @@ Refresh windows are defaults, not a reason to poll on every component render. Vi
 - Build the Tauri application and standalone Recovery target.
 - Exercise first-run and reinstall flows, GitHub API errors/rate limits, Docker-unavailable states, Vault metadata/scopes, empty and partial runner inventories, stale caches, denied policy operations and rollback failures.
 - Inspect the final diff for accidental changes to unrelated files or generated artifacts.
-- Keep the pull request draft until validation failures found by CI are resolved. Never merge to \`main\` as part of this task.
+- PR #83 was merged after all PR checks passed. Re-run relevant checks whenever dashboard code, scheduler APIs or recovery behavior changes.
 
 ## Acceptance criteria
 
@@ -95,14 +96,14 @@ Refresh windows are defaults, not a reason to poll on every component render. Vi
 
 ## Latest implementation notes
 
-- \`gitrun update --check\` now has a read-only CLI path: it verifies the signed release manifest, reports whether a GitRun release is newer, checks the runner image digest, and does not download or install anything.
-- A separate, confirmed runner-only action invokes the trusted privileged CLI. It verifies the release's runner image digest, pins the image in configuration, and reconciles permanent runners without replacing GitRun itself. GTUU skips busy runners and lets a later run reconcile them.
-- The scheduler reloads local GTUU schedule settings every tick, so changing automatic-update enablement, time or timezone in the dashboard does not require a service restart.
-- The Tauri backend has explicit service start/stop/restart commands, a bounded read-only host health report, coordinated config/settings persistence with rollback, and cached runner/workflow/repository/resource snapshots.
+- `gitrun update --check` is read-only: it verifies the signed release manifest, reports whether a newer GitRun release is available, and checks the runner image digest without downloading or installing anything.
+- A separate, confirmed runner-only action calls the trusted privileged CLI, verifies the runner image digest, pins the image in configuration and reconciles permanent runners without replacing GitRun. GTUU skips busy runners and retries them on a later run.
+- The scheduler reloads GTUU schedule settings each tick, so changes to automatic-update enablement, time or timezone do not require a service restart.
+- The Tauri backend exposes service start/stop/restart commands, a bounded read-only host health report, coordinated config/settings persistence with rollback, and cached runner/workflow/repository/resource snapshots.
 
-These notes describe the implementation on PR #83. Phase 7 is reviewing documentation and current-head CI evidence; the remaining desktop privilege-dialog and install-transition checks are explicitly environment-dependent and must not be described as passed until run on a supported desktop.
+PR #83 is merged. Dashboard features listed here describe the v1.5.0 source; desktop-only authorization and install transitions still require checks on a supported desktop.
 
 
-## v1.5.0 verification note
+## Verification status
 
-The Tauri GUI build/package and executable-trust regression tests pass in the current PR CI. This does not replace manual verification of the actual desktop authorization prompt (`pkexec`) or install/uninstall/reinstall privilege transitions on supported desktop environments. Do not describe those flows as fully verified until their runtime evidence is recorded in the [status tracker](v1.5.0-refactor-status.md).
+The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions were not exercised by those automated checks. See the [status report](v1.5.0-refactor-status.md).

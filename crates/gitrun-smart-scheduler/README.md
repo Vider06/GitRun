@@ -47,4 +47,4 @@ The first version forecasts the next-hour aggregate demand proxy: busy managed r
 
 ## Tests
 
-Unit tests cover disabled-by-default behavior, configuration validation, corrupt settings fallback, bucket aggregation, repository path handling, stale/insufficient forecast behavior, shadow mode, and bounded opt-in warm-pool recommendations. Full workspace CI is still required for each integrated source head.
+Unit tests cover disabled-by-default behavior, configuration validation, corrupt settings fallback, bucket aggregation, repository path handling, stale/insufficient forecasts, shadow mode and bounded opt-in warm-pool recommendations. These tests passed in the PR #83 source-head CI; rerun the workspace checks after future implementation or integration changes.

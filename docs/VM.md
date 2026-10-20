@@ -101,6 +101,6 @@ Use a protected Docker endpoint. Do not expose a guest Docker daemon to an untru
 A VM can provide a stronger boundary than a host Docker runner, but it is not automatically secure merely because it is a VM. Protect the VM's Docker endpoint, guest credentials and base image, and treat the guest as part of the GitRun trusted infrastructure.
 
 
-## Verification boundary (v1.5.0)
+## Verification status
 
-The current PR CI exercises VM configuration/resolution tests and the canonical build/test gates. It does **not** constitute a live provisioning and recovery run on both KVM/libvirt and VirtualBox hosts. Operators should validate the selected hypervisor, guest Docker endpoint, TLS material, recovery behavior and their own base images on the target host before production rollout. See the [v1.5.0 status tracker](v1.5.0-refactor-status.md) for the commit-specific evidence and limitations.
+PR #83's source HEAD passed the VM configuration/resolution tests and repository CI before merge. These tests do not replace live provisioning and recovery on both KVM/libvirt and VirtualBox hosts. Before production, validate the selected hypervisor, guest Docker endpoint, TLS material, recovery behavior and supplied base images on the target host. See the [status report](v1.5.0-refactor-status.md) for the recorded limits.

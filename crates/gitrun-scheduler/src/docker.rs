@@ -475,7 +475,37 @@ fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
 /// learning peak RAM requirements. The scheduler runs on the same Linux host as
 /// this local Docker daemon; if host PID/cgroup visibility is missing, sampling
 /// fails and Kitty falls back to its workload-class prior instead of guessing.
-fn container_cgroup_memory_usage_bytes_from_pid(pid: u32) -> Result<u64> {
+fn ensure_cgroup_matches_container_id(
+    cgroup_path: &str,
+    expected_container_id: &str,
+) -> Result<(), DockerError> {
+    if !is_full_container_id(expected_container_id) {
+        return Err(DockerError::Command(
+            "resource sampling requires an immutable full Docker container ID".into(),
+        ));
+    }
+    let actual_container_id = container_id_from_cgroup(cgroup_path).ok_or_else(|| {
+        DockerError::Command(
+            "host PID cgroup does not identify a Docker container; refusing to attribute memory usage"
+                .into(),
+        )
+    })?;
+    if !actual_container_id.eq_ignore_ascii_case(expected_container_id) {
+        return Err(DockerError::Command(
+            "host PID cgroup identity changed during resource sampling; refusing to attribute memory usage to a different container"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Read total memory charged to the cgroup for the exact immutable Docker ID,
+/// including page cache. A PID can exit or be reused between Docker inspection
+/// and this read, so the cgroup identity must match before memory is attributed.
+fn container_cgroup_memory_usage_bytes_from_pid(
+    pid: u32,
+    expected_container_id: &str,
+) -> Result<u64> {
     const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
     if pid == 0 {
         return Err(DockerError::Command(
@@ -492,6 +522,7 @@ fn container_cgroup_memory_usage_bytes_from_pid(pid: u32) -> Result<u64> {
                 "accurate resource learning requires a visible cgroup-v2 memory controller".into(),
             )
         })?;
+    ensure_cgroup_matches_container_id(relative, expected_container_id)?;
     let root = std::fs::canonicalize("/sys/fs/cgroup")?;
     let relative = cgroup_v2_relative_path(relative)?;
     let cgroup = std::fs::canonicalize(root.join(relative))?;
@@ -637,7 +668,7 @@ pub fn container_resource_usages(
         let cpu_cores = *cpu_usage.get(id).ok_or_else(|| {
             DockerError::Command("verified container CPU usage disappeared from sample".into())
         })?;
-        let memory_bytes = container_cgroup_memory_usage_bytes_from_pid(pid)?;
+        let memory_bytes = container_cgroup_memory_usage_bytes_from_pid(pid, id)?;
         result.insert(
             id.clone(),
             ContainerResourceUsage {
@@ -854,7 +885,7 @@ pub fn running_managed_container_resource_reservations(
         // MemAvailable already accounts for the RAM currently used by containers.
         // Subtract only the remaining part of each hard limit to avoid counting
         // current container RAM a second time in the shared host budget.
-        let memory_in_use = container_cgroup_memory_usage_bytes_from_pid(pid)?;
+        let memory_in_use = container_cgroup_memory_usage_bytes_from_pid(pid, &id)?;
         reservations.push(ManagedContainerResourceReservation {
             name,
             cpu_headroom_cores: (cpu_limit - cpu_usage).max(0.0),
@@ -2666,8 +2697,7 @@ pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     Ok(None)
 }
 
-/// Extracts a Docker-style 64-hex container id from a Linux cgroup path.
-#[cfg(target_os = "linux")]
+/// Extracts a Docker-style 64-hex container ID from a cgroup path.
 fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
     for component in cgroup.split('/') {
         if is_full_container_id(component) {
@@ -2688,7 +2718,6 @@ fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
     None
 }
 
-#[cfg(target_os = "linux")]
 fn is_full_container_id(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
@@ -3734,6 +3763,43 @@ mod tests {
             container_id_from_cgroup(&format!("0::/system.slice/docker-{id}.scope")).as_deref(),
             Some(id.as_str())
         );
+    }
+
+    #[test]
+    fn resource_cgroup_must_match_the_immutable_container_id() {
+        let expected = "0123456789abcdef".repeat(4);
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/system.slice/docker-{expected}.scope"),
+            &expected,
+        )
+        .is_ok());
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/docker/{expected}"),
+            &expected,
+        )
+        .is_ok());
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/system.slice/cri-containerd-{expected}.scope"),
+            &expected,
+        )
+        .is_ok());
+
+        let other = "fedcba9876543210".repeat(4);
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/system.slice/docker-{other}.scope"),
+            &expected,
+        )
+        .is_err());
+        assert!(ensure_cgroup_matches_container_id(
+            "0::/user.slice/user-1000.slice/session-42.scope",
+            &expected,
+        )
+        .is_err());
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/system.slice/docker-{expected}.scope"),
+            "truncated-container-id",
+        )
+        .is_err());
     }
 
     #[cfg(target_os = "linux")]

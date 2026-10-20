@@ -1,6 +1,6 @@
 # GitRun architecture — GitRun 1.5.1
 
-> This is the high-level architecture overview for the 1.5.1 source line. The [1.5.1 release notes](v1.5.1-release-notes.md) describe the post-1.5.0 recovery and version changes. The [contract inventory](v1.5.0-contract-inventory.md) and [refactor status](v1.5.0-refactor-status.md) remain historical snapshots of the 1.5.0 audit.
+> This is the high-level architecture overview for the 1.5.1 source line. The [1.5.1 release notes](v1.5.1-release-notes.md) describe the post-1.5.0 recovery and version changes. The [1.5.0 audit summary](v1.5.0-refactor-status.md) is a concise historical record; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 

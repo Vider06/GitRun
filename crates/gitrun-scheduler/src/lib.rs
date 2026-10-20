@@ -1615,7 +1615,7 @@ impl AdaptiveResourceBudgetState {
                 };
             }
         };
-        let reservations = match docker::running_managed_container_resource_headroom() {
+        let reservations = match docker::running_managed_container_resource_reservations() {
             Ok(reservations) => reservations,
             Err(error) => {
                 return Self {
@@ -1701,7 +1701,7 @@ struct AdaptiveResourceBudget {
 impl AdaptiveResourceBudget {
     fn from_capacity(
         capacity: resource_pressure::ResourceCapacity,
-        reservations: Vec<docker::ManagedContainerResourceHeadroom>,
+        reservations: Vec<docker::ManagedContainerResourceReservation>,
     ) -> Option<Self> {
         if !capacity.cpu_cores.is_finite()
             || capacity.cpu_cores < 0.0
@@ -1714,23 +1714,23 @@ impl AdaptiveResourceBudget {
         let mut reserved_memory_bytes = 0_u64;
         for reservation in reservations {
             if reservation.name.trim().is_empty()
-                || !reservation.cpu_cores.is_finite()
-                || reservation.cpu_cores < 0.0
-                || reservation.memory_bytes > (1_u64 << 60)
+                || !reservation.cpu_headroom_cores.is_finite()
+                || reservation.cpu_headroom_cores < 0.0
+                || reservation.memory_limit_bytes > (1_u64 << 60)
             {
                 return None;
             }
-            reserved_cpu_cores += reservation.cpu_cores;
+            reserved_cpu_cores += reservation.cpu_headroom_cores;
             if !reserved_cpu_cores.is_finite() {
                 return None;
             }
-            reserved_memory_bytes = reserved_memory_bytes.checked_add(reservation.memory_bytes)?;
+            reserved_memory_bytes = reserved_memory_bytes.checked_add(reservation.memory_limit_bytes)?;
             if reserved_memory_bytes > (1_u64 << 62)
                 || reservations_by_name.insert(
                     reservation.name,
                     ContainerResourceReservation {
-                        cpu_cores: reservation.cpu_cores,
-                        memory_bytes: reservation.memory_bytes,
+                        cpu_cores: reservation.cpu_headroom_cores,
+                        memory_bytes: reservation.memory_limit_bytes,
                     },
                 ).is_some()
             {
@@ -3815,10 +3815,10 @@ mod resource_pressure_reconciliation_tests {
         const GIB: u64 = 1024 * 1024 * 1024;
         let mut budget = AdaptiveResourceBudget::from_capacity(
             resource_pressure::ResourceCapacity { cpu_cores: 3.0, memory_bytes: 8 * GIB },
-            vec![docker::ManagedContainerResourceHeadroom {
+            vec![docker::ManagedContainerResourceReservation {
                 name: "runner-a".into(),
-                cpu_cores: 2.0,
-                memory_bytes: 4 * GIB,
+                cpu_headroom_cores: 2.0,
+                memory_limit_bytes: 4 * GIB,
             }],
         ).unwrap();
         assert_eq!(budget.available_cpu_cores(), 1.0);

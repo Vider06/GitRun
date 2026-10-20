@@ -6,7 +6,8 @@ const apiOps = {
   GitSaveRun: ["File","Logs"],
   GitRegisterRun: ["Register"],
   GitInstallRun: ["Install","Remove","Update"],
-  GitReadRun: ["Read"], GitWriteRun: ["Write"], GitVerifyRun: ["Verify"], GitStatusRun: ["Status"]
+  GitReadRun: ["Read"], GitWriteRun: ["Write"], GitVerifyRun: ["Verify"], GitStatusRun: ["Status"],
+  GitDispatchRun: ["Plan"]
 };
 
 export async function renderSecurity() {

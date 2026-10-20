@@ -4095,6 +4095,48 @@ mod resource_pressure_reconciliation_tests {
     }
 
     #[test]
+    fn dispatch_route_binds_exact_job_but_family_route_does_not() {
+        let job_name = Some("build");
+        assert_eq!(
+            runner_workflow_binding(Some("wk-0123456789abcdef"), None, job_name, Some(42), Some(420)),
+            (None, None, None),
+            "family routes may not claim one arbitrary job occurrence"
+        );
+        assert_eq!(
+            runner_workflow_binding(
+                Some("wk-0123456789abcdef"),
+                Some("0123456789abcdef0123456789abcdef"),
+                job_name,
+                Some(42),
+                Some(420),
+            ),
+            (Some("build"), Some(42), Some(420)),
+            "a unique one-use route can bind the exact queued occurrence for GSR verification"
+        );
+    }
+
+    #[test]
+    fn dispatch_route_parser_requires_one_family_and_one_canonical_route() {
+        let family = "gitrun-job-wk-0123456789abcdef".to_owned();
+        let route = "gitrun-route-0123456789abcdef0123456789abcdef".to_owned();
+        assert_eq!(
+            explicit_workload_routing_id(&[family.clone(), route.clone()]).unwrap(),
+            Some("wk-0123456789abcdef".to_owned())
+        );
+        assert_eq!(
+            explicit_dispatch_route_id(&[family.clone(), route.clone()]).unwrap(),
+            Some("0123456789abcdef0123456789abcdef".to_owned())
+        );
+        assert!(explicit_workload_routing_id(&[route.clone()]).is_err());
+        assert!(explicit_dispatch_route_id(&[family.clone(), "gitrun-route-short".into()]).is_err());
+        assert!(explicit_workload_routing_id(&[
+            family.clone(),
+            route.clone(),
+            "self-hosted".to_owned(),
+        ]).is_err());
+    }
+
+    #[test]
     fn adaptive_resource_backend_guard_defers_vm_targets() {
         use std::time::{SystemTime, UNIX_EPOCH};
         let path = std::env::temp_dir().join(format!(

@@ -1911,6 +1911,18 @@ impl AdaptiveResourceBudget {
     }
 }
 
+fn ensure_adaptive_allocation_backend_is_local(
+    backend: &docker::DockerHost,
+    resource_allocation: Option<&RunnerResourceAllocation>,
+) -> Result<(), std::io::Error> {
+    if resource_allocation.is_some() && !matches!(backend, docker::DockerHost::Local) {
+        return Err(std::io::Error::other(
+            "adaptive CPU/RAM limits were measured against the local host, but the resolved Docker backend is remote; refusing to apply a mismatched resource budget",
+        ));
+    }
+    Ok(())
+}
+
 fn ensure_adaptive_resource_backend_is_local(
     state_dir: &std::path::Path,
     job_labels: &[String],
@@ -2485,6 +2497,10 @@ fn create_runner(
         // resolution is pending; doing so could let it claim the wrong job.
         return Ok(false);
     };
+    // Logic Containers settings are dashboard-editable and were checked before
+    // allocation. Re-check the actual resolved backend here to close the
+    // configuration-change race between measurement and runner creation.
+    ensure_adaptive_allocation_backend_is_local(&backend, resource_allocation)?;
     if routed_workload_id.is_some() && is_windows {
         return Err(std::io::Error::other(
             "exclusive workload-family routing is not supported by the configured Windows runner bootstrap; use a managed Linux runner profile",
@@ -3963,6 +3979,49 @@ mod resource_pressure_reconciliation_tests {
         assert_eq!(
             state.unavailable_reason.as_deref(),
             Some("replacement failed")
+        );
+    }
+
+    #[test]
+    fn adaptive_allocation_is_never_applied_to_a_remote_backend() {
+        let allocation = RunnerResourceAllocation {
+            cpus: "1".into(),
+            memory: (1024_u64 * 1024 * 1024).to_string(),
+            workload_id: "wk-0123456789abcdef".into(),
+            learned: false,
+            reason: "test prior".into(),
+        };
+        assert!(
+            ensure_adaptive_allocation_backend_is_local(
+                &docker::DockerHost::Local,
+                Some(&allocation),
+            )
+            .is_ok()
+        );
+        assert!(
+            ensure_adaptive_allocation_backend_is_local(
+                &docker::DockerHost::Remote("tcp://127.0.0.1:2376".into()),
+                Some(&allocation),
+            )
+            .is_err()
+        );
+        assert!(
+            ensure_adaptive_allocation_backend_is_local(
+                &docker::DockerHost::RemoteTls {
+                    endpoint: "tcp://127.0.0.1:2376".into(),
+                    cert_dir: "/tmp/gitrun-test-certs".into(),
+                },
+                Some(&allocation),
+            )
+            .is_err()
+        );
+        assert!(
+            ensure_adaptive_allocation_backend_is_local(
+                &docker::DockerHost::Remote("tcp://127.0.0.1:2376".into()),
+                None,
+            )
+            .is_ok(),
+            "static configured limits remain available when adaptive allocation is disabled"
         );
     }
 

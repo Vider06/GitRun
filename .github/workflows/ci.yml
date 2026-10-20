@@ -1077,7 +1077,7 @@ jobs:
               end
           ' >/dev/null
           echo "✅ target cache GC family normalization"
-          
+
           out="$(printf '%s\n' '{"reason":"compiler-message","message":{"rendered":"error: x\n","level":"error","message":"unneeded return, 50% sure","code":{"code":"clippy::needless_return"},"spans":[{"file_name":"'"$ws"'/crates/b/src/main.rs","is_primary":true,"line_start":7,"line_end":7,"column_start":5,"column_end":12}]}}' | ci_cargo_json)"
           expect "cargo json → annotation with relative path" '::error file=crates/b/src/main.rs,line=7,col=5' "$out"
           expect "cargo json → % escaped" '50%25 sure' "$out"
@@ -2799,7 +2799,10 @@ jobs:
             echo "<details><summary>Caches that are kept</summary>"; echo
             echo "| Kind | Ref | Count | MB |"; echo "|---|---|---|---|"
             jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
-              def fam: sub("-[^-]+$"; "");
+              def fam:
+                if contains("-target-img") then
+                  (sub("-man[^-]+-[^-]+-"; "-") | sub("-[^-]+$"; ""))
+                else sub("-[^-]+$"; "") end;
               ([$plan[0][].id]) as $gone
               | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })
               | group_by([.fam, .ref]) | .[]

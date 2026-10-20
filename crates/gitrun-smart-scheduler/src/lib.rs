@@ -720,9 +720,12 @@ pub fn has_workload_routing_marker(labels: &[String]) -> bool {
 /// Malformed reserved-prefix labels still count as markers so they cannot
 /// silently fall back to a generic runner.
 pub fn has_dispatch_routing_marker(labels: &[String]) -> bool {
-    labels
-        .iter()
-        .any(|label| label.trim().to_ascii_lowercase().starts_with("gitrun-route-"))
+    labels.iter().any(|label| {
+        label
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("gitrun-route-")
+    })
 }
 
 /// Resolve exactly one canonical per-occurrence route ID (128-bit lowercase hex).
@@ -738,8 +741,11 @@ pub fn dispatch_route_id_from_labels(labels: &[String]) -> Option<String> {
         return None;
     }
     let route_id = candidates[0].strip_prefix("gitrun-route-")?;
-    (route_id.len() == 32 && route_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-        .then(|| route_id.to_owned())
+    (route_id.len() == 32
+        && route_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    .then(|| route_id.to_owned())
 }
 
 /// Resolve exactly one canonical GitRun workload-family label.

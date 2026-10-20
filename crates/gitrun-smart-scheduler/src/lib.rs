@@ -1405,11 +1405,33 @@ impl KittyRuntime {
             .filter(|sample| valid_resource_sample(sample, observed_at_epoch))
             .cloned()
             .collect();
+        let key = repository_key(repository);
         if valid_samples.is_empty() {
+            // Age out the private resource history even when no runner is
+            // currently active. This path touches only an already-loaded
+            // model, so empty telemetry does not trigger unnecessary disk IO.
+            let cutoff = observed_at_epoch.saturating_sub(180 * 86_400);
+            let pruned = if let Some(model) = self.models.get_mut(&key) {
+                let before = model.resource_observations.len();
+                model.resource_observations.retain(|entry| {
+                    entry.last_sample_at_epoch >= cutoff
+                        && entry.last_sample_at_epoch <= observed_at_epoch
+                });
+                before != model.resource_observations.len()
+            } else {
+                false
+            };
+            if pruned {
+                self.dirty_models.insert(key.clone());
+                if let Err(error) = self.persist_model(&key) {
+                    self.disabled_models.insert(key.clone());
+                    return Err(error);
+                }
+                self.dirty_models.remove(&key);
+                self.persist_dashboard_snapshot()?;
+            }
             return Ok(());
         }
-
-        let key = repository_key(repository);
         if self.disabled_models.contains(&key) {
             return Ok(());
         }

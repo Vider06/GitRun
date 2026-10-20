@@ -198,7 +198,10 @@ pub fn validate_arguments(
     }
 
     if (api, operation) == (GitRunApi::GitDispatchRun, GitRunOperation::Plan) {
-        let workflow = arguments.get("target_workflow").map(String::as_str).unwrap_or("");
+        let workflow = arguments
+            .get("target_workflow")
+            .map(String::as_str)
+            .unwrap_or("");
         if !workflow.starts_with(".github/workflows/")
             || workflow.contains("..")
             || workflow.contains('\\')
@@ -207,18 +210,39 @@ pub fn validate_arguments(
         {
             return Err("target_workflow must be a safe path beneath .github/workflows".into());
         }
-        let job = arguments.get("target_job").map(String::as_str).unwrap_or("");
-        if job.is_empty() || job.len() > 128 || !job.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')) {
+        let job = arguments
+            .get("target_job")
+            .map(String::as_str)
+            .unwrap_or("");
+        if job.is_empty()
+            || job.len() > 128
+            || !job
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        {
             return Err("target_job must be a valid GitHub Actions job identifier".into());
         }
-        let labels = arguments.get("target_labels").map(String::as_str).unwrap_or("");
+        let labels = arguments
+            .get("target_labels")
+            .map(String::as_str)
+            .unwrap_or("");
         let labels: Vec<_> = labels.split(',').map(str::trim).collect();
-        if labels.is_empty() || labels.len() > 32 || labels.iter().any(|label| {
-            label.is_empty() || label.len() > 128 || !label.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
-                || label.to_ascii_lowercase().starts_with("gitrun-route-")
-                || label.to_ascii_lowercase().starts_with("gitrun-job-")
-        }) {
-            return Err("target_labels must be a comma-separated list of safe, non-reserved runner labels".into());
+        if labels.is_empty()
+            || labels.len() > 32
+            || labels.iter().any(|label| {
+                label.is_empty()
+                    || label.len() > 128
+                    || !label
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                    || label.to_ascii_lowercase().starts_with("gitrun-route-")
+                    || label.to_ascii_lowercase().starts_with("gitrun-job-")
+            })
+        {
+            return Err(
+                "target_labels must be a comma-separated list of safe, non-reserved runner labels"
+                    .into(),
+            );
         }
     }
 

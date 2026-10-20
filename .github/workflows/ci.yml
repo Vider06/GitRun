@@ -1058,20 +1058,22 @@ jobs:
           ws="$GITHUB_WORKSPACE"
 
           # Target cache keys include manifest/lock hashes before the profile/job suffix.
-          # Ensure GC groups old target caches with their replacement, while preserving
-          # separate image/toolchain configurations.
+          # GC should group superseded keys for the SAME job, never consume another job's
+          # separately useful target cache; image fingerprints must remain distinct too.
           jq -n '
             def fam:
               if contains("-target-img") then
-                (sub("-man[^-]+-[^-]+-"; "-") | sub("-[^-]+$"; ""))
+                sub("-man[^-]+-[^-]+-prof"; "-prof")
               else sub("-[^-]+$"; "") end;
             [
               "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man11111111-lock11111111-profaaaaaaaa-rust-lint",
+              "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-lint",
               "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-test",
-              "gitrun-e1-Linux-X64-target-imgfeedbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-test"
+              "gitrun-e1-Linux-X64-target-imgfeedbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-lint"
             ] as $keys
             | if (($keys[0] | fam) == ($keys[1] | fam))
                  and (($keys[0] | fam) != ($keys[2] | fam))
+                 and (($keys[0] | fam) != ($keys[3] | fam))
               then true
               else error("target cache GC family normalization is unsafe")
               end
@@ -2763,7 +2765,7 @@ jobs:
             def ts: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
             def fam:
               if contains("-target-img") then
-                (sub("-man[^-]+-[^-]+-"; "-") | sub("-[^-]+$"; ""))
+                sub("-man[^-]+-[^-]+-prof"; "-prof")
               else sub("-[^-]+$"; "") end;
             map(. + { fam: (.key | fam), age: (($now - (.created_at | ts)) / 86400) })
             | map(. + { reason:
@@ -2801,7 +2803,7 @@ jobs:
             jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
               def fam:
                 if contains("-target-img") then
-                  (sub("-man[^-]+-[^-]+-"; "-") | sub("-[^-]+$"; ""))
+                  sub("-man[^-]+-[^-]+-prof"; "-prof")
                 else sub("-[^-]+$"; "") end;
               ([$plan[0][].id]) as $gone
               | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })

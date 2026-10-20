@@ -695,7 +695,25 @@ mod tests {
         assert!(unit_matches_contract(SYSTEMD_UNIT, SYSTEMD_UNIT));
         assert!(unit_matches_contract(GSR_SYSTEMD_UNIT, GSR_SYSTEMD_UNIT));
 
-        let legacy_scheduler = "[Unit]\\nDescription=GitRun Rust scheduler\\nRequires=docker.service\\nAfter=docker.service\\nWants=network-online.target\\nAfter=network-online.target\\n\\n[Service]\\nType=simple\\nExecStart=/usr/local/bin/gitrun scheduler\\nRestart=on-failure\\nRestartSec=5\\nTimeoutStopSec=60\\nKillMode=control-group\\nEnvironmentFile=/etc/gitrun/gitrun.env\\n\\n[Install]\\nWantedBy=multi-user.target\\n";
+        let legacy_scheduler = r#"[Unit]
+Description=GitRun Rust scheduler
+Requires=docker.service
+After=docker.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gitrun scheduler
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillMode=control-group
+EnvironmentFile=/etc/gitrun/gitrun.env
+
+[Install]
+WantedBy=multi-user.target
+"#;
         assert!(!unit_matches_contract(legacy_scheduler, SYSTEMD_UNIT));
         assert!(!unit_matches_contract(SYSTEMD_UNIT, GSR_SYSTEMD_UNIT));
     }

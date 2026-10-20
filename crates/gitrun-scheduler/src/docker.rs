@@ -448,8 +448,7 @@ pub fn parse_docker_bytes(raw: &str) -> Option<u64> {
         _ => return None,
     };
     let bytes = number * multiplier;
-    (bytes.is_finite() && bytes >= 0.0 && bytes <= u64::MAX as f64)
-        .then_some(bytes.ceil() as u64)
+    (bytes.is_finite() && bytes >= 0.0 && bytes <= u64::MAX as f64).then_some(bytes.ceil() as u64)
 }
 
 fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
@@ -460,7 +459,10 @@ fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
         ));
     }
     let path = Path::new(relative);
-    if path.components().any(|component| !matches!(component, Component::Normal(_))) {
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
         return Err(DockerError::Command(
             "container cgroup path contains unsafe components".into(),
         ));
@@ -485,9 +487,11 @@ fn container_cgroup_memory_usage_bytes_from_pid(pid: u32) -> Result<u64> {
     let relative = cgroup_file
         .lines()
         .find_map(|line| line.strip_prefix("0::"))
-        .ok_or_else(|| DockerError::Command(
-            "accurate resource learning requires a visible cgroup-v2 memory controller".into(),
-        ))?;
+        .ok_or_else(|| {
+            DockerError::Command(
+                "accurate resource learning requires a visible cgroup-v2 memory controller".into(),
+            )
+        })?;
     let root = std::fs::canonicalize("/sys/fs/cgroup")?;
     let relative = cgroup_v2_relative_path(relative)?;
     let cgroup = std::fs::canonicalize(root.join(relative))?;
@@ -546,7 +550,11 @@ pub fn container_resource_usages(
     let inspect_refs: Vec<&str> = inspect_args.iter().map(String::as_str).collect();
     let inspect_output = run_checked(&inspect_refs)?;
     let mut pids = HashMap::<String, u32>::new();
-    for line in inspect_output.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in inspect_output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         let (id, raw_pid) = line.split_once('|').ok_or_else(|| {
             DockerError::Command("docker inspect returned malformed ID/PID data".into())
         })?;
@@ -581,7 +589,11 @@ pub fn container_resource_usages(
     let stats_refs: Vec<&str> = stats_args.iter().map(String::as_str).collect();
     let stats_output = run_checked(&stats_refs)?;
     let mut cpu_usage = HashMap::<String, f64>::new();
-    for line in stats_output.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in stats_output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         let (short_id, raw_cpu) = line.split_once('|').ok_or_else(|| {
             DockerError::Command("docker stats returned malformed CPU usage".into())
         })?;
@@ -626,7 +638,13 @@ pub fn container_resource_usages(
             DockerError::Command("verified container CPU usage disappeared from sample".into())
         })?;
         let memory_bytes = container_cgroup_memory_usage_bytes_from_pid(pid)?;
-        result.insert(id.clone(), ContainerResourceUsage { cpu_cores, memory_bytes });
+        result.insert(
+            id.clone(),
+            ContainerResourceUsage {
+                cpu_cores,
+                memory_bytes,
+            },
+        );
     }
     Ok(result)
 }
@@ -661,14 +679,22 @@ pub fn running_managed_container_resource_reservations(
     const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
 
     let listing = run_checked(&[
-        "ps", "--no-trunc",
-        "--filter", "label=gitrun.runner=true",
-        "--filter", "status=running",
-        "--format", "{{.ID}}|{{.Names}}",
+        "ps",
+        "--no-trunc",
+        "--filter",
+        "label=gitrun.runner=true",
+        "--filter",
+        "status=running",
+        "--format",
+        "{{.ID}}|{{.Names}}",
     ])?;
     let mut identities = Vec::<(String, String)>::new();
     let mut expected_names = HashMap::<String, String>::new();
-    for line in listing.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in listing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         let (id, name) = line.split_once('|').ok_or_else(|| {
             DockerError::Command("docker ps returned an invalid managed-runner identity".into())
         })?;
@@ -708,7 +734,11 @@ pub fn running_managed_container_resource_reservations(
     let inspected = run_checked(&inspect_refs)?;
     let mut limits = HashMap::<String, (f64, u64)>::new();
     let mut pids = HashMap::<String, u32>::new();
-    for line in inspected.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in inspected
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         let fields: Vec<_> = line.splitn(5, '|').collect();
         if fields.len() != 5 {
             return Err(DockerError::Command(
@@ -722,9 +752,10 @@ pub fn running_managed_container_resource_reservations(
                 "managed runner identity changed while reading resource limits".into(),
             ));
         }
-        let nano_cpus = fields[2].trim().parse::<u64>().map_err(|_| {
-            DockerError::Command("docker inspect returned invalid NanoCpus".into())
-        })?;
+        let nano_cpus = fields[2]
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| DockerError::Command("docker inspect returned invalid NanoCpus".into()))?;
         let memory_bytes = fields[3].trim().parse::<u64>().map_err(|_| {
             DockerError::Command("docker inspect returned invalid Memory limit".into())
         })?;
@@ -766,7 +797,11 @@ pub fn running_managed_container_resource_reservations(
     let stats_refs: Vec<&str> = stats_args.iter().map(String::as_str).collect();
     let stats_output = run_checked(&stats_refs)?;
     let mut usages = HashMap::<String, f64>::new();
-    for line in stats_output.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in stats_output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         let fields: Vec<_> = line.splitn(2, '|').collect();
         if fields.len() != 2 {
             return Err(DockerError::Command(
@@ -3505,8 +3540,10 @@ mod tests {
         assert_eq!(parse_docker_percent("0.00%"), Some(0.0));
         assert_eq!(parse_docker_bytes("512MiB"), Some(512 * 1024 * 1024));
         assert_eq!(parse_docker_bytes("1.25GiB"), Some(1_342_177_280));
-        assert_eq!(cgroup_v2_relative_path("/system.slice/docker-abc.scope").unwrap(),
-            PathBuf::from("system.slice/docker-abc.scope"));
+        assert_eq!(
+            cgroup_v2_relative_path("/system.slice/docker-abc.scope").unwrap(),
+            PathBuf::from("system.slice/docker-abc.scope")
+        );
     }
 
     #[test]

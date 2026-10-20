@@ -1501,7 +1501,9 @@ fn reconcile_repo(
                                 .ok_or_else(|| {
                                     "Kitty could not produce a validated resource estimate; refusing to guess CPU/RAM".to_owned()
                                 })?;
-                            adaptive_resource_budget.allocate(estimate, config).map(Some)
+                            adaptive_resource_budget
+                                .allocate(estimate, config)
+                                .map(Some)
                         })();
                         attempt
                     }
@@ -1621,11 +1623,19 @@ impl AdaptiveResourceBudgetState {
             Err(_) => {
                 // Invalid/unreadable optional settings never enable adaptive
                 // behavior; Kitty's validated runtime will report the error.
-                return Self { enabled: false, budget: None, unavailable_reason: None };
+                return Self {
+                    enabled: false,
+                    budget: None,
+                    unavailable_reason: None,
+                };
             }
         };
         if !settings.adaptive_resource_management_enabled {
-            return Self { enabled: false, budget: None, unavailable_reason: None };
+            return Self {
+                enabled: false,
+                budget: None,
+                unavailable_reason: None,
+            };
         }
 
         // A single capacity sample and a single reservation snapshot are shared
@@ -1749,16 +1759,18 @@ impl AdaptiveResourceBudget {
             if !reserved_cpu_cores.is_finite() {
                 return None;
             }
-            reserved_memory_bytes = reserved_memory_bytes
-                .checked_add(reservation.memory_headroom_bytes)?;
+            reserved_memory_bytes =
+                reserved_memory_bytes.checked_add(reservation.memory_headroom_bytes)?;
             if reserved_memory_bytes > (1_u64 << 62)
-                || reservations_by_name.insert(
-                    reservation.name,
-                    ContainerResourceReservation {
-                        cpu_cores: reservation.cpu_headroom_cores,
-                        memory_bytes: reservation.memory_headroom_bytes,
-                    },
-                ).is_some()
+                || reservations_by_name
+                    .insert(
+                        reservation.name,
+                        ContainerResourceReservation {
+                            cpu_cores: reservation.cpu_headroom_cores,
+                            memory_bytes: reservation.memory_headroom_bytes,
+                        },
+                    )
+                    .is_some()
             {
                 return None;
             }
@@ -1788,8 +1800,9 @@ impl AdaptiveResourceBudget {
     fn release_container_reservation(&mut self, name: &str) {
         if let Some(reservation) = self.reservations_by_name.remove(name) {
             self.reserved_cpu_cores = (self.reserved_cpu_cores - reservation.cpu_cores).max(0.0);
-            self.reserved_memory_bytes =
-                self.reserved_memory_bytes.saturating_sub(reservation.memory_bytes);
+            self.reserved_memory_bytes = self
+                .reserved_memory_bytes
+                .saturating_sub(reservation.memory_bytes);
         }
     }
 
@@ -1901,13 +1914,19 @@ fn adaptive_resource_identity(
     inventory: &[docker::ManagedContainer],
 ) -> Option<(String, Vec<String>)> {
     match action {
-        Action::CreateRunner { job_name, job_labels, .. } => Some((
+        Action::CreateRunner {
+            job_name,
+            job_labels,
+            ..
+        } => Some((
             job_name.clone().unwrap_or_else(|| "general runner".into()),
             job_labels.clone(),
         )),
-        Action::PrewarmWorkload { job_name, job_labels, .. } => {
-            Some((job_name.clone(), job_labels.clone()))
-        }
+        Action::PrewarmWorkload {
+            job_name,
+            job_labels,
+            ..
+        } => Some((job_name.clone(), job_labels.clone())),
         Action::RecreateOrphaned { name, .. } => {
             let container = inventory.iter().find(|container| container.name == *name)?;
             let labels = container
@@ -3804,9 +3823,13 @@ mod resource_pressure_reconciliation_tests {
             ..Config::default()
         };
         let mut budget = AdaptiveResourceBudget::from_capacity(
-            resource_pressure::ResourceCapacity { cpu_cores: 3.0, memory_bytes: 8 * GIB },
+            resource_pressure::ResourceCapacity {
+                cpu_cores: 3.0,
+                memory_bytes: 8 * GIB,
+            },
             Vec::new(),
-        ).unwrap();
+        )
+        .unwrap();
         let estimate = |workload_id: &str| gitrun_smart_scheduler::ResourceDemandEstimate {
             workload_id: workload_id.into(),
             cpu_cores: 4.0,
@@ -3816,13 +3839,17 @@ mod resource_pressure_reconciliation_tests {
             reason: "test prior".into(),
         };
 
-        let first = budget.allocate(estimate("wk-0123456789abcdef"), &config).unwrap();
+        let first = budget
+            .allocate(estimate("wk-0123456789abcdef"), &config)
+            .unwrap();
         assert_eq!(first.cpus, "2");
         assert_eq!(first.memory, (4 * GIB).to_string());
         assert_eq!(budget.available_cpu_cores(), 1.0);
         assert_eq!(budget.available_memory_bytes(), 4 * GIB);
 
-        let second = budget.allocate(estimate("wk-fedcba9876543210"), &config).unwrap();
+        let second = budget
+            .allocate(estimate("wk-fedcba9876543210"), &config)
+            .unwrap();
         assert_eq!(second.cpus, "1");
         assert_eq!(second.memory, (4 * GIB).to_string());
         assert!(budget
@@ -3843,7 +3870,8 @@ mod resource_pressure_reconciliation_tests {
                 memory_bytes: 4 * 1024 * 1024 * 1024,
             },
             Vec::new(),
-        ).unwrap();
+        )
+        .unwrap();
         let estimate = gitrun_smart_scheduler::ResourceDemandEstimate {
             workload_id: "wk-0123456789abcdef".into(),
             cpu_cores: 2.0,
@@ -3859,13 +3887,17 @@ mod resource_pressure_reconciliation_tests {
     fn adaptive_budget_reserves_active_runner_headroom_and_releases_replaced_runner() {
         const GIB: u64 = 1024 * 1024 * 1024;
         let mut budget = AdaptiveResourceBudget::from_capacity(
-            resource_pressure::ResourceCapacity { cpu_cores: 3.0, memory_bytes: 8 * GIB },
+            resource_pressure::ResourceCapacity {
+                cpu_cores: 3.0,
+                memory_bytes: 8 * GIB,
+            },
             vec![docker::ManagedContainerResourceReservation {
                 name: "runner-a".into(),
                 cpu_headroom_cores: 2.0,
                 memory_headroom_bytes: 4 * GIB,
             }],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(budget.available_cpu_cores(), 1.0);
         assert_eq!(budget.available_memory_bytes(), 4 * GIB);
         budget.release_container_reservation("runner-a");
@@ -3880,37 +3912,39 @@ mod resource_pressure_reconciliation_tests {
         use std::time::{SystemTime, UNIX_EPOCH};
         let path = std::env::temp_dir().join(format!(
             "gitrun-adaptive-vm-guard-{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let rules = vec![logic_containers::LogicRule {
             name: "windows".into(),
             match_labels: vec!["windows".into()],
-            backend: logic_containers::Backend::Vm { vm_name: "win-host".into() },
+            backend: logic_containers::Backend::Vm {
+                vm_name: "win-host".into(),
+            },
             image: "gitrun-runner:windows".into(),
         }];
         logic_containers::save_rules(&path.join("logic-containers.json"), &rules).unwrap();
         let vm_labels = vec!["self-hosted".into(), "Windows".into()];
         let empty_profiles = std::collections::HashMap::new();
-        let error = ensure_adaptive_resource_backend_is_local(
-            &path,
-            &vm_labels,
-            &empty_profiles,
-        )
-        .unwrap_err();
+        let error = ensure_adaptive_resource_backend_is_local(&path, &vm_labels, &empty_profiles)
+            .unwrap_err();
         assert!(error.contains("per-VM resource probe"));
         let local_labels = vec!["self-hosted".into(), "Linux".into()];
-        assert!(ensure_adaptive_resource_backend_is_local(
-            &path,
-            &local_labels,
-            &empty_profiles,
-        )
-        .is_ok());
+        assert!(
+            ensure_adaptive_resource_backend_is_local(&path, &local_labels, &empty_profiles,)
+                .is_ok()
+        );
         let workload_id = "wk-0123456789abcdef".to_owned();
         let routed_label = format!("gitrun-job-{workload_id}");
         let mut profiles = std::collections::HashMap::new();
         profiles.insert(workload_id, vm_labels.clone());
-        assert!(ensure_adaptive_resource_backend_is_local(&path, &[routed_label], &profiles)
-            .unwrap_err().contains("per-VM resource probe"));
+        assert!(
+            ensure_adaptive_resource_backend_is_local(&path, &[routed_label], &profiles)
+                .unwrap_err()
+                .contains("per-VM resource probe")
+        );
         std::fs::remove_dir_all(path).unwrap();
     }
 

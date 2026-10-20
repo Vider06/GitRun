@@ -1,6 +1,10 @@
 //! Host-wide scheduler backpressure based on CPU utilization, available memory and critical filesystem usage.
 use gitrun_core::Config;
-use std::{fs, path::{Path, PathBuf}, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -42,9 +46,8 @@ impl ResourceCapacity {
             return None;
         }
         let cpu_reserve = (total_cpu_cores * 0.20).max(0.5);
-        let usable_cpu = (total_cpu_cores * (1.0 - cpu_utilization_percent / 100.0)
-            - cpu_reserve)
-            .max(0.0);
+        let usable_cpu =
+            (total_cpu_cores * (1.0 - cpu_utilization_percent / 100.0) - cpu_reserve).max(0.0);
         let memory_reserve = ((total_memory_bytes as f64 * 0.15) as u64).max(GIB);
         let usable_memory = available_memory_bytes.saturating_sub(memory_reserve);
         Some(Self {
@@ -126,12 +129,15 @@ fn process_cgroup_v2_directory() -> Result<Option<PathBuf>, ResourcePressureErro
     };
     let Some(relative) = contents.lines().find_map(|line| line.strip_prefix("0::")) else {
         let legacy_limited_controller = contents.lines().any(|line| {
-            let Some((controllers, _)) =
-                line.split_once(':').and_then(|(_, rest)| rest.split_once(':'))
+            let Some((controllers, _)) = line
+                .split_once(':')
+                .and_then(|(_, rest)| rest.split_once(':'))
             else {
                 return false;
             };
-            controllers.split(',').any(|name| matches!(name, "cpu" | "cpuacct" | "memory"))
+            controllers
+                .split(',')
+                .any(|name| matches!(name, "cpu" | "cpuacct" | "memory"))
         });
         // Do not silently use host figures when legacy CPU or memory controllers
         // may impose a tighter quota that this probe doesn't know how to read.
@@ -145,7 +151,11 @@ fn process_cgroup_v2_directory() -> Result<Option<PathBuf>, ResourcePressureErro
         return Err(ResourcePressureError::Parse);
     }
     let root = Path::new("/sys/fs/cgroup");
-    let directory = if relative.is_empty() { root.to_path_buf() } else { root.join(relative) };
+    let directory = if relative.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(relative)
+    };
     if directory.is_dir() && directory.starts_with(root) {
         Ok(Some(directory))
     } else {
@@ -166,14 +176,18 @@ fn parse_cgroup_cpu_max(raw: &str) -> Result<Option<f64>, ResourcePressureError>
     if fields.len() != 2 {
         return Err(ResourcePressureError::Parse);
     }
-    let period = fields[1].parse::<u64>().map_err(|_| ResourcePressureError::Parse)?;
+    let period = fields[1]
+        .parse::<u64>()
+        .map_err(|_| ResourcePressureError::Parse)?;
     if period == 0 {
         return Err(ResourcePressureError::Parse);
     }
     if fields[0] == "max" {
         return Ok(None);
     }
-    let quota = fields[0].parse::<u64>().map_err(|_| ResourcePressureError::Parse)?;
+    let quota = fields[0]
+        .parse::<u64>()
+        .map_err(|_| ResourcePressureError::Parse)?;
     if quota == 0 {
         return Err(ResourcePressureError::Parse);
     }
@@ -189,7 +203,9 @@ fn parse_cgroup_memory_limit(raw: &str) -> Result<Option<u64>, ResourcePressureE
     if value == "max" {
         return Ok(None);
     }
-    let bytes = value.parse::<u64>().map_err(|_| ResourcePressureError::Parse)?;
+    let bytes = value
+        .parse::<u64>()
+        .map_err(|_| ResourcePressureError::Parse)?;
     if bytes == 0 {
         return Err(ResourcePressureError::Parse);
     }
@@ -198,12 +214,17 @@ fn parse_cgroup_memory_limit(raw: &str) -> Result<Option<u64>, ResourcePressureE
 
 fn read_cgroup_cpu_usage_usec(directory: &Path) -> Result<u64, ResourcePressureError> {
     let contents = fs::read_to_string(directory.join("cpu.stat"))?;
-    contents.lines().find_map(|line| {
-        let mut fields = line.split_whitespace();
-        let name = fields.next()?;
-        let value = fields.next()?;
-        (name == "usage_usec").then(|| value.parse::<u64>().ok()).flatten()
-    }).ok_or(ResourcePressureError::Parse)
+    contents
+        .lines()
+        .find_map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next()?;
+            let value = fields.next()?;
+            (name == "usage_usec")
+                .then(|| value.parse::<u64>().ok())
+                .flatten()
+        })
+        .ok_or(ResourcePressureError::Parse)
 }
 
 fn sample_cgroup_cpu_percent(
@@ -258,7 +279,9 @@ fn read_cgroup_v2_limits() -> Result<CgroupV2Limits, ResourcePressureError> {
         if path == mount_root {
             break;
         }
-        current = path.parent().filter(|parent| parent.starts_with(mount_root));
+        current = path
+            .parent()
+            .filter(|parent| parent.starts_with(mount_root));
     }
     Ok(CgroupV2Limits {
         cpu_quota_cores,
@@ -290,14 +313,22 @@ pub fn available_capacity() -> Result<ResourceCapacity, ResourcePressureError> {
     let mut available_kib = None;
     for line in meminfo.lines() {
         if let Some(value) = line.strip_prefix("MemTotal:") {
-            total_kib = value.split_whitespace().next().and_then(|v| v.parse::<u64>().ok());
+            total_kib = value
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<u64>().ok());
         } else if let Some(value) = line.strip_prefix("MemAvailable:") {
-            available_kib = value.split_whitespace().next().and_then(|v| v.parse::<u64>().ok());
+            available_kib = value
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<u64>().ok());
         }
     }
-    let mut total_bytes = total_kib.and_then(|v| v.checked_mul(1024))
+    let mut total_bytes = total_kib
+        .and_then(|v| v.checked_mul(1024))
         .ok_or(ResourcePressureError::Parse)?;
-    let mut available_bytes = available_kib.and_then(|v| v.checked_mul(1024))
+    let mut available_bytes = available_kib
+        .and_then(|v| v.checked_mul(1024))
         .ok_or(ResourcePressureError::Parse)?;
     if let Some(limit) = cgroup.memory_limit_bytes {
         total_bytes = total_bytes.min(limit);
@@ -415,7 +446,10 @@ mod tests {
         assert_eq!(parse_cgroup_cpu_max("max 100000").unwrap(), None);
         assert!(parse_cgroup_cpu_max("0 100000").is_err());
         assert!(parse_cgroup_cpu_max("200000 0").is_err());
-        assert_eq!(parse_cgroup_memory_limit("1073741824").unwrap(), Some(1_073_741_824));
+        assert_eq!(
+            parse_cgroup_memory_limit("1073741824").unwrap(),
+            Some(1_073_741_824)
+        );
         assert_eq!(parse_cgroup_memory_limit("max").unwrap(), None);
         assert!(parse_cgroup_memory_limit("0").is_err());
         assert!(parse_cgroup_memory_limit("not-a-number").is_err());
@@ -477,13 +511,8 @@ mod tests {
         assert!(capacity.cpu_cores <= 3.2);
         assert_eq!(capacity.memory_bytes, 12 * GIB - (16 * GIB * 15 / 100));
 
-        let pressured = ResourceCapacity::from_measurements(
-            4.0,
-            100.0,
-            16 * GIB,
-            12 * GIB,
-        )
-        .unwrap();
+        let pressured =
+            ResourceCapacity::from_measurements(4.0, 100.0, 16 * GIB, 12 * GIB).unwrap();
         assert_eq!(pressured.cpu_cores, 0.0);
         assert!(ResourceCapacity::from_measurements(0.0, 20.0, 16 * GIB, 12 * GIB).is_none());
         assert!(ResourceCapacity::from_measurements(4.0, 20.0, 16 * GIB, 20 * GIB).is_none());

@@ -1041,10 +1041,7 @@ impl GitHubClient {
     /// Returns active self-hosted jobs with authoritative runner names.
     /// This is optional telemetry and inspects at most two in-progress workflow
     /// runs and one jobs page per run; incomplete history never changes scheduling.
-    pub fn active_self_hosted_jobs_on_runners(
-        &self,
-        repo: &str,
-    ) -> Result<Vec<ActiveJobOnRunner>> {
+    pub fn active_self_hosted_jobs_on_runners(&self, repo: &str) -> Result<Vec<ActiveJobOnRunner>> {
         const MAX_RUNS_TO_SCAN: usize = 2;
         const MAX_JOB_PAGES_PER_RUN: usize = 1;
         const MAX_ACTIVE_JOBS: usize = 256;
@@ -1083,11 +1080,16 @@ impl GitHubClient {
                     {
                         continue;
                     }
-                    let Some(runner_name) = job.runner_name.filter(|value| !value.trim().is_empty()) else {
+                    let Some(runner_name) =
+                        job.runner_name.filter(|value| !value.trim().is_empty())
+                    else {
                         continue;
                     };
-                    let Some(started_at_epoch) = job.started_at.as_deref()
-                        .and_then(parse_github_timestamp_epoch) else {
+                    let Some(started_at_epoch) = job
+                        .started_at
+                        .as_deref()
+                        .and_then(parse_github_timestamp_epoch)
+                    else {
                         // Unknown start times cannot provide a valid observed resource sample.
                         continue;
                     };

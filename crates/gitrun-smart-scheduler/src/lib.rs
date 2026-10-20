@@ -153,7 +153,8 @@ impl KittySettings {
         }
         if self.adaptive_resource_management_enabled && (!self.enabled || !self.telemetry_enabled) {
             return Err(KittyError::Invalid(
-                "Adaptive Resource Management requires Kitty and aggregate telemetry to be enabled".into(),
+                "Adaptive Resource Management requires Kitty and aggregate telemetry to be enabled"
+                    .into(),
             ));
         }
         if self.automation_allowed_repositories.len() > MAX_DASHBOARD_REPOSITORIES
@@ -1386,9 +1387,14 @@ impl KittyRuntime {
             return false;
         }
         let key = repository_key(repository);
-        if self.last_resource_sample_poll.get(&key).is_some_and(|last| {
-            now_epoch < *last || now_epoch.saturating_sub(*last) < RESOURCE_SAMPLE_INTERVAL_SECONDS
-        }) {
+        if self
+            .last_resource_sample_poll
+            .get(&key)
+            .is_some_and(|last| {
+                now_epoch < *last
+                    || now_epoch.saturating_sub(*last) < RESOURCE_SAMPLE_INTERVAL_SECONDS
+            })
+        {
             return false;
         }
         self.last_resource_sample_poll.insert(key, now_epoch);
@@ -1424,7 +1430,9 @@ impl KittyRuntime {
             // Age out the private resource history even when no runner is
             // currently active. This path touches only an already-loaded
             // model, so empty telemetry does not trigger unnecessary disk IO.
-            let pruned = self.models.get_mut(&key)
+            let pruned = self
+                .models
+                .get_mut(&key)
                 .is_some_and(|model| prune_stale_resource_observations(model, observed_at_epoch));
             if pruned {
                 self.dirty_models.insert(key.clone());
@@ -1486,7 +1494,11 @@ impl KittyRuntime {
                 // Resource telemetry is accepted only for a workload identity
                 // already represented in the validated model. This prevents a
                 // new/forged family label from manufacturing its own profile.
-                if !model.workload_patterns.iter().any(|entry| entry.workload_id == workload_id) {
+                if !model
+                    .workload_patterns
+                    .iter()
+                    .any(|entry| entry.workload_id == workload_id)
+                {
                     continue;
                 }
                 let occurrence_code =
@@ -1529,17 +1541,19 @@ impl KittyRuntime {
                     if model.resource_observations.len() >= MAX_WORKLOAD_RESOURCE_OBSERVATIONS {
                         continue;
                     }
-                    model.resource_observations.push(WorkloadResourceObservation {
-                        workload_id,
-                        occurrence_code,
-                        run_id: sample.job.run_id,
-                        job_id: sample.job.job_id,
-                        cpu_cores_peak: sample.cpu_cores,
-                        memory_bytes_peak: sample.memory_bytes,
-                        sample_count: 1,
-                        first_sample_at_epoch: sample.sampled_at_epoch,
-                        last_sample_at_epoch: sample.sampled_at_epoch,
-                    });
+                    model
+                        .resource_observations
+                        .push(WorkloadResourceObservation {
+                            workload_id,
+                            occurrence_code,
+                            run_id: sample.job.run_id,
+                            job_id: sample.job.job_id,
+                            cpu_cores_peak: sample.cpu_cores,
+                            memory_bytes_peak: sample.memory_bytes,
+                            sample_count: 1,
+                            first_sample_at_epoch: sample.sampled_at_epoch,
+                            last_sample_at_epoch: sample.sampled_at_epoch,
+                        });
                     changed = true;
                 }
             }
@@ -1641,17 +1655,25 @@ impl KittyRuntime {
             .unwrap_or_default()
             .as_secs();
         let model = self.models.get(&key)?;
-        let workload_id = requested_workload_id.or_else(|| {
-            // Runner reconciliation receives job name and labels directly from
-            // GitHub but does not need to persist workflow paths in the plan.
-            // Reuse a historical identity only when that pair is unambiguous.
-            let matches: Vec<_> = model.workload_patterns.iter().filter(|pattern| {
-                pattern.job_name == job_name
-                    && canonical_resource_labels(&pattern.labels)
-                        == canonical_resource_labels(labels)
-            }).map(|pattern| pattern.workload_id.clone()).take(2).collect();
-            (matches.len() == 1).then(|| matches[0].clone())
-        }).unwrap_or(fallback_workload_id);
+        let workload_id = requested_workload_id
+            .or_else(|| {
+                // Runner reconciliation receives job name and labels directly from
+                // GitHub but does not need to persist workflow paths in the plan.
+                // Reuse a historical identity only when that pair is unambiguous.
+                let matches: Vec<_> = model
+                    .workload_patterns
+                    .iter()
+                    .filter(|pattern| {
+                        pattern.job_name == job_name
+                            && canonical_resource_labels(&pattern.labels)
+                                == canonical_resource_labels(labels)
+                    })
+                    .map(|pattern| pattern.workload_id.clone())
+                    .take(2)
+                    .collect();
+                (matches.len() == 1).then(|| matches[0].clone())
+            })
+            .unwrap_or(fallback_workload_id);
         let cutoff = now_epoch.saturating_sub(180 * 86_400);
         let mut observed: Vec<_> = model
             .resource_observations
@@ -3350,35 +3372,50 @@ fn heuristic_resource_demand(
 
     // Conservative class priors cover cold-start workloads; measured high-water
     // marks take over once three distinct job occurrences are available.
-    let (cpu_cores, memory_bytes, class) = if [
-        "tauri", "webkit", "gtk", "linux-package", "gui-build",
-    ]
-    .iter()
-    .any(|marker| description.contains(marker))
-    {
-        (2.5, 4 * 1024 * 1024 * 1024u64, "Tauri/Linux GUI build")
-    } else if [
-        "rust", "cargo", "clippy", "rustfmt", "rust-test", "rust-build",
-    ]
-    .iter()
-    .any(|marker| description.contains(marker))
-    {
-        (2.0, 4 * 1024 * 1024 * 1024u64, "Rust/Cargo build")
-    } else if ["docker", "buildkit", "container-image", "image-build"]
+    let (cpu_cores, memory_bytes, class) =
+        if ["tauri", "webkit", "gtk", "linux-package", "gui-build"]
+            .iter()
+            .any(|marker| description.contains(marker))
+        {
+            (2.5, 4 * 1024 * 1024 * 1024u64, "Tauri/Linux GUI build")
+        } else if [
+            "rust",
+            "cargo",
+            "clippy",
+            "rustfmt",
+            "rust-test",
+            "rust-build",
+        ]
         .iter()
         .any(|marker| description.contains(marker))
-    {
-        (2.0, 3 * 1024 * 1024 * 1024u64, "container/image build")
-    } else if [
-        "npm", "node", "pnpm", "yarn", "vite", "webpack", "typescript", "javascript",
-    ]
-    .iter()
-    .any(|marker| description.contains(marker))
-    {
-        (1.5, 2 * 1024 * 1024 * 1024u64, "JavaScript/TypeScript build")
-    } else {
-        (1.0, 1536 * 1024 * 1024u64, "general workload")
-    };
+        {
+            (2.0, 4 * 1024 * 1024 * 1024u64, "Rust/Cargo build")
+        } else if ["docker", "buildkit", "container-image", "image-build"]
+            .iter()
+            .any(|marker| description.contains(marker))
+        {
+            (2.0, 3 * 1024 * 1024 * 1024u64, "container/image build")
+        } else if [
+            "npm",
+            "node",
+            "pnpm",
+            "yarn",
+            "vite",
+            "webpack",
+            "typescript",
+            "javascript",
+        ]
+        .iter()
+        .any(|marker| description.contains(marker))
+        {
+            (
+                1.5,
+                2 * 1024 * 1024 * 1024u64,
+                "JavaScript/TypeScript build",
+            )
+        } else {
+            (1.0, 1536 * 1024 * 1024u64, "general workload")
+        };
 
     ResourceDemandEstimate {
         workload_id: workload_id.to_owned(),
@@ -3996,15 +4033,20 @@ fn estimated_resources_for_pattern(
         );
     }
 
-    let mut cpu_peaks: Vec<f64> = observations.iter().map(|entry| entry.cpu_cores_peak).collect();
+    let mut cpu_peaks: Vec<f64> = observations
+        .iter()
+        .map(|entry| entry.cpu_cores_peak)
+        .collect();
     cpu_peaks.sort_by(f64::total_cmp);
-    let mut memory_peaks: Vec<u64> =
-        observations.iter().map(|entry| entry.memory_bytes_peak).collect();
+    let mut memory_peaks: Vec<u64> = observations
+        .iter()
+        .map(|entry| entry.memory_bytes_peak)
+        .collect();
     memory_peaks.sort_unstable();
     let quantile_index = (observations.len() * 4).div_ceil(5).saturating_sub(1);
     let learned_cpu = cpu_peaks[quantile_index] * 1.20;
-    let learned_memory = memory_peaks[quantile_index]
-        .saturating_add(memory_peaks[quantile_index] / 4);
+    let learned_memory =
+        memory_peaks[quantile_index].saturating_add(memory_peaks[quantile_index] / 4);
     (
         observations.len(),
         observed_peak_cpu_cores,
@@ -4056,8 +4098,7 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                 observed_peak_cpu_cores,
                 observed_peak_memory_bytes,
                 resource_estimate,
-            ) =
-                estimated_resources_for_pattern(model, pattern, model.generated_at_epoch);
+            ) = estimated_resources_for_pattern(model, pattern, model.generated_at_epoch);
             WorkloadPatternStatus {
                 workload_id: pattern.workload_id.clone(),
                 workflow_id: pattern.workflow_id,

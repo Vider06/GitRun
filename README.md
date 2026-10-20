@@ -205,7 +205,7 @@ At the top level:
 
 ## Development
 
-GitRun 1.5.0 is the current project version. Start with:
+The source version targeted by this branch is **1.5.1** (see `version.txt`). This does not imply that a 1.5.1 release artifact has been published. Start with:
 
 ```bash
 cargo fmt --all --check
@@ -225,4 +225,4 @@ GitRun is distributed under the Apache License 2.0.
 
 ## Version and verification
 
-The source tree version is **1.5.0**. PR [#83](https://github.com/Vider06/GitRun/pull/83) was merged to `main` on 2026-10-19. Its source HEAD, [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c), passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. Those checks do not replace environment-specific validation of desktop privilege prompts, real KVM/VirtualBox lifecycles, the complete authorized disconnect endpoint, or migration of every customized runner image. The v1.5.0 report is a historical refactor/audit record; 1.5.1 recovery behavior and its deployment boundaries are documented in [the 1.5.1 release notes](docs/v1.5.1-release-notes.md).
+The source version targeted by this branch is **1.5.1**, recorded in `version.txt` and the shipped dashboard metadata. This branch is a proposed source/version-alignment change, not evidence that an official 1.5.1 release artifact exists; check [GitHub Releases](https://github.com/Vider06/GitRun/releases) for published artifacts. PR [#83](https://github.com/Vider06/GitRun/pull/83) was merged to `main` on 2026-10-19. Its source HEAD, [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c), passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance at that historical 1.5.0 commit. Those checks do not replace environment-specific validation of desktop privilege prompts, real KVM/VirtualBox lifecycles, the complete authorized disconnect endpoint, or migration of every customized runner image. The v1.5.0 report is a historical refactor/audit record; 1.5.1 recovery behavior and its deployment boundaries are documented in [the 1.5.1 release notes](docs/v1.5.1-release-notes.md).

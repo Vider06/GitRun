@@ -475,7 +475,7 @@ fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
 fn ensure_cgroup_matches_container_id(
     cgroup_path: &str,
     expected_container_id: &str,
-) -> Result<(), DockerError> {
+) -> Result<()> {
     if !is_full_container_id(expected_container_id) {
         return Err(DockerError::Command(
             "resource sampling requires an immutable full Docker container ID".into(),

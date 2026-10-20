@@ -1039,14 +1039,14 @@ impl GitHubClient {
     }
 
     /// Returns active self-hosted jobs with authoritative runner names.
-    /// This is an optional telemetry path: it samples at most 100 active workflow
-    /// runs per call and never changes scheduling if history is incomplete.
+    /// This is optional telemetry and inspects at most two in-progress workflow
+    /// runs and one jobs page per run; incomplete history never changes scheduling.
     pub fn active_self_hosted_jobs_on_runners(
         &self,
         repo: &str,
     ) -> Result<Vec<ActiveJobOnRunner>> {
-        const MAX_RUNS_TO_SCAN: usize = 25;
-        const MAX_JOB_PAGES_PER_RUN: usize = 2;
+        const MAX_RUNS_TO_SCAN: usize = 2;
+        const MAX_JOB_PAGES_PER_RUN: usize = 1;
         const MAX_ACTIVE_JOBS: usize = 256;
         let (owner, name) = split_repo(repo)?;
         let runs_url = format!(

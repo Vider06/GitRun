@@ -57,7 +57,7 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
 COPY --from=gsr-builder /usr/src/gitrun/gitrun-gsr-agent /usr/local/bin/gitrun-gsr-agent
 COPY --from=gsr-builder /usr/src/gitrun/gitrun-api /usr/local/bin/gitrun-api
 RUN chmod 0755 /usr/local/bin/gitrun-gsr-agent /usr/local/bin/gitrun-api \
-    && for api in GitVaultRun GitDockRun GitSaveRun GitRegisterRun GitInstallRun GitReadRun GitWriteRun GitVerifyRun GitStatusRun; do \
+    && for api in GitVaultRun GitDockRun GitSaveRun GitRegisterRun GitInstallRun GitReadRun GitWriteRun GitVerifyRun GitStatusRun GitDispatchRun; do \
          ln -s /usr/local/bin/gitrun-api "/usr/local/bin/$api"; \
        done
 

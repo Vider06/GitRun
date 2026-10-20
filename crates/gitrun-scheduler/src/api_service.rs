@@ -7332,19 +7332,30 @@ mod kitty_dispatch_contract_tests {
 
     #[test]
     fn kitty_dispatch_plan_outputs_machine_readable_route_or_fallback() {
-        for (mode, status, labels) in [
+        for (mode, kitty_online, status, labels) in [
             (
                 "kitty",
+                true,
                 "online",
                 vec![
                     "gitrun-job-wk-0123456789abcdef",
                     "gitrun-route-0123456789abcdef0123456789abcdef",
                 ],
             ),
-            ("github", "degraded", vec!["self-hosted", "linux", "x64"]),
+            (
+                "github",
+                true,
+                "shadow",
+                vec!["self-hosted", "linux", "x64"],
+            ),
+            (
+                "github",
+                false,
+                "disabled",
+                vec!["self-hosted", "linux", "x64"],
+            ),
         ] {
             let labels: Vec<String> = labels.into_iter().map(str::to_owned).collect();
-            let kitty_online = mode == "kitty";
             let result =
                 kitty_dispatch_plan_result(mode, kitty_online, status, "test-reason", &labels)
                     .unwrap();

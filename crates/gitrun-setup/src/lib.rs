@@ -143,14 +143,41 @@ pub fn setup_flag_is_valid() -> bool {
 
     #[cfg(unix)]
     {
+        use std::os::unix::fs::MetadataExt;
         if metadata.uid() != 0 || (metadata.permissions().mode() & 0o777) != 0o600 {
+            return false;
+        }
+
+        // The desktop recovery UI is unprivileged by design. A root-owned
+        // 0600 flag inside a root-owned, non-writable /etc/gitrun directory is
+        // not invalid merely because the UI cannot read its nonce.
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        let Ok(parent_metadata) = fs::symlink_metadata(parent) else {
+            return false;
+        };
+        if parent_metadata.file_type().is_symlink()
+            || !parent_metadata.is_dir()
+            || parent_metadata.uid() != 0
+            || parent_metadata.permissions().mode() & 0o022 != 0
+        {
             return false;
         }
     }
 
-    fs::read_to_string(path)
-        .ok()
-        .is_some_and(|content| parse_setup_flag(&content))
+    setup_flag_contents_are_valid(fs::read_to_string(path))
+}
+
+fn setup_flag_contents_are_valid(content: Result<String, std::io::Error>) -> bool {
+    match content {
+        Ok(content) => parse_setup_flag(&content),
+        // Metadata and parent ownership have already established that an
+        // unprivileged reader is looking at a trusted root-only flag. Its
+        // nonce is verified by root-run setup/startup paths.
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => true,
+        Err(_) => false,
+    }
 }
 
 fn parse_setup_flag(content: &str) -> bool {
@@ -2192,6 +2219,20 @@ mod tests {
             Err(SetupError::InvalidConfigDir(_))
         ));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn setup_flag_trusted_permission_denial_is_not_misreported_as_incomplete() {
+        assert!(setup_flag_contents_are_valid(Err(std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        ))));
+        assert!(!setup_flag_contents_are_valid(Err(std::io::Error::from(
+            std::io::ErrorKind::NotFound
+        ))));
+        assert!(!setup_flag_contents_are_valid(Ok("not-a-valid-flag".into())));
+        assert!(setup_flag_contents_are_valid(Ok(
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\\n".into()
+        )));
     }
 
     #[test]

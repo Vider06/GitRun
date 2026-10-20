@@ -1453,20 +1453,24 @@ fn main() {
                 1
             }
         },
-        Command::SaveVmConfigsRoot { input_path } => match save_vm_configs_root_command(&input_path) {
-            Ok(()) => 0,
-            Err(error) => {
-                std::eprintln!("GitRun VM configuration save: FAIL — {error}");
-                1
+        Command::SaveVmConfigsRoot { input_path } => {
+            match save_vm_configs_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    std::eprintln!("GitRun VM configuration save: FAIL — {error}");
+                    1
+                }
             }
-        },
-        Command::ReadPendingHypervisorDecisionsRoot => match read_pending_hypervisor_decisions_root_command() {
-            Ok(()) => 0,
-            Err(error) => {
-                std::eprintln!("GitRun hypervisor decision read: FAIL — {error}");
-                1
+        }
+        Command::ReadPendingHypervisorDecisionsRoot => {
+            match read_pending_hypervisor_decisions_root_command() {
+                Ok(()) => 0,
+                Err(error) => {
+                    std::eprintln!("GitRun hypervisor decision read: FAIL — {error}");
+                    1
+                }
             }
-        },
+        }
         Command::RespondHypervisorDecisionRoot { vm_name, choice } => {
             match respond_hypervisor_decision_root_command(&vm_name, &choice) {
                 Ok(()) => 0,
@@ -1475,7 +1479,7 @@ fn main() {
                     1
                 }
             }
-        },
+        }
         Command::ReadLogicRulesRoot => match read_logic_rules_root_command() {
             Ok(()) => 0,
             Err(error) => {
@@ -1483,20 +1487,24 @@ fn main() {
                 1
             }
         },
-        Command::SaveLogicRulesRoot { input_path } => match save_logic_rules_root_command(&input_path) {
-            Ok(()) => 0,
-            Err(error) => {
-                std::eprintln!("GitRun Logic Containers save: FAIL — {error}");
-                1
+        Command::SaveLogicRulesRoot { input_path } => {
+            match save_logic_rules_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    std::eprintln!("GitRun Logic Containers save: FAIL — {error}");
+                    1
+                }
             }
-        },
-        Command::ReadDockRequirementsRoot { repository } => match read_dock_requirements_root_command(&repository) {
-            Ok(()) => 0,
-            Err(error) => {
-                std::eprintln!("GitRun GitDockRun requirements read: FAIL — {error}");
-                1
+        }
+        Command::ReadDockRequirementsRoot { repository } => {
+            match read_dock_requirements_root_command(&repository) {
+                Ok(()) => 0,
+                Err(error) => {
+                    std::eprintln!("GitRun GitDockRun requirements read: FAIL — {error}");
+                    1
+                }
             }
-        },
+        }
         Command::ReadGsrEventsRoot { limit } => match read_gsr_events_root_command(limit) {
             Ok(()) => 0,
             Err(error) => {
@@ -2852,7 +2860,10 @@ fn read_protected_state_file(
         || metadata.permissions().mode() & 0o022 != 0
         || metadata.len() > max_bytes
     {
-        return Err(format!("{label} must be a root-owned regular file with safe permissions and bounded size").into());
+        return Err(format!(
+            "{label} must be a root-owned regular file with safe permissions and bounded size"
+        )
+        .into());
     }
     Ok(Some(std::fs::read_to_string(path)?))
 }
@@ -2911,7 +2922,9 @@ fn save_vm_configs_root_command(_input_path: &str) -> Result<(), Box<dyn std::er
 #[cfg(target_os = "linux")]
 fn read_pending_hypervisor_decisions_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
-        return Err("reading system hypervisor decisions requires administrator authorization".into());
+        return Err(
+            "reading system hypervisor decisions requires administrator authorization".into(),
+        );
     }
     let config = trusted_root_config_for_state_access()?;
     let state_dir = PathBuf::from(&config.state_dir);
@@ -2941,7 +2954,9 @@ fn read_pending_hypervisor_decisions_root_command() -> Result<(), Box<dyn std::e
         }
         json_records += 1;
         if json_records > 1_000 {
-            return Err("hypervisor-decision directory exceeds the 1000-record safety limit".into());
+            return Err(
+                "hypervisor-decision directory exceeds the 1000-record safety limit".into(),
+            );
         }
         let file = std::fs::symlink_metadata(entry.path())?;
         if file.file_type().is_symlink()
@@ -2951,7 +2966,9 @@ fn read_pending_hypervisor_decisions_root_command() -> Result<(), Box<dyn std::e
             || file.permissions().mode() & 0o022 != 0
             || file.len() > 64 * 1024
         {
-            return Err("hypervisor-decision record is not a trusted root-owned regular file".into());
+            return Err(
+                "hypervisor-decision record is not a trusted root-owned regular file".into(),
+            );
         }
     }
 
@@ -2973,14 +2990,20 @@ fn respond_hypervisor_decision_root_command(
     choice: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
-        return Err("responding to a system hypervisor decision requires administrator privileges".into());
+        return Err(
+            "responding to a system hypervisor decision requires administrator privileges".into(),
+        );
     }
     // VM names are path-encoded by the decision protocol; accepting only the two
     // serialized enum spellings prevents the helper becoming a generic file writer.
     let choice = match choice {
         "retry_kvm" => gitrun_core::hypervisor_decision::DecisionChoice::RetryKvm,
         "use_virtual_box" => gitrun_core::hypervisor_decision::DecisionChoice::UseVirtualBox,
-        _ => return Err("unsupported hypervisor decision; expected retry_kvm or use_virtual_box".into()),
+        _ => {
+            return Err(
+                "unsupported hypervisor decision; expected retry_kvm or use_virtual_box".into(),
+            )
+        }
     };
     let config = trusted_root_config_for_state_access()?;
     gitrun_core::hypervisor_decision::respond(Path::new(&config.state_dir), vm_name, choice)?;
@@ -2999,14 +3022,17 @@ fn respond_hypervisor_decision_root_command(
 #[cfg(target_os = "linux")]
 fn read_logic_rules_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
-        return Err("reading system Logic Containers rules requires administrator authorization".into());
+        return Err(
+            "reading system Logic Containers rules requires administrator authorization".into(),
+        );
     }
     let config = trusted_root_config_for_state_access()?;
     let state_dir = PathBuf::from(&config.state_dir);
     let path = state_dir.join("logic-containers.json");
     let rules = match read_protected_state_file(&path, "Logic Containers rules", 1024 * 1024)? {
         Some(raw) => {
-            let rules: Vec<gitrun_scheduler::logic_containers::LogicRule> = serde_json::from_str(&raw)?;
+            let rules: Vec<gitrun_scheduler::logic_containers::LogicRule> =
+                serde_json::from_str(&raw)?;
             gitrun_scheduler::logic_containers::validate_rules(&rules)?;
             rules
         }
@@ -3024,7 +3050,9 @@ fn read_logic_rules_root_command() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(target_os = "linux")]
 fn save_logic_rules_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
-        return Err("saving system Logic Containers rules requires administrator authorization".into());
+        return Err(
+            "saving system Logic Containers rules requires administrator authorization".into(),
+        );
     }
     let requester_uid = std::env::var("PKEXEC_UID")
         .or_else(|_| std::env::var("SUDO_UID"))
@@ -3055,10 +3083,16 @@ fn save_logic_rules_root_command(_input_path: &str) -> Result<(), Box<dyn std::e
 #[cfg(target_os = "linux")]
 fn read_dock_requirements_root_command(repository: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
-        return Err("reading system GitDockRun requirements requires administrator authorization".into());
+        return Err(
+            "reading system GitDockRun requirements requires administrator authorization".into(),
+        );
     }
     let config = trusted_root_config_for_state_access()?;
-    if !config.repositories.iter().any(|configured| configured == repository) {
+    if !config
+        .repositories
+        .iter()
+        .any(|configured| configured == repository)
+    {
         return Err(format!("repository is not configured in GitRun: {repository}").into());
     }
 
@@ -3078,26 +3112,31 @@ fn read_dock_requirements_root_command(repository: &str) -> Result<(), Box<dyn s
         || metadata.uid() != 0
         || metadata.permissions().mode() & 0o022 != 0
     {
-        return Err("GitDockRun requirements directory is not a trusted root-owned directory".into());
+        return Err(
+            "GitDockRun requirements directory is not a trusted root-owned directory".into(),
+        );
     }
 
     let path = directory.join(format!(
         "{}.json",
         gitrun_scheduler::docker::sanitize(repository, '_')
     ));
-    let requirements = match read_protected_state_file(&path, "GitDockRun requirements", 1024 * 1024)? {
-        Some(raw) => {
-            let requests: Vec<gitrun_core::DockRequest> = serde_json::from_str(&raw)?;
-            requests
-        }
-        None => Vec::new(),
-    };
+    let requirements =
+        match read_protected_state_file(&path, "GitDockRun requirements", 1024 * 1024)? {
+            Some(raw) => {
+                let requests: Vec<gitrun_core::DockRequest> = serde_json::from_str(&raw)?;
+                requests
+            }
+            None => Vec::new(),
+        };
     std::println!("{}", serde_json::to_string(&requirements)?);
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn read_dock_requirements_root_command(_repository: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn read_dock_requirements_root_command(
+    _repository: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     Err("system GitDockRun requirements are supported on Linux only".into())
 }
 
@@ -3690,28 +3729,15 @@ mod internal_lifecycle_command_tests {
         ));
 
         assert!(matches!(
-            parse_internal_command(&[
-                "gitrun",
-                "--no-cat",
-                "--read-gsr-events-root",
-                "30"
-            ]),
+            parse_internal_command(&["gitrun", "--no-cat", "--read-gsr-events-root", "30"]),
             Command::ReadGsrEventsRoot { limit: 30 }
         ));
         assert!(matches!(
-            parse_internal_command(&[
-                "gitrun",
-                "--no-cat",
-                "--read-logic-rules-root"
-            ]),
+            parse_internal_command(&["gitrun", "--no-cat", "--read-logic-rules-root"]),
             Command::ReadLogicRulesRoot
         ));
         assert!(matches!(
-            parse_internal_command(&[
-                "gitrun",
-                "--no-cat",
-                "--read-vm-configs-root"
-            ]),
+            parse_internal_command(&["gitrun", "--no-cat", "--read-vm-configs-root"]),
             Command::ReadVmConfigsRoot
         ));
         assert!(matches!(

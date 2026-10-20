@@ -1954,13 +1954,10 @@ fn ensure_runner_network(
     // worker may create the named network after our inspect but before our create.
     // Accept that race only after re-inspecting and validating the full security
     // contract; never trust a same-named unmanaged or non-isolated bridge.
-    let raced_inspect = run_on(host, &[
-        "network",
-        "inspect",
-        "--format",
-        inspect_format,
-        network,
-    ])?;
+    let raced_inspect = run_on(
+        host,
+        &["network", "inspect", "--format", inspect_format, network],
+    )?;
     if raced_inspect.status.success() {
         let metadata = String::from_utf8_lossy(&raced_inspect.stdout);
         validate_runner_network_metadata(network, &metadata, require_inter_container_isolation)
@@ -1968,9 +1965,14 @@ fn ensure_runner_network(
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&create_output.stderr).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&create_output.stderr)
+        .trim()
+        .to_owned();
     Err(DockerError::Command(if stderr.is_empty() {
-        format!("docker network create {network} failed with status {}", create_output.status)
+        format!(
+            "docker network create {network} failed with status {}",
+            create_output.status
+        )
     } else {
         stderr
     }))

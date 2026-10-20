@@ -221,8 +221,7 @@ fn persist_logic_rules_as_root(
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    gitrun_scheduler::logic_containers::validate_rules(rules)
-        .map_err(|error| error.to_string())?;
+    gitrun_scheduler::logic_containers::validate_rules(rules).map_err(|error| error.to_string())?;
     let pkexec = pkexec_path().ok_or(
         "Saving Logic Containers rules requires administrator authorization, but trusted pkexec was not found.",
     )?;
@@ -250,7 +249,8 @@ fn persist_logic_rules_as_root(
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&path)
             .map_err(|error| error.to_string())?;
-        file.write_all(&payload).map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
 
@@ -281,9 +281,7 @@ fn persist_logic_rules_as_root(
 }
 
 #[cfg(target_os = "linux")]
-fn persist_vm_configs_as_root(
-    configs: &[gitrun_scheduler::vm::VmConfig],
-) -> Result<(), String> {
+fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -313,7 +311,8 @@ fn persist_vm_configs_as_root(
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&path)
             .map_err(|error| error.to_string())?;
-        file.write_all(&payload).map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
         let status = std::process::Command::new(&pkexec)
@@ -335,9 +334,7 @@ fn persist_vm_configs_as_root(
 }
 
 #[cfg(not(target_os = "linux"))]
-fn persist_vm_configs_as_root(
-    _configs: &[gitrun_scheduler::vm::VmConfig],
-) -> Result<(), String> {
+fn persist_vm_configs_as_root(_configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
     Err("administrator-authorized VM configuration persistence is Linux-only".into())
 }
 
@@ -1357,7 +1354,10 @@ fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
-            format!("authorized GitRun state helper exited with status {}", output.status)
+            format!(
+                "authorized GitRun state helper exited with status {}",
+                output.status
+            )
         } else {
             format!("authorized GitRun state helper failed: {detail}")
         });
@@ -1381,8 +1381,7 @@ fn list_gsr_events_for_dashboard(
     }
 
     let path = gitrun_gsr::events::default_queue_path(&config.state_dir);
-    gitrun_gsr::events::read_last(&path, limit.clamp(1, 500))
-        .map_err(|error| error.to_string())
+    gitrun_gsr::events::read_last(&path, limit.clamp(1, 500)).map_err(|error| error.to_string())
 }
 
 fn count_critical_events_for_dashboard(config: &Config, cutoff: u64) -> Result<u32, String> {
@@ -1414,8 +1413,8 @@ fn get_overview() -> Result<OverviewData, String> {
     let cutoff = recent_event_cutoff();
     let mut warnings = Vec::new();
     #[cfg(target_os = "linux")]
-    let system_install = trusted_system_cli_path().is_some()
-        && Path::new("/etc/gitrun/gitrun.env").is_file();
+    let system_install =
+        trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file();
     #[cfg(not(target_os = "linux"))]
     let system_install = false;
     let recent_critical_events = if system_install {
@@ -2070,8 +2069,7 @@ fn logic_rules_for_dashboard(
     }
 
     let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
-    gitrun_scheduler::logic_containers::load_rules(&rules_path)
-        .map_err(|error| error.to_string())
+    gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Serialize)]
@@ -2213,17 +2211,16 @@ pub struct GsrStatus {
 fn get_gsr_status() -> Result<GsrStatus, String> {
     let config = load_config()?;
     #[cfg(target_os = "linux")]
-    let watched_pid = if trusted_system_cli_path().is_some()
-        && Path::new("/etc/gitrun/gitrun.env").is_file()
-    {
-        None
-    } else {
-        let pid_file = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid");
-        std::fs::read_to_string(&pid_file)
-            .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok())
-            .filter(|pid| process_has_name(*pid, "gitrun-autoscaler"))
-    };
+    let watched_pid =
+        if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+            None
+        } else {
+            let pid_file = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid");
+            std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .filter(|pid| process_has_name(*pid, "gitrun-autoscaler"))
+        };
     #[cfg(not(target_os = "linux"))]
     let watched_pid = {
         let pid_file = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid");
@@ -2404,7 +2401,8 @@ fn save_logic_rules(
     rules: Vec<gitrun_scheduler::logic_containers::LogicRule>,
 ) -> Result<(), String> {
     let config = load_config()?;
-    gitrun_scheduler::logic_containers::validate_rules(&rules).map_err(|error| error.to_string())?;
+    gitrun_scheduler::logic_containers::validate_rules(&rules)
+        .map_err(|error| error.to_string())?;
     #[cfg(target_os = "linux")]
     if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
         return persist_logic_rules_as_root(&rules);
@@ -2684,18 +2682,15 @@ fn load_dock_requirements_for_repo(
     }
 
     #[cfg(target_os = "linux")]
-    let requests: Vec<gitrun_core::DockRequest> = if trusted_system_cli_path().is_some()
-        && Path::new("/etc/gitrun/gitrun.env").is_file()
-    {
-        let output = run_privileged_cli_helper(
-            "--read-dock-requirements-root",
-            &[repo.to_owned()],
-        )?;
-        serde_json::from_str(output.trim())
-            .map_err(|error| format!("decode authorized GitDockRun requirements: {error}"))?
-    } else {
-        read_dock_requirements_local(config, repo)?
-    };
+    let requests: Vec<gitrun_core::DockRequest> =
+        if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+            let output =
+                run_privileged_cli_helper("--read-dock-requirements-root", &[repo.to_owned()])?;
+            serde_json::from_str(output.trim())
+                .map_err(|error| format!("decode authorized GitDockRun requirements: {error}"))?
+        } else {
+            read_dock_requirements_local(config, repo)?
+        };
 
     #[cfg(not(target_os = "linux"))]
     let requests = read_dock_requirements_local(config, repo)?;

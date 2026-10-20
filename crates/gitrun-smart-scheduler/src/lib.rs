@@ -904,6 +904,16 @@ fn valid_occurrence_id(code: &str, workload_id: &str, run_id: u64, job_id: u64) 
         || code == format!("run-{run_id}-job-{job_id}")
 }
 
+fn prune_stale_resource_observations(model: &mut WorkflowModel, now_epoch: u64) -> bool {
+    const RESOURCE_OBSERVATION_RETENTION_SECONDS: u64 = 180 * 86_400;
+    let cutoff = now_epoch.saturating_sub(RESOURCE_OBSERVATION_RETENTION_SECONDS);
+    let before = model.resource_observations.len();
+    model.resource_observations.retain(|entry| {
+        entry.last_sample_at_epoch >= cutoff && entry.last_sample_at_epoch <= now_epoch
+    });
+    before != model.resource_observations.len()
+}
+
 impl WorkflowModel {
     fn empty(repository: &str) -> Self {
         Self {
@@ -1414,17 +1424,8 @@ impl KittyRuntime {
             // Age out the private resource history even when no runner is
             // currently active. This path touches only an already-loaded
             // model, so empty telemetry does not trigger unnecessary disk IO.
-            let cutoff = observed_at_epoch.saturating_sub(180 * 86_400);
-            let pruned = if let Some(model) = self.models.get_mut(&key) {
-                let before = model.resource_observations.len();
-                model.resource_observations.retain(|entry| {
-                    entry.last_sample_at_epoch >= cutoff
-                        && entry.last_sample_at_epoch <= observed_at_epoch
-                });
-                before != model.resource_observations.len()
-            } else {
-                false
-            };
+            let pruned = self.models.get_mut(&key)
+                .is_some_and(|model| prune_stale_resource_observations(model, observed_at_epoch));
             if pruned {
                 self.dirty_models.insert(key.clone());
                 if let Err(error) = self.persist_model(&key) {
@@ -1470,13 +1471,7 @@ impl KittyRuntime {
             let model = self.models.get_mut(&key).ok_or_else(|| {
                 KittyError::Invalid("resource model disappeared during update".into())
             })?;
-            let resource_cutoff = observed_at_epoch.saturating_sub(180 * 86_400);
-            let resource_observations_before = model.resource_observations.len();
-            model.resource_observations.retain(|entry| {
-                entry.last_sample_at_epoch >= resource_cutoff
-                    && entry.last_sample_at_epoch <= observed_at_epoch
-            });
-            changed |= model.resource_observations.len() != resource_observations_before;
+            changed |= prune_stale_resource_observations(model, observed_at_epoch);
             changed |= record_queued_job_occurrences(model, &job_metadata, observed_at_epoch);
             changed |= record_started_job_occurrences_with_coverage(
                 model,
@@ -4600,6 +4595,35 @@ fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn stale_resource_observations_are_pruned_and_pruning_is_idempotent() {
+        const DAY: u64 = 86_400;
+        let now = 200 * DAY;
+        let workload_id = "wk-0123456789abcdef";
+        let observation = |run_id, job_id, last_sample_at_epoch| WorkloadResourceObservation {
+            workload_id: workload_id.into(),
+            occurrence_code: provider_occurrence_key(workload_id, run_id, job_id),
+            run_id,
+            job_id,
+            cpu_cores_peak: 1.0,
+            memory_bytes_peak: 1024,
+            sample_count: 1,
+            first_sample_at_epoch: last_sample_at_epoch,
+            last_sample_at_epoch,
+        };
+        let mut model = WorkflowModel::empty("owner/repo");
+        model.resource_observations = vec![
+            observation(1, 11, DAY),
+            observation(2, 22, now - DAY),
+            observation(3, 33, now + DAY),
+        ];
+
+        assert!(prune_stale_resource_observations(&mut model, now));
+        assert_eq!(model.resource_observations.len(), 1);
+        assert_eq!(model.resource_observations[0].run_id, 2);
+        assert!(!prune_stale_resource_observations(&mut model, now));
+    }
 
     fn temp_dir(label: &str) -> PathBuf {
         let now = SystemTime::now()

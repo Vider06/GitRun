@@ -1,12 +1,12 @@
 schema: gitrun-premade/v1
 premade:
-  version: 0.3.0
+  version: 0.4.0
   status: active
 artifacts:
   dockers:
     - id: runner-linux-x86_64
       path: Core/Dockers/runners/linux-x86_64
-      version: 0.1.0
+      version: 0.2.0
       source: gitrun-setup
       platforms:
         - linux/amd64
@@ -23,6 +23,12 @@ artifacts:
       version: 0.1.0
     - id: runner-verification
       path: Workflows/GitRun-Dependent/runner-verification.yml
+      version: 0.1.0
+    - id: kitty-dispatch-plan
+      path: Workflows/GitRun-Dependent/kitty-dispatch-plan.yml
+      version: 0.1.0
+    - id: kitty-dispatch-example
+      path: Workflows/GitRun-Dependent/kitty-dispatch-example.yml
       version: 0.1.0
   other: []
 verification:

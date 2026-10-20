@@ -36,6 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: raven-actions/actionlint@v2
+        with:
+          files: ".github/workflows/*.yml,Workflows/GitRun-Dependent/kitty-dispatch-plan.yml,Workflows/GitRun-Dependent/kitty-dispatch-example.yml"
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 60

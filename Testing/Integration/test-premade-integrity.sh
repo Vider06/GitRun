@@ -13,4 +13,12 @@ done
 test -f Core/Dockers/runners/linux-x86_64/Dockerfile
 test -f Core/manifests/premade.yaml
 test -f README.md
+test -f Workflows/GitRun-Dependent/kitty-dispatch-plan.yml
+test -f Workflows/GitRun-Dependent/kitty-dispatch-example.yml
+grep -Fq 'GitDispatchRun --plan' Workflows/GitRun-Dependent/kitty-dispatch-plan.yml
+grep -Fq 'kitty_online' Workflows/GitRun-Dependent/kitty-dispatch-plan.yml
+grep -Fq 'controller_online' Workflows/GitRun-Dependent/kitty-dispatch-plan.yml
+grep -Fq 'gitrun-controller-offline' Workflows/GitRun-Dependent/kitty-dispatch-plan.yml
+grep -Fq 'fromJSON(needs.plan.outputs.runs_on)' Workflows/GitRun-Dependent/kitty-dispatch-example.yml
+grep -Fq 'GitDispatchRun' Workflows/GitRun-Dependent/README.md
 echo "Premade integrity checks passed."

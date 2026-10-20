@@ -1,0 +1,9 @@
+# Kitty Dispatch files are templates copied into consuming repositories under .github/workflows.
+# The example therefore cannot resolve its local workflow_call reference while stored in this artifact library.
+self-hosted-runner:
+  labels:
+    - gitrun-control
+paths:
+  Workflows/GitRun-Dependent/kitty-dispatch-example.yml:
+    ignore:
+      - 'could not read reusable workflow file for "\./\.github/workflows/kitty-dispatch-plan\.yml": open .+: no such file or directory'

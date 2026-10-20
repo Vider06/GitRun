@@ -1,0 +1,50 @@
+name: GitRun Premade - Kitty Dispatch Example
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    uses: ./.github/workflows/kitty-dispatch-plan.yml
+    with:
+      # After copying this template to .github/workflows/kitty-dispatch-example.yml,
+      # use that exact path plus the historical job name/profile for this caller repository.
+      # Do not use a display name that differs from the job ID.
+      target_job: build
+      target_workflow: .github/workflows/kitty-dispatch-example.yml
+      target_labels: self-hosted,linux,x64
+
+  build:
+    name: build
+    needs: plan
+    # GitHub performs the final assignment. This is a unique label pair only in Kitty mode;
+    # fallback mode returns the ordinary target_labels array.
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    timeout-minutes: 60
+    steps:
+      - name: Show the selected route mode
+        env:
+          ROUTE_MODE: ${{ needs.plan.outputs.mode }}
+          CONTROLLER_ONLINE: ${{ needs.plan.outputs.controller_online }}
+          KITTY_ONLINE: ${{ needs.plan.outputs.kitty_online }}
+          ROUTE_STATUS: ${{ needs.plan.outputs.status }}
+          ROUTE_REASON: ${{ needs.plan.outputs.reason }}
+        run: |
+          printf 'GitRun route mode: %s\n' "$ROUTE_MODE"
+          printf 'GitRun controller online: %s\n' "$CONTROLLER_ONLINE"
+          printf 'Kitty online: %s\n' "$KITTY_ONLINE"
+          printf 'Kitty/controller status: %s\n' "$ROUTE_STATUS"
+          printf 'Route reason: %s\n' "$ROUTE_REASON"
+
+      - uses: actions/checkout@v4
+
+      - name: Run the build on the selected compatible runner
+        run: |
+          echo "The planner has already reported whether Kitty routing or GitHub fallback was selected."
+          # Replace this command with the repository's actual build/test command.
+          echo "Build placeholder"

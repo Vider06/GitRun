@@ -639,17 +639,17 @@ pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceU
     })
 }
 
-/// Remaining CPU headroom and the full RAM limit already committed to a running runner.
-/// Host CPU/memory probes account for current use. Docker's Linux CLI stats subtract
-/// page cache from displayed memory, so RAM reserves the entire existing hard limit.
+/// Remaining CPU and RAM headroom already committed to a running runner.
+/// Docker's Linux CLI stats subtract page cache from displayed memory, so RAM
+/// is measured from the container's cgroup-v2 memory.current counter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManagedContainerResourceReservation {
     pub name: String,
     pub cpu_headroom_cores: f64,
-    pub memory_limit_bytes: u64,
+    pub memory_headroom_bytes: u64,
 }
 
-/// Return unused CPU capacity and committed RAM limits for running GitRun-managed runners.
+/// Return uncommitted CPU/RAM headroom for running GitRun-managed runners.
 /// Missing limits, ambiguous identities, or failed measurements are errors so
 /// Adaptive Resource Management defers creation instead of guessing capacity.
 pub fn running_managed_container_resource_reservations() -> Result<Vec<ManagedContainerResourceReservation>> {
@@ -697,17 +697,18 @@ pub fn running_managed_container_resource_reservations() -> Result<Vec<ManagedCo
     let mut inspect_args = vec![
         "inspect".to_owned(),
         "--format".to_owned(),
-        "{{.Id}}|{{.Name}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}".to_owned(),
+        "{{.Id}}|{{.Name}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.State.Pid}}".to_owned(),
     ];
     inspect_args.extend(identities.iter().map(|(id, _)| id.clone()));
     let inspect_refs: Vec<&str> = inspect_args.iter().map(String::as_str).collect();
     let inspected = run_checked(&inspect_refs)?;
     let mut limits = HashMap::<String, (f64, u64)>::new();
+    let mut pids = HashMap::<String, u32>::new();
     for line in inspected.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let fields: Vec<_> = line.splitn(4, '|').collect();
-        if fields.len() != 4 {
+        let fields: Vec<_> = line.splitn(5, '|').collect();
+        if fields.len() != 5 {
             return Err(DockerError::Command(
-                "docker inspect returned malformed runner resource limits".into(),
+                "docker inspect returned malformed runner resource limits/PID".into(),
             ));
         }
         let id = fields[0].trim().to_owned();
@@ -723,6 +724,14 @@ pub fn running_managed_container_resource_reservations() -> Result<Vec<ManagedCo
         let memory_bytes = fields[3].trim().parse::<u64>().map_err(|_| {
             DockerError::Command("docker inspect returned invalid Memory limit".into())
         })?;
+        let pid = fields[4].trim().parse::<u32>().map_err(|_| {
+            DockerError::Command("docker inspect returned invalid container PID".into())
+        })?;
+        if pid == 0 || pids.insert(id.clone(), pid).is_some() {
+            return Err(DockerError::Command(format!(
+                "running managed runner {name} has no unique host PID"
+            )));
+        }
         let cores = nano_cpus as f64 / NANO_CPUS_PER_CORE;
         if nano_cpus == 0
             || !cores.is_finite()
@@ -737,9 +746,9 @@ pub fn running_managed_container_resource_reservations() -> Result<Vec<ManagedCo
             )));
         }
     }
-    if limits.len() != identities.len() {
+    if limits.len() != identities.len() || pids.len() != identities.len() {
         return Err(DockerError::Command(
-            "could not verify resource limits for every running GitRun runner".into(),
+            "could not verify resource limits/PIDs for every running GitRun runner".into(),
         ));
     }
 
@@ -800,12 +809,17 @@ pub fn running_managed_container_resource_reservations() -> Result<Vec<ManagedCo
         let cpu_usage = usages.get(&id).ok_or_else(|| {
             DockerError::Command("verified runner usage disappeared from snapshot".into())
         })?;
+        let pid = *pids.get(&id).ok_or_else(|| {
+            DockerError::Command("verified runner PID disappeared from snapshot".into())
+        })?;
+        // MemAvailable already accounts for the RAM currently used by containers.
+        // Subtract only the remaining part of each hard limit to avoid counting
+        // current container RAM a second time in the shared host budget.
+        let memory_in_use = container_cgroup_memory_usage_bytes_from_pid(pid)?;
         reservations.push(ManagedContainerResourceReservation {
             name,
             cpu_headroom_cores: (cpu_limit - cpu_usage).max(0.0),
-            // Reserve the full hard limit. Docker's Linux CLI subtracts page
-            // cache from MemUsage, so that figure is not safe for RAM headroom.
-            memory_limit_bytes: memory_limit,
+            memory_headroom_bytes: memory_limit.saturating_sub(memory_in_use),
         });
     }
     Ok(reservations)

@@ -9,6 +9,7 @@
 //! directly, so it stays testable without Docker installed.
 
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -484,6 +485,174 @@ pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceU
         container_id,
     ])?;
     parse_docker_stats(&output)
+}
+
+/// Unused CPU/RAM headroom already committed to a running GitRun runner.
+/// Host free/idle readings already account for current usage; this reserves
+/// only the gap between each container's hard limit and its measured usage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManagedContainerResourceHeadroom {
+    pub name: String,
+    pub cpu_cores: f64,
+    pub memory_bytes: u64,
+}
+
+/// Return unused capacity committed to running GitRun-managed runners.
+/// Missing limits, ambiguous identities, or failed measurements are errors so
+/// Adaptive Resource Management defers creation instead of guessing capacity.
+pub fn running_managed_container_resource_headroom() -> Result<Vec<ManagedContainerResourceHeadroom>> {
+    const MAX_CONTAINERS: usize = 512;
+    const NANO_CPUS_PER_CORE: f64 = 1_000_000_000.0;
+    const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
+
+    let listing = run_checked(&[
+        "ps", "--no-trunc",
+        "--filter", "label=gitrun.runner=true",
+        "--filter", "status=running",
+        "--format", "{{.ID}}|{{.Names}}",
+    ])?;
+    let mut identities = Vec::<(String, String)>::new();
+    let mut expected_names = HashMap::<String, String>::new();
+    for line in listing.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let (id, name) = line.split_once('|').ok_or_else(|| {
+            DockerError::Command("docker ps returned an invalid managed-runner identity".into())
+        })?;
+        let id = id.trim().to_owned();
+        let name = name.trim().to_owned();
+        if id.len() != 64
+            || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || name.is_empty()
+            || name.contains('|')
+            || expected_names.insert(id.clone(), name.clone()).is_some()
+        {
+            return Err(DockerError::Command(
+                "docker ps returned an invalid or duplicated managed-runner identity".into(),
+            ));
+        }
+        identities.push((id, name));
+        if identities.len() > MAX_CONTAINERS {
+            return Err(DockerError::Command(
+                "too many running managed containers to verify an adaptive resource budget".into(),
+            ));
+        }
+    }
+    if identities.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Inspect by immutable ID, not by mutable names. Zero/unset Docker limits
+    // mean unbounded resources and therefore make a safe adaptive budget unknowable.
+    let mut inspect_args = vec![
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{.Id}}|{{.Name}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}".to_owned(),
+    ];
+    inspect_args.extend(identities.iter().map(|(id, _)| id.clone()));
+    let inspect_refs: Vec<&str> = inspect_args.iter().map(String::as_str).collect();
+    let inspected = run_checked(&inspect_refs)?;
+    let mut limits = HashMap::<String, (f64, u64)>::new();
+    for line in inspected.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let fields: Vec<_> = line.splitn(4, '|').collect();
+        if fields.len() != 4 {
+            return Err(DockerError::Command(
+                "docker inspect returned malformed runner resource limits".into(),
+            ));
+        }
+        let id = fields[0].trim().to_owned();
+        let name = fields[1].trim().trim_start_matches('/').to_owned();
+        if expected_names.get(&id) != Some(&name) {
+            return Err(DockerError::Command(
+                "managed runner identity changed while reading resource limits".into(),
+            ));
+        }
+        let nano_cpus = fields[2].trim().parse::<u64>().map_err(|_| {
+            DockerError::Command("docker inspect returned invalid NanoCpus".into())
+        })?;
+        let memory_bytes = fields[3].trim().parse::<u64>().map_err(|_| {
+            DockerError::Command("docker inspect returned invalid Memory limit".into())
+        })?;
+        let cores = nano_cpus as f64 / NANO_CPUS_PER_CORE;
+        if nano_cpus == 0
+            || !cores.is_finite()
+            || cores <= 0.0
+            || cores > 256.0
+            || memory_bytes == 0
+            || memory_bytes > MAX_MEMORY_BYTES
+            || limits.insert(id, (cores, memory_bytes)).is_some()
+        {
+            return Err(DockerError::Command(format!(
+                "running managed runner {name} has missing, unbounded or invalid CPU/RAM limits"
+            )));
+        }
+    }
+    if limits.len() != identities.len() {
+        return Err(DockerError::Command(
+            "could not verify resource limits for every running GitRun runner".into(),
+        ));
+    }
+
+    let mut stats_args = vec![
+        "stats".to_owned(),
+        "--no-stream".to_owned(),
+        "--format".to_owned(),
+        "{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}".to_owned(),
+    ];
+    stats_args.extend(identities.iter().map(|(id, _)| id.clone()));
+    let stats_refs: Vec<&str> = stats_args.iter().map(String::as_str).collect();
+    let stats_output = run_checked(&stats_refs)?;
+    let mut usages = HashMap::<String, ContainerResourceUsage>::new();
+    for line in stats_output.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let fields: Vec<_> = line.splitn(3, '|').collect();
+        if fields.len() != 3 {
+            return Err(DockerError::Command(
+                "docker stats returned malformed runner usage".into(),
+            ));
+        }
+        let short_id = fields[0].trim();
+        if short_id.len() < 12 || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(DockerError::Command(
+                "docker stats returned an invalid container ID".into(),
+            ));
+        }
+        let mut matches = identities.iter().filter(|(id, _)| id.starts_with(short_id));
+        let Some((full_id, _)) = matches.next() else {
+            return Err(DockerError::Command(
+                "docker stats returned an unknown managed-runner ID".into(),
+            ));
+        };
+        if matches.next().is_some() {
+            return Err(DockerError::Command(
+                "docker stats returned an ambiguous managed-runner ID".into(),
+            ));
+        }
+        let usage = parse_docker_stats(&format!("{}|{}", fields[1], fields[2]))?;
+        if usages.insert(full_id.clone(), usage).is_some() {
+            return Err(DockerError::Command(
+                "docker stats returned duplicate managed-runner usage".into(),
+            ));
+        }
+    }
+    if usages.len() != identities.len() {
+        return Err(DockerError::Command(
+            "could not measure every running GitRun runner before adaptive allocation".into(),
+        ));
+    }
+
+    let mut headroom = Vec::with_capacity(identities.len());
+    for (id, name) in identities {
+        let (cpu_limit, memory_limit) = *limits.get(&id).ok_or_else(|| {
+            DockerError::Command("verified runner limit disappeared from snapshot".into())
+        })?;
+        let usage = usages.get(&id).ok_or_else(|| {
+            DockerError::Command("verified runner usage disappeared from snapshot".into())
+        })?;
+        headroom.push(ManagedContainerResourceHeadroom {
+            name,
+            cpu_cores: (cpu_limit - usage.cpu_cores).max(0.0),
+            memory_bytes: memory_limit.saturating_sub(usage.memory_bytes),
+        });
+    }
+    Ok(headroom)
 }
 
 #[derive(Debug, Clone)]

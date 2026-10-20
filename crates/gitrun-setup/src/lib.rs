@@ -1442,6 +1442,12 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
     let config = Config::from_env_file(config_path)?;
     config.validate()?;
     let state_dir = PathBuf::from(&config.state_dir);
+    if desktop_uid.is_some() && state_dir != Path::new("/var/lib/gitrun") {
+        return Err(SetupError::Command(
+            "legacy user-owned config selected a non-standard runtime state directory; refusing privileged ownership migration until an administrator verifies the path"
+                .into(),
+        ));
+    }
     repair_system_runtime_directory(&state_dir)?;
 
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);

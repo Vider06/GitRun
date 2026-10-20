@@ -1253,6 +1253,15 @@ impl ApiExecutionBackend {
         // Dispatch is opt-in and deliberately falls back to normal GitHub label
         // matching for every disabled, stale, unsupported or ambiguous state.
         let mut kitty = gitrun_smart_scheduler::KittyRuntime::new(&self.state_dir);
+        // This call reloads the persisted, validated settings on a fresh runtime.
+        // Do it before reading settings(); otherwise the in-memory defaults would
+        // make every dispatch appear disabled even when Kitty is configured.
+        let estimate = kitty.resource_demand_estimate(
+            &request.repository,
+            &target_workflow,
+            &target_job,
+            &target_labels,
+        );
         let settings = kitty.settings().clone();
         if !settings.enabled {
             return fallback("disabled", "kitty-disabled-or-settings-invalid");
@@ -1269,13 +1278,7 @@ impl ApiExecutionBackend {
         if settings.shadow_mode {
             return fallback("shadow", "shadow-mode-keeps-routing-observational");
         }
-
-        let estimate = match kitty.resource_demand_estimate(
-            &request.repository,
-            &target_workflow,
-            &target_job,
-            &target_labels,
-        ) {
+        let estimate = match estimate {
             Some(estimate) => estimate,
             None => return fallback("degraded", "resource-estimate-unavailable"),
         };

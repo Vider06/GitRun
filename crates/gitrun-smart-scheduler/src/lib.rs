@@ -1450,9 +1450,7 @@ impl KittyRuntime {
         }
         if !self.models.contains_key(&key) {
             if self.models.len() >= MAX_MODELS {
-                if let Err(error) = self.evict_oldest_model() {
-                    return Err(error);
-                }
+                self.evict_oldest_model()?;
             }
             match self.load_model(repository, &key) {
                 Ok((model, migrated)) => {

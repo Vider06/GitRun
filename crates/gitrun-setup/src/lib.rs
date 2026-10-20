@@ -1378,6 +1378,137 @@ pub fn validate_system_state_directory(directory: &Path) -> Result<(), SetupErro
     validate_root_owned_directory_chain(directory)
 }
 
+/// Repair ownership drift from older system installations without recursively
+/// changing user-owned settings, vault contents, or recovery journals.
+pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), SetupError> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err(SetupError::UnsupportedPlatform);
+    }
+    if !running_as_root() {
+        return Err(SetupError::NotRoot);
+    }
+
+    let parent = config_path.parent().ok_or_else(|| {
+        SetupError::Command("system config path has no parent directory".into())
+    })?;
+    validate_root_owned_directory_chain(parent)?;
+
+    let config_metadata = fs::symlink_metadata(config_path)?;
+    if config_metadata.file_type().is_symlink() || !config_metadata.is_file() {
+        return Err(SetupError::Command(
+            "system config must be a regular, non-symlink file before migration".into(),
+        ));
+    }
+    if config_metadata.uid() == 0 && config_metadata.permissions().mode() & 0o022 != 0 {
+        return Err(SetupError::Command(
+            "root-owned system config is group/world-writable; refusing migration".into(),
+        ));
+    }
+
+    // A legacy installer made the system config desktop-user-owned. Secure it
+    // before trusting values such as GITRUN_STATE_DIR for privileged repair.
+    let mut desktop_uid = (config_metadata.uid() != 0).then_some(config_metadata.uid());
+    if let Some(uid) = desktop_uid {
+        secure_system_config_file(config_path, Some(uid))?;
+    }
+
+    let config = Config::from_env_file(config_path)?;
+    config.validate()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    repair_system_runtime_directory(&state_dir)?;
+
+    let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
+    match fs::symlink_metadata(&settings_path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(SetupError::Command(
+                    "GitRun security settings must be a regular, non-symlink file".into(),
+                ));
+            }
+            if desktop_uid.is_none() && metadata.uid() != 0 {
+                desktop_uid = Some(metadata.uid());
+                // Keep the desktop's intended read-only access after moving
+                // the settings file back under root control.
+                secure_system_config_file(config_path, desktop_uid)?;
+            }
+            secure_system_settings_file(&settings_path, desktop_uid)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    Ok(())
+}
+
+fn repair_system_runtime_directory(directory: &Path) -> Result<(), SetupError> {
+    validate_runtime_directory_path(directory)?;
+
+    let parent = directory.parent().ok_or_else(|| {
+        SetupError::Command("runtime state directory has no parent directory".into())
+    })?;
+    validate_root_owned_directory_chain(parent)?;
+
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(SetupError::Command(
+                    "runtime state path must be a real directory, not a symlink or file".into(),
+                ));
+            }
+            if metadata.permissions().mode() & 0o022 != 0 {
+                return Err(SetupError::Command(
+                    "runtime state directory is group/world-writable; refusing ownership migration"
+                        .into(),
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(directory)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    // Only the state directory entry is migrated. Its child files and
+    // directories are deliberately left untouched; in particular, user-owned
+    // vault/settings payloads and crash-recovery records are not recursively
+    // chowned or deleted.
+    run_command(
+        Command::new("/usr/bin/chown")
+            .args(["0:0"])
+            .arg(directory),
+    )?;
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
+
+    let metadata = fs::symlink_metadata(directory)?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != 0
+        || metadata.gid() != 0
+        || metadata.permissions().mode() & 0o777 != 0o755
+    {
+        return Err(SetupError::Command(
+            "runtime state directory ownership/permissions failed postcondition verification"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_runtime_directory_path(directory: &Path) -> Result<(), SetupError> {
+    if !directory.is_absolute()
+        || directory == Path::new("/")
+        || directory
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(SetupError::Command(
+            "runtime state directory must be absolute, non-root, and contain no parent traversal"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Security policy is consumed by the root scheduler to authorize privileged
 /// workflow operations. Never make this file desktop-user-owned or writable:
 /// grant only read access through the desktop user's primary group.
@@ -2061,6 +2192,14 @@ mod tests {
             Err(SetupError::InvalidConfigDir(_))
         ));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn runtime_directory_migration_rejects_unsafe_paths() {
+        assert!(validate_runtime_directory_path(Path::new("var/lib/gitrun")).is_err());
+        assert!(validate_runtime_directory_path(Path::new("/")).is_err());
+        assert!(validate_runtime_directory_path(Path::new("/var/lib/../etc")).is_err());
+        assert!(validate_runtime_directory_path(Path::new("/var/lib/gitrun")).is_ok());
     }
 
     #[test]

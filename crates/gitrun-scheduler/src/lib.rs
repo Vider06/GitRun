@@ -224,6 +224,10 @@ pub fn run() {
                 );
                 continue;
             }
+            let mut reconcile_resource_context = ReconcileResourceContext {
+                pressure: resource_context,
+                adaptive_budget: &mut adaptive_resource_budget,
+            };
             if let Err(error) = reconcile_repo(
                 &client,
                 &config,
@@ -231,8 +235,7 @@ pub fn run() {
                 &vm_registry,
                 &mut kitty_runtime,
                 repo,
-                resource_context,
-                &mut adaptive_resource_budget,
+                &mut reconcile_resource_context,
             ) {
                 if let Some(GitHubError::RateLimited { retry_after }) =
                     error.downcast_ref::<GitHubError>()
@@ -793,6 +796,11 @@ struct ResourcePressureContext {
     snapshot: Option<resource_pressure::ResourceSnapshot>,
 }
 
+struct ReconcileResourceContext<'a> {
+    pressure: ResourcePressureContext,
+    adaptive_budget: &'a mut AdaptiveResourceBudgetState,
+}
+
 fn reconcile_repo(
     client: &GitHubClient,
     config: &Config,
@@ -800,13 +808,13 @@ fn reconcile_repo(
     vm_registry: &VmResolutionRegistry,
     kitty_runtime: &mut gitrun_smart_scheduler::KittyRuntime,
     repo: &str,
-    resource_context: ResourcePressureContext,
-    adaptive_resource_budget: &mut AdaptiveResourceBudgetState,
+    resource_context: &mut ReconcileResourceContext<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ResourcePressureContext {
         allow_new_runner_creation,
         snapshot: host_resources,
-    } = resource_context;
+    } = resource_context.pressure;
+    let adaptive_resource_budget = &mut *resource_context.adaptive_budget;
 
     // GTUU replaces permanent runners. Hold its process-shared lifecycle lock
     // across the complete snapshot/plan/execute cycle so an update cannot
@@ -1497,24 +1505,21 @@ fn reconcile_repo(
             if adaptive_resources_enabled {
                 match adaptive_resource_identity(&action, &containers) {
                     None => Ok(None),
-                    Some((job_name, job_labels)) => {
-                        let attempt = (|| {
-                            ensure_adaptive_resource_backend_is_local(
-                                state_dir,
-                                &job_labels,
-                                &workload_routing_profiles,
-                            )?;
-                            let estimate = kitty_runtime
-                                .resource_demand_estimate(repo, "", &job_name, &job_labels)
-                                .ok_or_else(|| {
-                                    "Kitty could not produce a validated resource estimate; refusing to guess CPU/RAM".to_owned()
-                                })?;
-                            adaptive_resource_budget
-                                .allocate(estimate, config)
-                                .map(Some)
-                        })();
-                        attempt
-                    }
+                    Some((job_name, job_labels)) => (|| {
+                        ensure_adaptive_resource_backend_is_local(
+                            state_dir,
+                            &job_labels,
+                            &workload_routing_profiles,
+                        )?;
+                        let estimate = kitty_runtime
+                            .resource_demand_estimate(repo, "", &job_name, &job_labels)
+                            .ok_or_else(|| {
+                                "Kitty could not produce a validated resource estimate; refusing to guess CPU/RAM".to_owned()
+                            })?;
+                        adaptive_resource_budget
+                            .allocate(estimate, config)
+                            .map(Some)
+                    })(),
                 }
             } else {
                 Ok(None)

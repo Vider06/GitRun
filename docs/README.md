@@ -2,7 +2,7 @@
 
 Architecture, operator guidance, API contracts and security documentation for the GitRun 1.5.1 source line.
 
-## Current release notes
+## 1.5.1 change notes
 
 - [GitRun 1.5.1 — recovery and documentation notes](v1.5.1-release-notes.md) — protected state, guarded migration of legacy 1.5.0 installations, crate/product version boundaries, Smart Scheduler retention and deployment verification.
 - [Architecture](ARCHITECTURE.md) — runtime components and trust boundaries.

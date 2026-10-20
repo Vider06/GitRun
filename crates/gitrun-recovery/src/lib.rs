@@ -493,14 +493,15 @@ pub fn repair_service_unit() -> Result<(), String> {
         return Err("service repair requires root privileges".into());
     }
 
+    // Validate both privileged destinations before changing either one.
+    gitrun_setup::validate_system_state_directory(Path::new("/etc/systemd/system"))
+        .map_err(|error| format!("systemd unit directory is not trusted: {error}"))?;
+
     // Older installers left the state directory desktop-user-owned and the
     // system config writable by that account. Migrate only the directory entry
     // and the explicit settings/config files; never recursively chown state.
     gitrun_setup::repair_installed_runtime_permissions(Path::new("/etc/gitrun/gitrun.env"))
         .map_err(|error| format!("repair legacy runtime ownership: {error}"))?;
-
-    gitrun_setup::validate_system_state_directory(Path::new("/etc/systemd/system"))
-        .map_err(|error| format!("systemd unit directory is not trusted: {error}"))?;
 
     let path = Path::new("/etc/systemd/system/gitrun.service");
     let gsr_path = Path::new("/etc/systemd/system/gitrun-gsr.service");

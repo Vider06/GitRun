@@ -5110,7 +5110,7 @@ fn kitty_dispatch_plan_result(
     let encoded_runs_on = serde_json::to_string(runs_on)
         .map_err(|error| failed(format!("encode Kitty dispatch runs-on labels: {error}")))?;
     Ok(success(format!(
-        "GITRUN_DISPATCH_STATUS={status}\\nGITRUN_DISPATCH_MODE={mode}\\nGITRUN_DISPATCH_RUNS_ON={encoded_runs_on}\\nGITRUN_DISPATCH_REASON={reason}\\n"
+        "GITRUN_DISPATCH_STATUS={status}\nGITRUN_DISPATCH_MODE={mode}\nGITRUN_DISPATCH_RUNS_ON={encoded_runs_on}\nGITRUN_DISPATCH_REASON={reason}\n"
     )))
 }
 

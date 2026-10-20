@@ -75,7 +75,7 @@ export async function renderAppSettings() {
       const resourceEstimateText = (workload.resource_profile_learned
         ? 'learned P80 + safety headroom'
         : 'workload-class estimate · ' + resourceSampleCount + ' of 3 distinct jobs sampled') +
-        ' · ' + (Number.isFinite(estimatedCpu) ? estimatedCpu.toFixed(2).replace(/0+$/, '').replace(/\\.$/, '') : 'unknown') +
+        ' · ' + (Number.isFinite(estimatedCpu) ? estimatedCpu.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') : 'unknown') +
         ' CPU cores / ' + (Number.isFinite(estimatedMemoryGiB) ? estimatedMemoryGiB.toFixed(1) : 'unknown') +
         ' GiB RAM before host-availability and operator-cap limits' +
         (Number.isFinite(workload.observed_peak_cpu_cores) && Number.isFinite(workload.observed_peak_memory_bytes)

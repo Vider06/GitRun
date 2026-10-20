@@ -1257,9 +1257,9 @@ impl ApiExecutionBackend {
         // Do it before reading settings(); otherwise the in-memory defaults would
         // make every dispatch appear disabled even when Kitty is configured.
         let estimate = kitty.resource_demand_estimate(
-            &request.repository,
-            &target_workflow,
-            &target_job,
+            request.repository.as_str(),
+            target_workflow.as_str(),
+            target_job.as_str(),
             &target_labels,
         );
         let settings = kitty.settings().clone();

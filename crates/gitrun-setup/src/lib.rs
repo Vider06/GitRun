@@ -2072,7 +2072,7 @@ mod tests {
     #[test]
     fn setup_flag_parser_accepts_only_the_expected_marker() {
         assert!(parse_setup_flag(
-            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\n"
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\n".into()
         ));
         assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=not-hex\n"));
         assert!(!parse_setup_flag("OTHER=value\n"));

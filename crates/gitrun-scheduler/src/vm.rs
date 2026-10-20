@@ -321,10 +321,17 @@ pub fn save_vm_configs(state_dir: &Path, configs: &[VmConfig]) -> Result<()> {
     ));
 
     let serialized = serde_json::to_string_pretty(configs)?;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // VM definitions can contain host filesystem paths and private TLS
+        // credential locations. Never create the staged replacement using a
+        // permissive inherited umask when this is called by a privileged helper.
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp)?;
     use std::io::Write;
     file.write_all(serialized.as_bytes())?;
     file.write_all(b"\n")?;
@@ -1174,6 +1181,21 @@ mod tests {
         assert_eq!(loaded[0].name, "win-runner-1");
         assert_eq!(loaded[1].base_disk_image, "/vms/base.qcow2");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_vm_config_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_state_dir("private-permissions");
+        save_vm_configs(&dir, &[sample_vm("private-vm", "/vms/base.qcow2")]).unwrap();
+        let mode = std::fs::metadata(dir.join("vm-configs.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

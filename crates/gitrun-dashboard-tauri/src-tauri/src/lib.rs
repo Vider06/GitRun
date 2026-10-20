@@ -215,6 +215,162 @@ fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), Str
 }
 
 #[cfg(target_os = "linux")]
+fn persist_logic_rules_as_root(
+    rules: &[gitrun_scheduler::logic_containers::LogicRule],
+) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    gitrun_scheduler::logic_containers::validate_rules(rules).map_err(|error| error.to_string())?;
+    let pkexec = pkexec_path().ok_or(
+        "Saving Logic Containers rules requires administrator authorization, but trusted pkexec was not found.",
+    )?;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; Logic Containers rules cannot be saved safely.",
+    )?;
+    let payload = serde_json::to_vec(rules).map_err(|error| error.to_string())?;
+    if payload.len() > 1024 * 1024 {
+        return Err("Logic Containers rules exceed the 1 MiB safety limit".into());
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-save-logic-rules-{}-{unique}.json",
+        std::process::id()
+    ));
+
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        drop(file);
+
+        let status = std::process::Command::new(&pkexec)
+            .arg(&cli)
+            .arg("--no-cat")
+            .arg("--save-logic-rules-root")
+            .arg(&path)
+            .status()
+            .map_err(|error| format!("unable to request administrator authorization: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "administrator-authorized Logic Containers save failed with status {status}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[cfg(not(target_os = "linux"))]
+fn persist_logic_rules_as_root(
+    _rules: &[gitrun_scheduler::logic_containers::LogicRule],
+) -> Result<(), String> {
+    Err("administrator-authorized Logic Containers persistence is Linux-only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let pkexec = pkexec_path().ok_or(
+        "Saving VM configuration requires administrator authorization, but trusted pkexec was not found.",
+    )?;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; VM configuration cannot be saved safely.",
+    )?;
+    let payload = serde_json::to_vec(configs).map_err(|error| error.to_string())?;
+    if payload.len() > 1024 * 1024 {
+        return Err("VM configuration exceeds the 1 MiB safety limit".into());
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-save-vm-configs-{}-{unique}.json",
+        std::process::id()
+    ));
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&payload)
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        drop(file);
+        let status = std::process::Command::new(&pkexec)
+            .arg(&cli)
+            .arg("--no-cat")
+            .arg("--save-vm-configs-root")
+            .arg(&path)
+            .status()
+            .map_err(|error| format!("unable to request administrator authorization: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "administrator-authorized VM configuration save failed with status {status}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[cfg(not(target_os = "linux"))]
+fn persist_vm_configs_as_root(_configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
+    Err("administrator-authorized VM configuration persistence is Linux-only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn respond_hypervisor_decision_as_root(
+    vm_name: &str,
+    choice: gitrun_core::hypervisor_decision::DecisionChoice,
+) -> Result<(), String> {
+    if vm_name.trim().is_empty()
+        || vm_name.chars().any(char::is_control)
+        || vm_name.contains('/')
+        || vm_name.contains('\\')
+        || vm_name.len() > 128
+    {
+        return Err("VM decision name is invalid".into());
+    }
+    let choice_arg = match choice {
+        gitrun_core::hypervisor_decision::DecisionChoice::RetryKvm => "retry_kvm",
+        gitrun_core::hypervisor_decision::DecisionChoice::UseVirtualBox => "use_virtual_box",
+    };
+    let _ = run_privileged_cli_helper(
+        "--respond-hypervisor-decision-root",
+        &["--".to_owned(), vm_name.to_owned(), choice_arg.to_owned()],
+    )?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn respond_hypervisor_decision_as_root(
+    _vm_name: &str,
+    _choice: gitrun_core::hypervisor_decision::DecisionChoice,
+) -> Result<(), String> {
+    Err("administrator-authorized hypervisor decisions are Linux-only".into())
+}
+
+#[cfg(target_os = "linux")]
 fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -1180,6 +1336,62 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result<String, String> {
+    let pkexec = pkexec_path().ok_or(
+        "This protected GitRun operation requires administrator authorization, but trusted pkexec was not found.",
+    )?;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; protected GitRun state cannot be accessed safely.",
+    )?;
+    let output = std::process::Command::new(pkexec)
+        .arg(cli)
+        .arg("--no-cat")
+        .arg(command_name)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("unable to request authorized GitRun state access: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!(
+                "authorized GitRun state helper exited with status {}",
+                output.status
+            )
+        } else {
+            format!("authorized GitRun state helper failed: {detail}")
+        });
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|error| format!("GitRun state helper returned invalid UTF-8: {error}"))
+}
+
+fn list_gsr_events_for_dashboard(
+    config: &Config,
+    limit: usize,
+) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
+    #[cfg(target_os = "linux")]
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        let output = run_privileged_cli_helper(
+            "--read-gsr-events-root",
+            &[limit.clamp(1, 500).to_string()],
+        )?;
+        return serde_json::from_str(output.trim())
+            .map_err(|error| format!("decode authorized GSR event response: {error}"));
+    }
+
+    let path = gitrun_gsr::events::default_queue_path(&config.state_dir);
+    gitrun_gsr::events::read_last(&path, limit.clamp(1, 500)).map_err(|error| error.to_string())
+}
+
+fn count_critical_events_for_dashboard(config: &Config, cutoff: u64) -> Result<u32, String> {
+    // Only unprivileged developer installs call this helper. System installs
+    // intentionally leave this aggregate unavailable on Overview and prompt
+    // for authorization only when the operator opens the GSR event view.
+    let path = gitrun_gsr::events::default_queue_path(&config.state_dir);
+    gitrun_gsr::events::count_critical_since(&path, cutoff).map_err(|error| error.to_string())
+}
+
 // ---------------------------------------------------------------------
 // Overview
 // ---------------------------------------------------------------------
@@ -1198,17 +1410,27 @@ pub struct OverviewData {
 #[tauri::command]
 fn get_overview() -> Result<OverviewData, String> {
     let config = load_config()?;
-    let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
     let cutoff = recent_event_cutoff();
     let mut warnings = Vec::new();
-    let recent_critical_events =
-        match gitrun_gsr::events::count_critical_since(&events_path, cutoff) {
+    #[cfg(target_os = "linux")]
+    let system_install =
+        trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file();
+    #[cfg(not(target_os = "linux"))]
+    let system_install = false;
+    let recent_critical_events = if system_install {
+        // The queue is root-only and includes security-sensitive details.
+        // Avoid prompting for elevation during dashboard startup; the GSR page
+        // retrieves it through its explicit, fixed-purpose helper when opened.
+        None
+    } else {
+        match count_critical_events_for_dashboard(&config, cutoff) {
             Ok(count) => Some(count),
             Err(error) => {
                 warnings.push(format!("Critical-event queue could not be read: {error}"));
                 None
             }
-        };
+        }
+    };
     let gsr_watching = process_name_running("gitrun-gsr");
 
     Ok(OverviewData {
@@ -1836,6 +2058,20 @@ fn get_repository_activity(
     }
 }
 
+fn logic_rules_for_dashboard(
+    config: &Config,
+) -> Result<Vec<gitrun_scheduler::logic_containers::LogicRule>, String> {
+    #[cfg(target_os = "linux")]
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        let raw = run_privileged_cli_helper("--read-logic-rules-root", &[])?;
+        return serde_json::from_str(raw.trim())
+            .map_err(|error| format!("decode authorized Logic Containers rules: {error}"));
+    }
+
+    let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
+    gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|error| error.to_string())
+}
+
 #[derive(Debug, Serialize)]
 pub struct RepoDetail {
     pub repo: String,
@@ -1854,9 +2090,7 @@ fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     {
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
-    let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
-    let all_rules =
-        gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
+    let all_rules = logic_rules_for_dashboard(&config)?;
     let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
         .map_err(|e| e.to_string())?;
     let docker_policy = settings.effective_for_repository(&repo).docker;
@@ -1976,11 +2210,25 @@ pub struct GsrStatus {
 #[tauri::command]
 fn get_gsr_status() -> Result<GsrStatus, String> {
     let config = load_config()?;
-    let pid_file = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid");
-    let watched_pid = std::fs::read_to_string(&pid_file)
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .filter(|pid| process_has_name(*pid, "gitrun-autoscaler"));
+    #[cfg(target_os = "linux")]
+    let watched_pid =
+        if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+            None
+        } else {
+            let pid_file = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid");
+            std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .filter(|pid| process_has_name(*pid, "gitrun-autoscaler"))
+        };
+    #[cfg(not(target_os = "linux"))]
+    let watched_pid = {
+        let pid_file = PathBuf::from(&config.state_dir).join("gitrun-autoscaler.pid");
+        std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .filter(|pid| process_has_name(*pid, "gitrun-autoscaler"))
+    };
 
     Ok(GsrStatus {
         watching: process_name_running("gitrun-gsr"),
@@ -1991,10 +2239,8 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
 #[tauri::command]
 fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
     let config = load_config()?;
-    let events_path = gitrun_gsr::events::default_queue_path(&config.state_dir);
-    let limit = limit.unwrap_or(500).min(500);
-    let mut events =
-        gitrun_gsr::events::read_last(&events_path, limit).map_err(|error| error.to_string())?;
+    let limit = limit.unwrap_or(500).clamp(1, 500);
+    let mut events = list_gsr_events_for_dashboard(&config, limit)?;
     events.reverse(); // most recent first
     Ok(events)
 }
@@ -2015,7 +2261,7 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
     }
     let units = journal_units(&source)?;
     let limit = limit.unwrap_or(200).clamp(1, 500);
-    let mut command = std::process::Command::new("journalctl");
+    let mut command = std::process::Command::new("/usr/bin/journalctl");
     command
         .arg("--no-pager")
         .arg("--output=short-iso-precise")
@@ -2147,8 +2393,7 @@ fn disable_zizmor() -> Result<(), String> {
 #[tauri::command]
 fn list_logic_rules() -> Result<Vec<gitrun_scheduler::logic_containers::LogicRule>, String> {
     let config = load_config()?;
-    let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
-    gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())
+    logic_rules_for_dashboard(&config)
 }
 
 #[tauri::command]
@@ -2156,6 +2401,13 @@ fn save_logic_rules(
     rules: Vec<gitrun_scheduler::logic_containers::LogicRule>,
 ) -> Result<(), String> {
     let config = load_config()?;
+    gitrun_scheduler::logic_containers::validate_rules(&rules)
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "linux")]
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        return persist_logic_rules_as_root(&rules);
+    }
+
     let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
     gitrun_scheduler::logic_containers::save_rules(&rules_path, &rules).map_err(|e| e.to_string())
 }
@@ -2164,34 +2416,54 @@ fn save_logic_rules(
 // VM / hypervisor
 // ---------------------------------------------------------------------
 
+fn system_vm_configs(config: &Config) -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
+    #[cfg(target_os = "linux")]
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        let raw = run_privileged_cli_helper("--read-vm-configs-root", &[])?;
+        return serde_json::from_str(raw.trim())
+            .map_err(|error| format!("decode authorized VM configuration: {error}"));
+    }
+    gitrun_scheduler::vm::load_vm_configs(Path::new(&config.state_dir))
+        .map_err(|error| error.to_string())
+}
+
+fn persist_vm_configs_for_dashboard(
+    config: &Config,
+    configs: &[gitrun_scheduler::vm::VmConfig],
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        return persist_vm_configs_as_root(configs);
+    }
+    gitrun_scheduler::vm::save_vm_configs(Path::new(&config.state_dir), configs)
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn list_vm_configs() -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
     let config = load_config()?;
-    gitrun_scheduler::vm::load_vm_configs(std::path::Path::new(&config.state_dir))
-        .map_err(|e| e.to_string())
+    system_vm_configs(&config)
 }
 
 #[tauri::command]
 fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), String> {
     let config = load_config()?;
-    let state_dir = std::path::Path::new(&config.state_dir);
-    let mut all = gitrun_scheduler::vm::load_vm_configs(state_dir).map_err(|e| e.to_string())?;
+    let mut all = system_vm_configs(&config)?;
     all.retain(|vm| !vm.name.eq_ignore_ascii_case(&config_entry.name));
     all.push(config_entry);
-    gitrun_scheduler::vm::save_vm_configs(state_dir, &all).map_err(|e| e.to_string())
+    persist_vm_configs_for_dashboard(&config, &all)
 }
 
 #[tauri::command]
 fn delete_vm_config(name: String) -> Result<(), String> {
     let config = load_config()?;
-    let state_dir = std::path::Path::new(&config.state_dir);
-    let mut all = gitrun_scheduler::vm::load_vm_configs(state_dir).map_err(|e| e.to_string())?;
+    let mut all = system_vm_configs(&config)?;
     let original_len = all.len();
     all.retain(|vm| !vm.name.eq_ignore_ascii_case(name.trim()));
     if all.len() == original_len {
         return Err(format!("VM configuration was not found: {name}"));
     }
-    gitrun_scheduler::vm::save_vm_configs(state_dir, &all).map_err(|e| e.to_string())
+    persist_vm_configs_for_dashboard(&config, &all)
 }
 
 // ---------------------------------------------------------------------
@@ -2207,8 +2479,14 @@ fn delete_vm_config(name: String) -> Result<(), String> {
 fn list_pending_hypervisor_decisions(
 ) -> Result<Vec<gitrun_core::hypervisor_decision::PendingDecision>, String> {
     let config = load_config()?;
-    gitrun_core::hypervisor_decision::list_pending(std::path::Path::new(&config.state_dir))
-        .map_err(|e| e.to_string())
+    #[cfg(target_os = "linux")]
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        let raw = run_privileged_cli_helper("--read-pending-hypervisor-decisions-root", &[])?;
+        return serde_json::from_str(raw.trim())
+            .map_err(|error| format!("decode authorized hypervisor decisions: {error}"));
+    }
+    gitrun_core::hypervisor_decision::list_pending(Path::new(&config.state_dir))
+        .map_err(|error| error.to_string())
 }
 
 /// The operator's answer to a pending prompt. Does *not* itself bring the
@@ -2226,12 +2504,12 @@ fn respond_hypervisor_decision(
     choice: gitrun_core::hypervisor_decision::DecisionChoice,
 ) -> Result<(), String> {
     let config = load_config()?;
-    gitrun_core::hypervisor_decision::respond(
-        std::path::Path::new(&config.state_dir),
-        &vm_name,
-        choice,
-    )
-    .map_err(|e| e.to_string())
+    #[cfg(target_os = "linux")]
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        return respond_hypervisor_decision_as_root(&vm_name, choice);
+    }
+    gitrun_core::hypervisor_decision::respond(Path::new(&config.state_dir), &vm_name, choice)
+        .map_err(|error| error.to_string())
 }
 
 // ---------------------------------------------------------------------
@@ -2254,7 +2532,7 @@ pub struct DockRequirementSummary {
     pub operation: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct KittyDashboardData {
     settings: KittySettings,
     status: KittyDashboardStatus,
@@ -2265,6 +2543,17 @@ struct KittyDashboardData {
 fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
     let config = load_config()?;
     let state_dir = Path::new(&config.state_dir);
+    #[cfg(target_os = "linux")]
+    if KittyRuntime::uses_system_settings_path(state_dir) {
+        if trusted_system_cli_path().is_none() {
+            return Err(
+                "A trusted system-installed GitRun CLI was not found; Kitty dashboard state cannot be read safely.".into(),
+            );
+        }
+        let raw = run_privileged_cli_helper("--read-kitty-dashboard-root", &[])?;
+        return serde_json::from_str(raw.trim())
+            .map_err(|error| format!("decode authorized Kitty dashboard response: {error}"));
+    }
     let settings = gitrun_smart_scheduler::load_settings_for_dashboard(state_dir)
         .map_err(|e| e.to_string())?;
     let (status, status_error) = match gitrun_smart_scheduler::load_dashboard_status(state_dir) {
@@ -2402,6 +2691,37 @@ fn load_dock_requirements_for_repo(
     {
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
+
+    #[cfg(target_os = "linux")]
+    let requests: Vec<gitrun_core::DockRequest> =
+        if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+            let output =
+                run_privileged_cli_helper("--read-dock-requirements-root", &[repo.to_owned()])?;
+            serde_json::from_str(output.trim())
+                .map_err(|error| format!("decode authorized GitDockRun requirements: {error}"))?
+        } else {
+            read_dock_requirements_local(config, repo)?
+        };
+
+    #[cfg(not(target_os = "linux"))]
+    let requests = read_dock_requirements_local(config, repo)?;
+
+    Ok(requests
+        .into_iter()
+        .map(|request| DockRequirementSummary {
+            file: request.file,
+            line: request.line,
+            calling_job: request.calling_job,
+            target_job: request.target_job,
+            operation: request.operation.as_str().into(),
+        })
+        .collect())
+}
+
+fn read_dock_requirements_local(
+    config: &Config,
+    repo: &str,
+) -> Result<Vec<gitrun_core::DockRequest>, String> {
     let path = PathBuf::from(&config.state_dir)
         .join("workflow-dock-requirements")
         .join(format!(
@@ -2414,21 +2734,8 @@ fn load_dock_requirements_for_repo(
         Err(error) => return Err(error.to_string()),
     };
     serde_json::from_str::<Vec<gitrun_core::DockRequest>>(&raw)
-        .map(|requests| {
-            requests
-                .into_iter()
-                .map(|request| DockRequirementSummary {
-                    file: request.file,
-                    line: request.line,
-                    calling_job: request.calling_job,
-                    target_job: request.target_job,
-                    operation: request.operation.as_str().into(),
-                })
-                .collect()
-        })
-        .map_err(|e| format!("decode Dock requirements: {e}"))
+        .map_err(|error| format!("decode Dock requirements: {error}"))
 }
-
 #[tauri::command]
 fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
     let config = load_config()?;
@@ -2457,9 +2764,7 @@ fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, 
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
 
-    let rules_path = PathBuf::from(&config.state_dir).join("logic-containers.json");
-    let logic_rules =
-        gitrun_scheduler::logic_containers::load_rules(&rules_path).map_err(|e| e.to_string())?;
+    let logic_rules = logic_rules_for_dashboard(&config)?;
     let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
         .map_err(|e| e.to_string())?;
     let docker_policy = settings.effective_for_repository(&repo).docker;

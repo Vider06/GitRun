@@ -404,6 +404,36 @@ fn retryable_status(status: reqwest::StatusCode) -> bool {
     )
 }
 
+fn repository_runner_permission_hint(
+    method: &reqwest::Method,
+    url: &str,
+    detail: &str,
+) -> Option<&'static str> {
+    if !detail.contains("Resource not accessible by integration")
+        || !url.contains("/repos/")
+        || !url.contains("/actions/runners")
+    {
+        return None;
+    }
+
+    match method.as_str() {
+        "GET" => Some(concat!(
+            "GitHub denied repository runner listing. ",
+            "Grant the GitHub App installation repository Administration: read permission, ",
+            "approve the updated permissions, and ensure the App is installed on this repository. ",
+            "Fine-grained PATs need Administration: read; classic PATs need repo scope ",
+            "and repository admin access.",
+        )),
+        "POST" | "PUT" | "DELETE" => Some(concat!(
+            "GitHub denied a repository runner write. ",
+            "Grant the GitHub App installation repository Administration: write permission, ",
+            "approve the updated permissions, and ensure the App is installed on this repository. ",
+            "Fine-grained PATs need Administration: write; classic PATs need repo scope ",
+            "and repository admin access.",
+        )),
+        _ => None,
+    }
+}
 fn retry_delay(attempt: usize) -> Duration {
     Duration::from_secs(
         2_u64
@@ -533,7 +563,14 @@ impl GitHubClient {
                     continue;
                 }
                 let detail = response.text().unwrap_or_default();
-                let detail = detail.chars().take(500).collect();
+                let detail = if status == reqwest::StatusCode::FORBIDDEN {
+                    repository_runner_permission_hint(&method, url, &detail)
+                        .map(|hint| format!("{detail}; {hint}"))
+                        .unwrap_or(detail)
+                } else {
+                    detail
+                };
+                let detail = detail.chars().take(1_200).collect();
                 return Err(GitHubError::Api {
                     status: status.as_u16(),
                     detail,
@@ -1496,6 +1533,32 @@ mod tests {
             headers.insert(reqwest::header::LINK, link.parse().unwrap());
             assert_eq!(parse_next_link(&headers), None, "link: {link}");
         }
+    }
+
+    #[test]
+    fn repository_runner_permission_errors_explain_required_github_app_permissions() {
+        let url = "https://api.github.com/repos/owner/repo/actions/runners?per_page=100";
+        let detail = r#"{"message":"Resource not accessible by integration","status":"403"}"#;
+        let hint = repository_runner_permission_hint(&reqwest::Method::GET, url, detail)
+            .expect("repository runner GET must include a permission hint");
+        assert!(hint.contains("Administration: read"));
+        assert!(hint.contains("ensure the App is installed"));
+
+        let write_hint = repository_runner_permission_hint(&reqwest::Method::POST, url, detail)
+            .expect("repository runner POST must include a permission hint");
+        assert!(write_hint.contains("Administration: write"));
+        assert!(repository_runner_permission_hint(
+            &reqwest::Method::GET,
+            "https://api.github.com/repos/owner/repo/actions/runs",
+            detail
+        )
+        .is_none());
+        assert!(repository_runner_permission_hint(
+            &reqwest::Method::GET,
+            url,
+            r#"{"message":"Bad credentials"}"#
+        )
+        .is_none());
     }
 
     #[test]

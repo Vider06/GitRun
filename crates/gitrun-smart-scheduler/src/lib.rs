@@ -162,7 +162,9 @@ impl KittySettings {
             ));
         }
         if self.kitty_dispatch_enabled
-            && (!self.enabled || !self.telemetry_enabled || !self.adaptive_resource_management_enabled)
+            && (!self.enabled
+                || !self.telemetry_enabled
+                || !self.adaptive_resource_management_enabled)
         {
             return Err(KittyError::Invalid(
                 "Kitty Dispatch requires Kitty, aggregate telemetry and Adaptive Resource Management to be enabled".into(),

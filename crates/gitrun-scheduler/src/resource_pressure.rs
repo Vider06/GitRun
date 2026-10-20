@@ -477,7 +477,13 @@ mod tests {
         assert!(capacity.cpu_cores <= 3.2);
         assert_eq!(capacity.memory_bytes, 12 * GIB - (16 * GIB * 15 / 100));
 
-        let pressured = ResourceCapacity::from_measurements(4.0, 100.0, 16 * GIB, 12 * GIB).unwrap();
+        let pressured = ResourceCapacity::from_measurements(
+            4.0,
+            100.0,
+            16 * GIB,
+            12 * GIB,
+        )
+        .unwrap();
         assert_eq!(pressured.cpu_cores, 0.0);
         assert!(ResourceCapacity::from_measurements(0.0, 20.0, 16 * GIB, 12 * GIB).is_none());
         assert!(ResourceCapacity::from_measurements(4.0, 20.0, 16 * GIB, 20 * GIB).is_none());

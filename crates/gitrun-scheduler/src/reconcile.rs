@@ -162,6 +162,7 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
     // per-job capacity regardless of label coverage or routing rules.
     is_dock_target
         || gitrun_smart_scheduler::has_workload_routing_marker(labels)
+        || gitrun_smart_scheduler::has_dispatch_routing_marker(labels)
         || crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
 }
 
@@ -291,7 +292,9 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                 return None;
             }
 
-            if gitrun_smart_scheduler::has_workload_routing_marker(labels) {
+            if gitrun_smart_scheduler::has_workload_routing_marker(labels)
+                && !gitrun_smart_scheduler::has_dispatch_routing_marker(labels)
+            {
                 if let Some(workload_id) =
                     gitrun_smart_scheduler::workload_id_from_routing_labels(labels)
                 {

@@ -1,9 +1,9 @@
 # Fast Stop and Kitty Smart Scheduler
 
 Updated: 2026-10-20  
-Current source line: GitRun 1.5.1 (Fast Stop and Kitty behavior originated in 1.5.0)
+Working source line: GitRun 1.5.2 (PR #105; not yet released; Fast Stop and Kitty originated in 1.5.0)
 
-Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and remain part of the 1.5.1 source line. Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The 1.5.1 legacy-recovery changes are documented separately in [the 1.5.1 release notes](v1.5.1-release-notes.md).
+Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and continue in the 1.5.2 working branch. Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The 1.5.1 legacy-recovery changes are documented separately in [the 1.5.1 release notes](v1.5.1-release-notes.md).
 
 ## Fast Stop
 
@@ -25,7 +25,7 @@ Kitty lives in `gitrun-smart-scheduler`. It is a bounded, deterministic-statisti
 
 ### Inputs and forecast
 
-Kitty samples aggregate per-repository counts in five-minute buckets: queued self-hosted jobs, busy/online/managed runners and optional host-wide CPU, memory and disk readings. Its one-hour forecast estimates aggregate demand from busy managed runners plus queued jobs. It evaluates forecasts against later observations; missing target data are skipped rather than counted as zero.
+Kitty samples aggregate per-repository counts in five-minute buckets: queued self-hosted jobs, busy/online/managed runners and optional host-wide CPU, memory and disk readings. Its one-hour forecast estimates aggregate demand from busy managed runners plus queued jobs. Separately, optional Adaptive Resource Management polls active GitHub self-hosted jobs on a bounded 30-second cadence, maps the authoritative runner name to a currently running GitRun-managed container, and records Docker CPU/RAM usage against that run/job occurrence. Missing or ambiguous runner mappings and failed stats are skipped rather than guessed. Resource samples are high-water marks per distinct job occurrence and remain in the private model.
 
 Weekday/hour forecasts are evaluated separately from the aggregate forecast. Predictive Warm Pool candidates are workload-specific only when there is recent evidence, at least four active weeks and activity in at least 80% of the observed span. Quality scores are heuristic readiness measures, not calibrated probabilities.
 
@@ -39,19 +39,25 @@ Kitty does not store workflow contents, command strings, job payloads, environme
 
 Settings are stored at:
 
-```text
+```
 /var/lib/gitrun/kitty/settings.json
 ```
 
 A missing file means Kitty is disabled. Store the directory with mode 0700 and the settings/model files with mode 0600, owned by the GitRun service identity. The example settings and full field list are in [the crate README](../crates/gitrun-smart-scheduler/README.md).
 
-By default, Kitty uses shadow mode and does not change runner capacity. Predictive Warm Pool requires the master switch, its own `predictive_warm_pool_enabled` switch, `shadow_mode: false`, fresh/sufficient history and an acceptable forecast-quality score. It may only raise the configured runner floor within both the extra-runner cap and the global maximum. Resource-pressure backpressure still wins, and Kitty cannot lower the operator's configured floor.
+By default, Kitty is disabled and Predictive Warm Pool is in shadow mode. Predictive Warm Pool requires the master switch, its own `predictive_warm_pool_enabled` switch, `shadow_mode: false`, fresh/sufficient history and an acceptable forecast-quality score. It may only raise the configured runner floor within both the extra-runner cap and the global maximum. Resource-pressure backpressure still wins, and Kitty cannot lower the operator's configured floor.
 
-Malformed settings, stale data, corrupt/unsafe model state or persistence errors fall back to deterministic scheduling.
+#### Adaptive Resource Management
 
-### Capabilities not active
+This feature is implemented but disabled by default. It requires Kitty and aggregate telemetry to be enabled. Until three distinct jobs of a workload have been observed, Kitty uses a conservative workload-class prior; after that, it uses the 80th percentile of recent per-job CPU/RAM high-water observations plus safety headroom, never below the workload-class prior.
 
-Adaptive Resource Management and Smart Fast Stop triggers are reserved settings, not active automation. They remain disabled until GitRun has reliable per-job resource attribution and verified job-level cancellation-outcome evidence. This does not disable the operator-triggered Fast Stop command described above.
+Before Docker creation, the scheduler clamps the request against the hard ceilings `GITRUN_CONTAINER_CPUS` and `GITRUN_CONTAINER_MEMORY`, and against one shared host budget for the entire scheduler poll tick across configured repositories. The budget is based on CPU utilization and currently available memory, after retaining at least 20% (and at least half a core) of CPU capacity and 15% (and at least 1 GiB) of RAM for the host, Docker and GitRun. If capacity cannot be measured, or the remaining budget cannot meet the minimum allocation, new runner creation is deferred. Existing containers are never resized. The displayed estimate is before those runtime caps; the applied Docker limits are the actual bounded allocation.
+
+Malformed settings, stale data, corrupt/unsafe model state or persistence errors fall back to deterministic scheduling. If the adaptive feature itself is explicitly enabled but capacity cannot be verified, new runner creation is deferred rather than applying an unbounded guess.
+
+#### Smart Fast Stop
+
+The automatic Smart Fast Stop path is implemented but remains an explicit opt-in. It requires Kitty, Automation mode, a configured repository allowlist, a valid runtime threshold and a fresh GSR authorization. It cancels the entire GitHub workflow run, not an individual job. A successful API response means GitHub accepted the cancellation request; it does not prove every runner process has exited. The separate operator-triggered `gitrun fast-stop <owner/repo> <workflow-run-id> --yes` command remains available independently of the automatic trigger.
 
 ## Verification and deployment limits
 

@@ -416,6 +416,76 @@ pub fn runner_name_prefix(repo: &str) -> String {
     format!("gitrun-{readable}-{encoded}-")
 }
 
+/// Current usage snapshot for a managed runner container. CPU is expressed in
+/// cores consumed (100% is one core), memory in bytes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContainerResourceUsage {
+    pub cpu_cores: f64,
+    pub memory_bytes: u64,
+}
+
+fn parse_docker_percent(raw: &str) -> Option<f64> {
+    let value = raw.trim().strip_suffix('%')?.trim().parse::<f64>().ok()?;
+    let cores = value / 100.0;
+    (cores.is_finite() && (0.0..=256.0).contains(&cores)).then_some(cores)
+}
+
+pub fn parse_docker_bytes(raw: &str) -> Option<u64> {
+    let raw = raw.trim();
+    let split = raw.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
+    let number = raw[..split].trim().parse::<f64>().ok()?;
+    let unit = raw[split..].trim().to_ascii_lowercase();
+    if !number.is_finite() || number < 0.0 {
+        return None;
+    }
+    let multiplier = match unit.as_str() {
+        "b" => 1.0,
+        "k" | "kb" | "kib" => 1024.0,
+        "m" | "mb" | "mib" => 1024.0_f64.powi(2),
+        "g" | "gb" | "gib" => 1024.0_f64.powi(3),
+        "t" | "tb" | "tib" => 1024.0_f64.powi(4),
+        _ => return None,
+    };
+    let bytes = number * multiplier;
+    (bytes.is_finite() && bytes >= 0.0 && bytes <= u64::MAX as f64)
+        .then_some(bytes.ceil() as u64)
+}
+
+fn parse_docker_stats(output: &str) -> Result<ContainerResourceUsage> {
+    let (cpu, memory) = output.trim().split_once('|').ok_or_else(|| {
+        DockerError::Command("docker stats returned an unexpected CPU/memory format".into())
+    })?;
+    let memory_used = memory.split_once('/').map(|(used, _)| used).ok_or_else(|| {
+        DockerError::Command("docker stats returned an unexpected memory value".into())
+    })?;
+    let cpu_cores = parse_docker_percent(cpu).ok_or_else(|| {
+        DockerError::Command("docker stats returned an invalid CPU percentage".into())
+    })?;
+    let memory_bytes = parse_docker_bytes(memory_used).ok_or_else(|| {
+        DockerError::Command("docker stats returned an invalid memory usage value".into())
+    })?;
+    Ok(ContainerResourceUsage { cpu_cores, memory_bytes })
+}
+
+/// Query usage by immutable Docker ID, never by a mutable container name.
+pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceUsage> {
+    if container_id.len() < 12
+        || !container_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(DockerError::Command(
+            "refusing resource query for a malformed Docker container ID".into(),
+        ));
+    }
+    let output = run_checked(&[
+        "stats",
+        "--no-stream",
+        "--format",
+        "{{.CPUPerc}}|{{.MemUsage}}",
+        container_id,
+    ])?;
+    parse_docker_stats(&output)
+}
+
 #[derive(Debug, Clone)]
 pub struct ManagedContainer {
     pub name: String,
@@ -3084,6 +3154,23 @@ mod tests {
             container_label_format("gitrun.dock_target"),
             r#"{{index .Config.Labels "gitrun.dock_target"}}"#
         );
+    }
+
+    #[test]
+    fn docker_stats_parses_cpu_cores_and_binary_memory_units() {
+        let usage = parse_docker_stats("175.00%|1.25GiB / 8GiB").unwrap();
+        assert_eq!(usage.cpu_cores, 1.75);
+        assert_eq!(usage.memory_bytes, (1.25_f64 * 1024.0_f64.powi(3)) as u64);
+        assert_eq!(parse_docker_percent("0.00%"), Some(0.0));
+        assert_eq!(parse_docker_bytes("512MiB"), Some(512 * 1024 * 1024));
+    }
+
+    #[test]
+    fn docker_stats_rejects_malformed_or_unbounded_values() {
+        assert!(parse_docker_stats("n/a|10MiB / 1GiB").is_err());
+        assert!(parse_docker_stats("100%|unknown").is_err());
+        assert_eq!(parse_docker_bytes("-1GiB"), None);
+        assert_eq!(parse_docker_bytes("NaNGiB"), None);
     }
 
     #[test]

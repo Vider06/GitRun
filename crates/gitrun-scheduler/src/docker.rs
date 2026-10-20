@@ -3156,23 +3156,51 @@ mod tests {
         let route_id = "0123456789abcdef0123456789abcdef";
         let routed = format!("{family},gitrun-route-{route_id}");
         assert!(validate_workload_routing_contract(
-            &routed, Some(id), None, true, false, false, false
-        ).is_ok());
+            &routed,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_ok());
 
         let duplicate_route = format!("{routed},gitrun-route-{route_id}");
         assert!(validate_workload_routing_contract(
-            &duplicate_route, Some(id), None, true, false, false, false
-        ).is_err());
+            &duplicate_route,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_err());
 
         let malformed_route = format!("{family},gitrun-route-short");
         assert!(validate_workload_routing_contract(
-            &malformed_route, Some(id), None, true, false, false, false
-        ).is_err());
+            &malformed_route,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_err());
 
         let generic_label = format!("{routed},self-hosted");
         assert!(validate_workload_routing_contract(
-            &generic_label, Some(id), None, true, false, false, false
-        ).is_err());
+            &generic_label,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_err());
     }
 
     #[test]

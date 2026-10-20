@@ -2561,7 +2561,9 @@ fn create_runner(
             // Every occurrence-routed runner is one-use even when the global
             // pool is persistent; this prevents a stale reservation from being
             // claimed by a later workflow job.
-            ephemeral: config.ephemeral || dispatch_route_id.is_some() || (is_windows && !permanent),
+            ephemeral: config.ephemeral
+                || dispatch_route_id.is_some()
+                || (is_windows && !permanent),
             disable_update: config.runner_disable_update,
             cpus: resource_allocation
                 .map(|allocation| allocation.cpus.as_str())
@@ -2762,15 +2764,30 @@ fn explicit_workload_routing_id(job_labels: &[String]) -> Result<Option<String>,
         ));
     };
     let expected = format!("gitrun-job-{workload_id}");
-    let family_count = job_labels.iter().filter(|label| label.trim().eq_ignore_ascii_case(&expected)).count();
+    let family_count = job_labels
+        .iter()
+        .filter(|label| label.trim().eq_ignore_ascii_case(&expected))
+        .count();
     let route_id = if has_route {
         gitrun_smart_scheduler::dispatch_route_id_from_labels(job_labels)
     } else {
         None
     };
-    let route_count = job_labels.iter().filter(|label| label.trim().to_ascii_lowercase().starts_with("gitrun-route-")).count();
+    let route_count = job_labels
+        .iter()
+        .filter(|label| {
+            label
+                .trim()
+                .to_ascii_lowercase()
+                .starts_with("gitrun-route-")
+        })
+        .count();
     let expected_count = 1 + usize::from(has_route);
-    if family_count != 1 || route_count != usize::from(has_route) || job_labels.len() != expected_count || (has_route && route_id.is_none()) {
+    if family_count != 1
+        || route_count != usize::from(has_route)
+        || job_labels.len() != expected_count
+        || (has_route && route_id.is_none())
+    {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "exclusive GitRun routing requires only one family label and, optionally, one canonical per-occurrence route label",

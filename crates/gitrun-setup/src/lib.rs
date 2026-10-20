@@ -2068,7 +2068,7 @@ mod tests {
     #[test]
     fn setup_flag_parser_accepts_only_the_expected_marker() {
         assert!(parse_setup_flag(
-            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\n".into()
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\n"
         ));
         assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=not-hex\n"));
         assert!(!parse_setup_flag("OTHER=value\n"));
@@ -2229,7 +2229,7 @@ mod tests {
             Ok("not-a-valid-flag".into())
         ));
         assert!(setup_flag_contents_are_valid(Ok(
-            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\\n".into()
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\n".into()
         )));
     }
 

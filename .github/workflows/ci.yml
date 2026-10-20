@@ -1621,11 +1621,14 @@ jobs:
           profile="$(printf 'dev=%s;test=%s' "${CARGO_PROFILE_DEV_DEBUG:-default}" "${CARGO_PROFILE_TEST_DEBUG:-default}" | sha256sum | cut -c1-8)"
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
+            echo "toolchain_prefix=$ns-rustup-${RUST_VERSION}-"
             echo "registry=$ns-cargo-registry-${lock}"
-            # Exact keys encode profile settings; the shared prefix intentionally also restores
-            # older/other-job artifacts, which Cargo invalidates by its own fingerprints.
+            # Lockfile/manifest hashes remain part of the exact target key. The fallback
+            # deliberately spans lockfile and workspace-crate bumps: Cargo's fingerprints
+            # validate restored artifacts and rebuild only incompatible dependencies.
+            echo "registry_prefix=$ns-cargo-registry-"
             echo "target=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
-            echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-"
+            echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-prof${profile}-"
           } >> "$GITHUB_OUTPUT"
           echo "image fingerprint $fp: target caches are exact per job, with cross-job restore fallback"
       - &c_tc
@@ -1637,6 +1640,7 @@ jobs:
             .gitrun-ci/rustup
             .gitrun-ci/cargo/bin
           key: ${{ steps.keys.outputs.toolchain }}
+          restore-keys: ${{ steps.keys.outputs.toolchain_prefix }}
       - &c_reg
         name: Restore cargo registry cache
         id: c_reg
@@ -1647,6 +1651,7 @@ jobs:
             .gitrun-ci/cargo/registry/cache
             .gitrun-ci/cargo/git/db
           key: ${{ steps.keys.outputs.registry }}
+          restore-keys: ${{ steps.keys.outputs.registry_prefix }}
       - &c_tgt
         name: Restore target cache
         id: c_tgt
@@ -1710,16 +1715,9 @@ jobs:
           before="$(du -sm "$t" | cut -f1)"
           find "$t" -maxdepth 3 -type d -name incremental -prune -exec rm -rf {} + 2>/dev/null || true
           rm -rf "$t/doc" "$t/tmp" "$t"/*/bundle
-          # Workspace crates change on every commit: drop them so the cache only keeps third-party artifacts.
-          names="$(cargo metadata --no-deps --format-version 1 --locked 2>/dev/null | jq -r '.packages[].name' || true)"
-          for prof in "$t"/*/ "$t"/*/*/; do
-            [ -d "${prof}.fingerprint" ] || continue
-            for n in $names; do
-              u="${n//-/_}"
-              find "${prof}.fingerprint" "${prof}build" -maxdepth 1 -type d -regextype posix-extended -regex ".*/${n}-[0-9a-f]{16}" -exec rm -rf {} + 2>/dev/null || true
-              find "${prof}deps" -maxdepth 1 -type f -regextype posix-extended -regex ".*/(lib)?${u}-[0-9a-f]{16}(\..*)?" -delete 2>/dev/null || true
-            done
-          done
+          # Preserve workspace artifacts and Cargo fingerprints across commits.
+          # Cargo validates source/dependency fingerprints and rebuilds anything stale;
+          # deleting every local crate forces all GitRun crates to recompile each job.
           after="$(du -sm "$t" | cut -f1)"
           echo "target cache pruned: ${before} MB → ${after} MB (limit ${TARGET_CACHE_MAX_MB} MB)"
           { echo "- 🧹 target cache pruned: **${before} MB → ${after} MB**"; } | ci_sum

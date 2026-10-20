@@ -1471,16 +1471,22 @@ impl KittyRuntime {
                     if existing.occurrence_code != occurrence_code {
                         continue;
                     }
+                    // Old samples may be replayed after a clock/API race. Do not
+                    // double-count a poll or mutate newer state with stale telemetry.
+                    if sample.sampled_at_epoch <= existing.last_sample_at_epoch {
+                        continue;
+                    }
                     let old_cpu = existing.cpu_cores_peak;
                     let old_memory = existing.memory_bytes_peak;
+                    let old_last_sample = existing.last_sample_at_epoch;
                     existing.cpu_cores_peak = existing.cpu_cores_peak.max(sample.cpu_cores);
                     existing.memory_bytes_peak =
                         existing.memory_bytes_peak.max(sample.memory_bytes);
                     existing.sample_count = existing.sample_count.saturating_add(1);
-                    existing.last_sample_at_epoch = existing.last_sample_at_epoch.max(sample.sampled_at_epoch);
+                    existing.last_sample_at_epoch = sample.sampled_at_epoch;
                     changed |= existing.cpu_cores_peak != old_cpu
                         || existing.memory_bytes_peak != old_memory
-                        || existing.last_sample_at_epoch == sample.sampled_at_epoch;
+                        || existing.last_sample_at_epoch != old_last_sample;
                 } else {
                     if model.resource_observations.len() >= MAX_WORKLOAD_RESOURCE_OBSERVATIONS {
                         if let Some((index, _)) = model
@@ -3459,6 +3465,9 @@ fn record_queued_job_occurrences(
                     model
                         .workload_predictions
                         .retain(|prediction| prediction.workload_id != stale);
+                    model
+                        .resource_observations
+                        .retain(|observation| observation.workload_id != stale);
                 }
             }
             if model.workload_patterns.len() >= MAX_JOB_PATTERNS {
@@ -3634,6 +3643,9 @@ fn record_started_job_occurrences_with_coverage(
                     model
                         .workload_predictions
                         .retain(|prediction| prediction.workload_id != stale);
+                    model
+                        .resource_observations
+                        .retain(|observation| observation.workload_id != stale);
                 }
             }
 

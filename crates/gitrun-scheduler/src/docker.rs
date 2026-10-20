@@ -635,7 +635,9 @@ pub fn container_resource_usages(
 pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceUsage> {
     let mut usages = container_resource_usages(&[container_id.to_owned()])?;
     usages.remove(container_id).ok_or_else(|| {
-        DockerError::Command("Docker resource sample did not contain the requested container".into())
+        DockerError::Command(
+            "Docker resource sample did not contain the requested container".into(),
+        )
     })
 }
 

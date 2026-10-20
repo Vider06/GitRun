@@ -1,20 +1,25 @@
 # GitRun documentation
 
-Architecture, operator guidance, API contracts and security documentation for GitRun **1.5.0**. PR [#83](https://github.com/Vider06/GitRun/pull/83) merged to `main` on 2026-10-19.
+Architecture, operator guidance, API contracts and security documentation for the GitRun 1.5.1 source line.
 
-## Core references
+## Current release notes
 
+- [GitRun 1.5.1 — recovery and documentation notes](v1.5.1-release-notes.md) — protected state, guarded migration of legacy 1.5.0 installations, crate/product version boundaries, Smart Scheduler retention and deployment verification.
 - [Architecture](ARCHITECTURE.md) — runtime components and trust boundaries.
 - [Security model](SECURITY_MODEL.md) — explicit trust assumptions, hardening and known limits.
 - [Workflow API](GITRUN_API.md) and [IPC](IPC.md) — request identity, transport and authorization boundaries.
 - [VM-backed runners](VM.md) — supported backend behavior and operator requirements.
-- [Contract inventory](v1.5.0-contract-inventory.md) — requirements, source references and test evidence.
-- [Refactor status and final report](v1.5.0-refactor-status.md) — phase tracker, verification evidence, open limitations and release decision.
-- [Dashboard redesign roadmap](dashboard-redesign-roadmap.md) — UI goals and implementation status.
-- [Fast Stop / Experimental Smart Scheduler](fast-stop-and-experimental-smart-scheduler.md) — implemented cancellation work versus proposed experimental scheduling.
+- [Dashboard redesign roadmap](dashboard-redesign-roadmap.md) — UI goals, implemented behavior and remaining environment-specific checks.
+- [Fast Stop / Experimental Smart Scheduler](fast-stop-and-experimental-smart-scheduler.md) — operator-triggered cancellation, Kitty forecasting, retention, and currently inactive automation.
+
+## Historical audit records
+
+- [v1.5.0 contract inventory](v1.5.0-contract-inventory.md) — point-in-time requirements, source references and test evidence for the 1.5.0 refactor.
+- [v1.5.0 refactor status](v1.5.0-refactor-status.md) — historical phase tracker and verification checkpoints. Its dated instructions and older source-head statuses are audit history, not current release instructions.
+- [Rust migration notes](RUST_MIGRATION.md) — runtime migration background and component map.
 
 ## Evidence rule
 
-A passing CI workflow establishes only the checks actually executed on the recorded commit. It does not prove zero open alerts in GitHub Security, real desktop authorization behavior, real KVM/VirtualBox provisioning, or migration behavior for every operator-customized runner image. The status tracker records those distinctions and must be read alongside the contract inventory.
+A passing CI workflow establishes only the checks executed on the recorded commit. It does not prove that no GitHub Security alerts remain, that desktop authorization and installation transitions work on every machine, or that recovery has been validated on every legacy installation or customized runner image. Confirm the exact checks for the target commit and follow the host-level validation steps in the 1.5.1 release notes.
 
-**Source version:** 1.5.0 (from `version.txt`). The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. Documentation changes made after that run need their own verification. A source version does not by itself indicate that a release artifact has been published.
+The root `version.txt` defines the product/source version. It does not by itself mean that an official release artifact has been published; use [GitHub Releases](https://github.com/Vider06/GitRun/releases) to verify published artifacts.

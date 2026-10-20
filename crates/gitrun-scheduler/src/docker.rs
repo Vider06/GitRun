@@ -454,6 +454,11 @@ pub fn parse_docker_bytes(raw: &str) -> Option<u64> {
 
 fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
     let relative = raw.trim().trim_start_matches('/');
+    if relative.is_empty() {
+        return Err(DockerError::Command(
+            "container cgroup path does not identify a container-specific group".into(),
+        ));
+    }
     let path = Path::new(relative);
     if path.components().any(|component| !matches!(component, Component::Normal(_))) {
         return Err(DockerError::Command(
@@ -3494,6 +3499,7 @@ mod tests {
         assert_eq!(parse_docker_bytes("NaNGiB"), None);
         assert!(cgroup_v2_relative_path("/../../etc").is_err());
         assert!(cgroup_v2_relative_path("/a/../b").is_err());
+        assert!(cgroup_v2_relative_path("/").is_err());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-# GitRun architecture — v1.5.0 refactor (draft)
+# GitRun architecture — GitRun 1.5.0
 
 > This is a high-level architecture overview. The contract inventory and refactor tracker carry the detailed source/test audit and current verification state. The crate-by-crate evidence map and remaining test obligations are tracked in [v1.5.0-contract-inventory.md](v1.5.0-contract-inventory.md) and [v1.5.0-refactor-status.md](v1.5.0-refactor-status.md).
 
@@ -13,7 +13,7 @@ GitRun is a Rust-native control plane. The workspace separates policy, execution
 | `gitrun-scheduler` | GitHub polling, deterministic reconciliation, autoscaling, runner lifecycle, Docker and VM backends |
 | `gitrun-exe` | Internal authorized execution model and IPC/authentication primitives |
 | `gitrun-gsr` | Security enforcement, watchdog, workflow API authorization and API launcher |
-| `gitrun-smart-scheduler` | Optional bounded statistical workload model, forecast quality evaluation, and a guarded runner-floor recommendation | No execution authority; disabled by default, with the deterministic scheduler as fallback |
+| `gitrun-smart-scheduler` | Optional bounded statistical workload model and forecast-quality evaluation; can recommend a guarded runner-floor increase when explicitly enabled. It has no execution authority and is disabled by default. |
 | `gitrun-vault` | AES-256-GCM encrypted secret storage |
 | `gitrun-setup` | First-run preflight and installation preparation |
 | `gitrun-updater` | Release update, verification and rollback |
@@ -74,6 +74,6 @@ Runner caches default to per-runner isolation. Repository/global scopes are expl
 The Docker socket remains a host-level privilege boundary on Linux. See [SECURITY_MODEL.md](SECURITY_MODEL.md).
 
 
-## v1.5.0 verification status
+## Verification status
 
-PR #83's current head is checked by the GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance workflows. Treat each green result as evidence for the checks actually run, not as proof of complete production-environment coverage. In particular, desktop privilege dialogs and install transitions, real KVM/VirtualBox lifecycle runs, full disconnect-through-API cleanup, and migration of arbitrary pre-existing runner images require separate evidence. The [status tracker](v1.5.0-refactor-status.md) is authoritative for the current commit and release decision.
+PR [#83](https://github.com/Vider06/GitRun/pull/83) merged to `main` on 2026-10-19. The PR source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. The remaining deployment checks are the live desktop `pkexec` authorization/install flows, provisioning and recovery on real KVM/VirtualBox hosts, the complete authorized disconnect API path, and compatibility with customized or pre-existing runner images. See the [status report](v1.5.0-refactor-status.md) for details.

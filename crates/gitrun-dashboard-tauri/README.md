@@ -29,4 +29,4 @@ The Tauri backend shares persistent VM and Logic Containers formats with the sch
 The dashboard does not replace the scheduler. The scheduler remains the runtime control plane and continues operating when the graphical dashboard is closed.
 
 
-The v1.5.0 CI suite builds/packages the dashboard and tests trusted privileged-binary resolution, including symlink rejection. A successful build/test does not exercise the actual desktop `pkexec` prompt or every install/uninstall/reinstall privilege transition; those remain separate environment-level verification items in the [status tracker](../../docs/v1.5.0-refactor-status.md).
+PR #83's source HEAD passed Tauri build/package and trusted privileged-binary resolution tests. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions were not exercised by CI; see the [status report](../../docs/v1.5.0-refactor-status.md).

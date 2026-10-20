@@ -1,3 +1,3 @@
-# `.github/workflows`
+# .github/workflows
 
-GitHub Actions workflow definitions for CI, DevSkim, Rustfmt autofix and releases. Workflow changes affect repository validation and release automation.
+GitHub Actions workflows for workspace CI, CodeQL, DevSkim, Rust formatting, Cargo lockfile maintenance and release automation. A successful workflow validates only the checks it runs on the commit it reports.

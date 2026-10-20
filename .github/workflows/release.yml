@@ -387,7 +387,11 @@ jobs:
           dpkg-deb --contents "$deb" | grep -E '/usr/libexec/gitrun/uninstall\.sh$'
           dpkg-deb --control "$deb" "$RUNNER_TEMP/gitrun-deb-control"
           test -x "$RUNNER_TEMP/gitrun-deb-control/prerm"
-          grep -Fq -- '--uninstall-package-hook' "$RUNNER_TEMP/gitrun-deb-control/prerm"
+          if grep -Fq -- '--uninstall-package-hook' "$RUNNER_TEMP/gitrun-deb-control/prerm"; then
+            echo "package prerm must not invoke the destructive uninstall hook on ordinary package removal" >&2
+            exit 1
+          fi
+          grep -Fq -- 'systemctl disable --now' "$RUNNER_TEMP/gitrun-deb-control/prerm"
           if dpkg-deb -c "$deb" | grep -Eq '/(gitrun-recovery|gitrun-dashboard-tauri)(\.exe)?$'; then
             echo "release package contains a retired secondary executable" >&2
             exit 1

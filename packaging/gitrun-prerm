@@ -3,13 +3,14 @@ set -eu
 
 case "${1:-}" in
   remove|deconfigure)
-    # Remove GitRun runtime resources before dpkg removes its owned files.
-    # The hidden hook is intentionally idempotent and never calls dpkg itself.
-    for cli in /usr/bin/gitrun /usr/local/bin/gitrun; do
-      if [ -x "$cli" ]; then
-        exec "$cli" --no-cat --uninstall-package-hook
-      fi
-    done
+    # A package removal is not a GitRun uninstall. Stop only the service units;
+    # preserve configuration, state, runner registrations and Docker resources.
+    # Operators who want a destructive cleanup must run the explicit
+    # "gitrun uninstall" command before removing the package.
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl disable --now gitrun-gsr.service gitrun.service >/dev/null 2>&1 || true
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
     ;;
 esac
 

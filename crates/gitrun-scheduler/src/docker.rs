@@ -1896,6 +1896,13 @@ fn validate_runner_network_metadata(
     Ok(())
 }
 
+fn missing_network_error(detail: &str, network: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    let network = network.to_ascii_lowercase();
+    detail.contains(&format!("network {network} not found"))
+        || detail.contains(&format!("network {network} does not exist"))
+}
+
 fn ensure_runner_network(
     host: &DockerHost,
     network: &str,
@@ -1938,8 +1945,35 @@ fn ensure_runner_network(
         create_args.extend(["--opt", "com.docker.network.bridge.enable_icc=false"]);
     }
     create_args.extend(["--label", "gitrun.managed=true", network]);
-    run_checked_on(host, &create_args)?;
-    Ok(())
+    let create_output = run_on(host, &create_args)?;
+    if create_output.status.success() {
+        return Ok(());
+    }
+
+    // Reconciliation can race when several repositories scale at once: another
+    // worker may create the named network after our inspect but before our create.
+    // Accept that race only after re-inspecting and validating the full security
+    // contract; never trust a same-named unmanaged or non-isolated bridge.
+    let raced_inspect = run_on(host, &[
+        "network",
+        "inspect",
+        "--format",
+        inspect_format,
+        network,
+    ])?;
+    if raced_inspect.status.success() {
+        let metadata = String::from_utf8_lossy(&raced_inspect.stdout);
+        validate_runner_network_metadata(network, &metadata, require_inter_container_isolation)
+            .map_err(DockerError::Command)?;
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&create_output.stderr).trim().to_owned();
+    Err(DockerError::Command(if stderr.is_empty() {
+        format!("docker network create {network} failed with status {}", create_output.status)
+    } else {
+        stderr
+    }))
 }
 
 fn remote_linux_runner_api_unsupported(host: &DockerHost, is_windows: bool) -> bool {
@@ -2234,7 +2268,17 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     // only variable names are visible in the process listing.
     append_env_passthrough_args(&mut args, spec.secret_env, &mut forwarded_env);
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_checked_on_with_env(host, &arg_refs, &forwarded_env)?;
+    match run_checked_on_with_env(host, &arg_refs, &forwarded_env) {
+        Ok(_) => {}
+        Err(DockerError::Command(detail)) if missing_network_error(&detail, spec.network) => {
+            // The bridge may be removed between the initial validation and
+            // Docker's container create. Recreate/validate it once, then retry
+            // only this request; repeated failure is returned to reconciliation.
+            ensure_runner_network(host, spec.network, !spec.is_windows)?;
+            run_checked_on_with_env(host, &arg_refs, &forwarded_env)?;
+        }
+        Err(error) => return Err(error),
+    }
     Ok(())
 }
 
@@ -3683,6 +3727,26 @@ mod tests {
             parse_top_output(raw),
             vec!["cargo build --release", "sh -c echo hi"]
         );
+    }
+
+    #[test]
+    fn missing_network_error_matches_only_the_configured_network() {
+        assert!(missing_network_error(
+            "Error response from daemon: network gitrun-runner not found",
+            "gitrun-runner"
+        ));
+        assert!(missing_network_error(
+            "network GitRun-Runner does not exist",
+            "gitrun-runner"
+        ));
+        assert!(!missing_network_error(
+            "network unrelated not found",
+            "gitrun-runner"
+        ));
+        assert!(!missing_network_error(
+            "permission denied while connecting to Docker",
+            "gitrun-runner"
+        ));
     }
 
     #[test]

@@ -1446,6 +1446,64 @@ fn main() {
                 1
             }
         },
+        Command::ReadVmConfigsRoot => match read_vm_configs_root_command() {
+            Ok(()) => 0,
+            Err(error) => {
+                std::eprintln!("GitRun VM configuration read: FAIL — {error}");
+                1
+            }
+        },
+        Command::SaveVmConfigsRoot { input_path } => match save_vm_configs_root_command(&input_path) {
+            Ok(()) => 0,
+            Err(error) => {
+                std::eprintln!("GitRun VM configuration save: FAIL — {error}");
+                1
+            }
+        },
+        Command::ReadPendingHypervisorDecisionsRoot => match read_pending_hypervisor_decisions_root_command() {
+            Ok(()) => 0,
+            Err(error) => {
+                std::eprintln!("GitRun hypervisor decision read: FAIL — {error}");
+                1
+            }
+        },
+        Command::RespondHypervisorDecisionRoot { vm_name, choice } => {
+            match respond_hypervisor_decision_root_command(&vm_name, &choice) {
+                Ok(()) => 0,
+                Err(error) => {
+                    std::eprintln!("GitRun hypervisor decision response: FAIL — {error}");
+                    1
+                }
+            }
+        },
+        Command::ReadLogicRulesRoot => match read_logic_rules_root_command() {
+            Ok(()) => 0,
+            Err(error) => {
+                std::eprintln!("GitRun Logic Containers read: FAIL — {error}");
+                1
+            }
+        },
+        Command::SaveLogicRulesRoot { input_path } => match save_logic_rules_root_command(&input_path) {
+            Ok(()) => 0,
+            Err(error) => {
+                std::eprintln!("GitRun Logic Containers save: FAIL — {error}");
+                1
+            }
+        },
+        Command::ReadDockRequirementsRoot { repository } => match read_dock_requirements_root_command(&repository) {
+            Ok(()) => 0,
+            Err(error) => {
+                std::eprintln!("GitRun GitDockRun requirements read: FAIL — {error}");
+                1
+            }
+        },
+        Command::ReadGsrEventsRoot { limit } => match read_gsr_events_root_command(limit) {
+            Ok(()) => 0,
+            Err(error) => {
+                std::eprintln!("GitRun GSR event read: FAIL — {error}");
+                1
+            }
+        },
         Command::SaveConfigRoot { input_path } => match save_config_root_command(&input_path) {
             Ok(()) => 0,
             Err(error) => {
@@ -1513,6 +1571,14 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::ReinstallRoot { .. }
         | Command::ReinstallLatestRoot
         | Command::ReinstallExistingRoot
+        | Command::ReadVmConfigsRoot
+        | Command::SaveVmConfigsRoot { .. }
+        | Command::ReadPendingHypervisorDecisionsRoot
+        | Command::RespondHypervisorDecisionRoot { .. }
+        | Command::ReadLogicRulesRoot
+        | Command::SaveLogicRulesRoot { .. }
+        | Command::ReadDockRequirementsRoot { .. }
+        | Command::ReadGsrEventsRoot { .. }
         | Command::SaveConfigRoot { .. }
         | Command::SaveGitRunSettingsRoot { .. }
         | Command::SaveKittySettingsRoot { .. } => ValidationState::Recovering,
@@ -1632,6 +1698,47 @@ enum Command {
     /// Internal command that rebuilds runtime resources from the saved configuration.
     #[command(name = "--reinstall-existing-root", hide = true)]
     ReinstallExistingRoot,
+    /// Internal read-only helper for root-owned VM configuration.
+    #[command(name = "--read-vm-configs-root", hide = true)]
+    ReadVmConfigsRoot,
+    /// Internal validated writer for root-owned VM configuration.
+    #[command(name = "--save-vm-configs-root", hide = true)]
+    SaveVmConfigsRoot {
+        /// Private JSON payload created by the unprivileged dashboard.
+        input_path: String,
+    },
+    /// Internal read-only helper for pending hypervisor decisions.
+    #[command(name = "--read-pending-hypervisor-decisions-root", hide = true)]
+    ReadPendingHypervisorDecisionsRoot,
+    /// Internal helper to answer one pending hypervisor decision.
+    #[command(name = "--respond-hypervisor-decision-root", hide = true)]
+    RespondHypervisorDecisionRoot {
+        /// VM name from the pending decision record.
+        vm_name: String,
+        /// One of retry_kvm or use_virtual_box.
+        choice: String,
+    },
+    /// Internal read-only helper for Logic Containers policy data.
+    #[command(name = "--read-logic-rules-root", hide = true)]
+    ReadLogicRulesRoot,
+    /// Internal helper to save validated Logic Containers policy through an authenticated payload.
+    #[command(name = "--save-logic-rules-root", hide = true)]
+    SaveLogicRulesRoot {
+        /// Private JSON payload created by the unprivileged dashboard.
+        input_path: String,
+    },
+    /// Internal read-only helper for requirements of a configured repository.
+    #[command(name = "--read-dock-requirements-root", hide = true)]
+    ReadDockRequirementsRoot {
+        /// Exact owner/repository value from the trusted system configuration.
+        repository: String,
+    },
+    /// Internal read-only helper for the dashboard; reads only the trusted GSR queue.
+    #[command(name = "--read-gsr-events-root", hide = true)]
+    ReadGsrEventsRoot {
+        /// Maximum number of recent events to return (clamped to 500).
+        limit: usize,
+    },
     /// Internal command to persist validated settings to the system env file.
     #[command(name = "--save-config-root", hide = true)]
     SaveConfigRoot {
@@ -2716,6 +2823,304 @@ fn read_privileged_user_payload(
 }
 
 #[cfg(target_os = "linux")]
+fn trusted_root_config_for_state_access() -> Result<Config, Box<dyn std::error::Error>> {
+    let path = trusted_system_config_path()
+        .ok_or("trusted system GitRun configuration is missing or unsafe")?;
+    let config = Config::from_env_file(path)?;
+    config.validate()?;
+    gitrun_setup::validate_system_state_directory(Path::new(&config.state_dir))?;
+    Ok(config)
+}
+
+#[cfg(target_os = "linux")]
+fn read_protected_state_file(
+    path: &Path,
+    label: &str,
+    max_bytes: u64,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+        || metadata.len() > max_bytes
+    {
+        return Err(format!("{label} must be a root-owned regular file with safe permissions and bounded size").into());
+    }
+    Ok(Some(std::fs::read_to_string(path)?))
+}
+
+#[cfg(target_os = "linux")]
+fn read_vm_configs_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("reading system VM configuration requires administrator authorization".into());
+    }
+    let config = trusted_root_config_for_state_access()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    let path = state_dir.join("vm-configs.json");
+    let _ = read_protected_state_file(&path, "VM configuration", 1024 * 1024)?;
+    let configs = gitrun_scheduler::vm::load_vm_configs(&state_dir)?;
+    std::println!("{}", serde_json::to_string(&configs)?);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_vm_configs_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("system VM configuration reading is supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn save_vm_configs_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("saving system VM configuration requires administrator privileges".into());
+    }
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("VM configuration helper requires a verified requesting user UID")?;
+    let bytes = read_privileged_user_payload(Path::new(input_path), requester_uid, "vm-configs")?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("VM configuration payload exceeds the 1 MiB safety limit".into());
+    }
+    let configs: Vec<gitrun_scheduler::vm::VmConfig> = serde_json::from_slice(&bytes)?;
+    let config = trusted_root_config_for_state_access()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    let path = state_dir.join("vm-configs.json");
+    let _ = read_protected_state_file(&path, "VM configuration", 1024 * 1024)?;
+    gitrun_scheduler::vm::save_vm_configs(&state_dir, &configs)?;
+    // Re-open and validate the committed file's final properties as a postcondition.
+    let _ = read_protected_state_file(&path, "saved VM configuration", 1024 * 1024)?
+        .ok_or("saved VM configuration file unexpectedly disappeared")?;
+    std::println!("GitRun VM configuration saved successfully.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn save_vm_configs_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system VM configuration persistence is supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn read_pending_hypervisor_decisions_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("reading system hypervisor decisions requires administrator authorization".into());
+    }
+    let config = trusted_root_config_for_state_access()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    let directory = state_dir.join("hypervisor-decisions");
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let metadata = match std::fs::symlink_metadata(&directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::println!("[]");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("hypervisor-decision directory is not a trusted root-owned directory".into());
+    }
+
+    let mut json_records = 0usize;
+    for entry in std::fs::read_dir(&directory)? {
+        let entry = entry?;
+        if entry.path().extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        json_records += 1;
+        if json_records > 1_000 {
+            return Err("hypervisor-decision directory exceeds the 1000-record safety limit".into());
+        }
+        let file = std::fs::symlink_metadata(entry.path())?;
+        if file.file_type().is_symlink()
+            || !file.is_file()
+            || file.nlink() != 1
+            || file.uid() != 0
+            || file.permissions().mode() & 0o022 != 0
+            || file.len() > 64 * 1024
+        {
+            return Err("hypervisor-decision record is not a trusted root-owned regular file".into());
+        }
+    }
+
+    let mut decisions = gitrun_core::hypervisor_decision::list_pending(&state_dir)?;
+    // The dashboard needs a bounded response even if several VMs are pending.
+    decisions.truncate(100);
+    std::println!("{}", serde_json::to_string(&decisions)?);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_pending_hypervisor_decisions_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("system hypervisor decision reading is supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn respond_hypervisor_decision_root_command(
+    vm_name: &str,
+    choice: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("responding to a system hypervisor decision requires administrator privileges".into());
+    }
+    // VM names are path-encoded by the decision protocol; accepting only the two
+    // serialized enum spellings prevents the helper becoming a generic file writer.
+    let choice = match choice {
+        "retry_kvm" => gitrun_core::hypervisor_decision::DecisionChoice::RetryKvm,
+        "use_virtual_box" => gitrun_core::hypervisor_decision::DecisionChoice::UseVirtualBox,
+        _ => return Err("unsupported hypervisor decision; expected retry_kvm or use_virtual_box".into()),
+    };
+    let config = trusted_root_config_for_state_access()?;
+    gitrun_core::hypervisor_decision::respond(Path::new(&config.state_dir), vm_name, choice)?;
+    std::println!("GitRun hypervisor decision saved.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn respond_hypervisor_decision_root_command(
+    _vm_name: &str,
+    _choice: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system hypervisor decision responses are supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn read_logic_rules_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("reading system Logic Containers rules requires administrator authorization".into());
+    }
+    let config = trusted_root_config_for_state_access()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    let path = state_dir.join("logic-containers.json");
+    let rules = match read_protected_state_file(&path, "Logic Containers rules", 1024 * 1024)? {
+        Some(raw) => {
+            let rules: Vec<gitrun_scheduler::logic_containers::LogicRule> = serde_json::from_str(&raw)?;
+            gitrun_scheduler::logic_containers::validate_rules(&rules)?;
+            rules
+        }
+        None => Vec::new(),
+    };
+    std::println!("{}", serde_json::to_string(&rules)?);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_logic_rules_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("system Logic Containers rules are supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn save_logic_rules_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("saving system Logic Containers rules requires administrator authorization".into());
+    }
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("Logic Containers helper requires a verified requesting user UID")?;
+    let bytes = read_privileged_user_payload(Path::new(input_path), requester_uid, "logic-rules")?;
+    let rules: Vec<gitrun_scheduler::logic_containers::LogicRule> = serde_json::from_slice(&bytes)?;
+    gitrun_scheduler::logic_containers::validate_rules(&rules)?;
+
+    let config = trusted_root_config_for_state_access()?;
+    let path = PathBuf::from(&config.state_dir).join("logic-containers.json");
+    // Reject unsafe pre-existing files before atomic replacement. The parent
+    // state directory has already been verified as root-owned and non-writable.
+    let _ = read_protected_state_file(&path, "Logic Containers rules", 1024 * 1024)?;
+    gitrun_scheduler::logic_containers::save_rules(&path, &rules)?;
+    let _ = read_protected_state_file(&path, "Logic Containers rules", 1024 * 1024)?
+        .ok_or("saved Logic Containers rules file unexpectedly disappeared")?;
+    std::println!("GitRun Logic Containers rules saved successfully.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn save_logic_rules_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system Logic Containers rules are supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn read_dock_requirements_root_command(repository: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("reading system GitDockRun requirements requires administrator authorization".into());
+    }
+    let config = trusted_root_config_for_state_access()?;
+    if !config.repositories.iter().any(|configured| configured == repository) {
+        return Err(format!("repository is not configured in GitRun: {repository}").into());
+    }
+
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let state_dir = PathBuf::from(&config.state_dir);
+    let directory = state_dir.join("workflow-dock-requirements");
+    let metadata = match std::fs::symlink_metadata(&directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::println!("[]");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err("GitDockRun requirements directory is not a trusted root-owned directory".into());
+    }
+
+    let path = directory.join(format!(
+        "{}.json",
+        gitrun_scheduler::docker::sanitize(repository, '_')
+    ));
+    let requirements = match read_protected_state_file(&path, "GitDockRun requirements", 1024 * 1024)? {
+        Some(raw) => {
+            let requests: Vec<gitrun_core::DockRequest> = serde_json::from_str(&raw)?;
+            requests
+        }
+        None => Vec::new(),
+    };
+    std::println!("{}", serde_json::to_string(&requirements)?);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_dock_requirements_root_command(_repository: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system GitDockRun requirements are supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
+fn read_gsr_events_root_command(limit: usize) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("reading system GSR events requires administrator authorization".into());
+    }
+    let config = trusted_root_config_for_state_access()?;
+    let path = gitrun_gsr::events::default_queue_path(&config.state_dir);
+    let events = gitrun_gsr::events::read_last(&path, limit.clamp(1, 500))?;
+    // Machine-readable output is consumed by the dashboard after pkexec
+    // authorizes this fixed, read-only operation. Never accept a caller path.
+    std::println!("{}", serde_json::to_string(&events)?);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_gsr_events_root_command(_limit: usize) -> Result<(), Box<dyn std::error::Error>> {
+    Err("system GSR event reading is supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
 fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("saving system settings requires administrator privileges".into());
@@ -3283,6 +3688,84 @@ mod internal_lifecycle_command_tests {
             Command::SaveConfigRoot { input_path }
                 if input_path == "/tmp/private-settings.json"
         ));
+
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--read-gsr-events-root",
+                "30"
+            ]),
+            Command::ReadGsrEventsRoot { limit: 30 }
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--read-logic-rules-root"
+            ]),
+            Command::ReadLogicRulesRoot
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--read-vm-configs-root"
+            ]),
+            Command::ReadVmConfigsRoot
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--save-vm-configs-root",
+                "/tmp/private-vm-configs.json"
+            ]),
+            Command::SaveVmConfigsRoot { input_path }
+                if input_path == "/tmp/private-vm-configs.json"
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--read-pending-hypervisor-decisions-root"
+            ]),
+            Command::ReadPendingHypervisorDecisionsRoot
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--respond-hypervisor-decision-root",
+                "--",
+                "-win-runner",
+                "use_virtual_box"
+            ]),
+            Command::RespondHypervisorDecisionRoot { vm_name, choice }
+                if vm_name == "-win-runner" && choice == "use_virtual_box"
+        ));
+
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--save-logic-rules-root",
+                "/tmp/private-logic-rules.json"
+            ]),
+            Command::SaveLogicRulesRoot { input_path }
+                if input_path == "/tmp/private-logic-rules.json"
+        ));
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--read-dock-requirements-root",
+                "owner/repo"
+            ]),
+            Command::ReadDockRequirementsRoot { repository }
+                if repository == "owner/repo"
+        ));
+
         assert!(matches!(
             parse_internal_command(&[
                 "gitrun",

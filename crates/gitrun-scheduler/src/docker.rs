@@ -487,9 +487,9 @@ pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceU
     parse_docker_stats(&output)
 }
 
-/// Unused CPU/RAM headroom already committed to a running GitRun runner.
-/// Host free/idle readings already account for current usage; this reserves
-/// only the gap between each container's hard limit and its measured usage.
+/// Remaining CPU headroom and the full RAM limit already committed to a running runner.
+/// Host CPU/memory probes account for current use. Docker's Linux CLI stats subtract
+/// page cache from displayed memory, so RAM reserves the entire existing hard limit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManagedContainerResourceHeadroom {
     pub name: String,
@@ -497,7 +497,7 @@ pub struct ManagedContainerResourceHeadroom {
     pub memory_bytes: u64,
 }
 
-/// Return unused capacity committed to running GitRun-managed runners.
+/// Return unused CPU capacity and committed RAM limits for running GitRun-managed runners.
 /// Missing limits, ambiguous identities, or failed measurements are errors so
 /// Adaptive Resource Management defers creation instead of guessing capacity.
 pub fn running_managed_container_resource_headroom() -> Result<Vec<ManagedContainerResourceHeadroom>> {
@@ -595,17 +595,17 @@ pub fn running_managed_container_resource_headroom() -> Result<Vec<ManagedContai
         "stats".to_owned(),
         "--no-stream".to_owned(),
         "--format".to_owned(),
-        "{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}".to_owned(),
+        "{{.ID}}|{{.CPUPerc}}".to_owned(),
     ];
     stats_args.extend(identities.iter().map(|(id, _)| id.clone()));
     let stats_refs: Vec<&str> = stats_args.iter().map(String::as_str).collect();
     let stats_output = run_checked(&stats_refs)?;
-    let mut usages = HashMap::<String, ContainerResourceUsage>::new();
+    let mut usages = HashMap::<String, f64>::new();
     for line in stats_output.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let fields: Vec<_> = line.splitn(3, '|').collect();
-        if fields.len() != 3 {
+        let fields: Vec<_> = line.splitn(2, '|').collect();
+        if fields.len() != 2 {
             return Err(DockerError::Command(
-                "docker stats returned malformed runner usage".into(),
+                "docker stats returned malformed runner CPU usage".into(),
             ));
         }
         let short_id = fields[0].trim();
@@ -625,8 +625,10 @@ pub fn running_managed_container_resource_headroom() -> Result<Vec<ManagedContai
                 "docker stats returned an ambiguous managed-runner ID".into(),
             ));
         }
-        let usage = parse_docker_stats(&format!("{}|{}", fields[1], fields[2]))?;
-        if usages.insert(full_id.clone(), usage).is_some() {
+        let cpu_cores = parse_docker_percent(fields[1]).ok_or_else(|| {
+            DockerError::Command("docker stats returned an invalid CPU percentage".into())
+        })?;
+        if usages.insert(full_id.clone(), cpu_cores).is_some() {
             return Err(DockerError::Command(
                 "docker stats returned duplicate managed-runner usage".into(),
             ));
@@ -643,13 +645,15 @@ pub fn running_managed_container_resource_headroom() -> Result<Vec<ManagedContai
         let (cpu_limit, memory_limit) = *limits.get(&id).ok_or_else(|| {
             DockerError::Command("verified runner limit disappeared from snapshot".into())
         })?;
-        let usage = usages.get(&id).ok_or_else(|| {
+        let cpu_usage = usages.get(&id).ok_or_else(|| {
             DockerError::Command("verified runner usage disappeared from snapshot".into())
         })?;
         headroom.push(ManagedContainerResourceHeadroom {
             name,
-            cpu_cores: (cpu_limit - usage.cpu_cores).max(0.0),
-            memory_bytes: memory_limit.saturating_sub(usage.memory_bytes),
+            cpu_cores: (cpu_limit - cpu_usage).max(0.0),
+            // Reserve the full hard limit. Docker's Linux CLI subtracts page
+            // cache from MemUsage, so that figure is not safe for RAM headroom.
+            memory_bytes: memory_limit,
         });
     }
     Ok(headroom)

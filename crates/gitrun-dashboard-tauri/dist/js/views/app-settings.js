@@ -69,6 +69,19 @@ export async function renderAppSettings() {
           ':00 (' + String(slot.distinct_weeks) + ' weeks)'
       ).join(' · ') || "No recurring slot established";
       const latest = workload.latest_prediction;
+      const resourceSampleCount = Number(workload.resource_sample_count || 0);
+      const estimatedCpu = Number(workload.estimated_cpu_cores);
+      const estimatedMemoryGiB = Number(workload.estimated_memory_bytes) / (1024 ** 3);
+      const resourceEstimateText = (workload.resource_profile_learned
+        ? 'learned P80 + safety headroom'
+        : 'workload-class estimate · ' + resourceSampleCount + ' of 3 distinct jobs sampled') +
+        ' · ' + (Number.isFinite(estimatedCpu) ? estimatedCpu.toFixed(2).replace(/0+$/, '').replace(/\\.$/, '') : 'unknown') +
+        ' CPU cores / ' + (Number.isFinite(estimatedMemoryGiB) ? estimatedMemoryGiB.toFixed(1) : 'unknown') +
+        ' GiB RAM before host-availability and operator-cap limits' +
+        (Number.isFinite(workload.observed_peak_cpu_cores) && Number.isFinite(workload.observed_peak_memory_bytes)
+          ? ' · observed peak ' + Number(workload.observed_peak_cpu_cores).toFixed(2) + ' CPU cores / ' +
+            (Number(workload.observed_peak_memory_bytes) / (1024 ** 3)).toFixed(2) + ' GiB'
+          : '');
       const predictionText = latest
         ? 'Latest target ' + formatEpoch(latest.target_epoch) +
           ' · predicted ' + String(latest.predicted_occurrences) +
@@ -88,7 +101,8 @@ export async function renderAppSettings() {
         esc((workload.labels || []).slice(0, 8).join(', ')) +
         ((workload.labels || []).length > 8 ? ' …' : '') +
         '</small><small>Recurring: ' + esc(recurring) +
-        '</small><small>' + esc(predictionText) + '</small></div>';
+        '</small><small>' + esc(predictionText) + '</small>' +
+        '<small>Kitty resource estimate: ' + esc(resourceEstimateText) + '</small></div>';
     }).join("");
     const recentJobs = (entry.recent_job_occurrences || []).slice(-3).reverse().map((job) =>
       '<small>GitRun job ' + esc(String(job.gitrun_job_id)) +
@@ -115,7 +129,7 @@ export async function renderAppSettings() {
       pill(forecastLabel, forecastFresh ? "good" : forecast ? "neutral" : "info") + '</div>';
   }).join("") || (kittySettings.workflow_model_visible ? emptyModelPlaceholder : hiddenModelPlaceholder);
   const kittyPanel = '<div class="section">' + panel("Kitty Smart Scheduler",
-    '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. It is disabled by default; recommendations never authorize themselves. For a routed workload, use the generated gitrun-job-wk-… label as the only runs-on label on a managed Linux runner profile. GitRun creates that family with no generic self-hosted/platform labels and reuses its saved backend/image profile; an unknown family fails closed. GitHub will choose any idle runner in that family, not one exact container for a future run/job ID.</p>' +
+    '<p class="section-description">Kitty is an optional statistics-based companion. The deterministic scheduler remains primary and is always the fallback. Kitty is disabled by default; recommendations never authorize themselves. Adaptive Resource Management learns bounded per-job CPU/RAM envelopes and applies them only to new containers when enabled. For a routed workload, use the generated gitrun-job-wk-… label as the only runs-on label on a managed Linux runner profile. GitRun creates that family with no generic self-hosted/platform labels and reuses its saved backend/image profile; an unknown family fails closed. GitHub will choose any idle runner in that family, not one exact container for a future run/job ID.</p>' +
     (kittyLoadError ? '<div class="notice warn"><div><strong>Kitty settings could not be loaded</strong><p>' + esc(kittyLoadError) + '</p><p>The visible fields use safe defaults and may not reflect saved values. Saving will replace the current settings with the values shown. Unsafe ownership, permissions or trusted-path failures require administrator repair.</p></div></div>' : '') +
     (kittyStatusError ? '<div class="notice warn"><div><strong>Workflow Model status is unavailable</strong><p>' + esc(kittyStatusError) + '</p><p>Kitty settings are still available, but the status snapshot was rejected. Inspect the status file ownership and permissions before retrying.</p></div></div>' : '') +
     '<label class="checkbox-row"><input id="kitty-enabled" type="checkbox" ' + (kittySettings.enabled ? "checked" : "") + '><span><strong>Enable Kitty</strong>Enable the optional observer and its statistical model. This does not enable automatic scaling.</span></label>' +
@@ -128,7 +142,7 @@ export async function renderAppSettings() {
     '<div class="field mt-12"><label for="kitty-automation-repositories">Automation repository allowlist</label><textarea id="kitty-automation-repositories" rows="3" placeholder="owner/repo, one per line">' + esc((kittySettings.automation_allowed_repositories || []).join("\n")) + '</textarea><small class="field-hint">Automation remains disabled for repositories not listed here. Only repositories configured in GitRun can be acted on.</small></div>' +
     '<label class="checkbox-row"><input id="kitty-fast-stop-enabled" type="checkbox" ' + (kittySettings.smart_fast_stop_enabled ? "checked" : "") + '><span><strong>Smart Fast Stop</strong>Cancel an overlong workflow run only after its configured deadline, allowlist check and GSR audit. Cancellation affects the entire run, not a single job.</span></label>' +
     '<div class="field mt-10"><label for="kitty-fast-stop-runtime">Fast Stop deadline (seconds)</label><input id="kitty-fast-stop-runtime" type="number" min="300" max="604800" step="300" value="' + esc(String(kittySettings.fast_stop_max_runtime_seconds || 14400)) + '"><small class="field-hint">Default proposal: 14400 seconds (4 hours). The deadline is inactive unless Smart Fast Stop is enabled; runs with unknown start time are never cancelled.</small></div>' +
-    '<label class="checkbox-row"><input type="checkbox" disabled><span><strong>Adaptive Resource Management</strong>Unavailable in this version; reliable per-job resource attribution and bounded profiles are not ready.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-adaptive-resources" type="checkbox" ' + (kittySettings.adaptive_resource_management_enabled ? "checked" : "") + '><span><strong>Adaptive Resource Management</strong>Learn per-job CPU/RAM demand from active managed containers and assign workload-specific Docker limits. Kitty never exceeds GITRUN_CONTAINER_CPUS or GITRUN_CONTAINER_MEMORY, and defers creation when safe host capacity cannot be measured.</span></label>' +
     '<div class="two-col mt-12">' +
       '<div class="field"><label for="kitty-min-samples">Minimum five-minute samples</label><input id="kitty-min-samples" type="number" min="24" max="2016" value="' + esc(String(kittySettings.minimum_samples)) + '"><small class="field-hint">Default 576 samples (48 hours); forecast quality needs later outcomes too.</small></div>' +
       '<div class="field"><label for="kitty-history-buckets">History buckets (maximum 2016)</label><input id="kitty-history-buckets" type="number" min="24" max="2016" value="' + esc(String(kittySettings.history_buckets)) + '"><small class="field-hint">Five-minute high-resolution history, at most seven days. Weekly, four-week, yearly and lifetime summaries plus bounded workload profiles are retained separately.</small></div>' +
@@ -137,7 +151,7 @@ export async function renderAppSettings() {
       '<div class="field"><label for="kitty-warmup-lead">Predictive warm-up lead (seconds)</label><input id="kitty-warmup-lead" type="number" min="300" max="3600" step="300" value="' + esc(String(kittySettings.warm_pool_lead_seconds ?? 300)) + '"><small class="field-hint">Default 300 seconds: prepare for a recurring weekday/hour demand pattern five minutes before its target slot.</small></div>' +
       '<div class="field"><label for="kitty-min-quality">Minimum forecast readiness (0.5–1)</label><input id="kitty-min-quality" type="number" min="0.5" max="1" step="0.01" value="' + esc(String(kittySettings.minimum_quality_score)) + '"><small class="field-hint">A heuristic readiness score, not a calibrated probability.</small></div>' +
     '</div>' +
-    '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management remains unavailable. Smart Fast Stop only cancels an allowlisted workflow run after its configured maximum runtime and GSR authorization; GitHub run cancellation also affects every job in that run. GitRun occurrence IDs (grj-…) identify individual observed jobs, while workload IDs (wk-…) identify recurring job families. On the managed Linux bootstrap, a family-labeled runner is registered with only gitrun-job-wk-… and the workflow must use that exact label as its only runs-on requirement. This isolates a family from unrelated jobs, but GitHub selects an idle member of the family; it does not expose a supported API to force-pin one future run/job ID to a specific container. Windows family routing remains unavailable and fails closed.</p></div></div>' +
+    '<div class="notice"><div><strong>Safety boundary</strong><p>Adaptive Resource Management assigns limits only to new managed containers. Learned profiles require at least three distinct observed jobs; until then Kitty uses a conservative workload-class estimate. Host CPU/RAM availability must be measurable, a host reserve is retained, and the configured GITRUN_CONTAINER_CPUS / GITRUN_CONTAINER_MEMORY values are hard ceilings. Existing containers are not resized. Smart Fast Stop only cancels an allowlisted workflow run after its configured maximum runtime and GSR authorization; GitHub run cancellation also affects every job in that run. GitRun occurrence IDs (grj-…) identify individual observed jobs, while workload IDs (wk-…) identify recurring job families. On the managed Linux bootstrap, a family-labeled runner is registered with only gitrun-job-wk-… and the workflow must use that exact label as its only runs-on requirement. This isolates a family from unrelated jobs, but GitHub selects an idle member of the family; it does not expose a supported API to force-pin one future run/job ID to a specific container. Windows family routing remains unavailable and fails closed.</p></div></div>' +
     '<div class="toolbar"><span class="field-hint">System installs request administrator authorization to save Kitty settings. Changes are read by the scheduler within 30 seconds.</span><div class="heading-actions"><button class="btn" id="refresh-kitty-status">Refresh model status</button><button class="btn btn-primary" id="save-kitty-settings">Save Kitty settings</button></div></div>' +
     '<div class="section-heading mt-12"><h3>Workflow Model status</h3>' + pill(kittySettings.enabled ? (kittySettings.shadow_mode ? "Shadow mode" : "Enabled") : "Disabled", kittySettings.enabled ? (kittySettings.shadow_mode ? "info" : "warn") : "neutral") + '</div>' +
     '<div class="card-list mt-10">' + kittyRows + '</div>'
@@ -191,7 +205,7 @@ export async function renderAppSettings() {
       workflow_model_visible: document.getElementById("kitty-model-visible").checked,
       shadow_mode: document.getElementById("kitty-shadow-mode").checked,
       predictive_warm_pool_enabled: document.getElementById("kitty-warm-pool-enabled").checked,
-      adaptive_resource_management_enabled: false,
+      adaptive_resource_management_enabled: document.getElementById("kitty-adaptive-resources").checked,
       automation_mode: document.getElementById("kitty-automation-mode").checked,
       automation_allowed_repositories: [...new Set(document.getElementById("kitty-automation-repositories").value
         .split(/[\n,;]/).map((repo) => repo.trim()).filter(Boolean))],
@@ -219,6 +233,7 @@ export async function renderAppSettings() {
         updated.minimum_quality_score > 1 ||
         updated.automation_allowed_repositories.length > 64 ||
         updated.automation_allowed_repositories.some((repo) => !/^[A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/.test(repo)) ||
+        (updated.adaptive_resource_management_enabled && (!updated.enabled || !updated.telemetry_enabled)) ||
         (updated.automation_mode && !updated.enabled) ||
         (updated.automation_mode && updated.automation_allowed_repositories.length === 0) ||
         (updated.smart_fast_stop_enabled && (!updated.automation_mode ||
@@ -234,6 +249,17 @@ export async function renderAppSettings() {
         "Replace Kitty settings that could not be loaded?",
         "GitRun could not read the saved settings. The visible fields use safe defaults, not verified saved values. Saving will overwrite the current settings with the values shown and may reset existing options. Continue only if you intend to repair or replace them.",
         "Replace Kitty settings",
+        true
+      );
+      if (!confirmed) return;
+    }
+    const adaptiveResourcesRiskChanged = updated.adaptive_resource_management_enabled &&
+      !kittySettings.adaptive_resource_management_enabled;
+    if (adaptiveResourcesRiskChanged) {
+      const confirmed = await confirmModal(
+        "Enable Adaptive Resource Management?",
+        "Kitty will set per-container CPU and RAM limits for new managed runners. It will use measured workload data when enough distinct jobs exist, otherwise a conservative workload-class estimate. Every allocation is capped by the configured GITRUN_CONTAINER_CPUS and GITRUN_CONTAINER_MEMORY ceilings and a host capacity budget; when capacity cannot be verified, runner creation is deferred. Existing containers are not resized.",
+        "Enable adaptive resources",
         true
       );
       if (!confirmed) return;

@@ -1,4 +1,4 @@
-# Git*Run API reference — 1.5.0
+# Git*Run API reference — 1.5.1
 
 GitRun exposes a closed set of workflow-facing APIs. These are named executables, not a generic shell wrapper.
 
@@ -167,6 +167,8 @@ The public workflow API does not expose this channel key.
 The API is an authorization boundary, not a replacement for host isolation. A Linux runner that already has Docker socket access retains host-level Docker authority. See [SECURITY_MODEL.md](SECURITY_MODEL.md).
 
 
-## Verification status
+## Verification and deployment boundaries
 
-PR [#83](https://github.com/Vider06/GitRun/pull/83) merged after source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. The live mount test exercises cleanup in a privileged Docker namespace; it does not drive the complete authorized disconnect API endpoint through a real client lifecycle. Real desktop privilege transitions, live hypervisor provisioning/recovery and customized runner-image migration also remain environment-specific checks. The [status report](v1.5.0-refactor-status.md) records the evidence and residual limits.
+The CI result linked from PR [#83](https://github.com/Vider06/GitRun/pull/83) is historical evidence for the 1.5.0 source-head checks only. It does not certify later recovery/version-alignment commits or prove an end-to-end adversarial test of every API operation.
+
+PR [#103](https://github.com/Vider06/GitRun/pull/103) changed recovery diagnostics and repair of the host runtime/systemd installation; it does not change the closed Git*Run API operation set described above. Follow the [1.5.1 release notes](v1.5.1-release-notes.md) and check the exact workflow results for the commit being deployed. The complete authorized disconnect API path and real host/hypervisor lifecycle tests remain environment-specific verification obligations.

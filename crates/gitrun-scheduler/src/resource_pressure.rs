@@ -13,6 +13,47 @@ pub enum ResourcePressureError {
     Disk { path: String, detail: String },
 }
 
+/// Conservative capacity left for new runner limits after a host reserve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResourceCapacity {
+    pub cpu_cores: f64,
+    pub memory_bytes: u64,
+}
+
+impl ResourceCapacity {
+    /// Reserve 20% of schedulable CPU (at least half a core) and 15% of RAM
+    /// (at least 1 GiB) for the host, GitRun, Docker and unrelated processes.
+    /// These values are an upper-bound budget for newly planned containers,
+    /// not a claim that all reported capacity is idle for the whole job.
+    pub fn from_measurements(
+        total_cpu_cores: f64,
+        cpu_utilization_percent: f64,
+        total_memory_bytes: u64,
+        available_memory_bytes: u64,
+    ) -> Option<Self> {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        if !total_cpu_cores.is_finite()
+            || total_cpu_cores <= 0.0
+            || !cpu_utilization_percent.is_finite()
+            || !(0.0..=100.0).contains(&cpu_utilization_percent)
+            || total_memory_bytes == 0
+            || available_memory_bytes > total_memory_bytes
+        {
+            return None;
+        }
+        let cpu_reserve = (total_cpu_cores * 0.20).max(0.5);
+        let usable_cpu = (total_cpu_cores * (1.0 - cpu_utilization_percent / 100.0)
+            - cpu_reserve)
+            .max(0.0);
+        let memory_reserve = ((total_memory_bytes as f64 * 0.15) as u64).max(GIB);
+        let usable_memory = available_memory_bytes.saturating_sub(memory_reserve);
+        Some(Self {
+            cpu_cores: (usable_cpu * 1000.0).floor() / 1000.0,
+            memory_bytes: usable_memory,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResourceSnapshot {
     /// Actual host CPU utilization over a short sampling interval.
@@ -64,6 +105,40 @@ pub fn sample(config: &Config) -> Result<ResourceSnapshot, ResourcePressureError
         memory_percent,
         disk_percent,
     })
+}
+
+/// Estimate capacity for Adaptive Resource Management independently of
+/// the scheduler's optional scale-up pressure gate. Errors are propagated to
+/// the adaptive caller, which must defer a runner rather than guess capacity.
+pub fn available_capacity() -> Result<ResourceCapacity, ResourcePressureError> {
+    let total_cpu_cores = std::thread::available_parallelism()
+        .map(|cores| cores.get() as f64)
+        .unwrap_or(0.0);
+    let cpu_percent = f64::from(sample_cpu_percent()?);
+
+    let meminfo = fs::read_to_string("/proc/meminfo")?;
+    let mut total_kib = None;
+    let mut available_kib = None;
+    for line in meminfo.lines() {
+        if let Some(value) = line.strip_prefix("MemTotal:") {
+            total_kib = value.split_whitespace().next().and_then(|v| v.parse::<u64>().ok());
+        } else if let Some(value) = line.strip_prefix("MemAvailable:") {
+            available_kib = value.split_whitespace().next().and_then(|v| v.parse::<u64>().ok());
+        }
+    }
+    let total_bytes = total_kib
+        .and_then(|v| v.checked_mul(1024))
+        .ok_or(ResourcePressureError::Parse)?;
+    let available_bytes = available_kib
+        .and_then(|v| v.checked_mul(1024))
+        .ok_or(ResourcePressureError::Parse)?;
+    ResourceCapacity::from_measurements(
+        total_cpu_cores,
+        cpu_percent,
+        total_bytes,
+        available_bytes,
+    )
+    .ok_or(ResourcePressureError::Parse)
 }
 
 fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
@@ -213,6 +288,19 @@ mod tests {
             ResourcePressureError::Disk { path, .. }
                 if path == missing.display().to_string()
         ));
+    }
+
+    #[test]
+    fn adaptive_capacity_keeps_host_reserves_and_never_exceeds_available_ram() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let capacity = ResourceCapacity::from_measurements(4.0, 0.0, 16 * GIB, 12 * GIB).unwrap();
+        assert!(capacity.cpu_cores <= 3.2);
+        assert_eq!(capacity.memory_bytes, 12 * GIB - (16 * GIB * 15 / 100));
+
+        let pressured = ResourceCapacity::from_measurements(4.0, 100.0, 16 * GIB, 12 * GIB).unwrap();
+        assert_eq!(pressured.cpu_cores, 0.0);
+        assert!(ResourceCapacity::from_measurements(0.0, 20.0, 16 * GIB, 12 * GIB).is_none());
+        assert!(ResourceCapacity::from_measurements(4.0, 20.0, 16 * GIB, 20 * GIB).is_none());
     }
 
     #[test]

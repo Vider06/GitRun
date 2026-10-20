@@ -2532,7 +2532,7 @@ pub struct DockRequirementSummary {
     pub operation: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct KittyDashboardData {
     settings: KittySettings,
     status: KittyDashboardStatus,
@@ -2543,6 +2543,17 @@ struct KittyDashboardData {
 fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
     let config = load_config()?;
     let state_dir = Path::new(&config.state_dir);
+    #[cfg(target_os = "linux")]
+    if KittyRuntime::uses_system_settings_path(state_dir) {
+        if trusted_system_cli_path().is_none() {
+            return Err(
+                "A trusted system-installed GitRun CLI was not found; Kitty dashboard state cannot be read safely.".into(),
+            );
+        }
+        let raw = run_privileged_cli_helper("--read-kitty-dashboard-root", &[])?;
+        return serde_json::from_str(raw.trim())
+            .map_err(|error| format!("decode authorized Kitty dashboard response: {error}"));
+    }
     let settings = gitrun_smart_scheduler::load_settings_for_dashboard(state_dir)
         .map_err(|e| e.to_string())?;
     let (status, status_error) = match gitrun_smart_scheduler::load_dashboard_status(state_dir) {

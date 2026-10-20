@@ -1528,6 +1528,13 @@ fn main() {
                 }
             }
         }
+        Command::ReadKittyDashboardRoot => match read_kitty_dashboard_root_command() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("GitRun Kitty dashboard read: FAIL — {error}");
+                1
+            }
+        },
         Command::SaveKittySettingsRoot { input_path } => {
             match save_kitty_settings_root_command(&input_path) {
                 Ok(()) => 0,
@@ -1589,7 +1596,8 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::ReadGsrEventsRoot { .. }
         | Command::SaveConfigRoot { .. }
         | Command::SaveGitRunSettingsRoot { .. }
-        | Command::SaveKittySettingsRoot { .. } => ValidationState::Recovering,
+        | Command::SaveKittySettingsRoot { .. }
+        | Command::ReadKittyDashboardRoot => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1759,6 +1767,9 @@ enum Command {
         /// Private JSON file containing a GitRunSettings object.
         input_path: String,
     },
+    /// Internal read-only helper for the protected Kitty dashboard state.
+    #[command(name = "--read-kitty-dashboard-root", hide = true)]
+    ReadKittyDashboardRoot,
     /// Internal privileged command to persist validated optional Kitty settings.
     #[command(name = "--save-kitty-settings-root", hide = true)]
     SaveKittySettingsRoot {
@@ -3330,6 +3341,48 @@ fn promote_staged_kitty_settings(
 }
 
 #[cfg(target_os = "linux")]
+fn read_kitty_dashboard_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("reading the system Kitty dashboard requires administrator authorization".into());
+    }
+    let config = trusted_root_config_for_state_access()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    let settings = gitrun_smart_scheduler::load_settings_for_dashboard(&state_dir)?;
+    let (status, status_error) =
+        match gitrun_smart_scheduler::load_dashboard_status(&state_dir) {
+            Ok(status) => (status, None),
+            Err(error) => (
+                gitrun_smart_scheduler::KittyDashboardStatus {
+                    schema_version: gitrun_smart_scheduler::SETTINGS_SCHEMA_VERSION,
+                    generated_at_epoch: 0,
+                    enabled: settings.enabled,
+                    telemetry_enabled: settings.telemetry_enabled,
+                    predictive_analytics_enabled: settings.predictive_analytics_enabled,
+                    workflow_model_visible: settings.workflow_model_visible,
+                    predictive_warm_pool_enabled: settings.predictive_warm_pool_enabled,
+                    shadow_mode: settings.shadow_mode,
+                    repositories: Vec::new(),
+                },
+                Some(error.to_string()),
+            ),
+        };
+    std::println!(
+        "{}",
+        serde_json::json!({
+            "settings": settings,
+            "status": status,
+            "status_error": status_error
+        })
+    );
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_kitty_dashboard_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("system Kitty dashboard reading is supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
 fn save_kitty_settings_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("saving Kitty settings requires administrator privileges".into());
@@ -3811,6 +3864,15 @@ mod internal_lifecycle_command_tests {
             ]),
             Command::SaveKittySettingsRoot { input_path }
                 if input_path == "/tmp/private-kitty-settings.json"
+        ));
+
+        assert!(matches!(
+            parse_internal_command(&[
+                "gitrun",
+                "--no-cat",
+                "--read-kitty-dashboard-root"
+            ]),
+            Command::ReadKittyDashboardRoot
         ));
         assert!(matches!(
             parse_internal_command(&[

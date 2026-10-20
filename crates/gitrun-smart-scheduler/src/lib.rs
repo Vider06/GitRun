@@ -28,6 +28,9 @@ const MAX_DASHBOARD_REPOSITORIES: usize = 64;
 const MAX_JOB_PATTERNS: usize = 24;
 const MAX_JOB_OCCURRENCES: usize = 256;
 const MAX_WORKLOAD_PREDICTIONS: usize = 256;
+const MAX_WORKLOAD_RESOURCE_OBSERVATIONS: usize = 512;
+const RESOURCE_SAMPLE_INTERVAL_SECONDS: u64 = 30;
+const MIN_RESOURCE_PROFILE_JOBS: usize = 3;
 const MAX_DASHBOARD_JOB_OCCURRENCES: usize = 32;
 const MAX_AUDIT_RECORDS: usize = 64;
 const MAX_EVALUATED_FORECASTS: usize = 256;
@@ -72,8 +75,9 @@ pub struct KittySettings {
     pub predictive_analytics_enabled: bool,
     pub workflow_model_visible: bool,
     pub predictive_warm_pool_enabled: bool,
-    /// Reserved until reliable per-job resource measurements and bounded
-    /// runner profiles are available. It never authorizes a resource change.
+    /// Optional bounded per-container CPU/RAM assignment based on active-job
+    /// measurements and workload-class priors. Requires telemetry and applies
+    /// only to new containers; operator ceilings and host reserves remain hard.
     pub adaptive_resource_management_enabled: bool,
     /// Allows GSR-gated Fast Stop for verified active workflow runs that exceed
     /// the operator's age threshold. GitHub's force-cancel endpoint is run-scoped.
@@ -147,9 +151,9 @@ impl KittySettings {
                 "max_additional_warm_runners must not exceed 100".into(),
             ));
         }
-        if self.adaptive_resource_management_enabled {
+        if self.adaptive_resource_management_enabled && (!self.enabled || !self.telemetry_enabled) {
             return Err(KittyError::Invalid(
-                "Adaptive Resource Management is reserved and not supported by this version".into(),
+                "Adaptive Resource Management requires Kitty and aggregate telemetry to be enabled".into(),
             ));
         }
         if self.automation_allowed_repositories.len() > MAX_DASHBOARD_REPOSITORIES
@@ -430,6 +434,46 @@ pub struct QueuedJobOccurrence {
     pub started_at_epoch: Option<u64>,
 }
 
+/// One bounded live resource sample for a job that GitHub authoritatively
+/// reports as running on a GitRun-managed container. CPU is expressed in
+/// consumed cores (Docker's 100% equals one core); memory is bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActiveJobResourceSample {
+    pub job: QueuedJobOccurrence,
+    pub cpu_cores: f64,
+    pub memory_bytes: u64,
+    pub sampled_at_epoch: u64,
+}
+
+/// High-water resource telemetry for one real workflow-job occurrence.
+/// Several samples of the same run/job update this record rather than
+/// inflating the number of independent workload observations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkloadResourceObservation {
+    pub workload_id: String,
+    pub occurrence_code: String,
+    pub run_id: u64,
+    pub job_id: u64,
+    pub cpu_cores_peak: f64,
+    pub memory_bytes_peak: u64,
+    pub sample_count: u32,
+    pub first_sample_at_epoch: u64,
+    pub last_sample_at_epoch: u64,
+}
+
+/// Resource envelope inferred for a workload family. It is a requested
+/// ceiling, not reserved physical capacity; the scheduler still clamps it
+/// against per-runner operator limits and a shared per-cycle host budget.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResourceDemandEstimate {
+    pub workload_id: String,
+    pub cpu_cores: f64,
+    pub memory_bytes: u64,
+    pub sample_count: usize,
+    pub learned: bool,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkloadPattern {
     #[serde(alias = "workload_code", alias = "gitrun_job_id")]
@@ -524,6 +568,22 @@ pub struct WorkloadPatternStatus {
     pub recurring_slots: Vec<WorkloadSlotSummary>,
     #[serde(default)]
     pub latest_prediction: Option<WorkloadPredictionStatus>,
+    /// Resource telemetry across recent distinct job occurrences; raw samples
+    /// remain in the private Workflow Model file.
+    #[serde(default)]
+    pub resource_sample_count: usize,
+    #[serde(default)]
+    pub observed_peak_cpu_cores: Option<f64>,
+    #[serde(default)]
+    pub observed_peak_memory_bytes: Option<u64>,
+    /// Recommended per-container envelope before host availability and
+    /// operator hard ceilings are applied at creation time.
+    #[serde(default)]
+    pub estimated_cpu_cores: f64,
+    #[serde(default)]
+    pub estimated_memory_bytes: u64,
+    #[serde(default)]
+    pub resource_profile_learned: bool,
 }
 
 /// A bounded suggestion to reserve compatible runner capacity for a recurring
@@ -599,6 +659,10 @@ pub struct WorkflowModel {
     pub workload_patterns: Vec<WorkloadPattern>,
     #[serde(default)]
     pub recent_job_occurrences: Vec<RecentJobOccurrence>,
+    /// Bounded private resource samples keyed by authoritative GitHub run/job IDs.
+    /// These are measurements from the managed runner container, never workflow payloads.
+    #[serde(default)]
+    pub resource_observations: Vec<WorkloadResourceObservation>,
     /// Monotonic per-repository sequence used to generate unique GitRun job IDs.
     #[serde(default = "default_next_gitrun_job_sequence")]
     pub next_gitrun_job_sequence: u64,
@@ -850,6 +914,7 @@ impl WorkflowModel {
             history: Vec::new(),
             workload_patterns: Vec::new(),
             recent_job_occurrences: Vec::new(),
+            resource_observations: Vec::new(),
             next_gitrun_job_sequence: 1,
             workload_predictions: Vec::new(),
             weekly_summaries: Vec::new(),
@@ -882,6 +947,7 @@ impl WorkflowModel {
             || self.history.len() > history_limit
             || self.workload_patterns.len() > MAX_JOB_PATTERNS
             || self.recent_job_occurrences.len() > MAX_JOB_OCCURRENCES
+            || self.resource_observations.len() > MAX_WORKLOAD_RESOURCE_OBSERVATIONS
             || self.workload_predictions.len() > MAX_WORKLOAD_PREDICTIONS
             || self.weekly_summaries.len() > MAX_WEEKLY_SUMMARIES
             || self.monthly_summaries.len() > MAX_MONTHLY_SUMMARIES
@@ -983,6 +1049,29 @@ impl WorkflowModel {
             {
                 return Err(KittyError::Invalid(
                     "stored job occurrence has an invalid identity or workload reference".into(),
+                ));
+            }
+        }
+        let mut resource_occurrence_keys = HashSet::new();
+        for sample in &self.resource_observations {
+            if !valid_workload_id(&sample.workload_id)
+                || !workload_ids.contains(sample.workload_id.as_str())
+                || sample.run_id == 0
+                || sample.job_id == 0
+                || sample.occurrence_code
+                    != provider_occurrence_key(&sample.workload_id, sample.run_id, sample.job_id)
+                || !sample.cpu_cores_peak.is_finite()
+                || !(0.0..=256.0).contains(&sample.cpu_cores_peak)
+                || sample.memory_bytes_peak == 0
+                || sample.memory_bytes_peak > (1u64 << 60)
+                || sample.sample_count == 0
+                || sample.first_sample_at_epoch == 0
+                || sample.first_sample_at_epoch > sample.last_sample_at_epoch
+                || sample.last_sample_at_epoch > self.generated_at_epoch
+                || !resource_occurrence_keys.insert((sample.workload_id.as_str(), sample.run_id, sample.job_id))
+            {
+                return Err(KittyError::Invalid(
+                    "stored workload resource observation is malformed, duplicated, or outside bounds".into(),
                 ));
             }
         }
@@ -1168,6 +1257,7 @@ pub struct KittyRuntime {
     settings_error: Option<String>,
     last_settings_reload: Option<Instant>,
     last_workload_history_poll: HashMap<String, u64>,
+    last_resource_sample_poll: HashMap<String, u64>,
     models: HashMap<String, WorkflowModel>,
     disabled_models: HashSet<String>,
     dirty_models: HashSet<String>,
@@ -1181,6 +1271,7 @@ impl KittyRuntime {
             settings_error: None,
             last_settings_reload: None,
             last_workload_history_poll: HashMap::new(),
+            last_resource_sample_poll: HashMap::new(),
             models: HashMap::new(),
             disabled_models: HashSet::new(),
             dirty_models: HashSet::new(),
@@ -1265,6 +1356,305 @@ impl KittyRuntime {
         }
         self.last_workload_history_poll.insert(key, now_epoch);
         true
+    }
+
+    /// Sample live jobs at most once every 30 seconds per repository. Unlike
+    /// historical start polling, this does not require predictive analytics:
+    /// Kitty can learn resource envelopes before adaptive allocation is enabled.
+    pub fn should_poll_job_resources(&mut self, repository: &str, now_epoch: u64) -> bool {
+        self.reload_settings_if_due();
+        if self.settings_error.is_some()
+            || !self.settings.enabled
+            || !self.settings.telemetry_enabled
+            || !valid_repository(repository)
+            || now_epoch == 0
+        {
+            return false;
+        }
+        let key = repository_key(repository);
+        if self.last_resource_sample_poll.get(&key).is_some_and(|last| {
+            now_epoch < *last || now_epoch.saturating_sub(*last) < RESOURCE_SAMPLE_INTERVAL_SECONDS
+        }) {
+            return false;
+        }
+        self.last_resource_sample_poll.insert(key, now_epoch);
+        true
+    }
+
+    /// Persist bounded observed CPU/memory high-water marks for active jobs.
+    /// Samples come only from a GitHub-authoritative active-job mapping to a
+    /// currently running GitRun-managed container. A failure here is optional
+    /// telemetry failure and must not stop deterministic reconciliation.
+    pub fn record_resource_samples(
+        &mut self,
+        repository: &str,
+        samples: &[ActiveJobResourceSample],
+        observed_at_epoch: u64,
+    ) -> Result<()> {
+        self.reload_settings_if_due();
+        if self.settings_error.is_some()
+            || !self.settings.enabled
+            || !self.settings.telemetry_enabled
+            || !valid_repository(repository)
+            || observed_at_epoch == 0
+        {
+            return Ok(());
+        }
+        let valid_samples: Vec<_> = samples
+            .iter()
+            .filter(|sample| valid_resource_sample(sample, observed_at_epoch))
+            .cloned()
+            .collect();
+        if valid_samples.is_empty() {
+            return Ok(());
+        }
+
+        let key = repository_key(repository);
+        if self.disabled_models.contains(&key) {
+            return Ok(());
+        }
+        if !self.models.contains_key(&key) {
+            if self.models.len() >= MAX_MODELS {
+                if let Err(error) = self.evict_oldest_model() {
+                    return Err(error);
+                }
+            }
+            match self.load_model(repository, &key) {
+                Ok((model, migrated)) => {
+                    self.models.insert(key.clone(), model);
+                    if migrated {
+                        self.dirty_models.insert(key.clone());
+                    }
+                }
+                Err(error) => {
+                    if self.disabled_models.len() < MAX_MODELS {
+                        self.disabled_models.insert(key.clone());
+                    }
+                    return Err(error);
+                }
+            }
+        }
+
+        let job_metadata: Vec<_> = valid_samples
+            .iter()
+            .map(|sample| sample.job.clone())
+            .collect();
+        let mut changed = false;
+        {
+            let model = self.models.get_mut(&key).ok_or_else(|| {
+                KittyError::Invalid("resource model disappeared during update".into())
+            })?;
+            changed |= record_queued_job_occurrences(model, &job_metadata, observed_at_epoch);
+            changed |= record_started_job_occurrences_with_coverage(
+                model,
+                &job_metadata,
+                observed_at_epoch,
+                false,
+            );
+            for sample in &valid_samples {
+                let Some(workload_id) = workload_id_for(repository, &sample.job) else {
+                    continue;
+                };
+                // Resource telemetry is accepted only for a workload identity
+                // already represented in the validated model. This prevents a
+                // new/forged family label from manufacturing its own profile.
+                if !model.workload_patterns.iter().any(|entry| entry.workload_id == workload_id) {
+                    continue;
+                }
+                let occurrence_code =
+                    provider_occurrence_key(&workload_id, sample.job.run_id, sample.job.job_id);
+                if let Some(existing) = model.resource_observations.iter_mut().find(|entry| {
+                    entry.workload_id == workload_id
+                        && entry.run_id == sample.job.run_id
+                        && entry.job_id == sample.job.job_id
+                }) {
+                    if existing.occurrence_code != occurrence_code {
+                        continue;
+                    }
+                    let old_cpu = existing.cpu_cores_peak;
+                    let old_memory = existing.memory_bytes_peak;
+                    existing.cpu_cores_peak = existing.cpu_cores_peak.max(sample.cpu_cores);
+                    existing.memory_bytes_peak =
+                        existing.memory_bytes_peak.max(sample.memory_bytes);
+                    existing.sample_count = existing.sample_count.saturating_add(1);
+                    existing.last_sample_at_epoch = existing.last_sample_at_epoch.max(sample.sampled_at_epoch);
+                    changed |= existing.cpu_cores_peak != old_cpu
+                        || existing.memory_bytes_peak != old_memory
+                        || existing.last_sample_at_epoch == sample.sampled_at_epoch;
+                } else {
+                    if model.resource_observations.len() >= MAX_WORKLOAD_RESOURCE_OBSERVATIONS {
+                        if let Some((index, _)) = model
+                            .resource_observations
+                            .iter()
+                            .enumerate()
+                            .min_by_key(|(_, entry)| entry.last_sample_at_epoch)
+                        {
+                            model.resource_observations.remove(index);
+                        }
+                    }
+                    if model.resource_observations.len() >= MAX_WORKLOAD_RESOURCE_OBSERVATIONS {
+                        continue;
+                    }
+                    model.resource_observations.push(WorkloadResourceObservation {
+                        workload_id,
+                        occurrence_code,
+                        run_id: sample.job.run_id,
+                        job_id: sample.job.job_id,
+                        cpu_cores_peak: sample.cpu_cores,
+                        memory_bytes_peak: sample.memory_bytes,
+                        sample_count: 1,
+                        first_sample_at_epoch: sample.sampled_at_epoch,
+                        last_sample_at_epoch: sample.sampled_at_epoch,
+                    });
+                    changed = true;
+                }
+            }
+            model.generated_at_epoch = model.generated_at_epoch.max(observed_at_epoch);
+            if changed {
+                model.validate_for(repository, MAX_HISTORY_BUCKETS)?;
+            }
+        }
+        if changed {
+            self.dirty_models.insert(key.clone());
+        }
+        // Resource observations can be collected even when predictive history
+        // is disabled; persist them here rather than relying on finish_cycle's
+        // forecast audit to trigger a write.
+        if self.dirty_models.contains(&key) {
+            if let Err(error) = self.persist_model(&key) {
+                self.disabled_models.insert(key.clone());
+                return Err(error);
+            }
+            self.dirty_models.remove(&key);
+            if let Err(error) = self.persist_dashboard_snapshot() {
+                eprintln!("gitrun-smart-scheduler: dashboard status persistence failed after resource sampling: {error}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Estimate the CPU/memory envelope for a known workflow/job family. At
+    /// least three distinct observed jobs are required before measured peaks
+    /// influence the estimate; otherwise Kitty uses a conservative workload
+    /// class prior. Both paths are requests only: the scheduler clamps them
+    /// against the operator ceiling and current host capacity before Docker.
+    pub fn resource_demand_estimate(
+        &mut self,
+        repository: &str,
+        workflow_path: &str,
+        job_name: &str,
+        labels: &[String],
+    ) -> Option<ResourceDemandEstimate> {
+        self.reload_settings_if_due();
+        if self.settings_error.is_some()
+            || !self.settings.enabled
+            || !self.settings.telemetry_enabled
+            || !self.settings.adaptive_resource_management_enabled
+            || !valid_repository(repository)
+        {
+            return None;
+        }
+        let requested_workload_id = if has_workload_routing_marker(labels) {
+            Some(workload_id_from_routing_labels(labels)?)
+        } else if !workflow_path.trim().is_empty() {
+            generate_workload_id(repository, workflow_path, job_name, labels)
+        } else {
+            None
+        };
+        let fallback_workload_id = requested_workload_id
+            .clone()
+            .unwrap_or_else(|| resource_prior_workload_id(repository, job_name, labels));
+        let key = repository_key(repository);
+        if self.disabled_models.contains(&key) {
+            return Some(heuristic_resource_demand(
+                &fallback_workload_id,
+                workflow_path,
+                job_name,
+                labels,
+                0,
+            ));
+        }
+        if !self.models.contains_key(&key) {
+            if self.models.len() >= MAX_MODELS && self.evict_oldest_model().is_err() {
+                return Some(heuristic_resource_demand(
+                    &fallback_workload_id,
+                    workflow_path,
+                    job_name,
+                    labels,
+                    0,
+                ));
+            }
+            match self.load_model(repository, &key) {
+                Ok((model, migrated)) => {
+                    self.models.insert(key.clone(), model);
+                    if migrated {
+                        self.dirty_models.insert(key.clone());
+                    }
+                }
+                Err(_) => {
+                    return Some(heuristic_resource_demand(
+                        &fallback_workload_id,
+                        workflow_path,
+                        job_name,
+                        labels,
+                        0,
+                    ));
+                }
+            }
+        }
+        let now_epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let model = self.models.get(&key)?;
+        let workload_id = requested_workload_id.or_else(|| {
+            // Runner reconciliation receives job name and labels directly from
+            // GitHub but does not need to persist workflow paths in the plan.
+            // Reuse a historical identity only when that pair is unambiguous.
+            let matches: Vec<_> = model.workload_patterns.iter().filter(|pattern| {
+                pattern.job_name == job_name
+                    && canonical_resource_labels(&pattern.labels) == canonical_resource_labels(labels)
+            }).map(|pattern| pattern.workload_id.clone()).take(2).collect();
+            (matches.len() == 1).then(|| matches[0].clone())
+        }).unwrap_or(fallback_workload_id);
+        let cutoff = now_epoch.saturating_sub(180 * 86_400);
+        let mut observed: Vec<_> = model
+            .resource_observations
+            .iter()
+            .filter(|entry| {
+                entry.workload_id == workload_id
+                    && entry.last_sample_at_epoch >= cutoff
+                    && entry.last_sample_at_epoch <= now_epoch
+            })
+            .collect();
+        if observed.len() < MIN_RESOURCE_PROFILE_JOBS {
+            return Some(heuristic_resource_demand(
+                &workload_id,
+                workflow_path,
+                job_name,
+                labels,
+                observed.len(),
+            ));
+        }
+        observed.sort_by(|a, b| a.cpu_cores_peak.total_cmp(&b.cpu_cores_peak));
+        let quantile_index = (observed.len() * 4).div_ceil(5).saturating_sub(1);
+        let learned_cpu = observed[quantile_index].cpu_cores_peak * 1.20;
+        observed.sort_by_key(|entry| entry.memory_bytes_peak);
+        let learned_memory = observed[quantile_index]
+            .memory_bytes_peak
+            .saturating_add(observed[quantile_index].memory_bytes_peak / 4);
+        let prior = heuristic_resource_demand(&workload_id, workflow_path, job_name, labels, observed.len());
+        Some(ResourceDemandEstimate {
+            workload_id,
+            // Never undercut the workload-class prior based on a small or
+            // unusually quiet set of samples. Operator and host ceilings still
+            // determine the final Docker limits.
+            cpu_cores: learned_cpu.max(prior.cpu_cores).clamp(0.25, 256.0),
+            memory_bytes: learned_memory.max(prior.memory_bytes).clamp(512 * 1024 * 1024, 1u64 << 60),
+            sample_count: observed.len(),
+            learned: true,
+            reason: "P80 of recent per-job CPU/memory high-water marks plus safety headroom".into(),
+        })
     }
 
     pub fn observe(
@@ -1585,7 +1975,7 @@ impl KittyRuntime {
         });
 
         let capability_note = if self.settings.adaptive_resource_management_enabled {
-            " Adaptive Resource Management is reserved and is not executed in this version."
+            " Adaptive Resource Management is enabled; new runner limits are assigned from bounded per-workload CPU/RAM estimates, host availability and operator ceilings. Existing containers are not resized."
         } else {
             ""
         };
@@ -2861,6 +3251,102 @@ fn workload_id_for(repository: &str, job: &QueuedJobOccurrence) -> Option<String
     generate_workload_id(repository, &job.workflow_path, &job.name, &job.labels)
 }
 
+fn resource_prior_workload_id(repository: &str, job_name: &str, labels: &[String]) -> String {
+    let canonical = format!(
+        "resource-prior|{}|{}|{}",
+        repository.trim().to_ascii_lowercase(),
+        job_name.trim(),
+        canonical_resource_labels(labels).join(",")
+    );
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in canonical.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("wk-{hash:016x}")
+}
+
+fn canonical_resource_labels(labels: &[String]) -> Vec<String> {
+    let mut canonical: Vec<_> = labels
+        .iter()
+        .map(|label| label.trim().to_ascii_lowercase())
+        .filter(|label| !label.starts_with("gitrun-job-"))
+        .collect();
+    canonical.sort();
+    canonical.dedup();
+    canonical
+}
+
+fn valid_resource_sample(sample: &ActiveJobResourceSample, observed_at_epoch: u64) -> bool {
+    valid_queued_job(&sample.job)
+        && sample
+            .job
+            .started_at_epoch
+            .is_some_and(|started| started > 0 && started <= sample.sampled_at_epoch)
+        && sample.sampled_at_epoch > 0
+        && sample.sampled_at_epoch <= observed_at_epoch
+        && sample.cpu_cores.is_finite()
+        && (0.0..=256.0).contains(&sample.cpu_cores)
+        && sample.memory_bytes > 0
+        && sample.memory_bytes <= (1u64 << 60)
+}
+
+fn heuristic_resource_demand(
+    workload_id: &str,
+    workflow_path: &str,
+    job_name: &str,
+    labels: &[String],
+    sample_count: usize,
+) -> ResourceDemandEstimate {
+    let description = std::iter::once(workflow_path)
+        .chain(std::iter::once(job_name))
+        .chain(labels.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+
+    // Conservative class priors cover cold-start workloads; measured high-water
+    // marks take over once three distinct job occurrences are available.
+    let (cpu_cores, memory_bytes, class) = if [
+        "tauri", "webkit", "gtk", "linux-package", "gui-build",
+    ]
+    .iter()
+    .any(|marker| description.contains(marker))
+    {
+        (2.5, 4 * 1024 * 1024 * 1024u64, "Tauri/Linux GUI build")
+    } else if [
+        "rust", "cargo", "clippy", "rustfmt", "rust-test", "rust-build",
+    ]
+    .iter()
+    .any(|marker| description.contains(marker))
+    {
+        (2.0, 4 * 1024 * 1024 * 1024u64, "Rust/Cargo build")
+    } else if ["docker", "buildkit", "container-image", "image-build"]
+        .iter()
+        .any(|marker| description.contains(marker))
+    {
+        (2.0, 3 * 1024 * 1024 * 1024u64, "container/image build")
+    } else if [
+        "npm", "node", "pnpm", "yarn", "vite", "webpack", "typescript", "javascript",
+    ]
+    .iter()
+    .any(|marker| description.contains(marker))
+    {
+        (1.5, 2 * 1024 * 1024 * 1024u64, "JavaScript/TypeScript build")
+    } else {
+        (1.0, 1536 * 1024 * 1024u64, "general workload")
+    };
+
+    ResourceDemandEstimate {
+        workload_id: workload_id.to_owned(),
+        cpu_cores,
+        memory_bytes,
+        sample_count,
+        learned: false,
+        reason: format!("conservative {class} resource prior"),
+    }
+}
+
 fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
     job.run_id > 0
         && job.job_id > 0
@@ -3422,6 +3908,70 @@ fn forecast_workload_prewarms(
         .collect()
 }
 
+fn estimated_resources_for_pattern(
+    model: &WorkflowModel,
+    pattern: &WorkloadPattern,
+    now_epoch: u64,
+) -> (usize, Option<f64>, Option<u64>, ResourceDemandEstimate) {
+    let cutoff = now_epoch.saturating_sub(180 * 86_400);
+    let observations: Vec<_> = model
+        .resource_observations
+        .iter()
+        .filter(|entry| {
+            entry.workload_id == pattern.workload_id
+                && entry.last_sample_at_epoch >= cutoff
+                && entry.last_sample_at_epoch <= now_epoch
+        })
+        .collect();
+    let observed_peak_cpu_cores = observations
+        .iter()
+        .map(|entry| entry.cpu_cores_peak)
+        .reduce(f64::max);
+    let observed_peak_memory_bytes = observations
+        .iter()
+        .map(|entry| entry.memory_bytes_peak)
+        .max();
+    let prior = heuristic_resource_demand(
+        &pattern.workload_id,
+        &pattern.workflow_path,
+        &pattern.job_name,
+        &pattern.labels,
+        observations.len(),
+    );
+    if observations.len() < MIN_RESOURCE_PROFILE_JOBS {
+        return (
+            observations.len(),
+            observed_peak_cpu_cores,
+            observed_peak_memory_bytes,
+            prior,
+        );
+    }
+
+    let mut cpu_peaks: Vec<f64> = observations.iter().map(|entry| entry.cpu_cores_peak).collect();
+    cpu_peaks.sort_by(f64::total_cmp);
+    let mut memory_peaks: Vec<u64> =
+        observations.iter().map(|entry| entry.memory_bytes_peak).collect();
+    memory_peaks.sort_unstable();
+    let quantile_index = (observations.len() * 4).div_ceil(5).saturating_sub(1);
+    let learned_cpu = cpu_peaks[quantile_index] * 1.20;
+    let learned_memory = memory_peaks[quantile_index].saturating_add(memory_peaks[quantile_index] / 4);
+    (
+        observations.len(),
+        observed_peak_cpu_cores,
+        observed_peak_memory_bytes,
+        ResourceDemandEstimate {
+            workload_id: pattern.workload_id.clone(),
+            cpu_cores: learned_cpu.max(prior.cpu_cores).clamp(0.25, 256.0),
+            memory_bytes: learned_memory
+                .max(prior.memory_bytes)
+                .clamp(512 * 1024 * 1024, 1u64 << 60),
+            sample_count: observations.len(),
+            learned: true,
+            reason: "P80 of recent per-job CPU/memory high-water marks plus safety headroom".into(),
+        },
+    )
+}
+
 fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> {
     let recent_slot_cutoff =
         weekly_period_start(model.generated_at_epoch.saturating_sub(90 * 86_400));
@@ -3451,6 +4001,8 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                 )
             });
             recurring_slots.truncate(3);
+            let (resource_sample_count, observed_peak_cpu_cores, observed_peak_memory_bytes, resource_estimate) =
+                estimated_resources_for_pattern(model, pattern, model.generated_at_epoch);
             WorkloadPatternStatus {
                 workload_id: pattern.workload_id.clone(),
                 workflow_id: pattern.workflow_id,
@@ -3461,6 +4013,12 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                 first_seen_epoch: pattern.first_seen_epoch,
                 last_seen_epoch: pattern.last_seen_epoch,
                 recurring_slots,
+                resource_sample_count,
+                observed_peak_cpu_cores,
+                observed_peak_memory_bytes,
+                estimated_cpu_cores: resource_estimate.cpu_cores,
+                estimated_memory_bytes: resource_estimate.memory_bytes,
+                resource_profile_learned: resource_estimate.learned,
                 latest_prediction: model
                     .workload_predictions
                     .iter()
@@ -4298,10 +4856,64 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_resource_management_is_reserved_and_automation_requires_master_switch() {
+    fn resource_class_priors_distinguish_rust_and_general_jobs() {
+        let rust = heuristic_resource_demand(
+            "wk-0123456789abcdef",
+            ".github/workflows/ci.yml",
+            "Rust tests",
+            &[],
+            0,
+        );
+        let general = heuristic_resource_demand(
+            "wk-fedcba9876543210",
+            ".github/workflows/ci.yml",
+            "Metadata sync",
+            &[],
+            0,
+        );
+        assert!(rust.cpu_cores > general.cpu_cores);
+        assert!(rust.memory_bytes > general.memory_bytes);
+        assert!(!rust.learned);
+    }
+
+    #[test]
+    fn resource_sample_validation_requires_authoritative_job_and_bounded_measurements() {
+        let valid = ActiveJobResourceSample {
+            job: QueuedJobOccurrence {
+                run_id: 1,
+                job_id: 2,
+                workflow_id: 3,
+                workflow_path: ".github/workflows/ci.yml".into(),
+                name: "Rust tests".into(),
+                labels: vec!["self-hosted".into()],
+                started_at_epoch: Some(100),
+            },
+            cpu_cores: 1.25,
+            memory_bytes: 1024 * 1024 * 1024,
+            sampled_at_epoch: 120,
+        };
+        assert!(valid_resource_sample(&valid, 120));
+        let mut invalid = valid.clone();
+        invalid.cpu_cores = f64::NAN;
+        assert!(!valid_resource_sample(&invalid, 120));
+        let mut invalid = valid.clone();
+        invalid.job.started_at_epoch = None;
+        assert!(!valid_resource_sample(&invalid, 120));
+        let mut invalid = valid;
+        invalid.memory_bytes = 0;
+        assert!(!valid_resource_sample(&invalid, 120));
+    }
+
+    #[test]
+    fn adaptive_resource_management_requires_telemetry_and_automation_requires_master_switch() {
         let mut settings = enabled_settings();
         settings.adaptive_resource_management_enabled = true;
+        assert!(settings.validate().is_ok());
+
+        settings.telemetry_enabled = false;
         assert!(settings.validate().is_err());
+        settings.telemetry_enabled = true;
+        assert!(settings.validate().is_ok());
 
         settings.adaptive_resource_management_enabled = false;
         settings.automation_mode = true;

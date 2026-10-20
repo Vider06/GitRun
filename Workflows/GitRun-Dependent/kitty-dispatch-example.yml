@@ -33,6 +33,7 @@ jobs:
           ROUTE_REASON: ${{ needs.plan.outputs.reason }}
         run: |
           printf 'GitRun route mode: %s\n' "$ROUTE_MODE"
+          printf 'Kitty route-ready: %s\n' "$KITTY_ONLINE"
           printf 'Kitty/controller status: %s\n' "$ROUTE_STATUS"
           printf 'Route reason: %s\n' "$ROUTE_REASON"
 

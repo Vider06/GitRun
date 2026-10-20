@@ -79,6 +79,9 @@ pub struct KittySettings {
     /// measurements and workload-class priors. Requires telemetry and applies
     /// only to new containers; operator ceilings and host reserves remain hard.
     pub adaptive_resource_management_enabled: bool,
+    /// Opt-in exact per-occurrence routing for workflows using GitRun's dispatch planner.
+    /// Requires Kitty + aggregate telemetry; shadow mode always chooses GitHub fallback.
+    pub kitty_dispatch_enabled: bool,
     /// Allows GSR-gated Fast Stop for verified active workflow runs that exceed
     /// the operator's age threshold. GitHub's force-cancel endpoint is run-scoped.
     pub smart_fast_stop_enabled: bool,
@@ -116,6 +119,7 @@ impl Default for KittySettings {
             workflow_model_visible: true,
             predictive_warm_pool_enabled: false,
             adaptive_resource_management_enabled: false,
+            kitty_dispatch_enabled: false,
             smart_fast_stop_enabled: false,
             automation_mode: false,
             automation_allowed_repositories: Vec::new(),
@@ -155,6 +159,11 @@ impl KittySettings {
             return Err(KittyError::Invalid(
                 "Adaptive Resource Management requires Kitty and aggregate telemetry to be enabled"
                     .into(),
+            ));
+        }
+        if self.kitty_dispatch_enabled && (!self.enabled || !self.telemetry_enabled) {
+            return Err(KittyError::Invalid(
+                "Kitty Dispatch requires Kitty and aggregate telemetry to be enabled".into(),
             ));
         }
         if self.automation_allowed_repositories.len() > MAX_DASHBOARD_REPOSITORIES
@@ -705,6 +714,32 @@ pub fn has_workload_routing_marker(labels: &[String]) -> bool {
     labels
         .iter()
         .any(|label| label.trim().to_ascii_lowercase().starts_with("gitrun-job-"))
+}
+
+/// True if a job carries a per-occurrence Kitty dispatch route label.
+/// Malformed reserved-prefix labels still count as markers so they cannot
+/// silently fall back to a generic runner.
+pub fn has_dispatch_routing_marker(labels: &[String]) -> bool {
+    labels
+        .iter()
+        .any(|label| label.trim().to_ascii_lowercase().starts_with("gitrun-route-"))
+}
+
+/// Resolve exactly one canonical per-occurrence route ID (128-bit lowercase hex).
+pub fn dispatch_route_id_from_labels(labels: &[String]) -> Option<String> {
+    let candidates: Vec<String> = labels
+        .iter()
+        .filter_map(|label| {
+            let label = label.trim().to_ascii_lowercase();
+            label.starts_with("gitrun-route-").then_some(label)
+        })
+        .collect();
+    if candidates.len() != 1 {
+        return None;
+    }
+    let route_id = candidates[0].strip_prefix("gitrun-route-")?;
+    (route_id.len() == 32 && route_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        .then(|| route_id.to_owned())
 }
 
 /// Resolve exactly one canonical GitRun workload-family label.

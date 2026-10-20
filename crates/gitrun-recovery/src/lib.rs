@@ -464,16 +464,14 @@ fn is_protected_state_permission(error: &StateError) -> bool {
 }
 
 fn unit_matches_contract(installed: &str, packaged: &str) -> bool {
-    let installed_lines: std::collections::HashSet<&str> = installed
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .collect();
-    packaged
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .all(|line| installed_lines.contains(line))
+    let normalized_lines = |content: &str| {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect::<Vec<_>>()
+    };
+    normalized_lines(installed) == normalized_lines(packaged)
 }
 
 pub fn service_unit_is_valid() -> bool {
@@ -499,6 +497,9 @@ pub fn repair_service_unit() -> Result<(), String> {
     // and the explicit settings/config files; never recursively chown state.
     gitrun_setup::repair_installed_runtime_permissions(Path::new("/etc/gitrun/gitrun.env"))
         .map_err(|error| format!("repair legacy runtime ownership: {error}"))?;
+
+    gitrun_setup::validate_system_state_directory(Path::new("/etc/systemd/system"))
+        .map_err(|error| format!("systemd unit directory is not trusted: {error}"))?;
 
     let path = Path::new("/etc/systemd/system/gitrun.service");
     let gsr_path = Path::new("/etc/systemd/system/gitrun-gsr.service");
@@ -733,6 +734,12 @@ WantedBy=multi-user.target
 "#;
         assert!(!unit_matches_contract(legacy_scheduler, SYSTEMD_UNIT));
         assert!(!unit_matches_contract(SYSTEMD_UNIT, GSR_SYSTEMD_UNIT));
+
+        let overridden = SYSTEMD_UNIT.replace(
+            "NoNewPrivileges=yes",
+            "NoNewPrivileges=yes\\nNoNewPrivileges=no",
+        );
+        assert!(!unit_matches_contract(&overridden, SYSTEMD_UNIT));
     }
 
     #[test]

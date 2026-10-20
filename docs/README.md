@@ -14,8 +14,7 @@ Architecture, operator guidance, API contracts and security documentation for th
 
 ## Historical audit records
 
-- [v1.5.0 contract inventory](v1.5.0-contract-inventory.md) — point-in-time requirements, source references and test evidence for the 1.5.0 refactor.
-- [v1.5.0 refactor status](v1.5.0-refactor-status.md) — historical phase tracker and verification checkpoints. Its dated instructions and older source-head statuses are audit history, not current release instructions.
+- [v1.5.0 audit summary](v1.5.0-refactor-status.md) — concise record of the merged refactor, the checks run at that historical source commit, and remaining environment-specific limits.
 - [Rust migration notes](RUST_MIGRATION.md) — runtime migration background and component map.
 
 ## Evidence rule

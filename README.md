@@ -188,7 +188,7 @@ gitrun cat
 
 ## Repository map
 
-The repository is deliberately documented at directory level. Each source/configuration directory contains a local `README.md` describing its responsibility.
+The repository is documented at directory level, with local `README.md` files in most major source/configuration directories describing their responsibilities.
 
 At the top level:
 

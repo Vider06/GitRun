@@ -186,7 +186,7 @@ pub fn inspect() -> RecoveryReport {
             });
         }
         Ok(Some(_)) | Ok(None) => {}
-        Err(StateError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+        Err(error) if is_protected_state_permission(&error) => {
             issues.push(RecoveryIssue {
                 code: "crash-record-protected".into(),
                 severity: Severity::Info,

@@ -1,6 +1,6 @@
-# GitRun architecture — GitRun 1.5.0
+# GitRun architecture — GitRun 1.5.1
 
-> This is a high-level architecture overview. The contract inventory and refactor tracker carry the detailed source/test audit and current verification state. The crate-by-crate evidence map and remaining test obligations are tracked in [v1.5.0-contract-inventory.md](v1.5.0-contract-inventory.md) and [v1.5.0-refactor-status.md](v1.5.0-refactor-status.md).
+> This is the high-level architecture overview for the 1.5.1 source line. The [1.5.1 release notes](v1.5.1-release-notes.md) describe the post-1.5.0 recovery and version changes. The [contract inventory](v1.5.0-contract-inventory.md) and [refactor status](v1.5.0-refactor-status.md) remain historical snapshots of the 1.5.0 audit.
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 
@@ -54,6 +54,8 @@ Important shared state lives under `GITRUN_STATE_DIR`:
 - GSR security events and queues;
 - updater/recovery state.
 
+Some setup, health and crash records are intentionally root-owned and mode `0600`. An unprivileged recovery UI can receive `PermissionDenied` when reading them; that alone is not evidence of corruption or incomplete setup. The repair path treats this as protected state and only migrates the validated legacy files/directories described in the [1.5.1 notes](v1.5.1-release-notes.md).
+
 The Tauri dashboard and scheduler intentionally share file formats for VM and Logic Containers configuration.
 
 ## Security boundaries
@@ -74,6 +76,6 @@ Runner caches default to per-runner isolation. Repository/global scopes are expl
 The Docker socket remains a host-level privilege boundary on Linux. See [SECURITY_MODEL.md](SECURITY_MODEL.md).
 
 
-## Verification status
+## Verification and deployment boundaries
 
-PR [#83](https://github.com/Vider06/GitRun/pull/83) merged to `main` on 2026-10-19. The PR source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. The remaining deployment checks are the live desktop `pkexec` authorization/install flows, provisioning and recovery on real KVM/VirtualBox hosts, the complete authorized disconnect API path, and compatibility with customized or pre-existing runner images. See the [status report](v1.5.0-refactor-status.md) for details.
+The PR #83 source-head checks are historical evidence for the 1.5.0 refactor commit, not certification of every later change. PR [#103](https://github.com/Vider06/GitRun/pull/103) added protected-state reporting and guarded legacy runtime/systemd repair; see the [1.5.1 notes](v1.5.1-release-notes.md) and check the current PR/workflow results for the version-alignment changes. Live desktop `pkexec` transitions, repair on the actual legacy host, real KVM/VirtualBox provisioning/recovery, the full authorized disconnect API path, and customized/pre-existing runner-image migration still require environment-specific validation.

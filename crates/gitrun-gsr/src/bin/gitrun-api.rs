@@ -551,4 +551,29 @@ mod tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn dispatch_plan_requires_all_target_fields() {
+        assert!(parse_api(GitRunApi::GitDispatchRun, &["--plan".into()]).is_err());
+
+        let incomplete = [
+            "--plan".into(),
+            "--target-job".into(),
+            "build".into(),
+            "--target-workflow".into(),
+            "ci.yml".into(),
+        ];
+        assert!(parse_api(GitRunApi::GitDispatchRun, &incomplete).is_err());
+
+        let complete = [
+            "--plan".into(),
+            "--target-job".into(),
+            "build".into(),
+            "--target-workflow".into(),
+            "ci.yml".into(),
+            "--target-labels".into(),
+            "linux,x64".into(),
+        ];
+        assert!(parse_api(GitRunApi::GitDispatchRun, &complete).is_ok());
+    }
 }

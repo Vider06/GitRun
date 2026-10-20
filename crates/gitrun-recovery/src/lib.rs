@@ -737,7 +737,7 @@ WantedBy=multi-user.target
 
         let overridden = SYSTEMD_UNIT.replace(
             "NoNewPrivileges=yes",
-            "NoNewPrivileges=yes\\nNoNewPrivileges=no",
+            "NoNewPrivileges=yes\nNoNewPrivileges=no",
         );
         assert!(!unit_matches_contract(&overridden, SYSTEMD_UNIT));
     }

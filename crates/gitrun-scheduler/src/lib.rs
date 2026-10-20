@@ -2782,9 +2782,9 @@ fn explicit_workload_routing_id(job_labels: &[String]) -> Result<Option<String>,
                 .starts_with("gitrun-route-")
         })
         .count();
-    let expected_count = 1 + usize::from(has_route);
+    let expected_count = if has_route { 2 } else { 1 };
     if family_count != 1
-        || route_count != usize::from(has_route)
+        || route_count != if has_route { 1 } else { 0 }
         || job_labels.len() != expected_count
         || (has_route && route_id.is_none())
     {

@@ -1045,17 +1045,20 @@ impl GitHubClient {
         &self,
         repo: &str,
     ) -> Result<Vec<ActiveJobOnRunner>> {
+        const MAX_RUNS_TO_SCAN: usize = 25;
+        const MAX_JOB_PAGES_PER_RUN: usize = 2;
+        const MAX_ACTIVE_JOBS: usize = 256;
         let (owner, name) = split_repo(repo)?;
         let runs_url = format!(
             "{API_BASE}/repos/{}/{}/actions/runs?status=in_progress&per_page=100",
             encode_path_segment(owner),
             encode_path_segment(name)
         );
-        // Deliberately one page: high-cardinality repositories should skip
-        // unsampled jobs rather than turn 30-second telemetry into unbounded API work.
+        // Bound run and job-page fan-out so 30-second resource telemetry cannot
+        // turn a high-cardinality repository into unbounded API work.
         let parsed: WorkflowRunsResponse = self.request(reqwest::Method::GET, &runs_url)?.json()?;
         let mut results = Vec::new();
-        for run in parsed.workflow_runs.into_iter().take(100) {
+        for run in parsed.workflow_runs.into_iter().take(MAX_RUNS_TO_SCAN) {
             let mut url = format!(
                 "{API_BASE}/repos/{}/{}/actions/runs/{}/jobs?filter=latest&per_page=100",
                 encode_path_segment(owner),
@@ -1063,7 +1066,12 @@ impl GitHubClient {
                 run.id
             );
             let mut seen_pages = HashSet::new();
+            let mut job_pages = 0usize;
             loop {
+                if job_pages >= MAX_JOB_PAGES_PER_RUN {
+                    break;
+                }
+                job_pages += 1;
                 record_page_url(&mut seen_pages, &url)?;
                 let response = self.request(reqwest::Method::GET, &url)?;
                 let next_url = parse_next_link(response.headers());
@@ -1100,13 +1108,13 @@ impl GitHubClient {
                     Some(next) => url = next,
                     None => break,
                 }
-                if results.len() >= 256 {
-                    results.truncate(256);
+                if results.len() >= MAX_ACTIVE_JOBS {
+                    results.truncate(MAX_ACTIVE_JOBS);
                     return Ok(results);
                 }
             }
-            if results.len() >= 256 {
-                results.truncate(256);
+            if results.len() >= MAX_ACTIVE_JOBS {
+                results.truncate(MAX_ACTIVE_JOBS);
                 break;
             }
         }

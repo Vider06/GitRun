@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-dashboard-tauri"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "gitrun-core",
  "gitrun-gsr",
@@ -1676,7 +1676,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.23.1",
  "filetime",
@@ -1706,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-smart-scheduler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "serde",

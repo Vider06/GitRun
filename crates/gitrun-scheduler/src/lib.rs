@@ -1482,9 +1482,17 @@ fn reconcile_repo(
         // operator has not enabled Adaptive Resource Management.
         // A replacement frees the old container's unused hard-limit reservation.
         // If replacement fails, this plan stops and the next tick re-probes everything.
-        if let Action::RecreateOrphaned { name, .. } = &action {
-            adaptive_resource_budget.release_container_reservation(name);
-        }
+        let replacement_reservation_released =
+            if let Action::RecreateOrphaned { name, .. } = &action {
+                if adaptive_resource_budget.enabled {
+                    adaptive_resource_budget.release_container_reservation(name);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
         let allocation_attempt: Result<Option<RunnerResourceAllocation>, String> =
             if adaptive_resources_enabled {
                 match adaptive_resource_identity(&action, &containers) {
@@ -1514,6 +1522,11 @@ fn reconcile_repo(
         let resource_allocation = match allocation_attempt {
             Ok(allocation) => allocation,
             Err(error) => {
+                if replacement_reservation_released {
+                    adaptive_resource_budget.invalidate(
+                        "runner replacement could not be budgeted after releasing its prior reservation; deferring other repositories until the next scheduler tick",
+                    );
+                }
                 eprintln!(
                     "gitrun-autoscaler: Kitty Adaptive Resource Management deferred {action:?} for {repo}: {error}"
                 );
@@ -1560,6 +1573,11 @@ fn reconcile_repo(
             }
             Ok(None) => {}
             Err(error) => {
+                if replacement_reservation_released {
+                    adaptive_resource_budget.invalidate(
+                        "runner replacement failed after releasing its prior reservation; deferring remaining repository allocations until the next scheduler tick",
+                    );
+                }
                 eprintln!("gitrun-autoscaler: action {action:?} failed for {repo}; aborting remaining planned actions until next reconcile: {error}");
                 action_execution_succeeded = false;
                 break;
@@ -1703,6 +1721,16 @@ impl AdaptiveResourceBudgetState {
     fn release_container_reservation(&mut self, name: &str) {
         if let Some(budget) = self.budget.as_mut() {
             budget.release_container_reservation(name);
+        }
+    }
+
+    /// Invalidate the shared tick budget when a replacement fails after the
+    /// previous runner's headroom was released. Other repositories must not
+    /// allocate against a snapshot that may no longer represent live runners.
+    fn invalidate(&mut self, reason: impl Into<String>) {
+        if self.enabled {
+            self.budget = None;
+            self.unavailable_reason = Some(reason.into());
         }
     }
 }
@@ -3905,6 +3933,32 @@ mod resource_pressure_reconciliation_tests {
         assert_eq!(budget.available_memory_bytes(), 8 * GIB);
         budget.release_container_reservation("runner-a");
         assert_eq!(budget.available_cpu_cores(), 3.0);
+    }
+
+    #[test]
+    fn failed_replacement_invalidates_shared_budget_for_remaining_repositories() {
+        let mut state = AdaptiveResourceBudgetState {
+            enabled: true,
+            budget: Some(AdaptiveResourceBudget {
+                capacity_cpu_cores: 2.0,
+                capacity_memory_bytes: 4 * 1024 * 1024 * 1024,
+                reserved_cpu_cores: 0.0,
+                reserved_memory_bytes: 0,
+                allocated_cpu_cores: 1.0,
+                allocated_memory_bytes: 1024 * 1024 * 1024,
+                reservations_by_name: std::collections::HashMap::new(),
+            }),
+            unavailable_reason: None,
+        };
+
+        state.invalidate("replacement failed".to_owned());
+
+        assert!(state.enabled);
+        assert!(state.budget.is_none());
+        assert_eq!(
+            state.unavailable_reason.as_deref(),
+            Some("replacement failed")
+        );
     }
 
     #[test]

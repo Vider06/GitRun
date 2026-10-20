@@ -6157,7 +6157,9 @@ mod tests {
 
         let route_id = "0123456789abcdef0123456789abcdef";
         let route_label = format!("gitrun-route-{route_id}");
-        assert!(has_dispatch_routing_marker(std::slice::from_ref(&route_label)));
+        assert!(has_dispatch_routing_marker(std::slice::from_ref(
+            &route_label
+        )));
         assert_eq!(
             dispatch_route_id_from_labels(std::slice::from_ref(&route_label)),
             Some(route_id.to_owned())

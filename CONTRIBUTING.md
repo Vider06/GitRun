@@ -31,4 +31,4 @@ Runtime configuration should use environment variables or secret-management syst
 
 ## Documentation structure
 
-Architecture and operator behavior are documented under `docs/`. Every repository directory has a local `README.md` describing its responsibility; keep that README aligned when adding, removing or repurposing a directory. Changes to public behavior must update the relevant top-level documentation and detailed architecture/API/security documentation.
+Architecture and operator behavior are documented under `docs/`. Major source/configuration directories should have a local `README.md` describing their responsibility. Keep existing directory READMEs aligned when adding, removing or repurposing a directory, and add one when a new directory introduces a distinct component or operational responsibility. Changes to public behavior must update the relevant top-level documentation and detailed architecture/API/security documentation.

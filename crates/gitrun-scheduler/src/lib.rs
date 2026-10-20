@@ -1491,7 +1491,11 @@ fn reconcile_repo(
                     None => Ok(None),
                     Some((job_name, job_labels)) => {
                         let attempt = (|| {
-                            ensure_adaptive_resource_backend_is_local(state_dir, &job_labels)?;
+                            ensure_adaptive_resource_backend_is_local(
+                                state_dir,
+                                &job_labels,
+                                &workload_routing_profiles,
+                            )?;
                             let estimate = kitty_runtime
                                 .resource_demand_estimate(repo, "", &job_name, &job_labels)
                                 .ok_or_else(|| {
@@ -1863,11 +1867,26 @@ impl AdaptiveResourceBudget {
 fn ensure_adaptive_resource_backend_is_local(
     state_dir: &std::path::Path,
     job_labels: &[String],
+    workload_routing_profiles: &std::collections::HashMap<String, Vec<String>>,
 ) -> Result<(), String> {
+    // Family labels are selectors, not backend labels. Resolve them through
+    // Kitty's validated profile before checking Logic Containers, exactly as
+    // create_runner does, so a VM family cannot evade the local-host guard.
+    let backend_labels = match explicit_workload_routing_id(job_labels)
+        .map_err(|error| format!("could not validate workload routing labels: {error}"))?
+    {
+        Some(workload_id) => workload_routing_profiles
+            .get(&workload_id)
+            .cloned()
+            .ok_or_else(|| format!(
+                "no validated Kitty workload profile exists for routed workload {workload_id}; refusing to guess a resource backend"
+            ))?,
+        None => job_labels.to_vec(),
+    };
     let rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
         .map_err(|error| format!("could not verify Logic Containers backend: {error}"))?;
     if let Some((logic_containers::Backend::Vm { vm_name }, _)) =
-        logic_containers::resolve(&rules, job_labels)
+        logic_containers::resolve(&rules, &backend_labels)
     {
         return Err(format!(
             "VM-backed workload '{vm_name}' requires a per-VM resource probe; refusing to use miniserver host capacity"
@@ -3866,10 +3885,17 @@ mod resource_pressure_reconciliation_tests {
         }];
         logic_containers::save_rules(&path.join("logic-containers.json"), &rules).unwrap();
         let vm_labels = vec!["self-hosted".into(), "Windows".into()];
-        let error = ensure_adaptive_resource_backend_is_local(&path, &vm_labels).unwrap_err();
+        let empty_profiles = std::collections::HashMap::new();
+        let error = ensure_adaptive_resource_backend_is_local(&path, &vm_labels, &empty_profiles).unwrap_err();
         assert!(error.contains("per-VM resource probe"));
         let local_labels = vec!["self-hosted".into(), "Linux".into()];
-        assert!(ensure_adaptive_resource_backend_is_local(&path, &local_labels).is_ok());
+        assert!(ensure_adaptive_resource_backend_is_local(&path, &local_labels, &empty_profiles).is_ok());
+        let workload_id = "wk-0123456789abcdef".to_owned();
+        let routed_label = format!("gitrun-job-{workload_id}");
+        let mut profiles = std::collections::HashMap::new();
+        profiles.insert(workload_id, vm_labels.clone());
+        assert!(ensure_adaptive_resource_backend_is_local(&path, &[routed_label], &profiles)
+            .unwrap_err().contains("per-VM resource probe"));
         std::fs::remove_dir_all(path).unwrap();
     }
 

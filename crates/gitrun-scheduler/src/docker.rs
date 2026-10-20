@@ -452,39 +452,87 @@ pub fn parse_docker_bytes(raw: &str) -> Option<u64> {
         .then_some(bytes.ceil() as u64)
 }
 
-fn parse_docker_stats(output: &str) -> Result<ContainerResourceUsage> {
-    let (cpu, memory) = output.trim().split_once('|').ok_or_else(|| {
-        DockerError::Command("docker stats returned an unexpected CPU/memory format".into())
-    })?;
-    let memory_used = memory.split_once('/').map(|(used, _)| used).ok_or_else(|| {
-        DockerError::Command("docker stats returned an unexpected memory value".into())
-    })?;
-    let cpu_cores = parse_docker_percent(cpu).ok_or_else(|| {
-        DockerError::Command("docker stats returned an invalid CPU percentage".into())
-    })?;
-    let memory_bytes = parse_docker_bytes(memory_used).ok_or_else(|| {
-        DockerError::Command("docker stats returned an invalid memory usage value".into())
-    })?;
-    Ok(ContainerResourceUsage { cpu_cores, memory_bytes })
+fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
+    let relative = raw.trim().trim_start_matches('/');
+    let path = Path::new(relative);
+    if path.components().any(|component| !matches!(component, Component::Normal(_))) {
+        return Err(DockerError::Command(
+            "container cgroup path contains unsafe components".into(),
+        ));
+    }
+    Ok(path.to_path_buf())
 }
 
-/// Query usage by immutable Docker ID, never by a mutable container name.
+/// Read total memory charged to the container's cgroup, including page cache.
+/// Docker CLI's displayed MemUsage subtracts cache on Linux and is not safe for
+/// learning peak RAM requirements. The scheduler runs on the same Linux host as
+/// this local Docker daemon; if host PID/cgroup visibility is missing, sampling
+/// fails and Kitty falls back to its workload-class prior instead of guessing.
+fn container_cgroup_memory_usage_bytes(container_id: &str) -> Result<u64> {
+    const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
+    let pid_output = run_checked(&[
+        "inspect",
+        "--format",
+        "{{.State.Pid}}",
+        container_id,
+    ])?;
+    let pid = pid_output.trim().parse::<u32>().map_err(|_| {
+        DockerError::Command("docker inspect returned an invalid container PID".into())
+    })?;
+    if pid == 0 {
+        return Err(DockerError::Command(
+            "container has no running host PID for cgroup memory measurement".into(),
+        ));
+    }
+
+    let cgroup_file = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))?;
+    let relative = cgroup_file
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .ok_or_else(|| DockerError::Command(
+            "accurate resource learning requires a visible cgroup-v2 memory controller".into(),
+        ))?;
+    let root = std::fs::canonicalize("/sys/fs/cgroup")?;
+    let relative = cgroup_v2_relative_path(relative)?;
+    let cgroup = std::fs::canonicalize(root.join(relative))?;
+    if !cgroup.starts_with(&root) {
+        return Err(DockerError::Command(
+            "container cgroup resolved outside the cgroup mount".into(),
+        ));
+    }
+    let raw = std::fs::read_to_string(cgroup.join("memory.current"))?;
+    let memory_bytes = raw.trim().parse::<u64>().map_err(|_| {
+        DockerError::Command("container cgroup returned invalid memory.current".into())
+    })?;
+    if memory_bytes == 0 || memory_bytes > MAX_MEMORY_BYTES {
+        return Err(DockerError::Command(
+            "container cgroup returned zero or unbounded memory usage".into(),
+        ));
+    }
+    Ok(memory_bytes)
+}
+
+/// Query usage by immutable full Docker ID, never by a mutable name or prefix.
 pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceUsage> {
-    if container_id.len() < 12
+    if container_id.len() != 64
         || !container_id.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(DockerError::Command(
-            "refusing resource query for a malformed Docker container ID".into(),
+            "refusing resource query for a malformed or non-immutable Docker container ID".into(),
         ));
     }
     let output = run_checked(&[
         "stats",
         "--no-stream",
         "--format",
-        "{{.CPUPerc}}|{{.MemUsage}}",
+        "{{.CPUPerc}}",
         container_id,
     ])?;
-    parse_docker_stats(&output)
+    let cpu_cores = parse_docker_percent(&output).ok_or_else(|| {
+        DockerError::Command("docker stats returned an invalid CPU percentage".into())
+    })?;
+    let memory_bytes = container_cgroup_memory_usage_bytes(container_id)?;
+    Ok(ContainerResourceUsage { cpu_cores, memory_bytes })
 }
 
 /// Remaining CPU headroom and the full RAM limit already committed to a running runner.
@@ -3330,20 +3378,23 @@ mod tests {
     }
 
     #[test]
-    fn docker_stats_parses_cpu_cores_and_binary_memory_units() {
-        let usage = parse_docker_stats("175.00%|1.25GiB / 8GiB").unwrap();
-        assert_eq!(usage.cpu_cores, 1.75);
-        assert_eq!(usage.memory_bytes, (1.25_f64 * 1024.0_f64.powi(3)) as u64);
+    fn docker_cpu_and_memory_parsers_handle_bounded_values() {
+        assert_eq!(parse_docker_percent("175.00%"), Some(1.75));
         assert_eq!(parse_docker_percent("0.00%"), Some(0.0));
         assert_eq!(parse_docker_bytes("512MiB"), Some(512 * 1024 * 1024));
+        assert_eq!(parse_docker_bytes("1.25GiB"), Some(1_342_177_280));
+        assert_eq!(cgroup_v2_relative_path("/system.slice/docker-abc.scope").unwrap(),
+            PathBuf::from("system.slice/docker-abc.scope"));
     }
 
     #[test]
-    fn docker_stats_rejects_malformed_or_unbounded_values() {
-        assert!(parse_docker_stats("n/a|10MiB / 1GiB").is_err());
-        assert!(parse_docker_stats("100%|unknown").is_err());
+    fn docker_resource_parsers_reject_malformed_or_unsafe_values() {
+        assert_eq!(parse_docker_percent("n/a"), None);
+        assert_eq!(parse_docker_percent("30000%"), None);
         assert_eq!(parse_docker_bytes("-1GiB"), None);
         assert_eq!(parse_docker_bytes("NaNGiB"), None);
+        assert!(cgroup_v2_relative_path("/../../etc").is_err());
+        assert!(cgroup_v2_relative_path("/a/../b").is_err());
     }
 
     #[test]

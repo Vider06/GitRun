@@ -1452,10 +1452,8 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
                 .into(),
         ));
     }
-    repair_system_runtime_directory(&state_dir, desktop_uid)?;
-
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
-    match fs::symlink_metadata(&settings_path) {
+    let settings_metadata = match fs::symlink_metadata(&settings_path) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
                 return Err(SetupError::Command(
@@ -1469,10 +1467,17 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
                         .into(),
                 ));
             }
-            secure_system_settings_file(&settings_path, desktop_uid)?;
+            Some(metadata)
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
+    };
+
+    // Preflight settings and file identity before changing directory ownership,
+    // so an unsafe settings path cannot cause a partially applied migration.
+    repair_system_runtime_directory(&state_dir, desktop_uid)?;
+    if settings_metadata.is_some() {
+        secure_system_settings_file(&settings_path, desktop_uid)?;
     }
 
     Ok(())

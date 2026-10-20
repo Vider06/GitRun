@@ -161,9 +161,11 @@ impl KittySettings {
                     .into(),
             ));
         }
-        if self.kitty_dispatch_enabled && (!self.enabled || !self.telemetry_enabled) {
+        if self.kitty_dispatch_enabled
+            && (!self.enabled || !self.telemetry_enabled || !self.adaptive_resource_management_enabled)
+        {
             return Err(KittyError::Invalid(
-                "Kitty Dispatch requires Kitty and aggregate telemetry to be enabled".into(),
+                "Kitty Dispatch requires Kitty, aggregate telemetry and Adaptive Resource Management to be enabled".into(),
             ));
         }
         if self.automation_allowed_repositories.len() > MAX_DASHBOARD_REPOSITORIES

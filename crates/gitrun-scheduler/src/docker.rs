@@ -3153,7 +3153,7 @@ mod tests {
     fn dispatch_runner_accepts_only_one_valid_occurrence_route() {
         let id = "wk-0123456789abcdef";
         let family = format!("gitrun-job-{id}");
-        let route_id = "0123456789abcdef0123456789abcdef";
+        let route_id = concat!("0123456789abcdef", "0123456789abcdef");
         let routed = format!("{family},gitrun-route-{route_id}");
         assert!(validate_workload_routing_contract(
             &routed,

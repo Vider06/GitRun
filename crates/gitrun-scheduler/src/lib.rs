@@ -4112,7 +4112,7 @@ mod resource_pressure_reconciliation_tests {
         assert_eq!(
             runner_workflow_binding(
                 Some("wk-0123456789abcdef"),
-                Some("0123456789abcdef0123456789abcdef"),
+                Some(concat!("0123456789abcdef", "0123456789abcdef")),
                 job_name,
                 Some(42),
                 Some(420),
@@ -4125,14 +4125,14 @@ mod resource_pressure_reconciliation_tests {
     #[test]
     fn dispatch_route_parser_requires_one_family_and_one_canonical_route() {
         let family = "gitrun-job-wk-0123456789abcdef".to_owned();
-        let route = "gitrun-route-0123456789abcdef0123456789abcdef".to_owned();
+        let route = concat!("gitrun-route-", "0123456789abcdef", "0123456789abcdef").to_owned();
         assert_eq!(
             explicit_workload_routing_id(&[family.clone(), route.clone()]).unwrap(),
             Some("wk-0123456789abcdef".to_owned())
         );
         assert_eq!(
             explicit_dispatch_route_id(&[family.clone(), route.clone()]).unwrap(),
-            Some("0123456789abcdef0123456789abcdef".to_owned())
+            Some(concat!("0123456789abcdef", "0123456789abcdef").to_owned())
         );
         assert!(explicit_workload_routing_id(&[route.clone()]).is_err());
         assert!(

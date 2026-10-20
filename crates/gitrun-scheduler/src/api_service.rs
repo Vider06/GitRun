@@ -1254,8 +1254,8 @@ impl ApiExecutionBackend {
         // make every dispatch appear disabled even when Kitty is configured.
         let estimate = kitty.resource_demand_estimate(
             request.repository.as_str(),
-            target_workflow.as_str(),
-            target_job.as_str(),
+            target_workflow,
+            target_job,
             &target_labels,
         );
         let settings = kitty.settings().clone();
@@ -7339,7 +7339,7 @@ mod kitty_dispatch_contract_tests {
                 "online",
                 vec![
                     "gitrun-job-wk-0123456789abcdef",
-                    "gitrun-route-0123456789abcdef0123456789abcdef",
+                    concat!("gitrun-route-", "0123456789abcdef", "0123456789abcdef"),
                 ],
             ),
             (

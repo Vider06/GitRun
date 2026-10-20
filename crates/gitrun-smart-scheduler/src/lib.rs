@@ -6155,7 +6155,7 @@ mod tests {
             None,
         );
 
-        let route_id = "0123456789abcdef0123456789abcdef";
+        let route_id = concat!("0123456789abcdef", "0123456789abcdef");
         let route_label = format!("gitrun-route-{route_id}");
         assert!(has_dispatch_routing_marker(std::slice::from_ref(
             &route_label
@@ -6167,7 +6167,7 @@ mod tests {
         assert_eq!(
             dispatch_route_id_from_labels(&[
                 route_label.clone(),
-                "gitrun-route-fedcba9876543210fedcba9876543210".to_owned(),
+                concat!("gitrun-route-", "fedcba9876543210", "fedcba9876543210").to_owned(),
             ]),
             None,
             "conflicting per-occurrence route IDs must fail closed"

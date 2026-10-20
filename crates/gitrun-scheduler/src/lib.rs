@@ -1459,12 +1459,18 @@ fn reconcile_repo(
         // A failed measurement, invalid estimate or exhausted host budget
         // prevents creation; the static scheduler remains unchanged when the
         // operator has not enabled Adaptive Resource Management.
+        // A replacement frees the old container's unused hard-limit reservation.
+        // If replacement fails, this plan stops and the next tick re-probes everything.
+        if let Action::RecreateOrphaned { name, .. } = &action {
+            adaptive_resource_budget.release_container_reservation(name);
+        }
         let allocation_attempt: Result<Option<RunnerResourceAllocation>, String> =
             if adaptive_resources_enabled {
                 match adaptive_resource_identity(&action, &containers) {
                     None => Ok(None),
                     Some((job_name, job_labels)) => {
                         let attempt = (|| {
+                            ensure_adaptive_resource_backend_is_local(state_dir, &job_labels)?;
                             let estimate = kitty_runtime
                                 .resource_demand_estimate(repo, "", &job_name, &job_labels)
                                 .ok_or_else(|| {
@@ -1596,16 +1602,44 @@ impl AdaptiveResourceBudgetState {
         if !settings.adaptive_resource_management_enabled {
             return Self { enabled: false, budget: None, unavailable_reason: None };
         }
-        match resource_pressure::available_capacity() {
-            Ok(capacity) => Self {
+
+        // A single capacity sample and a single reservation snapshot are shared
+        // across all configured repositories for the complete scheduler tick.
+        let capacity = match resource_pressure::available_capacity() {
+            Ok(capacity) => capacity,
+            Err(error) => {
+                return Self {
+                    enabled: true,
+                    budget: None,
+                    unavailable_reason: Some(error.to_string()),
+                };
+            }
+        };
+        let reservations = match docker::running_managed_container_resource_headroom() {
+            Ok(reservations) => reservations,
+            Err(error) => {
+                return Self {
+                    enabled: true,
+                    budget: None,
+                    unavailable_reason: Some(format!(
+                        "existing GitRun runner limits could not be measured safely: {error}"
+                    )),
+                };
+            }
+        };
+
+        match AdaptiveResourceBudget::from_capacity(capacity, reservations) {
+            Some(budget) => Self {
                 enabled: true,
-                budget: Some(AdaptiveResourceBudget::from_capacity(capacity)),
+                budget: Some(budget),
                 unavailable_reason: None,
             },
-            Err(error) => Self {
+            None => Self {
                 enabled: true,
                 budget: None,
-                unavailable_reason: Some(error.to_string()),
+                unavailable_reason: Some(
+                    "existing runner reservations were invalid or outside safe bounds".into(),
+                ),
             },
         }
     }
@@ -1624,12 +1658,17 @@ impl AdaptiveResourceBudgetState {
                     .unwrap_or_default()
             ));
         }
-        let budget = self.budget.as_mut().ok_or_else(|| {
+        self.budget.as_mut().ok_or_else(|| {
             "host resource budget disappeared unexpectedly".to_owned()
-        })?;
-        budget.allocate(estimate, config).ok_or_else(|| {
+        })?.allocate(estimate, config).ok_or_else(|| {
             "safe host CPU/RAM budget or operator ceilings are too small for another runner; deferring creation".to_owned()
         })
+    }
+
+    fn release_container_reservation(&mut self, name: &str) {
+        if let Some(budget) = self.budget.as_mut() {
+            budget.release_container_reservation(name);
+        }
     }
 }
 
@@ -1643,16 +1682,88 @@ struct RunnerResourceAllocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+struct ContainerResourceReservation {
+    cpu_cores: f64,
+    memory_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct AdaptiveResourceBudget {
-    remaining_cpu_cores: f64,
-    remaining_memory_bytes: u64,
+    capacity_cpu_cores: f64,
+    capacity_memory_bytes: u64,
+    reserved_cpu_cores: f64,
+    reserved_memory_bytes: u64,
+    allocated_cpu_cores: f64,
+    allocated_memory_bytes: u64,
+    reservations_by_name: std::collections::HashMap<String, ContainerResourceReservation>,
 }
 
 impl AdaptiveResourceBudget {
-    fn from_capacity(capacity: resource_pressure::ResourceCapacity) -> Self {
-        Self {
-            remaining_cpu_cores: capacity.cpu_cores,
-            remaining_memory_bytes: capacity.memory_bytes,
+    fn from_capacity(
+        capacity: resource_pressure::ResourceCapacity,
+        reservations: Vec<docker::ManagedContainerResourceHeadroom>,
+    ) -> Option<Self> {
+        if !capacity.cpu_cores.is_finite()
+            || capacity.cpu_cores < 0.0
+            || capacity.memory_bytes > (1_u64 << 62)
+        {
+            return None;
+        }
+        let mut reservations_by_name = std::collections::HashMap::new();
+        let mut reserved_cpu_cores = 0.0_f64;
+        let mut reserved_memory_bytes = 0_u64;
+        for reservation in reservations {
+            if reservation.name.trim().is_empty()
+                || !reservation.cpu_cores.is_finite()
+                || reservation.cpu_cores < 0.0
+                || reservation.memory_bytes > (1_u64 << 60)
+            {
+                return None;
+            }
+            reserved_cpu_cores += reservation.cpu_cores;
+            if !reserved_cpu_cores.is_finite() {
+                return None;
+            }
+            reserved_memory_bytes = reserved_memory_bytes.checked_add(reservation.memory_bytes)?;
+            if reserved_memory_bytes > (1_u64 << 62)
+                || reservations_by_name.insert(
+                    reservation.name,
+                    ContainerResourceReservation {
+                        cpu_cores: reservation.cpu_cores,
+                        memory_bytes: reservation.memory_bytes,
+                    },
+                ).is_some()
+            {
+                return None;
+            }
+        }
+
+        Some(Self {
+            capacity_cpu_cores: capacity.cpu_cores,
+            capacity_memory_bytes: capacity.memory_bytes,
+            reserved_cpu_cores,
+            reserved_memory_bytes,
+            allocated_cpu_cores: 0.0,
+            allocated_memory_bytes: 0,
+            reservations_by_name,
+        })
+    }
+
+    fn available_cpu_cores(&self) -> f64 {
+        (self.capacity_cpu_cores - self.reserved_cpu_cores - self.allocated_cpu_cores).max(0.0)
+    }
+
+    fn available_memory_bytes(&self) -> u64 {
+        self.capacity_memory_bytes
+            .saturating_sub(self.reserved_memory_bytes)
+            .saturating_sub(self.allocated_memory_bytes)
+    }
+
+    fn release_container_reservation(&mut self, name: &str) {
+        if let Some(reservation) = self.reservations_by_name.remove(name) {
+            self.reserved_cpu_cores = (self.reserved_cpu_cores - reservation.cpu_cores).max(0.0);
+            self.reserved_memory_bytes =
+                self.reserved_memory_bytes.saturating_sub(reservation.memory_bytes);
         }
     }
 
@@ -1663,48 +1774,85 @@ impl AdaptiveResourceBudget {
     ) -> Option<RunnerResourceAllocation> {
         const MIN_CPU_CORES: f64 = 0.25;
         const MIN_MEMORY_BYTES: u64 = 512 * 1024 * 1024;
-        let operator_cpu_cap = config.container_cpus.parse::<f64>().ok()?;
-        let operator_memory_cap = docker::parse_docker_bytes(&config.container_memory)?;
-        if !operator_cpu_cap.is_finite() || operator_cpu_cap <= 0.0 || operator_memory_cap == 0 {
+        if !estimate.cpu_cores.is_finite()
+            || estimate.cpu_cores <= 0.0
+            || estimate.memory_bytes == 0
+            || estimate.memory_bytes > (1_u64 << 60)
+        {
             return None;
         }
 
-        // GITRUN_CONTAINER_CPUS / GITRUN_CONTAINER_MEMORY are hard operator
-        // ceilings. Kitty may request less than those ceilings and the host
-        // budget may reduce the request further, but it can never raise a cap.
-        let cpu_cores = estimate
+        let operator_cpu_cap = config.container_cpus.parse::<f64>().ok()?;
+        let operator_memory_cap = docker::parse_docker_bytes(&config.container_memory)?;
+        if !operator_cpu_cap.is_finite()
+            || operator_cpu_cap <= 0.0
+            || operator_cpu_cap > 256.0
+            || operator_memory_cap == 0
+        {
+            return None;
+        }
+
+        // Configured limits are hard ceilings. Unused headroom in already-running
+        // managed containers is deducted, then each new allocation consumes the
+        // same budget shared by all repositories during this scheduler tick.
+        let requested_cpu = estimate
             .cpu_cores
             .min(operator_cpu_cap)
-            .min(self.remaining_cpu_cores);
+            .min(self.available_cpu_cores());
         let memory_bytes = estimate
             .memory_bytes
             .min(operator_memory_cap)
-            .min(self.remaining_memory_bytes);
-        if !cpu_cores.is_finite()
-            || cpu_cores < MIN_CPU_CORES
+            .min(self.available_memory_bytes());
+        if !requested_cpu.is_finite()
+            || requested_cpu < MIN_CPU_CORES
             || memory_bytes < MIN_MEMORY_BYTES
         {
             return None;
         }
 
-        self.remaining_cpu_cores =
-            (self.remaining_cpu_cores - cpu_cores).max(0.0);
-        self.remaining_memory_bytes =
-            self.remaining_memory_bytes.saturating_sub(memory_bytes);
+        // Docker's --cpus value is rounded down to millicores. Never round an
+        // allocation upward beyond the available shared budget.
+        let milli_cores = (requested_cpu * 1000.0).floor() as u64;
+        let cpu_cores = milli_cores as f64 / 1000.0;
+        if cpu_cores < MIN_CPU_CORES {
+            return None;
+        }
+        let next_allocated_memory = self.allocated_memory_bytes.checked_add(memory_bytes)?;
+        let next_allocated_cpu = self.allocated_cpu_cores + cpu_cores;
+        if !next_allocated_cpu.is_finite() {
+            return None;
+        }
+
+        self.allocated_cpu_cores = next_allocated_cpu;
+        self.allocated_memory_bytes = next_allocated_memory;
         let cpu_limit = format!("{cpu_cores:.3}")
             .trim_end_matches('0')
             .trim_end_matches('.')
             .to_owned();
         Some(RunnerResourceAllocation {
             cpus: cpu_limit,
-            // Docker accepts an integer byte count. Avoid unit rounding that
-            // could inadvertently cross the memory ceiling.
             memory: memory_bytes.to_string(),
             workload_id: estimate.workload_id,
             learned: estimate.learned,
             reason: estimate.reason,
         })
     }
+}
+
+fn ensure_adaptive_resource_backend_is_local(
+    state_dir: &std::path::Path,
+    job_labels: &[String],
+) -> Result<(), String> {
+    let rules = logic_containers::load_rules(&state_dir.join("logic-containers.json"))
+        .map_err(|error| format!("could not verify Logic Containers backend: {error}"))?;
+    if let Some((logic_containers::Backend::Vm { vm_name }, _)) =
+        logic_containers::resolve(&rules, job_labels)
+    {
+        return Err(format!(
+            "VM-backed workload '{vm_name}' requires a per-VM resource probe; refusing to use miniserver host capacity"
+        ));
+    }
+    Ok(())
 }
 
 fn adaptive_resource_identity(
@@ -3610,10 +3758,10 @@ mod resource_pressure_reconciliation_tests {
             container_memory: "4g".into(),
             ..Config::default()
         };
-        let mut budget = AdaptiveResourceBudget {
-            remaining_cpu_cores: 3.0,
-            remaining_memory_bytes: 8 * GIB,
-        };
+        let mut budget = AdaptiveResourceBudget::from_capacity(
+            resource_pressure::ResourceCapacity { cpu_cores: 3.0, memory_bytes: 8 * GIB },
+            Vec::new(),
+        ).unwrap();
         let estimate = |workload_id: &str| gitrun_smart_scheduler::ResourceDemandEstimate {
             workload_id: workload_id.into(),
             cpu_cores: 4.0,
@@ -3626,8 +3774,8 @@ mod resource_pressure_reconciliation_tests {
         let first = budget.allocate(estimate("wk-0123456789abcdef"), &config).unwrap();
         assert_eq!(first.cpus, "2");
         assert_eq!(first.memory, (4 * GIB).to_string());
-        assert_eq!(budget.remaining_cpu_cores, 1.0);
-        assert_eq!(budget.remaining_memory_bytes, 4 * GIB);
+        assert_eq!(budget.available_cpu_cores(), 1.0);
+        assert_eq!(budget.available_memory_bytes(), 4 * GIB);
 
         let second = budget.allocate(estimate("wk-fedcba9876543210"), &config).unwrap();
         assert_eq!(second.cpus, "1");
@@ -3644,10 +3792,13 @@ mod resource_pressure_reconciliation_tests {
             container_memory: "4g".into(),
             ..Config::default()
         };
-        let mut budget = AdaptiveResourceBudget {
-            remaining_cpu_cores: 0.2,
-            remaining_memory_bytes: 4 * 1024 * 1024 * 1024,
-        };
+        let mut budget = AdaptiveResourceBudget::from_capacity(
+            resource_pressure::ResourceCapacity {
+                cpu_cores: 0.2,
+                memory_bytes: 4 * 1024 * 1024 * 1024,
+            },
+            Vec::new(),
+        ).unwrap();
         let estimate = gitrun_smart_scheduler::ResourceDemandEstimate {
             workload_id: "wk-0123456789abcdef".into(),
             cpu_cores: 2.0,
@@ -3657,6 +3808,48 @@ mod resource_pressure_reconciliation_tests {
             reason: "test prior".into(),
         };
         assert!(budget.allocate(estimate, &config).is_none());
+    }
+
+    #[test]
+    fn adaptive_budget_reserves_active_runner_headroom_and_releases_replaced_runner() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let mut budget = AdaptiveResourceBudget::from_capacity(
+            resource_pressure::ResourceCapacity { cpu_cores: 3.0, memory_bytes: 8 * GIB },
+            vec![docker::ManagedContainerResourceHeadroom {
+                name: "runner-a".into(),
+                cpu_cores: 2.0,
+                memory_bytes: 4 * GIB,
+            }],
+        ).unwrap();
+        assert_eq!(budget.available_cpu_cores(), 1.0);
+        assert_eq!(budget.available_memory_bytes(), 4 * GIB);
+        budget.release_container_reservation("runner-a");
+        assert_eq!(budget.available_cpu_cores(), 3.0);
+        assert_eq!(budget.available_memory_bytes(), 8 * GIB);
+        budget.release_container_reservation("runner-a");
+        assert_eq!(budget.available_cpu_cores(), 3.0);
+    }
+
+    #[test]
+    fn adaptive_resource_backend_guard_defers_vm_targets() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-adaptive-vm-guard-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let rules = vec![logic_containers::LogicRule {
+            name: "windows".into(),
+            match_labels: vec!["windows".into()],
+            backend: logic_containers::Backend::Vm { vm_name: "win-host".into() },
+            image: "gitrun-runner:windows".into(),
+        }];
+        logic_containers::save_rules(&path.join("logic-containers.json"), &rules).unwrap();
+        let vm_labels = vec!["self-hosted".into(), "Windows".into()];
+        let error = ensure_adaptive_resource_backend_is_local(&path, &vm_labels).unwrap_err();
+        assert!(error.contains("per-VM resource probe"));
+        let local_labels = vec!["self-hosted".into(), "Linux".into()];
+        assert!(ensure_adaptive_resource_backend_is_local(&path, &local_labels).is_ok());
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

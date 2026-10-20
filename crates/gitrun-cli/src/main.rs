@@ -3343,29 +3343,30 @@ fn promote_staged_kitty_settings(
 #[cfg(target_os = "linux")]
 fn read_kitty_dashboard_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
-        return Err("reading the system Kitty dashboard requires administrator authorization".into());
+        return Err(
+            "reading the system Kitty dashboard requires administrator authorization".into(),
+        );
     }
     let config = trusted_root_config_for_state_access()?;
     let state_dir = PathBuf::from(&config.state_dir);
     let settings = gitrun_smart_scheduler::load_settings_for_dashboard(&state_dir)?;
-    let (status, status_error) =
-        match gitrun_smart_scheduler::load_dashboard_status(&state_dir) {
-            Ok(status) => (status, None),
-            Err(error) => (
-                gitrun_smart_scheduler::KittyDashboardStatus {
-                    schema_version: gitrun_smart_scheduler::SETTINGS_SCHEMA_VERSION,
-                    generated_at_epoch: 0,
-                    enabled: settings.enabled,
-                    telemetry_enabled: settings.telemetry_enabled,
-                    predictive_analytics_enabled: settings.predictive_analytics_enabled,
-                    workflow_model_visible: settings.workflow_model_visible,
-                    predictive_warm_pool_enabled: settings.predictive_warm_pool_enabled,
-                    shadow_mode: settings.shadow_mode,
-                    repositories: Vec::new(),
-                },
-                Some(error.to_string()),
-            ),
-        };
+    let (status, status_error) = match gitrun_smart_scheduler::load_dashboard_status(&state_dir) {
+        Ok(status) => (status, None),
+        Err(error) => (
+            gitrun_smart_scheduler::KittyDashboardStatus {
+                schema_version: gitrun_smart_scheduler::SETTINGS_SCHEMA_VERSION,
+                generated_at_epoch: 0,
+                enabled: settings.enabled,
+                telemetry_enabled: settings.telemetry_enabled,
+                predictive_analytics_enabled: settings.predictive_analytics_enabled,
+                workflow_model_visible: settings.workflow_model_visible,
+                predictive_warm_pool_enabled: settings.predictive_warm_pool_enabled,
+                shadow_mode: settings.shadow_mode,
+                repositories: Vec::new(),
+            },
+            Some(error.to_string()),
+        ),
+    };
     std::println!(
         "{}",
         serde_json::json!({
@@ -3867,11 +3868,7 @@ mod internal_lifecycle_command_tests {
         ));
 
         assert!(matches!(
-            parse_internal_command(&[
-                "gitrun",
-                "--no-cat",
-                "--read-kitty-dashboard-root"
-            ]),
+            parse_internal_command(&["gitrun", "--no-cat", "--read-kitty-dashboard-root"]),
             Command::ReadKittyDashboardRoot
         ));
         assert!(matches!(

@@ -2441,7 +2441,20 @@ fn create_runner(
         prewarm_hold_until_epoch,
         resource_allocation,
     } = context;
+    let dispatch_route_id = explicit_dispatch_route_id(job_labels)?;
     let explicit_workload_id = explicit_workload_routing_id(job_labels)?;
+    if dispatch_route_id.is_some() && explicit_workload_id.is_none() {
+        return Err(std::io::Error::other(
+            "Kitty Dispatch route requires exactly one validated workload-family label",
+        )
+        .into());
+    }
+    if prewarm_workload_id.is_some() && dispatch_route_id.is_some() {
+        return Err(std::io::Error::other(
+            "a one-use Kitty Dispatch reservation cannot be reused as a predictive prewarm",
+        )
+        .into());
+    }
     if let (Some(explicit_id), Some(prewarm_id)) =
         (explicit_workload_id.as_deref(), prewarm_workload_id)
     {
@@ -2508,7 +2521,13 @@ fn create_runner(
     }
 
     let runner_labels = match routed_workload_id.as_deref() {
-        Some(workload_id) => exclusive_workload_routing_label(workload_id)?,
+        Some(workload_id) => {
+            let family_label = exclusive_workload_routing_label(workload_id)?;
+            match dispatch_route_id.as_deref() {
+                Some(route_id) => format!("{family_label},gitrun-route-{route_id}"),
+                None => family_label,
+            }
+        }
         None => runner_labels_for_job(&config.runner_labels, permanent, job_labels),
     };
     let dock_target = load_dock_target_jobs(state_dir, repo)?
@@ -2520,8 +2539,13 @@ fn create_runner(
         )
         .into());
     }
-    let (container_job_name, container_run_id, container_job_id) =
-        runner_workflow_binding(routed_workload_id.as_deref(), job_name, job_run_id, job_id);
+    let (container_job_name, container_run_id, container_job_id) = runner_workflow_binding(
+        routed_workload_id.as_deref(),
+        dispatch_route_id.as_deref(),
+        job_name,
+        job_run_id,
+        job_id,
+    );
     let registration_token = client.registration_token(repo)?;
 
     docker::create_runner_on(
@@ -2534,7 +2558,10 @@ fn create_runner(
             image: &image,
             labels: &runner_labels,
             no_default_labels: routed_workload_id.is_some(),
-            ephemeral: config.ephemeral || (is_windows && !permanent),
+            // Every occurrence-routed runner is one-use even when the global
+            // pool is persistent; this prevents a stale reservation from being
+            // claimed by a later workflow job.
+            ephemeral: config.ephemeral || dispatch_route_id.is_some() || (is_windows && !permanent),
             disable_update: config.runner_disable_update,
             cpus: resource_allocation
                 .map(|allocation| allocation.cpus.as_str())
@@ -2668,15 +2695,16 @@ fn load_dock_target_jobs(
 /// eligible for an unrelated job after registration.
 fn runner_workflow_binding<'a>(
     routed_workload_id: Option<&str>,
+    dispatch_route_id: Option<&str>,
     job_name: Option<&'a str>,
     run_id: Option<u64>,
     job_id: Option<u64>,
 ) -> (Option<&'a str>, Option<u64>, Option<u64>) {
-    // A family-labeled runner can be assigned by GitHub to any job requesting
-    // that family label, so it must not claim a single occurrence ID in the
-    // runner container metadata. The API independently verifies the actual
-    // active run/job and that GitHub reports this runner name for that job.
-    if routed_workload_id.is_some() {
+    // Family routes can serve any occurrence within a workload family and
+    // therefore cannot claim a single GitHub job ID. A one-use dispatch route
+    // adds a unique label, so its runner can safely bind to the exact queued
+    // occurrence for GSR identity verification.
+    if routed_workload_id.is_some() && dispatch_route_id.is_none() {
         (None, None, None)
     } else {
         (job_name, run_id, job_id)
@@ -2715,7 +2743,15 @@ fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String
 /// Workflows must explicitly request this label in `runs-on` to prefer the
 /// family. It does not and cannot hard-pin a future GitHub run/job ID.
 fn explicit_workload_routing_id(job_labels: &[String]) -> Result<Option<String>, std::io::Error> {
-    if !gitrun_smart_scheduler::has_workload_routing_marker(job_labels) {
+    let has_family = gitrun_smart_scheduler::has_workload_routing_marker(job_labels);
+    let has_route = gitrun_smart_scheduler::has_dispatch_routing_marker(job_labels);
+    if !has_family {
+        if has_route {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Kitty Dispatch route label has no workload-family identity",
+            ));
+        }
         return Ok(None);
     }
     let Some(workload_id) = gitrun_smart_scheduler::workload_id_from_routing_labels(job_labels)
@@ -2726,13 +2762,35 @@ fn explicit_workload_routing_id(job_labels: &[String]) -> Result<Option<String>,
         ));
     };
     let expected = format!("gitrun-job-{workload_id}");
-    if job_labels.len() != 1 || !job_labels[0].eq_ignore_ascii_case(&expected) {
+    let family_count = job_labels.iter().filter(|label| label.trim().eq_ignore_ascii_case(&expected)).count();
+    let route_id = if has_route {
+        gitrun_smart_scheduler::dispatch_route_id_from_labels(job_labels)
+    } else {
+        None
+    };
+    let route_count = job_labels.iter().filter(|label| label.trim().to_ascii_lowercase().starts_with("gitrun-route-")).count();
+    let expected_count = 1 + usize::from(has_route);
+    if family_count != 1 || route_count != usize::from(has_route) || job_labels.len() != expected_count || (has_route && route_id.is_none()) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "exclusive GitRun routing requires runs-on to contain only the gitrun-job workload-family label",
+            "exclusive GitRun routing requires only one family label and, optionally, one canonical per-occurrence route label",
         ));
     }
     Ok(Some(workload_id))
+}
+
+fn explicit_dispatch_route_id(job_labels: &[String]) -> Result<Option<String>, std::io::Error> {
+    if !gitrun_smart_scheduler::has_dispatch_routing_marker(job_labels) {
+        return Ok(None);
+    }
+    explicit_workload_routing_id(job_labels)?;
+    let Some(route_id) = gitrun_smart_scheduler::dispatch_route_id_from_labels(job_labels) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "queued job contains a malformed or conflicting Kitty Dispatch route label",
+        ));
+    };
+    Ok(Some(route_id))
 }
 
 fn exclusive_workload_routing_label(workload_id: &str) -> Result<String, std::io::Error> {

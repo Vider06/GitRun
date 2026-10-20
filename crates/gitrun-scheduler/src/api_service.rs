@@ -1263,13 +1263,7 @@ impl ApiExecutionBackend {
         // Kitty can be enabled while a prerequisite or shadow mode keeps this
         // job on ordinary GitHub label matching.
         let fallback = |status: &str, reason: &str| {
-            kitty_dispatch_plan_result(
-                "github",
-                settings.enabled,
-                status,
-                reason,
-                &target_labels,
-            )
+            kitty_dispatch_plan_result("github", settings.enabled, status, reason, &target_labels)
         };
         if !settings.enabled {
             return fallback("disabled", "kitty-disabled-or-settings-invalid");

@@ -52,6 +52,9 @@ use std::time::{Duration, Instant};
 
 static CONTAINER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+// Bound per-repository Docker process spawning for Kitty's 30-second telemetry poll.
+const MAX_ACTIVE_RESOURCE_SAMPLES_PER_REPOSITORY: usize = 32;
+
 // The scheduler keeps reconciliation in Rust; the legacy Python path is no longer executed.
 pub fn run() {
     let stopping = Arc::new(AtomicBool::new(false));
@@ -1073,6 +1076,7 @@ fn reconcile_repo(
                     *count = count.saturating_add(1);
                 }
                 let mut resource_samples = Vec::new();
+                let mut resource_sample_attempts = 0usize;
                 for active in active_jobs {
                     // GitHub snapshots can briefly disagree during retries;
                     // never attribute one container's stats to two active jobs.
@@ -1085,6 +1089,10 @@ fn reconcile_repo(
                     }) else {
                         continue;
                     };
+                    if resource_sample_attempts >= MAX_ACTIVE_RESOURCE_SAMPLES_PER_REPOSITORY {
+                        break;
+                    }
+                    resource_sample_attempts += 1;
                     let usage = match docker::container_resource_usage(&container.id) {
                         Ok(usage) => usage,
                         Err(error) => {

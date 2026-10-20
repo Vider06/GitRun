@@ -652,7 +652,8 @@ pub struct ManagedContainerResourceReservation {
 /// Return uncommitted CPU/RAM headroom for running GitRun-managed runners.
 /// Missing limits, ambiguous identities, or failed measurements are errors so
 /// Adaptive Resource Management defers creation instead of guessing capacity.
-pub fn running_managed_container_resource_reservations() -> Result<Vec<ManagedContainerResourceReservation>> {
+pub fn running_managed_container_resource_reservations(
+) -> Result<Vec<ManagedContainerResourceReservation>> {
     const MAX_CONTAINERS: usize = 512;
     const NANO_CPUS_PER_CORE: f64 = 1_000_000_000.0;
     const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
@@ -697,7 +698,8 @@ pub fn running_managed_container_resource_reservations() -> Result<Vec<ManagedCo
     let mut inspect_args = vec![
         "inspect".to_owned(),
         "--format".to_owned(),
-        "{{.Id}}|{{.Name}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.State.Pid}}".to_owned(),
+        "{{.Id}}|{{.Name}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.State.Pid}}"
+            .to_owned(),
     ];
     inspect_args.extend(identities.iter().map(|(id, _)| id.clone()));
     let inspect_refs: Vec<&str> = inspect_args.iter().map(String::as_str).collect();

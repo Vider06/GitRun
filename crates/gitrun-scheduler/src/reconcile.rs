@@ -162,6 +162,7 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
     // per-job capacity regardless of label coverage or routing rules.
     is_dock_target
         || gitrun_smart_scheduler::has_workload_routing_marker(labels)
+        || gitrun_smart_scheduler::has_dispatch_routing_marker(labels)
         || crate::logic_containers::resolve(&input.logic_rules, labels).is_some()
 }
 
@@ -291,7 +292,9 @@ pub fn plan(input: &ReconcileInput) -> Vec<Action> {
                 return None;
             }
 
-            if gitrun_smart_scheduler::has_workload_routing_marker(labels) {
+            if gitrun_smart_scheduler::has_workload_routing_marker(labels)
+                && !gitrun_smart_scheduler::has_dispatch_routing_marker(labels)
+            {
                 if let Some(workload_id) =
                     gitrun_smart_scheduler::workload_id_from_routing_labels(labels)
                 {
@@ -757,6 +760,39 @@ mod tests {
                 ..
             } if job_labels == &vec!["gitrun-job-wk-0123456789abcdef".to_owned()]
         ));
+    }
+
+    #[test]
+    fn unique_dispatch_route_never_reuses_another_family_runner() {
+        let family = "wk-0123456789abcdef";
+        let route = "gitrun-route-0123456789abcdef0123456789abcdef";
+        let mut input = base_input();
+        input.min_runners = 0;
+        input.max_runners = 8;
+        input.queued_jobs = 1;
+        input.queued_job_labels = vec![vec![format!("gitrun-job-{family}"), route.to_owned()]];
+        input.queued_job_names = vec!["build".into()];
+        input.queued_job_run_ids = vec![41];
+        input.queued_job_ids = vec![410];
+        input.routed_workload_capacity = vec![(family.into(), 1)];
+
+        let actions = plan(&input);
+        assert_eq!(actions.len(), 1);
+        assert!(
+            matches!(
+                &actions[0],
+                Action::CreateRunner {
+                    permanent: false,
+                    job_id: Some(410),
+                    job_labels,
+                    ..
+                } if job_labels == &vec![
+                    format!("gitrun-job-{family}"),
+                    route.to_owned(),
+                ]
+            ),
+            "a family runner does not satisfy a unique per-occurrence reservation"
+        );
     }
 
     #[test]

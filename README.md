@@ -8,7 +8,7 @@
 
 It is built for people who want control over their own runner infrastructure without giving every workflow unrestricted access to the host. Bring a dedicated Linux machine, Docker and the repositories you trust; GitRun handles the runner lifecycle while keeping privileged operations behind an explicit API and policy checks.
 
-> **Version note:** this branch targets source version **1.5.2**. That is not a promise that a 1.5.2 release artifact is published yet; use [GitHub Releases](https://github.com/Vider06/GitRun/releases) for published builds.
+> **Version note:** this branch targets source version **1.6.0**. That is not a promise that a 1.6.0 release artifact is published yet; use [GitHub Releases](https://github.com/Vider06/GitRun/releases) for published builds.
 
 ## Architecture at a glance
 
@@ -48,8 +48,9 @@ See:
 - Docker-based Linux self-hosted runners with autoscaling and recovery.
 - VM-backed runner targets through KVM/libvirt or VirtualBox.
 - Logic Containers rules that route jobs by GitHub labels to a local Docker host or named VM.
-- Closed Git*Run APIs: `GitVaultRun`, `GitDockRun`, `GitSaveRun`, `GitRegisterRun`, `GitInstallRun`, `GitReadRun`, `GitWriteRun`, `GitVerifyRun` and `GitStatusRun`.
+- Closed Git*Run APIs: `GitVaultRun`, `GitDockRun`, `GitSaveRun`, `GitRegisterRun`, `GitInstallRun`, `GitReadRun`, `GitWriteRun`, `GitVerifyRun`, `GitStatusRun` and the opt-in `GitDispatchRun` planner contract.
 - Unix-socket API transport at `/run/gitrun/api.sock` by default, configurable with `GITRUN_API_SOCKET`.
+- Optional Kitty Dispatch planning: pre-made planner workflows can request a per-occurrence runner label; GitHub still performs final label/group matching, and workflows explicitly record Kitty routing versus ordinary GitHub fallback.
 - GSR authorization and command-policy enforcement before privileged execution.
 - Authenticated GSR-to-executor envelopes with HMAC-SHA256, timestamps, nonces and replay protection.
 - GitVault AES-256-GCM encrypted-at-rest secrets with global, group and repository scopes.
@@ -160,6 +161,7 @@ The API commands are intentionally explicit:
 | `GitWriteRun` | Write an allowed runner filesystem path |
 | `GitVerifyRun` | Calculate a SHA-256 digest for an allowed path |
 | `GitStatusRun` | Query GitRun status |
+| `GitDispatchRun --plan` | Request an opt-in Kitty Dispatch route or an explicit GitHub fallback; requires GSR policy authorization and is not a direct GitHub runner-pinning API |
 
 The host does not trust workflow-visible identity claims by themselves. It binds the request to the current in-progress GitHub job and Docker runner, verifies authoritative workflow/run information, and applies repository/resource policy before creating an authorized operation.
 
@@ -204,7 +206,7 @@ At the top level:
 
 ## Development
 
-The source version targeted by this branch is **1.5.2** (see `version.txt`). This does not imply that a 1.5.2 release artifact has been published. Start with:
+The source version targeted by this branch is **1.6.0** (see `version.txt`). This does not imply that a 1.6.0 release artifact has been published. Start with:
 
 ```bash
 cargo fmt --all --check

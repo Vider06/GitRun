@@ -1057,6 +1057,29 @@ jobs:
           }
           ws="$GITHUB_WORKSPACE"
 
+          # Target cache keys include manifest/lock hashes before the profile/job suffix.
+          # GC should group superseded keys for the SAME job, never consume another job's
+          # separately useful target cache; image fingerprints must remain distinct too.
+          jq -n '
+            def fam:
+              if contains("-target-img") then
+                sub("-man[^-]+-[^-]+-prof"; "-prof")
+              else sub("-[^-]+$"; "") end;
+            [
+              "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man11111111-lock11111111-profaaaaaaaa-rust-lint",
+              "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-lint",
+              "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-test",
+              "gitrun-e1-Linux-X64-target-imgfeedbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-lint"
+            ] as $keys
+            | if (($keys[0] | fam) == ($keys[1] | fam))
+                 and (($keys[0] | fam) != ($keys[2] | fam))
+                 and (($keys[0] | fam) != ($keys[3] | fam))
+              then true
+              else error("target cache GC family normalization is unsafe")
+              end
+          ' >/dev/null
+          echo "✅ target cache GC family normalization"
+
           out="$(printf '%s\n' '{"reason":"compiler-message","message":{"rendered":"error: x\n","level":"error","message":"unneeded return, 50% sure","code":{"code":"clippy::needless_return"},"spans":[{"file_name":"'"$ws"'/crates/b/src/main.rs","is_primary":true,"line_start":7,"line_end":7,"column_start":5,"column_end":12}]}}' | ci_cargo_json)"
           expect "cargo json → annotation with relative path" '::error file=crates/b/src/main.rs,line=7,col=5' "$out"
           expect "cargo json → % escaped" '50%25 sure' "$out"
@@ -1621,11 +1644,14 @@ jobs:
           profile="$(printf 'dev=%s;test=%s' "${CARGO_PROFILE_DEV_DEBUG:-default}" "${CARGO_PROFILE_TEST_DEBUG:-default}" | sha256sum | cut -c1-8)"
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
+            echo "toolchain_prefix=$ns-rustup-${RUST_VERSION}-"
             echo "registry=$ns-cargo-registry-${lock}"
-            # Exact keys encode profile settings; the shared prefix intentionally also restores
-            # older/other-job artifacts, which Cargo invalidates by its own fingerprints.
+            # Lockfile/manifest hashes remain part of the exact target key. The fallback
+            # deliberately spans lockfile and workspace-crate bumps: Cargo's fingerprints
+            # validate restored artifacts and rebuild only incompatible dependencies.
+            echo "registry_prefix=$ns-cargo-registry-"
             echo "target=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
-            echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-"
+            echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-prof${profile}-"
           } >> "$GITHUB_OUTPUT"
           echo "image fingerprint $fp: target caches are exact per job, with cross-job restore fallback"
       - &c_tc
@@ -1637,6 +1663,7 @@ jobs:
             .gitrun-ci/rustup
             .gitrun-ci/cargo/bin
           key: ${{ steps.keys.outputs.toolchain }}
+          restore-keys: ${{ steps.keys.outputs.toolchain_prefix }}
       - &c_reg
         name: Restore cargo registry cache
         id: c_reg
@@ -1647,6 +1674,7 @@ jobs:
             .gitrun-ci/cargo/registry/cache
             .gitrun-ci/cargo/git/db
           key: ${{ steps.keys.outputs.registry }}
+          restore-keys: ${{ steps.keys.outputs.registry_prefix }}
       - &c_tgt
         name: Restore target cache
         id: c_tgt
@@ -1710,16 +1738,9 @@ jobs:
           before="$(du -sm "$t" | cut -f1)"
           find "$t" -maxdepth 3 -type d -name incremental -prune -exec rm -rf {} + 2>/dev/null || true
           rm -rf "$t/doc" "$t/tmp" "$t"/*/bundle
-          # Workspace crates change on every commit: drop them so the cache only keeps third-party artifacts.
-          names="$(cargo metadata --no-deps --format-version 1 --locked 2>/dev/null | jq -r '.packages[].name' || true)"
-          for prof in "$t"/*/ "$t"/*/*/; do
-            [ -d "${prof}.fingerprint" ] || continue
-            for n in $names; do
-              u="${n//-/_}"
-              find "${prof}.fingerprint" "${prof}build" -maxdepth 1 -type d -regextype posix-extended -regex ".*/${n}-[0-9a-f]{16}" -exec rm -rf {} + 2>/dev/null || true
-              find "${prof}deps" -maxdepth 1 -type f -regextype posix-extended -regex ".*/(lib)?${u}-[0-9a-f]{16}(\..*)?" -delete 2>/dev/null || true
-            done
-          done
+          # Preserve workspace artifacts and Cargo fingerprints across commits.
+          # Cargo validates source/dependency fingerprints and rebuilds anything stale;
+          # deleting every local crate forces all GitRun crates to recompile each job.
           after="$(du -sm "$t" | cut -f1)"
           echo "target cache pruned: ${before} MB → ${after} MB (limit ${TARGET_CACHE_MAX_MB} MB)"
           { echo "- 🧹 target cache pruned: **${before} MB → ${after} MB**"; } | ci_sum
@@ -2742,7 +2763,10 @@ jobs:
           # nothing younger than ~10 minutes is ever touched (a save may still be in flight).
           jq --arg epoch "$CACHE_BASE_EPOCH" --arg rust "$RUST_VERSION" --argjson now "$(date +%s)" '
             def ts: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
-            def fam: sub("-[^-]+$"; "");
+            def fam:
+              if contains("-target-img") then
+                sub("-man[^-]+-[^-]+-prof"; "-prof")
+              else sub("-[^-]+$"; "") end;
             map(. + { fam: (.key | fam), age: (($now - (.created_at | ts)) / 86400) })
             | map(. + { reason:
                 ( if (.key | startswith("gitrun-") | not) then "legacy key format"
@@ -2777,7 +2801,10 @@ jobs:
             echo "<details><summary>Caches that are kept</summary>"; echo
             echo "| Kind | Ref | Count | MB |"; echo "|---|---|---|---|"
             jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
-              def fam: sub("-[^-]+$"; "");
+              def fam:
+                if contains("-target-img") then
+                  sub("-man[^-]+-[^-]+-prof"; "-prof")
+                else sub("-[^-]+$"; "") end;
               ([$plan[0][].id]) as $gone
               | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })
               | group_by([.fam, .ref]) | .[]

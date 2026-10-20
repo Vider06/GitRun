@@ -1,6 +1,10 @@
 //! Host-wide scheduler backpressure based on CPU utilization, available memory and critical filesystem usage.
 use gitrun_core::Config;
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -11,6 +15,46 @@ pub enum ResourcePressureError {
     Parse,
     #[error("filesystem usage probe failed for {path}: {detail}")]
     Disk { path: String, detail: String },
+}
+
+/// Conservative capacity left for new runner limits after a host reserve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResourceCapacity {
+    pub cpu_cores: f64,
+    pub memory_bytes: u64,
+}
+
+impl ResourceCapacity {
+    /// Reserve 20% of schedulable CPU (at least half a core) and 15% of RAM
+    /// (at least 1 GiB) for the host, GitRun, Docker and unrelated processes.
+    /// These values are an upper-bound budget for newly planned containers,
+    /// not a claim that all reported capacity is idle for the whole job.
+    pub fn from_measurements(
+        total_cpu_cores: f64,
+        cpu_utilization_percent: f64,
+        total_memory_bytes: u64,
+        available_memory_bytes: u64,
+    ) -> Option<Self> {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        if !total_cpu_cores.is_finite()
+            || total_cpu_cores <= 0.0
+            || !cpu_utilization_percent.is_finite()
+            || !(0.0..=100.0).contains(&cpu_utilization_percent)
+            || total_memory_bytes == 0
+            || available_memory_bytes > total_memory_bytes
+        {
+            return None;
+        }
+        let cpu_reserve = (total_cpu_cores * 0.20).max(0.5);
+        let usable_cpu =
+            (total_cpu_cores * (1.0 - cpu_utilization_percent / 100.0) - cpu_reserve).max(0.0);
+        let memory_reserve = ((total_memory_bytes as f64 * 0.15) as u64).max(GIB);
+        let usable_memory = available_memory_bytes.saturating_sub(memory_reserve);
+        Some(Self {
+            cpu_cores: (usable_cpu * 1000.0).floor() / 1000.0,
+            memory_bytes: usable_memory,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,6 +108,236 @@ pub fn sample(config: &Config) -> Result<ResourceSnapshot, ResourcePressureError
         memory_percent,
         disk_percent,
     })
+}
+
+/// Estimate capacity for Adaptive Resource Management independently of
+/// the scheduler's optional scale-up pressure gate. Errors are propagated to
+/// the adaptive caller, which must defer a runner rather than guess capacity.
+#[derive(Debug, Default)]
+struct CgroupV2Limits {
+    cpu_quota_cores: Option<f64>,
+    cpu_utilization_percent: Option<f64>,
+    memory_limit_bytes: Option<u64>,
+    memory_available_bytes: Option<u64>,
+}
+
+fn process_cgroup_v2_directory() -> Result<Option<PathBuf>, ResourcePressureError> {
+    let contents = match fs::read_to_string("/proc/self/cgroup") {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(relative) = contents.lines().find_map(|line| line.strip_prefix("0::")) else {
+        let legacy_limited_controller = contents.lines().any(|line| {
+            let Some((controllers, _)) = line
+                .split_once(':')
+                .and_then(|(_, rest)| rest.split_once(':'))
+            else {
+                return false;
+            };
+            controllers
+                .split(',')
+                .any(|name| matches!(name, "cpu" | "cpuacct" | "memory"))
+        });
+        // Do not silently use host figures when legacy CPU or memory controllers
+        // may impose a tighter quota that this probe doesn't know how to read.
+        if legacy_limited_controller {
+            return Err(ResourcePressureError::Parse);
+        }
+        return Ok(None);
+    };
+    let relative = relative.trim_start_matches('/');
+    if relative.split('/').any(|part| part == "." || part == "..") {
+        return Err(ResourcePressureError::Parse);
+    }
+    let root = Path::new("/sys/fs/cgroup");
+    let directory = if relative.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(relative)
+    };
+    if directory.is_dir() && directory.starts_with(root) {
+        Ok(Some(directory))
+    } else {
+        Err(ResourcePressureError::Parse)
+    }
+}
+
+fn read_optional_cgroup_file(path: &Path) -> Result<Option<String>, ResourcePressureError> {
+    match fs::read_to_string(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn parse_cgroup_cpu_max(raw: &str) -> Result<Option<f64>, ResourcePressureError> {
+    let fields: Vec<_> = raw.split_whitespace().collect();
+    if fields.len() != 2 {
+        return Err(ResourcePressureError::Parse);
+    }
+    let period = fields[1]
+        .parse::<u64>()
+        .map_err(|_| ResourcePressureError::Parse)?;
+    if period == 0 {
+        return Err(ResourcePressureError::Parse);
+    }
+    if fields[0] == "max" {
+        return Ok(None);
+    }
+    let quota = fields[0]
+        .parse::<u64>()
+        .map_err(|_| ResourcePressureError::Parse)?;
+    if quota == 0 {
+        return Err(ResourcePressureError::Parse);
+    }
+    let cores = quota as f64 / period as f64;
+    if !cores.is_finite() || cores <= 0.0 {
+        return Err(ResourcePressureError::Parse);
+    }
+    Ok(Some(cores))
+}
+
+fn parse_cgroup_memory_limit(raw: &str) -> Result<Option<u64>, ResourcePressureError> {
+    let value = raw.trim();
+    if value == "max" {
+        return Ok(None);
+    }
+    let bytes = value
+        .parse::<u64>()
+        .map_err(|_| ResourcePressureError::Parse)?;
+    if bytes == 0 {
+        return Err(ResourcePressureError::Parse);
+    }
+    Ok(Some(bytes))
+}
+
+fn read_cgroup_cpu_usage_usec(directory: &Path) -> Result<u64, ResourcePressureError> {
+    let contents = fs::read_to_string(directory.join("cpu.stat"))?;
+    contents
+        .lines()
+        .find_map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next()?;
+            let value = fields.next()?;
+            (name == "usage_usec")
+                .then(|| value.parse::<u64>().ok())
+                .flatten()
+        })
+        .ok_or(ResourcePressureError::Parse)
+}
+
+fn sample_cgroup_cpu_percent(
+    directory: &Path,
+    quota_cores: f64,
+) -> Result<f64, ResourcePressureError> {
+    let before = read_cgroup_cpu_usage_usec(directory)?;
+    let started = std::time::Instant::now();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let after = read_cgroup_cpu_usage_usec(directory)?;
+    let elapsed_usec = started.elapsed().as_micros().max(1) as f64;
+    let usage_delta_usec = after.saturating_sub(before) as f64;
+    let percent = usage_delta_usec / elapsed_usec / quota_cores * 100.0;
+    if !percent.is_finite() || percent < 0.0 {
+        return Err(ResourcePressureError::Parse);
+    }
+    Ok(percent.clamp(0.0, 100.0))
+}
+
+fn read_cgroup_v2_limits() -> Result<CgroupV2Limits, ResourcePressureError> {
+    let Some(directory) = process_cgroup_v2_directory()? else {
+        return Ok(CgroupV2Limits::default());
+    };
+    let mount_root = Path::new("/sys/fs/cgroup");
+    let mut current = Some(directory.as_path());
+    let mut cpu_quota_cores: Option<f64> = None;
+    let mut cpu_utilization_percent: Option<f64> = None;
+    let mut memory_limit_bytes: Option<u64> = None;
+    let mut memory_available_bytes: Option<u64> = None;
+    while let Some(path) = current {
+        if let Some(raw) = read_optional_cgroup_file(&path.join("cpu.max"))? {
+            if let Some(quota) = parse_cgroup_cpu_max(&raw)? {
+                cpu_quota_cores = Some(cpu_quota_cores.map_or(quota, |old| old.min(quota)));
+                let usage = sample_cgroup_cpu_percent(path, quota)?;
+                cpu_utilization_percent =
+                    Some(cpu_utilization_percent.map_or(usage, |old| old.max(usage)));
+            }
+        }
+        if let Some(raw) = read_optional_cgroup_file(&path.join("memory.max"))? {
+            if let Some(limit) = parse_cgroup_memory_limit(&raw)? {
+                memory_limit_bytes = Some(memory_limit_bytes.map_or(limit, |old| old.min(limit)));
+                let current_bytes = read_optional_cgroup_file(&path.join("memory.current"))?
+                    .ok_or(ResourcePressureError::Parse)?
+                    .trim()
+                    .parse::<u64>()
+                    .map_err(|_| ResourcePressureError::Parse)?;
+                let available = limit.saturating_sub(current_bytes);
+                memory_available_bytes =
+                    Some(memory_available_bytes.map_or(available, |old| old.min(available)));
+            }
+        }
+        if path == mount_root {
+            break;
+        }
+        current = path
+            .parent()
+            .filter(|parent| parent.starts_with(mount_root));
+    }
+    Ok(CgroupV2Limits {
+        cpu_quota_cores,
+        cpu_utilization_percent,
+        memory_limit_bytes,
+        memory_available_bytes,
+    })
+}
+
+/// Estimate capacity for Adaptive Resource Management independently of
+/// the scheduler's scale-up pressure gate. The caller defers runner creation
+/// if capacity cannot be measured without guessing. All visible cgroup-v2
+/// ancestor limits are applied as upper bounds on host capacity.
+pub fn available_capacity() -> Result<ResourceCapacity, ResourcePressureError> {
+    let mut total_cpu_cores = std::thread::available_parallelism()
+        .map(|cores| cores.get() as f64)
+        .unwrap_or(0.0);
+    let mut cpu_percent = f64::from(sample_cpu_percent()?);
+    let cgroup = read_cgroup_v2_limits()?;
+    if let Some(quota) = cgroup.cpu_quota_cores {
+        total_cpu_cores = total_cpu_cores.min(quota);
+    }
+    if let Some(cgroup_cpu_percent) = cgroup.cpu_utilization_percent {
+        cpu_percent = cpu_percent.max(cgroup_cpu_percent);
+    }
+
+    let meminfo = fs::read_to_string("/proc/meminfo")?;
+    let mut total_kib = None;
+    let mut available_kib = None;
+    for line in meminfo.lines() {
+        if let Some(value) = line.strip_prefix("MemTotal:") {
+            total_kib = value
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<u64>().ok());
+        } else if let Some(value) = line.strip_prefix("MemAvailable:") {
+            available_kib = value
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<u64>().ok());
+        }
+    }
+    let mut total_bytes = total_kib
+        .and_then(|v| v.checked_mul(1024))
+        .ok_or(ResourcePressureError::Parse)?;
+    let mut available_bytes = available_kib
+        .and_then(|v| v.checked_mul(1024))
+        .ok_or(ResourcePressureError::Parse)?;
+    if let Some(limit) = cgroup.memory_limit_bytes {
+        total_bytes = total_bytes.min(limit);
+    }
+    if let Some(available) = cgroup.memory_available_bytes {
+        available_bytes = available_bytes.min(available);
+    }
+    ResourceCapacity::from_measurements(total_cpu_cores, cpu_percent, total_bytes, available_bytes)
+        .ok_or(ResourcePressureError::Parse)
 }
 
 fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
@@ -167,6 +441,21 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn cgroup_v2_cpu_and_memory_limits_are_parsed_strictly() {
+        assert_eq!(parse_cgroup_cpu_max("150000 100000").unwrap(), Some(1.5));
+        assert_eq!(parse_cgroup_cpu_max("max 100000").unwrap(), None);
+        assert!(parse_cgroup_cpu_max("0 100000").is_err());
+        assert!(parse_cgroup_cpu_max("200000 0").is_err());
+        assert_eq!(
+            parse_cgroup_memory_limit("1073741824").unwrap(),
+            Some(1_073_741_824)
+        );
+        assert_eq!(parse_cgroup_memory_limit("max").unwrap(), None);
+        assert!(parse_cgroup_memory_limit("0").is_err());
+        assert!(parse_cgroup_memory_limit("not-a-number").is_err());
+    }
+
+    #[test]
     fn missing_configured_disk_path_is_an_error() {
         let missing = std::env::temp_dir().join(format!(
             "gitrun-missing-critical-fs-{}",
@@ -213,6 +502,20 @@ mod tests {
             ResourcePressureError::Disk { path, .. }
                 if path == missing.display().to_string()
         ));
+    }
+
+    #[test]
+    fn adaptive_capacity_keeps_host_reserves_and_never_exceeds_available_ram() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let capacity = ResourceCapacity::from_measurements(4.0, 0.0, 16 * GIB, 12 * GIB).unwrap();
+        assert!(capacity.cpu_cores <= 3.2);
+        assert_eq!(capacity.memory_bytes, 12 * GIB - (16 * GIB * 15 / 100));
+
+        let pressured =
+            ResourceCapacity::from_measurements(4.0, 100.0, 16 * GIB, 12 * GIB).unwrap();
+        assert_eq!(pressured.cpu_cores, 0.0);
+        assert!(ResourceCapacity::from_measurements(0.0, 20.0, 16 * GIB, 12 * GIB).is_none());
+        assert!(ResourceCapacity::from_measurements(4.0, 20.0, 16 * GIB, 20 * GIB).is_none());
     }
 
     #[test]

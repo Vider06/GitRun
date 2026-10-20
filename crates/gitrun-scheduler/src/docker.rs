@@ -9,6 +9,7 @@
 //! directly, so it stays testable without Docker installed.
 
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -395,13 +396,38 @@ fn validate_workload_routing_contract(
                         .into(),
                 );
             }
-            let route_labels = vec![labels.to_owned()];
+            let route_labels: Vec<String> = labels
+                .split(',')
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned)
+                .collect();
             if gitrun_smart_scheduler::workload_id_from_routing_labels(&route_labels).as_deref()
                 != Some(workload_id)
             {
                 return Err(
                     "exclusive runner must expose exactly its matching gitrun-job workload label"
                         .into(),
+                );
+            }
+            let family_label = format!("gitrun-job-{workload_id}");
+            let family_count = route_labels
+                .iter()
+                .filter(|label| label.eq_ignore_ascii_case(&family_label))
+                .count();
+            let has_route = gitrun_smart_scheduler::has_dispatch_routing_marker(&route_labels);
+            let route_count = route_labels
+                .iter()
+                .filter(|label| label.to_ascii_lowercase().starts_with("gitrun-route-"))
+                .count();
+            let valid_route = gitrun_smart_scheduler::dispatch_route_id_from_labels(&route_labels);
+            if family_count != 1
+                || route_labels.len() != if has_route { 2 } else { 1 }
+                || route_count != if has_route { 1 } else { 0 }
+                || (has_route && valid_route.is_none())
+            {
+                return Err(
+                    "exclusive runner labels must contain one workload-family label and at most one canonical per-occurrence route label".into(),
                 );
             }
             Ok(())
@@ -414,6 +440,481 @@ pub fn runner_name_prefix(repo: &str) -> String {
     let readable: String = sanitize(repo, '-').chars().take(16).collect();
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(repo.as_bytes());
     format!("gitrun-{readable}-{encoded}-")
+}
+
+/// Current usage snapshot for a managed runner container. CPU is expressed in
+/// cores consumed (100% is one core), memory in bytes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContainerResourceUsage {
+    pub cpu_cores: f64,
+    pub memory_bytes: u64,
+}
+
+fn parse_docker_percent(raw: &str) -> Option<f64> {
+    let value = raw.trim().strip_suffix('%')?.trim().parse::<f64>().ok()?;
+    let cores = value / 100.0;
+    (cores.is_finite() && (0.0..=256.0).contains(&cores)).then_some(cores)
+}
+
+pub fn parse_docker_bytes(raw: &str) -> Option<u64> {
+    let raw = raw.trim();
+    let split = raw.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
+    let number = raw[..split].trim().parse::<f64>().ok()?;
+    let unit = raw[split..].trim().to_ascii_lowercase();
+    if !number.is_finite() || number < 0.0 {
+        return None;
+    }
+    let multiplier = match unit.as_str() {
+        "b" => 1.0,
+        "k" | "kb" | "kib" => 1024.0,
+        "m" | "mb" | "mib" => 1024.0_f64.powi(2),
+        "g" | "gb" | "gib" => 1024.0_f64.powi(3),
+        "t" | "tb" | "tib" => 1024.0_f64.powi(4),
+        _ => return None,
+    };
+    let bytes = number * multiplier;
+    (bytes.is_finite() && bytes >= 0.0 && bytes <= u64::MAX as f64).then_some(bytes.ceil() as u64)
+}
+
+fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
+    let relative = raw.trim().trim_start_matches('/');
+    if relative.is_empty() {
+        return Err(DockerError::Command(
+            "container cgroup path does not identify a container-specific group".into(),
+        ));
+    }
+    let path = Path::new(relative);
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(DockerError::Command(
+            "container cgroup path contains unsafe components".into(),
+        ));
+    }
+    Ok(path.to_path_buf())
+}
+
+/// Verify that a PID's cgroup still identifies the immutable Docker container
+/// whose resource limits were inspected, before attributing memory to it.
+fn ensure_cgroup_matches_container_id(
+    cgroup_path: &str,
+    expected_container_id: &str,
+) -> Result<()> {
+    if !is_full_container_id(expected_container_id) {
+        return Err(DockerError::Command(
+            "resource sampling requires an immutable full Docker container ID".into(),
+        ));
+    }
+    let actual_container_id = container_id_from_cgroup(cgroup_path).ok_or_else(|| {
+        DockerError::Command(
+            "host PID cgroup does not identify a Docker container; refusing to attribute memory usage"
+                .into(),
+        )
+    })?;
+    if !actual_container_id.eq_ignore_ascii_case(expected_container_id) {
+        return Err(DockerError::Command(
+            "host PID cgroup identity changed during resource sampling; refusing to attribute memory usage to a different container"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Read total memory charged to the cgroup for the exact immutable Docker ID,
+/// including page cache. A PID can exit or be reused between Docker inspection
+/// and this read, so the cgroup identity must match before memory is attributed.
+fn container_cgroup_memory_usage_bytes_from_pid(
+    pid: u32,
+    expected_container_id: &str,
+) -> Result<u64> {
+    const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
+    if pid == 0 {
+        return Err(DockerError::Command(
+            "container has no running host PID for cgroup memory measurement".into(),
+        ));
+    }
+
+    let cgroup_file = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))?;
+    let relative = cgroup_file
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .ok_or_else(|| {
+            DockerError::Command(
+                "accurate resource learning requires a visible cgroup-v2 memory controller".into(),
+            )
+        })?;
+    ensure_cgroup_matches_container_id(relative, expected_container_id)?;
+    let root = std::fs::canonicalize("/sys/fs/cgroup")?;
+    let relative = cgroup_v2_relative_path(relative)?;
+    let cgroup = std::fs::canonicalize(root.join(relative))?;
+    if !cgroup.starts_with(&root) {
+        return Err(DockerError::Command(
+            "container cgroup resolved outside the cgroup mount".into(),
+        ));
+    }
+    let raw = std::fs::read_to_string(cgroup.join("memory.current"))?;
+    let memory_bytes = raw.trim().parse::<u64>().map_err(|_| {
+        DockerError::Command("container cgroup returned invalid memory.current".into())
+    })?;
+    if memory_bytes == 0 || memory_bytes > MAX_MEMORY_BYTES {
+        return Err(DockerError::Command(
+            "container cgroup returned zero or unbounded memory usage".into(),
+        ));
+    }
+    Ok(memory_bytes)
+}
+
+/// Batch CPU/PID queries to keep telemetry process-spawning bounded even on hosts
+/// with many runner containers. Memory comes from cgroup-v2 memory.current, which
+/// includes page cache unlike Docker CLI displayed MemUsage on Linux. If host
+/// PID/cgroup visibility is missing, sampling fails instead of guessing.
+pub fn container_resource_usages(
+    container_ids: &[String],
+) -> Result<HashMap<String, ContainerResourceUsage>> {
+    const MAX_CONTAINERS_PER_SAMPLE: usize = 256;
+    if container_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    if container_ids.len() > MAX_CONTAINERS_PER_SAMPLE {
+        return Err(DockerError::Command(
+            "too many containers in one bounded resource telemetry query".into(),
+        ));
+    }
+
+    let mut expected_ids = HashSet::new();
+    for id in container_ids {
+        if id.len() != 64
+            || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !expected_ids.insert(id.clone())
+        {
+            return Err(DockerError::Command(
+                "refusing resource query for malformed or duplicate immutable Docker IDs".into(),
+            ));
+        }
+    }
+
+    let mut inspect_args = vec![
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{.Id}}|{{.State.Pid}}".to_owned(),
+    ];
+    inspect_args.extend(container_ids.iter().cloned());
+    let inspect_refs: Vec<&str> = inspect_args.iter().map(String::as_str).collect();
+    let inspect_output = run_checked(&inspect_refs)?;
+    let mut pids = HashMap::<String, u32>::new();
+    for line in inspect_output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let (id, raw_pid) = line.split_once('|').ok_or_else(|| {
+            DockerError::Command("docker inspect returned malformed ID/PID data".into())
+        })?;
+        let id = id.trim().to_owned();
+        if !expected_ids.contains(&id) {
+            return Err(DockerError::Command(
+                "docker inspect returned an unexpected container identity".into(),
+            ));
+        }
+        let pid = raw_pid.trim().parse::<u32>().map_err(|_| {
+            DockerError::Command("docker inspect returned an invalid container PID".into())
+        })?;
+        if pid == 0 || pids.insert(id, pid).is_some() {
+            return Err(DockerError::Command(
+                "docker inspect returned a stopped or duplicated container PID".into(),
+            ));
+        }
+    }
+    if pids.len() != expected_ids.len() {
+        return Err(DockerError::Command(
+            "could not verify the host PID for every sampled container".into(),
+        ));
+    }
+
+    let mut stats_args = vec![
+        "stats".to_owned(),
+        "--no-stream".to_owned(),
+        "--format".to_owned(),
+        "{{.ID}}|{{.CPUPerc}}".to_owned(),
+    ];
+    stats_args.extend(container_ids.iter().cloned());
+    let stats_refs: Vec<&str> = stats_args.iter().map(String::as_str).collect();
+    let stats_output = run_checked(&stats_refs)?;
+    let mut cpu_usage = HashMap::<String, f64>::new();
+    for line in stats_output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let (short_id, raw_cpu) = line.split_once('|').ok_or_else(|| {
+            DockerError::Command("docker stats returned malformed CPU usage".into())
+        })?;
+        let short_id = short_id.trim();
+        if short_id.len() < 12 || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(DockerError::Command(
+                "docker stats returned an invalid container ID".into(),
+            ));
+        }
+        let mut matches = container_ids.iter().filter(|id| id.starts_with(short_id));
+        let Some(full_id) = matches.next() else {
+            return Err(DockerError::Command(
+                "docker stats returned an unknown container ID".into(),
+            ));
+        };
+        if matches.next().is_some() {
+            return Err(DockerError::Command(
+                "docker stats returned an ambiguous container ID".into(),
+            ));
+        }
+        let usage = parse_docker_percent(raw_cpu).ok_or_else(|| {
+            DockerError::Command("docker stats returned an invalid CPU percentage".into())
+        })?;
+        if cpu_usage.insert(full_id.clone(), usage).is_some() {
+            return Err(DockerError::Command(
+                "docker stats returned duplicate container usage".into(),
+            ));
+        }
+    }
+    if cpu_usage.len() != expected_ids.len() {
+        return Err(DockerError::Command(
+            "could not measure CPU usage for every sampled container".into(),
+        ));
+    }
+
+    let mut result = HashMap::with_capacity(container_ids.len());
+    for id in container_ids {
+        let pid = *pids.get(id).ok_or_else(|| {
+            DockerError::Command("verified container PID disappeared from sample".into())
+        })?;
+        let cpu_cores = *cpu_usage.get(id).ok_or_else(|| {
+            DockerError::Command("verified container CPU usage disappeared from sample".into())
+        })?;
+        let memory_bytes = container_cgroup_memory_usage_bytes_from_pid(pid, id)?;
+        result.insert(
+            id.clone(),
+            ContainerResourceUsage {
+                cpu_cores,
+                memory_bytes,
+            },
+        );
+    }
+    Ok(result)
+}
+
+/// Query usage by immutable full Docker ID, never by a mutable name or prefix.
+pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceUsage> {
+    let mut usages = container_resource_usages(&[container_id.to_owned()])?;
+    usages.remove(container_id).ok_or_else(|| {
+        DockerError::Command(
+            "Docker resource sample did not contain the requested container".into(),
+        )
+    })
+}
+
+/// Remaining CPU and RAM headroom already committed to a running runner.
+/// Docker's Linux CLI stats subtract page cache from displayed memory, so RAM
+/// is measured from the container's cgroup-v2 memory.current counter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManagedContainerResourceReservation {
+    pub name: String,
+    pub cpu_headroom_cores: f64,
+    pub memory_headroom_bytes: u64,
+}
+
+/// Return uncommitted CPU/RAM headroom for running GitRun-managed runners.
+/// Missing limits, ambiguous identities, or failed measurements are errors so
+/// Adaptive Resource Management defers creation instead of guessing capacity.
+pub fn running_managed_container_resource_reservations(
+) -> Result<Vec<ManagedContainerResourceReservation>> {
+    const MAX_CONTAINERS: usize = 512;
+    const NANO_CPUS_PER_CORE: f64 = 1_000_000_000.0;
+    const MAX_MEMORY_BYTES: u64 = 1u64 << 60;
+
+    let listing = run_checked(&[
+        "ps",
+        "--no-trunc",
+        "--filter",
+        "label=gitrun.runner=true",
+        "--filter",
+        "status=running",
+        "--format",
+        "{{.ID}}|{{.Names}}",
+    ])?;
+    let mut identities = Vec::<(String, String)>::new();
+    let mut expected_names = HashMap::<String, String>::new();
+    for line in listing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let (id, name) = line.split_once('|').ok_or_else(|| {
+            DockerError::Command("docker ps returned an invalid managed-runner identity".into())
+        })?;
+        let id = id.trim().to_owned();
+        let name = name.trim().to_owned();
+        if id.len() != 64
+            || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || name.is_empty()
+            || name.contains('|')
+            || expected_names.insert(id.clone(), name.clone()).is_some()
+        {
+            return Err(DockerError::Command(
+                "docker ps returned an invalid or duplicated managed-runner identity".into(),
+            ));
+        }
+        identities.push((id, name));
+        if identities.len() > MAX_CONTAINERS {
+            return Err(DockerError::Command(
+                "too many running managed containers to verify an adaptive resource budget".into(),
+            ));
+        }
+    }
+    if identities.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Inspect by immutable ID, not by mutable names. Zero/unset Docker limits
+    // mean unbounded resources and therefore make a safe adaptive budget unknowable.
+    let mut inspect_args = vec![
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{.Id}}|{{.Name}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.State.Pid}}"
+            .to_owned(),
+    ];
+    inspect_args.extend(identities.iter().map(|(id, _)| id.clone()));
+    let inspect_refs: Vec<&str> = inspect_args.iter().map(String::as_str).collect();
+    let inspected = run_checked(&inspect_refs)?;
+    let mut limits = HashMap::<String, (f64, u64)>::new();
+    let mut pids = HashMap::<String, u32>::new();
+    for line in inspected
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let fields: Vec<_> = line.splitn(5, '|').collect();
+        if fields.len() != 5 {
+            return Err(DockerError::Command(
+                "docker inspect returned malformed runner resource limits/PID".into(),
+            ));
+        }
+        let id = fields[0].trim().to_owned();
+        let name = fields[1].trim().trim_start_matches('/').to_owned();
+        if expected_names.get(&id) != Some(&name) {
+            return Err(DockerError::Command(
+                "managed runner identity changed while reading resource limits".into(),
+            ));
+        }
+        let nano_cpus = fields[2]
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| DockerError::Command("docker inspect returned invalid NanoCpus".into()))?;
+        let memory_bytes = fields[3].trim().parse::<u64>().map_err(|_| {
+            DockerError::Command("docker inspect returned invalid Memory limit".into())
+        })?;
+        let pid = fields[4].trim().parse::<u32>().map_err(|_| {
+            DockerError::Command("docker inspect returned invalid container PID".into())
+        })?;
+        if pid == 0 || pids.insert(id.clone(), pid).is_some() {
+            return Err(DockerError::Command(format!(
+                "running managed runner {name} has no unique host PID"
+            )));
+        }
+        let cores = nano_cpus as f64 / NANO_CPUS_PER_CORE;
+        if nano_cpus == 0
+            || !cores.is_finite()
+            || cores <= 0.0
+            || cores > 256.0
+            || memory_bytes == 0
+            || memory_bytes > MAX_MEMORY_BYTES
+            || limits.insert(id, (cores, memory_bytes)).is_some()
+        {
+            return Err(DockerError::Command(format!(
+                "running managed runner {name} has missing, unbounded or invalid CPU/RAM limits"
+            )));
+        }
+    }
+    if limits.len() != identities.len() || pids.len() != identities.len() {
+        return Err(DockerError::Command(
+            "could not verify resource limits/PIDs for every running GitRun runner".into(),
+        ));
+    }
+
+    let mut stats_args = vec![
+        "stats".to_owned(),
+        "--no-stream".to_owned(),
+        "--format".to_owned(),
+        "{{.ID}}|{{.CPUPerc}}".to_owned(),
+    ];
+    stats_args.extend(identities.iter().map(|(id, _)| id.clone()));
+    let stats_refs: Vec<&str> = stats_args.iter().map(String::as_str).collect();
+    let stats_output = run_checked(&stats_refs)?;
+    let mut usages = HashMap::<String, f64>::new();
+    for line in stats_output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let fields: Vec<_> = line.splitn(2, '|').collect();
+        if fields.len() != 2 {
+            return Err(DockerError::Command(
+                "docker stats returned malformed runner CPU usage".into(),
+            ));
+        }
+        let short_id = fields[0].trim();
+        if short_id.len() < 12 || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(DockerError::Command(
+                "docker stats returned an invalid container ID".into(),
+            ));
+        }
+        let mut matches = identities.iter().filter(|(id, _)| id.starts_with(short_id));
+        let Some((full_id, _)) = matches.next() else {
+            return Err(DockerError::Command(
+                "docker stats returned an unknown managed-runner ID".into(),
+            ));
+        };
+        if matches.next().is_some() {
+            return Err(DockerError::Command(
+                "docker stats returned an ambiguous managed-runner ID".into(),
+            ));
+        }
+        let cpu_cores = parse_docker_percent(fields[1]).ok_or_else(|| {
+            DockerError::Command("docker stats returned an invalid CPU percentage".into())
+        })?;
+        if usages.insert(full_id.clone(), cpu_cores).is_some() {
+            return Err(DockerError::Command(
+                "docker stats returned duplicate managed-runner usage".into(),
+            ));
+        }
+    }
+    if usages.len() != identities.len() {
+        return Err(DockerError::Command(
+            "could not measure every running GitRun runner before adaptive allocation".into(),
+        ));
+    }
+
+    let mut reservations = Vec::with_capacity(identities.len());
+    for (id, name) in identities {
+        let (cpu_limit, memory_limit) = *limits.get(&id).ok_or_else(|| {
+            DockerError::Command("verified runner limit disappeared from snapshot".into())
+        })?;
+        let cpu_usage = usages.get(&id).ok_or_else(|| {
+            DockerError::Command("verified runner usage disappeared from snapshot".into())
+        })?;
+        let pid = *pids.get(&id).ok_or_else(|| {
+            DockerError::Command("verified runner PID disappeared from snapshot".into())
+        })?;
+        // MemAvailable already accounts for the RAM currently used by containers.
+        // Subtract only the remaining part of each hard limit to avoid counting
+        // current container RAM a second time in the shared host budget.
+        let memory_in_use = container_cgroup_memory_usage_bytes_from_pid(pid, &id)?;
+        reservations.push(ManagedContainerResourceReservation {
+            name,
+            cpu_headroom_cores: (cpu_limit - cpu_usage).max(0.0),
+            memory_headroom_bytes: memory_limit.saturating_sub(memory_in_use),
+        });
+    }
+    Ok(reservations)
 }
 
 #[derive(Debug, Clone)]
@@ -2218,8 +2719,7 @@ pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     Ok(None)
 }
 
-/// Extracts a Docker-style 64-hex container id from a Linux cgroup path.
-#[cfg(target_os = "linux")]
+/// Extracts a Docker-style 64-hex container ID from a cgroup path.
 fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
     for component in cgroup.split('/') {
         if is_full_container_id(component) {
@@ -2240,7 +2740,6 @@ fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
     None
 }
 
-#[cfg(target_os = "linux")]
 fn is_full_container_id(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
@@ -2646,6 +3145,60 @@ mod tests {
             false,
             false,
             false,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn dispatch_runner_accepts_only_one_valid_occurrence_route() {
+        let id = "wk-0123456789abcdef";
+        let family = format!("gitrun-job-{id}");
+        let route_id = concat!("0123456789abcdef", "0123456789abcdef");
+        let routed = format!("{family},gitrun-route-{route_id}");
+        assert!(validate_workload_routing_contract(
+            &routed,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_ok());
+
+        let duplicate_route = format!("{routed},gitrun-route-{route_id}");
+        assert!(validate_workload_routing_contract(
+            &duplicate_route,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_err());
+
+        let malformed_route = format!("{family},gitrun-route-short");
+        assert!(validate_workload_routing_contract(
+            &malformed_route,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_err());
+
+        let generic_label = format!("{routed},self-hosted");
+        assert!(validate_workload_routing_contract(
+            &generic_label,
+            Some(id),
+            None,
+            true,
+            false,
+            false,
+            false
         )
         .is_err());
     }
@@ -3087,6 +3640,29 @@ mod tests {
     }
 
     #[test]
+    fn docker_cpu_and_memory_parsers_handle_bounded_values() {
+        assert_eq!(parse_docker_percent("175.00%"), Some(1.75));
+        assert_eq!(parse_docker_percent("0.00%"), Some(0.0));
+        assert_eq!(parse_docker_bytes("512MiB"), Some(512 * 1024 * 1024));
+        assert_eq!(parse_docker_bytes("1.25GiB"), Some(1_342_177_280));
+        assert_eq!(
+            cgroup_v2_relative_path("/system.slice/docker-abc.scope").unwrap(),
+            PathBuf::from("system.slice/docker-abc.scope")
+        );
+    }
+
+    #[test]
+    fn docker_resource_parsers_reject_malformed_or_unsafe_values() {
+        assert_eq!(parse_docker_percent("n/a"), None);
+        assert_eq!(parse_docker_percent("30000%"), None);
+        assert_eq!(parse_docker_bytes("-1GiB"), None);
+        assert_eq!(parse_docker_bytes("NaNGiB"), None);
+        assert!(cgroup_v2_relative_path("/../../etc").is_err());
+        assert!(cgroup_v2_relative_path("/a/../b").is_err());
+        assert!(cgroup_v2_relative_path("/").is_err());
+    }
+
+    #[test]
     fn parse_top_output_skips_header_and_blank_lines() {
         let raw = "COMMAND\ncargo build --release\nsh -c echo hi\n\n";
         assert_eq!(
@@ -3263,6 +3839,42 @@ mod tests {
             container_id_from_cgroup(&format!("0::/system.slice/docker-{id}.scope")).as_deref(),
             Some(id.as_str())
         );
+    }
+
+    #[test]
+    fn resource_cgroup_must_match_the_immutable_container_id() {
+        let expected = "0123456789abcdef".repeat(4);
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/system.slice/docker-{expected}.scope"),
+            &expected,
+        )
+        .is_ok());
+        assert!(
+            ensure_cgroup_matches_container_id(&format!("0::/docker/{expected}"), &expected,)
+                .is_ok()
+        );
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/system.slice/cri-containerd-{expected}.scope"),
+            &expected,
+        )
+        .is_ok());
+
+        let other = "fedcba9876543210".repeat(4);
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/system.slice/docker-{other}.scope"),
+            &expected,
+        )
+        .is_err());
+        assert!(ensure_cgroup_matches_container_id(
+            "0::/user.slice/user-1000.slice/session-42.scope",
+            &expected,
+        )
+        .is_err());
+        assert!(ensure_cgroup_matches_container_id(
+            &format!("0::/system.slice/docker-{expected}.scope"),
+            "truncated-container-id",
+        )
+        .is_err());
     }
 
     #[cfg(target_os = "linux")]

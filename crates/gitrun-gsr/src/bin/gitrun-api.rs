@@ -151,6 +151,7 @@ fn api_from_invocation(invocation: &str) -> Result<GitRunApi, String> {
         "GitWriteRun" => Ok(GitRunApi::GitWriteRun),
         "GitVerifyRun" => Ok(GitRunApi::GitVerifyRun),
         "GitStatusRun" => Ok(GitRunApi::GitStatusRun),
+        "GitDispatchRun" => Ok(GitRunApi::GitDispatchRun),
         other => Err(format!("unknown GitRun API command {other}")),
     }
 }
@@ -205,6 +206,28 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
 
     while i < args.len() {
         match args[i].as_str() {
+            "--plan" => {
+                select_operation(&mut operation, GitRunOperation::Plan)?;
+                i += 1;
+            }
+            "--target-job" => {
+                i += 1;
+                if i >= args.len() { return Err("--target-job requires a job identifier".into()); }
+                insert_argument(&mut values, "target_job", args[i].clone())?;
+                i += 1;
+            }
+            "--target-workflow" => {
+                i += 1;
+                if i >= args.len() { return Err("--target-workflow requires a workflow path".into()); }
+                insert_argument(&mut values, "target_workflow", args[i].clone())?;
+                i += 1;
+            }
+            "--target-labels" => {
+                i += 1;
+                if i >= args.len() { return Err("--target-labels requires comma-separated runner labels".into()); }
+                insert_argument(&mut values, "target_labels", args[i].clone())?;
+                i += 1;
+            }
             "--read" | "--get" => {
                 select_operation(&mut operation, GitRunOperation::Read)?;
                 i += 1;
@@ -392,6 +415,10 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
         }
     }
 
+    if api == GitRunApi::GitDispatchRun && operation.is_none() {
+        return Err("GitDispatchRun requires --plan".into());
+    }
+
     if api == GitRunApi::GitRegisterRun {
         if !values.contains_key("name") || !values.contains_key("entry") {
             return Err("GitRegisterRun requires --name <name> --entry <path>".into());
@@ -400,6 +427,12 @@ fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String
         values
             .entry("permanent".into())
             .or_insert_with(|| "false".into());
+    }
+
+    if api == GitRunApi::GitDispatchRun && operation == Some(GitRunOperation::Plan) {
+        if !values.contains_key("target_job") || !values.contains_key("target_workflow") || !values.contains_key("target_labels") {
+            return Err("GitDispatchRun --plan requires --target-job, --target-workflow and --target-labels".into());
+        }
     }
 
     if api == GitRunApi::GitSaveRun

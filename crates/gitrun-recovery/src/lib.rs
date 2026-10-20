@@ -1,6 +1,6 @@
 pub mod ui;
 
-use gitrun_core::{Config, StateStore};
+use gitrun_core::{Config, StateError, StateStore};
 use gitrun_setup::InstallationState;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -147,6 +147,18 @@ pub fn inspect() -> RecoveryReport {
             true
         }
         Ok(Some(_)) | Ok(None) => true,
+        Err(error) if is_protected_state_permission(&error) => {
+            issues.push(RecoveryIssue {
+                code: "health-state-protected".into(),
+                severity: Severity::Info,
+                title: "Health state is protected".into(),
+                detail: "The desktop user cannot read the root-owned health record; its contents were not inspected. This is expected for a privileged system installation.".into(),
+                repairable: false,
+            });
+            // Lack of desktop read access is not evidence of corruption or a
+            // failed scheduler preflight. Root-side startup checks read it.
+            true
+        }
         Err(error) => {
             issues.push(RecoveryIssue {
                 code: "health-corrupt".into(),
@@ -174,6 +186,15 @@ pub fn inspect() -> RecoveryReport {
             });
         }
         Ok(Some(_)) | Ok(None) => {}
+        Err(error) if is_protected_state_permission(&error) => {
+            issues.push(RecoveryIssue {
+                code: "crash-record-protected".into(),
+                severity: Severity::Info,
+                title: "Previous crash record is protected".into(),
+                detail: "The desktop user cannot read the root-owned crash record; its contents were not inspected. Review it from an administrator shell if needed.".into(),
+                repairable: false,
+            });
+        }
         Err(error) => {
             issues.push(RecoveryIssue {
                 code: "crash-log-unreadable".into(),
@@ -435,12 +456,31 @@ pub fn current_version() -> String {
         .unwrap_or_else(|| "0.0.0".into())
 }
 
+fn is_protected_state_permission(error: &StateError) -> bool {
+    matches!(
+        error,
+        StateError::Io(io_error) if io_error.kind() == std::io::ErrorKind::PermissionDenied
+    )
+}
+
+fn unit_matches_contract(installed: &str, packaged: &str) -> bool {
+    let normalized_lines = |content: &str| -> Vec<String> {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(str::to_owned)
+            .collect()
+    };
+    normalized_lines(installed) == normalized_lines(packaged)
+}
+
 pub fn service_unit_is_valid() -> bool {
     let scheduler_valid = fs::read_to_string("/etc/systemd/system/gitrun.service")
-        .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun scheduler"))
+        .map(|content| unit_matches_contract(&content, SYSTEMD_UNIT))
         .unwrap_or(false);
     let gsr_valid = fs::read_to_string("/etc/systemd/system/gitrun-gsr.service")
-        .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun gsr-watchdog"))
+        .map(|content| unit_matches_contract(&content, GSR_SYSTEMD_UNIT))
         .unwrap_or(false);
     scheduler_valid && gsr_valid
 }
@@ -452,6 +492,16 @@ pub fn repair_service_unit() -> Result<(), String> {
     if !is_root() {
         return Err("service repair requires root privileges".into());
     }
+
+    // Validate both privileged destinations before changing either one.
+    gitrun_setup::validate_system_state_directory(Path::new("/etc/systemd/system"))
+        .map_err(|error| format!("systemd unit directory is not trusted: {error}"))?;
+
+    // Older installers left the state directory desktop-user-owned and the
+    // system config writable by that account. Migrate only the directory entry
+    // and the explicit settings/config files; never recursively chown state.
+    gitrun_setup::repair_installed_runtime_permissions(Path::new("/etc/gitrun/gitrun.env"))
+        .map_err(|error| format!("repair legacy runtime ownership: {error}"))?;
 
     let path = Path::new("/etc/systemd/system/gitrun.service");
     let gsr_path = Path::new("/etc/systemd/system/gitrun-gsr.service");
@@ -648,6 +698,50 @@ mod tests {
                 PathBuf::from("/usr/bin/gitrun"),
             ]
         );
+    }
+
+    #[test]
+    fn permission_denied_for_root_only_state_is_not_treated_as_corruption() {
+        assert!(is_protected_state_permission(&StateError::Io(
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied)
+        )));
+        assert!(!is_protected_state_permission(&StateError::Io(
+            std::io::Error::from(std::io::ErrorKind::NotFound)
+        )));
+    }
+
+    #[test]
+    fn service_unit_contract_rejects_legacy_units_missing_hardening() {
+        assert!(unit_matches_contract(SYSTEMD_UNIT, SYSTEMD_UNIT));
+        assert!(unit_matches_contract(GSR_SYSTEMD_UNIT, GSR_SYSTEMD_UNIT));
+
+        let legacy_scheduler = r#"[Unit]
+Description=GitRun Rust scheduler
+Requires=docker.service
+After=docker.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gitrun scheduler
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillMode=control-group
+EnvironmentFile=/etc/gitrun/gitrun.env
+
+[Install]
+WantedBy=multi-user.target
+"#;
+        assert!(!unit_matches_contract(legacy_scheduler, SYSTEMD_UNIT));
+        assert!(!unit_matches_contract(SYSTEMD_UNIT, GSR_SYSTEMD_UNIT));
+
+        let overridden = SYSTEMD_UNIT.replace(
+            "NoNewPrivileges=yes",
+            "NoNewPrivileges=yes\nNoNewPrivileges=no",
+        );
+        assert!(!unit_matches_contract(&overridden, SYSTEMD_UNIT));
     }
 
     #[test]

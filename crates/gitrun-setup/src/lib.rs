@@ -143,14 +143,41 @@ pub fn setup_flag_is_valid() -> bool {
 
     #[cfg(unix)]
     {
+        use std::os::unix::fs::MetadataExt;
         if metadata.uid() != 0 || (metadata.permissions().mode() & 0o777) != 0o600 {
+            return false;
+        }
+
+        // The desktop recovery UI is unprivileged by design. A root-owned
+        // 0600 flag inside a root-owned, non-writable /etc/gitrun directory is
+        // not invalid merely because the UI cannot read its nonce.
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        let Ok(parent_metadata) = fs::symlink_metadata(parent) else {
+            return false;
+        };
+        if parent_metadata.file_type().is_symlink()
+            || !parent_metadata.is_dir()
+            || parent_metadata.uid() != 0
+            || parent_metadata.permissions().mode() & 0o022 != 0
+        {
             return false;
         }
     }
 
-    fs::read_to_string(path)
-        .ok()
-        .is_some_and(|content| parse_setup_flag(&content))
+    setup_flag_contents_are_valid(fs::read_to_string(path))
+}
+
+fn setup_flag_contents_are_valid(content: Result<String, std::io::Error>) -> bool {
+    match content {
+        Ok(content) => parse_setup_flag(&content),
+        // Metadata and parent ownership have already established that an
+        // unprivileged reader is looking at a trusted root-only flag. Its
+        // nonce is verified by root-run setup/startup paths.
+        Err(error) if cfg!(unix) && error.kind() == std::io::ErrorKind::PermissionDenied => true,
+        Err(_) => false,
+    }
 }
 
 fn parse_setup_flag(content: &str) -> bool {
@@ -1378,6 +1405,162 @@ pub fn validate_system_state_directory(directory: &Path) -> Result<(), SetupErro
     validate_root_owned_directory_chain(directory)
 }
 
+/// Repair ownership drift from older system installations without recursively
+/// changing user-owned settings, vault contents, or recovery journals.
+pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), SetupError> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err(SetupError::UnsupportedPlatform);
+    }
+    if !running_as_root() {
+        return Err(SetupError::NotRoot);
+    }
+
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| SetupError::Command("system config path has no parent directory".into()))?;
+    validate_root_owned_directory_chain(parent)?;
+
+    let config_metadata = fs::symlink_metadata(config_path)?;
+    if config_metadata.file_type().is_symlink()
+        || !config_metadata.is_file()
+        || config_metadata.nlink() != 1
+    {
+        return Err(SetupError::Command(
+            "system config must be a regular, non-symlink file without hard links before migration"
+                .into(),
+        ));
+    }
+    if config_metadata.uid() == 0 && config_metadata.permissions().mode() & 0o022 != 0 {
+        return Err(SetupError::Command(
+            "root-owned system config is group/world-writable; refusing migration".into(),
+        ));
+    }
+
+    // A legacy installer made the system config desktop-user-owned. Secure it
+    // before trusting values such as GITRUN_STATE_DIR for privileged repair.
+    let desktop_uid = (config_metadata.uid() != 0).then_some(config_metadata.uid());
+    if let Some(uid) = desktop_uid {
+        secure_system_config_file(config_path, Some(uid))?;
+    }
+
+    let config = Config::from_env_file(config_path)?;
+    config.validate()?;
+    let state_dir = PathBuf::from(&config.state_dir);
+    if desktop_uid.is_some() && state_dir != Path::new("/var/lib/gitrun") {
+        return Err(SetupError::Command(
+            "legacy user-owned config selected a non-standard runtime state directory; refusing privileged ownership migration until an administrator verifies the path"
+                .into(),
+        ));
+    }
+    let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
+    let settings_metadata = match fs::symlink_metadata(&settings_path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
+                return Err(SetupError::Command(
+                    "GitRun security settings must be a regular, non-symlink file without hard links"
+                        .into(),
+                ));
+            }
+            if metadata.uid() != 0 && desktop_uid != Some(metadata.uid()) {
+                return Err(SetupError::Command(
+                    "GitRun security settings ownership does not match the trusted system config; refusing automatic migration"
+                        .into(),
+                ));
+            }
+            Some(metadata)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+
+    // Preflight settings and file identity before changing directory ownership,
+    // so an unsafe settings path cannot cause a partially applied migration.
+    repair_system_runtime_directory(&state_dir, desktop_uid)?;
+    if settings_metadata.is_some() {
+        secure_system_settings_file(&settings_path, desktop_uid)?;
+    }
+
+    Ok(())
+}
+
+fn repair_system_runtime_directory(
+    directory: &Path,
+    expected_legacy_owner: Option<u32>,
+) -> Result<(), SetupError> {
+    validate_runtime_directory_path(directory)?;
+
+    let parent = directory.parent().ok_or_else(|| {
+        SetupError::Command("runtime state directory has no parent directory".into())
+    })?;
+    validate_root_owned_directory_chain(parent)?;
+
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(SetupError::Command(
+                    "runtime state path must be a real directory, not a symlink or file".into(),
+                ));
+            }
+            if metadata.permissions().mode() & 0o022 != 0 {
+                return Err(SetupError::Command(
+                    "runtime state directory is group/world-writable; refusing ownership migration"
+                        .into(),
+                ));
+            }
+            if !trusted_legacy_state_owner(metadata.uid(), expected_legacy_owner) {
+                return Err(SetupError::Command(
+                    "runtime state directory is not owned by root or the desktop identity from the legacy system config; refusing ownership migration"
+                        .into(),
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(directory)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    // Only the state directory entry is migrated. Its child files and
+    // directories are deliberately left untouched; in particular, user-owned
+    // vault/settings payloads and crash-recovery records are not recursively
+    // chowned or deleted.
+    run_command(Command::new("/usr/bin/chown").args(["0:0"]).arg(directory))?;
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
+
+    let metadata = fs::symlink_metadata(directory)?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != 0
+        || metadata.gid() != 0
+        || metadata.permissions().mode() & 0o777 != 0o755
+    {
+        return Err(SetupError::Command(
+            "runtime state directory ownership/permissions failed postcondition verification"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn trusted_legacy_state_owner(actual_uid: u32, expected_legacy_owner: Option<u32>) -> bool {
+    actual_uid == 0 || expected_legacy_owner == Some(actual_uid)
+}
+
+fn validate_runtime_directory_path(directory: &Path) -> Result<(), SetupError> {
+    if !directory.is_absolute()
+        || directory == Path::new("/")
+        || directory
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(SetupError::Command(
+            "runtime state directory must be absolute, non-root, and contain no parent traversal"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Security policy is consumed by the root scheduler to authorize privileged
 /// workflow operations. Never make this file desktop-user-owned or writable:
 /// grant only read access through the desktop user's primary group.
@@ -2061,6 +2244,38 @@ mod tests {
             Err(SetupError::InvalidConfigDir(_))
         ));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn setup_flag_trusted_permission_denial_is_not_misreported_as_incomplete() {
+        assert!(setup_flag_contents_are_valid(Err(std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        ))));
+        assert!(!setup_flag_contents_are_valid(Err(std::io::Error::from(
+            std::io::ErrorKind::NotFound
+        ))));
+        assert!(!setup_flag_contents_are_valid(
+            Ok("not-a-valid-flag".into())
+        ));
+        assert!(setup_flag_contents_are_valid(Ok(
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef\n".into()
+        )));
+    }
+
+    #[test]
+    fn runtime_directory_migration_only_accepts_root_or_known_legacy_owner() {
+        assert!(trusted_legacy_state_owner(0, None));
+        assert!(trusted_legacy_state_owner(1000, Some(1000)));
+        assert!(!trusted_legacy_state_owner(1001, Some(1000)));
+        assert!(!trusted_legacy_state_owner(1000, None));
+    }
+
+    #[test]
+    fn runtime_directory_migration_rejects_unsafe_paths() {
+        assert!(validate_runtime_directory_path(Path::new("var/lib/gitrun")).is_err());
+        assert!(validate_runtime_directory_path(Path::new("/")).is_err());
+        assert!(validate_runtime_directory_path(Path::new("/var/lib/../etc")).is_err());
+        assert!(validate_runtime_directory_path(Path::new("/var/lib/gitrun")).is_ok());
     }
 
     #[test]

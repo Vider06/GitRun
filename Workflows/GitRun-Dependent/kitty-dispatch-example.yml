@@ -12,7 +12,9 @@ jobs:
   plan:
     uses: ./.github/workflows/kitty-dispatch-plan.yml
     with:
-      # Match the historical workload profile. Do not use a display name that differs from the job ID.
+      # After copying this template to .github/workflows/kitty-dispatch-example.yml,
+      # use that exact path plus the historical job name/profile for this caller repository.
+      # Do not use a display name that differs from the job ID.
       target_job: build
       target_workflow: .github/workflows/kitty-dispatch-example.yml
       target_labels: self-hosted,linux,x64

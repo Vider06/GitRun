@@ -1065,8 +1065,9 @@ fn reconcile_repo(
 
     let observed_at_epoch = wall_clock_epoch;
     // Per-job resource learning is a separate, bounded telemetry cadence. Only
-    // jobs that GitHub says are actively assigned to a known GitRun container
-    // are measured; stats failures are ignored for scheduling purposes.
+    // jobs that GitHub says are assigned to a known GitRun container are sampled.
+    // Runner stats are batched so a busy repository doesn't spawn one Docker CLI
+    // process per job during the 30-second telemetry cadence.
     if kitty_runtime.should_poll_job_resources(repo, observed_at_epoch) {
         match client.active_self_hosted_jobs_on_runners(repo) {
             Ok(active_jobs) => {
@@ -1075,7 +1076,8 @@ fn reconcile_repo(
                     let count = runner_assignments.entry(active.runner_name.clone()).or_default();
                     *count = count.saturating_add(1);
                 }
-                let mut resource_samples = Vec::new();
+
+                let mut resource_candidates = Vec::new();
                 let mut resource_sample_attempts = 0usize;
                 for active in active_jobs {
                     // GitHub snapshots can briefly disagree during retries;
@@ -1093,15 +1095,26 @@ fn reconcile_repo(
                         break;
                     }
                     resource_sample_attempts += 1;
-                    let usage = match docker::container_resource_usage(&container.id) {
-                        Ok(usage) => usage,
-                        Err(error) => {
-                            eprintln!(
-                                "gitrun-autoscaler: Kitty skipped resource sample for {repo}/{}: {error}",
-                                active.runner_name
-                            );
-                            continue;
-                        }
+                    resource_candidates.push((active, container.id.clone()));
+                }
+
+                let container_ids: Vec<String> = resource_candidates
+                    .iter()
+                    .map(|(_, container_id)| container_id.clone())
+                    .collect();
+                let resource_usages = match docker::container_resource_usages(&container_ids) {
+                    Ok(usages) => usages,
+                    Err(error) => {
+                        eprintln!(
+                            "gitrun-autoscaler: Kitty batched resource telemetry unavailable for {repo}: {error}"
+                        );
+                        std::collections::HashMap::new()
+                    }
+                };
+                let mut resource_samples = Vec::with_capacity(resource_candidates.len());
+                for (active, container_id) in resource_candidates {
+                    let Some(usage) = resource_usages.get(&container_id).copied() else {
+                        continue;
                     };
                     resource_samples.push(
                         gitrun_smart_scheduler::ActiveJobResourceSample {

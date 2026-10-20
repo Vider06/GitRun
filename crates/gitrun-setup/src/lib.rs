@@ -1457,10 +1457,7 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
     let settings_path = GitRunSettings::path_for_state_dir(&state_dir);
     match fs::symlink_metadata(&settings_path) {
         Ok(metadata) => {
-            if metadata.file_type().is_symlink()
-                || !metadata.is_file()
-                || metadata.nlink() != 1
-            {
+            if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
                 return Err(SetupError::Command(
                     "GitRun security settings must be a regular, non-symlink file without hard links"
                         .into(),

@@ -1438,7 +1438,7 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
 
     // A legacy installer made the system config desktop-user-owned. Secure it
     // before trusting values such as GITRUN_STATE_DIR for privileged repair.
-    let mut desktop_uid = (config_metadata.uid() != 0).then_some(config_metadata.uid());
+    let desktop_uid = (config_metadata.uid() != 0).then_some(config_metadata.uid());
     if let Some(uid) = desktop_uid {
         secure_system_config_file(config_path, Some(uid))?;
     }

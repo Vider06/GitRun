@@ -11,7 +11,7 @@ ARG POWERSHELL_SHA256=492FF26BB958336BF61E597CE19E07648B4003BD2A08659E02F0E3E044
 
 # Build the GSR shell agent with a pinned Rust toolchain. BuildKit cache mounts
 # are persisted explicitly by the CI cache-dance step.
-FROM rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0 AS gsr-builder
+FROM rust:1.99.1-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29 AS gsr-builder
 
 WORKDIR /usr/src/gitrun
 
@@ -28,7 +28,7 @@ RUN --mount=type=cache,id=gitrun-runner-cargo-registry-v11,target=/usr/local/car
     && test -x /usr/src/gitrun/gitrun-gsr-agent \
     && test -x /usr/src/gitrun/gitrun-api
 
-FROM node:26.10.0-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6
+FROM node:26.12.0-bookworm@sha256:a856ae5e25d498bbe5ec85fde88f00f5ed99908fda803ba39d7735ab8574f58c
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -90,8 +90,14 @@ RUN rustc --version \
     && cargo --version
 
 RUN useradd --create-home --shell /bin/bash runner \
-    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared \
-    && chown -R runner:runner /home/runner /var/lib/gitrun/shared /opt/rustup /opt/cargo
+    && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared /var/lib/gitrun/control \
+    && chown -R runner:runner /home/runner /var/lib/gitrun/shared \
+    && chown root:root /var/lib/gitrun/control \
+    && chmod 0700 /var/lib/gitrun/control \
+    && chown -R root:root /opt/rustup /opt/cargo \
+    && chmod -R go-w /opt/rustup /opt/cargo \
+    && test -x /opt/cargo/bin/cargo \
+    && test -z "$(find /opt/cargo /opt/rustup -xdev \( ! -user root -o -perm /022 \) -print -quit)"
 
 WORKDIR /home/runner/actions-runner
 
@@ -120,6 +126,7 @@ RUN chmod 0755 /entrypoint.sh \
 RUN install -d -o root -g root -m 0755 /run/gitrun \
     && printf '%s\n' \
        'GITRUN_GSR_COMMAND_POLICY_ENABLED=true' \
+       'GITRUN_GSR_ALLOW_UNSAFE_RUNNER=false' \
        'GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED=true' \
        'GITRUN_GSR_COMMAND_BLACKLIST_ENABLED=false' \
        'GITRUN_GSR_COMMAND_BLACKLIST=' \

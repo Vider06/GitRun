@@ -147,7 +147,7 @@ pub fn inspect() -> RecoveryReport {
             true
         }
         Ok(Some(_)) | Ok(None) => true,
-        Err(StateError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+        Err(error) if is_protected_state_permission(&error) => {
             issues.push(RecoveryIssue {
                 code: "health-state-protected".into(),
                 severity: Severity::Info,
@@ -456,6 +456,13 @@ pub fn current_version() -> String {
         .unwrap_or_else(|| "0.0.0".into())
 }
 
+fn is_protected_state_permission(error: &StateError) -> bool {
+    matches!(
+        error,
+        StateError::Io(io_error) if io_error.kind() == std::io::ErrorKind::PermissionDenied
+    )
+}
+
 fn unit_matches_contract(installed: &str, packaged: &str) -> bool {
     let installed_lines: std::collections::HashSet<&str> = installed
         .lines()
@@ -688,6 +695,16 @@ mod tests {
                 PathBuf::from("/usr/bin/gitrun"),
             ]
         );
+    }
+
+    #[test]
+    fn permission_denied_for_root_only_state_is_not_treated_as_corruption() {
+        assert!(is_protected_state_permission(&StateError::Io(
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied)
+        )));
+        assert!(!is_protected_state_permission(&StateError::Io(
+            std::io::Error::from(std::io::ErrorKind::NotFound)
+        )));
     }
 
     #[test]

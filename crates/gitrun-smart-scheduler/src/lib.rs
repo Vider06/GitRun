@@ -1068,7 +1068,11 @@ impl WorkflowModel {
                 || sample.first_sample_at_epoch == 0
                 || sample.first_sample_at_epoch > sample.last_sample_at_epoch
                 || sample.last_sample_at_epoch > self.generated_at_epoch
-                || !resource_occurrence_keys.insert((sample.workload_id.as_str(), sample.run_id, sample.job_id))
+                || !resource_occurrence_keys.insert((
+                    sample.workload_id.as_str(),
+                    sample.run_id,
+                    sample.job_id,
+                ))
             {
                 return Err(KittyError::Invalid(
                     "stored workload resource observation is malformed, duplicated, or outside bounds".into(),
@@ -1641,7 +1645,8 @@ impl KittyRuntime {
             // Reuse a historical identity only when that pair is unambiguous.
             let matches: Vec<_> = model.workload_patterns.iter().filter(|pattern| {
                 pattern.job_name == job_name
-                    && canonical_resource_labels(&pattern.labels) == canonical_resource_labels(labels)
+                    && canonical_resource_labels(&pattern.labels)
+                        == canonical_resource_labels(labels)
             }).map(|pattern| pattern.workload_id.clone()).take(2).collect();
             (matches.len() == 1).then(|| matches[0].clone())
         }).unwrap_or(fallback_workload_id);
@@ -1671,14 +1676,22 @@ impl KittyRuntime {
         let learned_memory = observed[quantile_index]
             .memory_bytes_peak
             .saturating_add(observed[quantile_index].memory_bytes_peak / 4);
-        let prior = heuristic_resource_demand(&workload_id, workflow_path, job_name, labels, observed.len());
+        let prior = heuristic_resource_demand(
+            &workload_id,
+            workflow_path,
+            job_name,
+            labels,
+            observed.len(),
+        );
         Some(ResourceDemandEstimate {
             workload_id,
             // Never undercut the workload-class prior based on a small or
             // unusually quiet set of samples. Operator and host ceilings still
             // determine the final Docker limits.
             cpu_cores: learned_cpu.max(prior.cpu_cores).clamp(0.25, 256.0),
-            memory_bytes: learned_memory.max(prior.memory_bytes).clamp(512 * 1024 * 1024, 1u64 << 60),
+            memory_bytes: learned_memory
+                .max(prior.memory_bytes)
+                .clamp(512 * 1024 * 1024, 1u64 << 60),
             sample_count: observed.len(),
             learned: true,
             reason: "P80 of recent per-job CPU/memory high-water marks plus safety headroom".into(),
@@ -3988,7 +4001,8 @@ fn estimated_resources_for_pattern(
     memory_peaks.sort_unstable();
     let quantile_index = (observations.len() * 4).div_ceil(5).saturating_sub(1);
     let learned_cpu = cpu_peaks[quantile_index] * 1.20;
-    let learned_memory = memory_peaks[quantile_index].saturating_add(memory_peaks[quantile_index] / 4);
+    let learned_memory = memory_peaks[quantile_index]
+        .saturating_add(memory_peaks[quantile_index] / 4);
     (
         observations.len(),
         observed_peak_cpu_cores,
@@ -4035,7 +4049,12 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
                 )
             });
             recurring_slots.truncate(3);
-            let (resource_sample_count, observed_peak_cpu_cores, observed_peak_memory_bytes, resource_estimate) =
+            let (
+                resource_sample_count,
+                observed_peak_cpu_cores,
+                observed_peak_memory_bytes,
+                resource_estimate,
+            ) =
                 estimated_resources_for_pattern(model, pattern, model.generated_at_epoch);
             WorkloadPatternStatus {
                 workload_id: pattern.workload_id.clone(),

@@ -5,7 +5,8 @@ const apiOps = {
   GitDockRun:["Connect","Disconnect","Read","Write","Execute","Melt","Mount","Unmount"],
   GitSaveRun:["File","Logs"], GitRegisterRun:["Register"],
   GitInstallRun:["Install","Remove","Update"], GitReadRun:["Read"],
-  GitWriteRun:["Write"], GitVerifyRun:["Verify"], GitStatusRun:["Status"]
+  GitWriteRun:["Write"], GitVerifyRun:["Verify"], GitStatusRun:["Status"],
+  GitDispatchRun:["Plan"]
 };
 const logicOps = ["connect","read","write","execute","melt","mountable"];
 

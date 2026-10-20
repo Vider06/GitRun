@@ -3773,11 +3773,10 @@ mod tests {
             &expected,
         )
         .is_ok());
-        assert!(ensure_cgroup_matches_container_id(
-            &format!("0::/docker/{expected}"),
-            &expected,
-        )
-        .is_ok());
+        assert!(
+            ensure_cgroup_matches_container_id(&format!("0::/docker/{expected}"), &expected,)
+                .is_ok()
+        );
         assert!(ensure_cgroup_matches_container_id(
             &format!("0::/system.slice/cri-containerd-{expected}.scope"),
             &expected,

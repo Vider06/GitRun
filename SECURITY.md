@@ -13,7 +13,8 @@ Direct `/var/run/docker.sock` access is **disabled by default** for GitRun-manag
 ## Credential handling
 
 - Never commit `GITHUB_TOKEN` or runtime environment files.
-- Keep `/etc/gitrun/gitrun.env` mode 0600.
+- Keep `/etc/gitrun/gitrun.env` root-owned and readable only by root and the validated private desktop/service group. The guarded migration may use mode `0640` only when that group is dedicated and private; otherwise use `0600`. Never make the file group-readable through a broad shared group or world-readable.
+- Keep `/etc/gitrun/setup.flag`, `/var/lib/gitrun/health.json` and `/var/lib/gitrun/last-crash` protected as root-owned mode `0600`; an unprivileged UI reporting `PermissionDenied` for these files is not evidence of corruption.
 - Use a dedicated GitHub credential with only the repository/Actions permissions required by the installation. GitHub App authentication is supported as an alternative to PAT authentication; protect the App private key as a high-value credential.
 - Registration tokens are short-lived and should never be persisted.
 - Prefer ephemeral runners for untrusted or isolation-sensitive workloads.
@@ -38,6 +39,12 @@ The manager itself necessarily has access to the Docker socket and must therefor
 - Do not expose the Docker daemon or GitRun control interfaces to the public Internet.
 - Pin or regularly review runner image versions and base images.
 - Review every repository before connecting it to a runner pool.
+
+## Runtime-state ownership and repair
+
+The recovery UI may inspect host state without being able to read every root-only record. Permission denial for a protected setup marker, health record or crash record must not be treated as setup failure or data corruption. The privileged Repair path validates the trusted configuration/systemd directories and file metadata before changing ownership.
+
+Legacy automatic migration is restricted to the canonical `/var/lib/gitrun` state directory and specifically validated configuration/settings files. It changes only the directory entry and known files; it does not recursively `chown` the state tree, delete health/crash records, or adopt arbitrary GitVault, backup, update or registry data. It restores the packaged `gitrun.service` and `gitrun-gsr.service` contracts rather than accepting locally altered hardening as equivalent. Never work around a repair failure by applying `chown -R`, widening permissions, or deleting state records. See [the 1.5.1 release notes](docs/v1.5.1-release-notes.md).
 
 ## Reporting
 

@@ -1,6 +1,6 @@
 # Dashboard redesign roadmap
 
-Status: the v1.5.0 dashboard baseline was merged through [PR #83](https://github.com/Vider06/GitRun/pull/83) on 2026-10-19. This file records the implemented behavior and remaining environment-specific checks.
+Status: the dashboard baseline originated in GitRun 1.5.0 through [PR #83](https://github.com/Vider06/GitRun/pull/83) on 2026-10-19 and remains the dashboard baseline for the proposed 1.5.1 source line. This roadmap records dashboard behavior and remaining environment-specific checks; legacy host recovery and release-version changes are summarized in [the 1.5.1 release notes](v1.5.1-release-notes.md).
 
 ## Goals
 
@@ -101,9 +101,9 @@ Refresh windows are defaults, not a reason to poll on every component render. Vi
 - The scheduler reloads GTUU schedule settings each tick, so changes to automatic-update enablement, time or timezone do not require a service restart.
 - The Tauri backend exposes service start/stop/restart commands, a bounded read-only host health report, coordinated config/settings persistence with rollback, and cached runner/workflow/repository/resource snapshots.
 
-PR #83 is merged. Dashboard features listed here describe the v1.5.0 source; desktop-only authorization and install transitions still require checks on a supported desktop.
+PR #83 is merged. Dashboard feature notes below originated against the 1.5.0 source baseline. The proposed 1.5.1 change set updates dashboard product/package metadata and documents the separately merged protected-state/runtime repair; it does not convert the older PR #83 CI result into verification of the new version-alignment branch. Desktop-only authorization and install transitions still require checks on a supported desktop.
 
 
 ## Verification status
 
-The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions were not exercised by those automated checks. See the [status report](v1.5.0-refactor-status.md).
+The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. Those results apply to that historical 1.5.0 commit only; verify the exact CI results for the 1.5.1 version-alignment branch before calling it green. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions still need supported-desktop validation. See the [1.5.1 release notes](v1.5.1-release-notes.md) and [historical status report](v1.5.0-refactor-status.md).

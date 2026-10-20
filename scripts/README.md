@@ -1,3 +1,3 @@
 # `scripts`
 
-Installation, release-build and verification scripts for Linux, macOS and Windows. Scripts are operational tooling rather than part of the Rust runtime.
+Installation, release-build and verification scripts for Linux, macOS and Windows. Scripts are operational tooling rather than part of the Rust runtime. Installation and release behavior should be checked against the current source/product version in `version.txt`; the proposed 1.5.1 legacy recovery and version-alignment scope is documented in [the release notes](../docs/v1.5.1-release-notes.md). Do not treat the older 1.5.0 audit results as validation of a new installer or release commit.

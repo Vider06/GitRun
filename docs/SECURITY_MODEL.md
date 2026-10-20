@@ -1,4 +1,4 @@
-# Security model — GitRun 1.5.0
+# Security model — GitRun 1.5.1
 
 ## Optional Kitty Smart Scheduler
 
@@ -163,17 +163,26 @@ Untrusted input: workflow code, workflow-visible environment variables, requeste
 A successful privileged request therefore requires both authenticated transport identity and authoritative workload binding; policy alone is never treated as proof of identity.
 
 
-## Verification status — v1.5.0
+## Runtime-state recovery and privilege boundaries
 
-PR [#83](https://github.com/Vider06/GitRun/pull/83) merged on 2026-10-19. Its source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance.
+Several installation-state files are intentionally inaccessible to the unprivileged desktop UI: the setup marker, health state and last-crash record may be root-owned with mode `0600`. A `PermissionDenied` response to an unprivileged read is classified as protected state, not as proof that setup is incomplete or that the record is corrupt. Do not weaken these files to make the UI able to read their contents.
 
-The following deployment checks remain outstanding:
+The privileged Repair path is fail-closed. It validates the `/etc/gitrun` and `/etc/systemd/system` directories, checks config/settings file type, ownership, link count and permissions, and only auto-migrates a known legacy desktop-user-owned configuration when its state directory is exactly `/var/lib/gitrun`. It repairs only the validated directory entry and known config/settings files; it does not recursively change ownership, delete health/crash records, or adopt arbitrary Vault, backup, update or registry contents. Noncanonical paths, unexpected owners, symbolic links and hard links are rejected.
+
+Service recovery restores the packaged `gitrun.service` and `gitrun-gsr.service` contracts and restarts both after a systemd reload. The installed unit must match the packaged contract, including its hardening settings; an arbitrary unit with a plausible `ExecStart` is not treated as equivalent. See the [1.5.1 release notes](v1.5.1-release-notes.md) for the migration scope and deployment checks.
+
+## Verification status — historical v1.5.0 baseline
+
+PR [#83](https://github.com/Vider06/GitRun/pull/83) merged on 2026-10-19. Its source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance. These are historical, commit-scoped results for the 1.5.0 refactor; they do not automatically certify the 1.5.1 version-alignment changes.
+
+PR [#103](https://github.com/Vider06/GitRun/pull/103) merged the legacy recovery and canonical systemd-unit repair path on 2026-10-20. Check the workflow results attached to the exact source commit being deployed. Host-specific validation is still required for:
 
 - Actual desktop `pkexec` authorization prompts and install/uninstall/reinstall privilege transitions.
+- Repairing a real legacy installation and verifying service account ownership, GSR watchdog liveness and successful scheduler reconciliation.
 - VM provisioning and recovery on real KVM/libvirt and VirtualBox hosts.
 - A full authorized API request that drives GitDockRun disconnect cleanup end to end; CI exercises the cleanup helper in a privileged namespace.
 - Migration of all pre-existing and operator-customized runner images/control volumes.
 - Direct root/admin policy edits that bypass the sidecar-lock protocol; supported GitRun writers are serialized, but deliberate bypasses are not.
-- The count of open GitHub Security alerts. Successful CodeQL execution does not report that count.
+- The count and disposition of open GitHub Security alerts. A successful CodeQL workflow does not report that count.
 
-See the [status report](v1.5.0-refactor-status.md) for the verification record.
+See the [1.5.1 release notes](v1.5.1-release-notes.md) for current scope and the [v1.5.0 status report](v1.5.0-refactor-status.md) for the historical audit record.

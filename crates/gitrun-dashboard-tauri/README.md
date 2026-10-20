@@ -20,13 +20,12 @@ The Tauri backend shares persistent VM and Logic Containers formats with the sch
 ## Structure
 
 - `src-tauri/` — Rust/Tauri application backend.
-- `src-tauri/src/` — native commands and startup.
-- `src-tauri/capabilities/` — Tauri capability declarations.
-- `src-tauri/permissions/` — custom permissions.
-- `src-tauri/icons/` — application icons.
-- `dist/` — static dashboard frontend distribution.
+- `src-tauri/` — native commands/startup, capability and permission declarations, packaging configuration and application icons.
+- `dist/` — built frontend entry point plus its static CSS and JavaScript assets.
+
+The `dist/` tree is a packaged frontend, not the source-of-truth for application behavior; make UI changes in the maintained frontend source and regenerate the distribution using the repository's build workflow.
 
 The dashboard does not replace the scheduler. The scheduler remains the runtime control plane and continues operating when the graphical dashboard is closed.
 
 
-PR #83's source HEAD passed Tauri build/package and trusted privileged-binary resolution tests. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions were not exercised by CI; see the [status report](../../docs/v1.5.0-refactor-status.md).
+The product/bundle metadata is aligned to GitRun 1.5.1 in this change set; the Rust crate retains its own independent Cargo SemVer. PR #83's source HEAD passed Tauri build/package and trusted privileged-binary resolution tests, but those results are historical and do not verify the current version-alignment branch. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions were not exercised by that CI. See the [1.5.1 release notes](../../docs/v1.5.1-release-notes.md) and [historical status report](../../docs/v1.5.0-refactor-status.md).

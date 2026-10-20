@@ -1,4 +1,4 @@
-# VM-backed runners — 1.5.0
+# VM-backed runners — 1.5.1
 
 GitRun can route dynamic runner containers to a Docker daemon running inside a configured VM. This is primarily intended for Windows runner workloads and for Linux workloads that need a VM boundary.
 
@@ -101,6 +101,8 @@ Use a protected Docker endpoint. Do not expose a guest Docker daemon to an untru
 A VM can provide a stronger boundary than a host Docker runner, but it is not automatically secure merely because it is a VM. Protect the VM's Docker endpoint, guest credentials and base image, and treat the guest as part of the GitRun trusted infrastructure.
 
 
-## Verification status
+## Verification and deployment boundaries
 
-PR #83's source HEAD passed the VM configuration/resolution tests and repository CI before merge. These tests do not replace live provisioning and recovery on both KVM/libvirt and VirtualBox hosts. Before production, validate the selected hypervisor, guest Docker endpoint, TLS material, recovery behavior and supplied base images on the target host. See the [status report](v1.5.0-refactor-status.md) for the recorded limits.
+The PR #83 source-head checks passed the VM configuration/resolution test set before merge; those results are historical and do not replace live provisioning/recovery on target machines. Validate the selected hypervisor, guest Docker endpoint, TLS material, recovery behavior and supplied base images on the actual host.
+
+PR [#103](https://github.com/Vider06/GitRun/pull/103) addresses legacy host runtime recovery and canonical service units, not the VM guest lifecycle. The exact checks for the current source commit must be reviewed separately. See the [1.5.1 release notes](v1.5.1-release-notes.md) and [status history](v1.5.0-refactor-status.md).

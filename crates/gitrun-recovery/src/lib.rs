@@ -1,6 +1,6 @@
 pub mod ui;
 
-use gitrun_core::{Config, StateStore};
+use gitrun_core::{Config, StateError, StateStore};
 use gitrun_setup::InstallationState;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -147,6 +147,18 @@ pub fn inspect() -> RecoveryReport {
             true
         }
         Ok(Some(_)) | Ok(None) => true,
+        Err(StateError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            issues.push(RecoveryIssue {
+                code: "health-state-protected".into(),
+                severity: Severity::Info,
+                title: "Health state is protected".into(),
+                detail: "The desktop user cannot read the root-owned health record; its contents were not inspected. This is expected for a privileged system installation.".into(),
+                repairable: false,
+            });
+            // Lack of desktop read access is not evidence of corruption or a
+            // failed scheduler preflight. Root-side startup checks read it.
+            true
+        }
         Err(error) => {
             issues.push(RecoveryIssue {
                 code: "health-corrupt".into(),
@@ -174,6 +186,15 @@ pub fn inspect() -> RecoveryReport {
             });
         }
         Ok(Some(_)) | Ok(None) => {}
+        Err(StateError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            issues.push(RecoveryIssue {
+                code: "crash-record-protected".into(),
+                severity: Severity::Info,
+                title: "Previous crash record is protected".into(),
+                detail: "The desktop user cannot read the root-owned crash record; its contents were not inspected. Review it from an administrator shell if needed.".into(),
+                repairable: false,
+            });
+        }
         Err(error) => {
             issues.push(RecoveryIssue {
                 code: "crash-log-unreadable".into(),
@@ -435,12 +456,25 @@ pub fn current_version() -> String {
         .unwrap_or_else(|| "0.0.0".into())
 }
 
+fn unit_matches_contract(installed: &str, packaged: &str) -> bool {
+    let installed_lines: std::collections::HashSet<&str> = installed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    packaged
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .all(|line| installed_lines.contains(line))
+}
+
 pub fn service_unit_is_valid() -> bool {
     let scheduler_valid = fs::read_to_string("/etc/systemd/system/gitrun.service")
-        .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun scheduler"))
+        .map(|content| unit_matches_contract(&content, SYSTEMD_UNIT))
         .unwrap_or(false);
     let gsr_valid = fs::read_to_string("/etc/systemd/system/gitrun-gsr.service")
-        .map(|content| content.contains("ExecStart=/usr/local/bin/gitrun gsr-watchdog"))
+        .map(|content| unit_matches_contract(&content, GSR_SYSTEMD_UNIT))
         .unwrap_or(false);
     scheduler_valid && gsr_valid
 }
@@ -452,6 +486,12 @@ pub fn repair_service_unit() -> Result<(), String> {
     if !is_root() {
         return Err("service repair requires root privileges".into());
     }
+
+    // Older installers left the state directory desktop-user-owned and the
+    // system config writable by that account. Migrate only the directory entry
+    // and the explicit settings/config files; never recursively chown state.
+    gitrun_setup::repair_installed_runtime_permissions(Path::new("/etc/gitrun/gitrun.env"))
+        .map_err(|error| format!("repair legacy runtime ownership: {error}"))?;
 
     let path = Path::new("/etc/systemd/system/gitrun.service");
     let gsr_path = Path::new("/etc/systemd/system/gitrun-gsr.service");
@@ -648,6 +688,16 @@ mod tests {
                 PathBuf::from("/usr/bin/gitrun"),
             ]
         );
+    }
+
+    #[test]
+    fn service_unit_contract_rejects_legacy_units_missing_hardening() {
+        assert!(unit_matches_contract(SYSTEMD_UNIT, SYSTEMD_UNIT));
+        assert!(unit_matches_contract(GSR_SYSTEMD_UNIT, GSR_SYSTEMD_UNIT));
+
+        let legacy_scheduler = "[Unit]\\nDescription=GitRun Rust scheduler\\nRequires=docker.service\\nAfter=docker.service\\nWants=network-online.target\\nAfter=network-online.target\\n\\n[Service]\\nType=simple\\nExecStart=/usr/local/bin/gitrun scheduler\\nRestart=on-failure\\nRestartSec=5\\nTimeoutStopSec=60\\nKillMode=control-group\\nEnvironmentFile=/etc/gitrun/gitrun.env\\n\\n[Install]\\nWantedBy=multi-user.target\\n";
+        assert!(!unit_matches_contract(legacy_scheduler, SYSTEMD_UNIT));
+        assert!(!unit_matches_contract(SYSTEMD_UNIT, GSR_SYSTEMD_UNIT));
     }
 
     #[test]

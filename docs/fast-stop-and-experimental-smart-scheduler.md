@@ -1,9 +1,9 @@
 # Fast Stop and Kitty Smart Scheduler
 
 Updated: 2026-10-20  
-Working source line: GitRun 1.6.0 (feature branch; not yet released; Fast Stop and Kitty originated in 1.5.0)
+Working source line: GitRun 1.6.2 (feature branch; check GitHub Releases for published artifacts; Fast Stop and Kitty originated in 1.5.0)
 
-Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and continue in the 1.6.0 working branch. Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The 1.5.1 legacy-recovery changes are documented separately in [the 1.5.1 release notes](v1.5.1-release-notes.md).
+Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and continue in the 1.6.2 working source line. Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The 1.5.1 legacy-recovery changes are documented separately in [the 1.5.1 release notes](v1.5.1-release-notes.md).
 
 ## Fast Stop
 
@@ -63,4 +63,4 @@ The automatic Smart Fast Stop path is implemented but remains an explicit opt-in
 
 The PR #83 source-head checks are historical evidence for the 1.5.0 implementation commit, not proof of calibrated real-world prediction accuracy or complete historical job-start coverage. Review Kitty in shadow mode before enabling predictive capacity changes, and check the exact CI results for the source commit being deployed.
 
-The 1.5.1 source includes the guarded legacy recovery path from [PR #103](https://github.com/Vider06/GitRun/pull/103); real desktop privilege/install flows, repair on the target legacy host, provisioning and recovery on real KVM/VirtualBox hosts, a complete authorized disconnect API request, and migration of customized/pre-existing runner images still require environment-specific validation. See [the 1.5.1 release notes](v1.5.1-release-notes.md) and the [historical v1.5.0 status report](v1.5.0-refactor-status.md).
+The 1.6.2 source line includes the guarded legacy recovery path from [PR #103](https://github.com/Vider06/GitRun/pull/103) and the protected security-settings read path from [PR #109](https://github.com/Vider06/GitRun/pull/109); real desktop privilege/install flows, repair on the target legacy host, provisioning and recovery on real KVM/VirtualBox hosts, a complete authorized disconnect API request, and migration of customized/pre-existing runner images still require environment-specific validation. See [the 1.6.2 fixes](v1.6.2-fixes.md), [the 1.5.1 recovery notes](v1.5.1-release-notes.md), and the [historical v1.5.0 status report](v1.5.0-refactor-status.md).

@@ -171,7 +171,7 @@ Several installation-state files are intentionally inaccessible to the unprivile
 
 The privileged Repair path is fail-closed. It validates the `/etc/gitrun` and `/etc/systemd/system` directories, checks config/settings file type, ownership, link count and permissions, and only auto-migrates a known legacy desktop-user-owned configuration when its state directory is exactly `/var/lib/gitrun`. It repairs only the validated directory entry and known config/settings files; it does not recursively change ownership, delete health/crash records, or adopt arbitrary Vault, backup, update or registry contents. Noncanonical paths, unexpected owners, symbolic links and hard links are rejected.
 
-Service recovery restores the packaged `gitrun.service` and `gitrun-gsr.service` contracts and restarts both after a systemd reload. The installed unit must match the packaged contract, including its hardening settings; an arbitrary unit with a plausible `ExecStart` is not treated as equivalent. See the [1.5.1 release notes](v1.5.1-release-notes.md) for the migration scope and deployment checks.
+Service recovery restores the packaged `gitrun.service` and `gitrun-gsr.service` contracts and restarts both after a systemd reload. The installed unit must match the packaged contract, including its hardening settings; an arbitrary unit with a plausible `ExecStart` is not treated as equivalent. See the [release history](RELEASE_HISTORY.md) for the historical migration summary and deployment-check boundaries.
 
 ## Verification status — historical v1.5.0 baseline
 
@@ -187,4 +187,4 @@ PR [#103](https://github.com/Vider06/GitRun/pull/103) merged the legacy recovery
 - Direct root/admin policy edits that bypass the sidecar-lock protocol; supported GitRun writers are serialized, but deliberate bypasses are not.
 - The count and disposition of open GitHub Security alerts. A successful CodeQL workflow does not report that count.
 
-See the [1.5.1 release notes](v1.5.1-release-notes.md) for current scope and the [v1.5.0 status report](v1.5.0-refactor-status.md) for the historical audit record.
+See the [release history](RELEASE_HISTORY.md) for the historical audit and migration summary.

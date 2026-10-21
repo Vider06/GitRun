@@ -8,4 +8,4 @@ The setup library provides the guarded permission migration used by the recovery
 
 It may repair the state-directory entry and the validated environment/settings files only. It does not recursively `chown` descendants, loosen root-only setup/health/crash records, or delete state. Noncanonical paths and ownership ambiguity fail closed.
 
-See [the GitRun 1.5.1 release and recovery notes](../../docs/v1.5.1-release-notes.md).
+See [the GitRun 1.5.1 recovery notes](../../docs/v1.5.1-release-notes.md) for the historical migration behavior; current protected-settings dashboard behavior is documented in [the 1.6.2 fixes](../../docs/v1.6.2-fixes.md).

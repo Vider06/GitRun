@@ -6,4 +6,4 @@ The root `version.txt` and dashboard product metadata carry the product/source v
 
 A merged pull request, a passing CI run, or a `version.txt` bump is not proof that a signed release tag or binary has been published. Check [GitHub Releases](https://github.com/Vider06/GitRun/releases) for published artifacts, and validate release-signing configuration and rollback behavior on the target installation before rollout.
 
-See the [1.6.2 fixes](../docs/v1.6.2-fixes.md), [1.6.1 fixes](../docs/v1.6.1-fixes.md), and [historical 1.5.1 recovery notes](../docs/v1.5.1-release-notes.md).
+See the [1.6.2 fixes](../docs/v1.6.2-fixes.md), [1.6.1 fixes](../docs/v1.6.1-fixes.md), and [consolidated release history](../docs/RELEASE_HISTORY.md).

@@ -1,6 +1,6 @@
-# GitRun architecture — GitRun 1.6.0
+# GitRun architecture — GitRun 1.6.2
 
-> This is the high-level architecture overview for the 1.6.0 source line. The [1.5.1 release notes](v1.5.1-release-notes.md) describe the post-1.5.0 recovery and version changes. The [1.5.0 audit summary](v1.5.0-refactor-status.md) is a concise historical record; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
+> This is the high-level architecture overview for the 1.6.2 source line. The [1.5.1 release notes](v1.5.1-release-notes.md) describe the post-1.5.0 recovery and version changes. The [1.5.0 audit summary](v1.5.0-refactor-status.md) is a concise historical record; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 
@@ -78,4 +78,4 @@ The Docker socket remains a host-level privilege boundary on Linux. See [SECURIT
 
 ## Verification and deployment boundaries
 
-The PR #83 source-head checks are historical evidence for the 1.5.0 refactor commit, not certification of every later change. PR [#103](https://github.com/Vider06/GitRun/pull/103) added protected-state reporting and guarded legacy runtime/systemd repair; see the [1.5.1 notes](v1.5.1-release-notes.md) and check the current PR/workflow results for the version-alignment changes. Live desktop `pkexec` transitions, repair on the actual legacy host, real KVM/VirtualBox provisioning/recovery, the full authorized disconnect API path, and customized/pre-existing runner-image migration still require environment-specific validation.
+The PR #83 source-head checks are historical evidence for the 1.5.0 refactor commit, not certification of every later change. PR [#103](https://github.com/Vider06/GitRun/pull/103) added protected-state reporting and guarded legacy runtime/systemd repair; see the [1.5.1 notes](v1.5.1-release-notes.md) and check the exact CI results for the commit being deployed. PR [#109](https://github.com/Vider06/GitRun/pull/109) adds a fixed-purpose privileged read for protected GitRun security settings when the desktop user receives a real permission-denied error; it does not weaken state-file permissions. Live desktop `pkexec` transitions, repair on the actual legacy host, real KVM/VirtualBox provisioning/recovery, the full authorized disconnect API path, and customized/pre-existing runner-image migration still require environment-specific validation.

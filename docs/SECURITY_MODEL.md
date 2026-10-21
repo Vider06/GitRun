@@ -8,12 +8,15 @@ observations, insufficient history, or persistence failure must not block the
 ordinary scheduler and must never increase its configured runner floor. The
 deterministic reconciler remains the default and the fallback.
 
-Kitty stores only bounded, aggregated per-repository observations: queued-job
-counts, counts of busy/online/managed runners, and optional host-wide CPU,
-memory, and disk percentages. It does not collect secrets, tokens, environment
-values, workflow contents, command strings, or per-job payloads. The historical
-model and decision audit are size-bounded and written via an owner-checked
-private directory and atomic replacement.
+Kitty stores bounded per-repository aggregate observations: queued-job
+counts, busy/online/managed runner counts, and optional host-wide CPU, memory
+and disk percentages. When Adaptive Resource Management is explicitly enabled,
+it also stores bounded per-workload CPU/RAM high-water samples for observed job
+occurrences, plus limited workflow paths, job names, runner labels and GitHub
+run/job IDs for correlation and deduplication. It does not store workflow
+contents, command strings, job payloads, environment values, tokens or secrets.
+Model, occurrence and decision-audit collections are capped and persisted in
+an owner-checked private directory using atomic replacement.
 
 The Kitty model itself has no execution authority. Its predictive warm-pool
 recommendation can only increase the effective runner floor, and only when the

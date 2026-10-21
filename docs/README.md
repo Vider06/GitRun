@@ -1,27 +1,22 @@
 # GitRun documentation
 
-Architecture, operator guidance, API contracts and security documentation for the **1.6.2 source line**.
+Start with the [main README](../README.md) for a readable overview of GitRun's features, setup path and recommended first steps.
 
-## Current source-line notes
+## Understand GitRun
 
-- [GitRun 1.6.2 fixes](v1.6.2-fixes.md) — dashboard reads of protected GitRun security settings, narrowly scoped administrator authorization, and the failure behavior when access cannot be granted.
-- [GitRun 1.6.1 fixes](v1.6.1-fixes.md) — earlier dashboard/runtime recovery and package-lifecycle fixes.
-- [GitRun 1.5.1 recovery notes](v1.5.1-release-notes.md) — historical explanation of the protected-state and legacy runtime/systemd repair work introduced after 1.5.0.
+- [Architecture](ARCHITECTURE.md) — runtime components, request flow, state and trust boundaries.
+- [Git*Run API reference](GITRUN_API.md) — exact workflow API commands, arguments and authorization requirements.
+- [IPC and socket architecture](IPC.md) — local socket transport and authenticated executor protocol.
+- [VM-backed runners](VM.md) — KVM/libvirt, VirtualBox, Logic Containers, TLS and lifecycle limits.
+- [Security model](SECURITY_MODEL.md) — enforcement details, deployment assumptions and residual risks.
+- [Kitty, Adaptive Resources and Fast Stop](SMART_SCHEDULER.md) — forecasting, bounded history, optional capacity automation and cancellation semantics.
 
-## Architecture and contracts
+## Version history
 
-- [Architecture](ARCHITECTURE.md) — components, data flow, persistent state, and trust boundaries.
-- [Git*Run API](GITRUN_API.md) — workflow-facing operation grammar and authorization requirements.
-- [IPC and socket architecture](IPC.md) — Unix socket transport and internal GSR/executor authentication.
-- [Security model](SECURITY_MODEL.md) — enforcement boundaries, deployment assumptions, and residual risks.
-- [VM-backed runners](VM.md) — hypervisors, guest endpoints, routing, TLS, and lifecycle limits.
-- [Dashboard redesign roadmap](dashboard-redesign-roadmap.md) — dashboard information architecture and remaining environment-specific validation.
-- [Fast Stop and Kitty Smart Scheduler](fast-stop-and-experimental-smart-scheduler.md) — cancellation semantics, forecasting, retention, and opt-in controls.
+- [Release history](RELEASE_HISTORY.md) — 1.5.0 refactor baseline, 1.5.1 recovery migration and historical verification boundaries.
+- [GitRun 1.6.1 fixes](v1.6.1-fixes.md) — runtime/dashboard recovery, GitHub permission diagnostics and package lifecycle.
+- [GitRun 1.6.2 fixes](v1.6.2-fixes.md) — protected security-settings reads in the dashboard.
 
-## Historical audit records
+## Evidence and deployment
 
-- [v1.5.0 audit summary](v1.5.0-refactor-status.md) — the merged refactor's scope and commit-specific verification record.
-
-## Evidence rule
-
-A passing CI workflow establishes only the checks executed on the recorded commit. It does not prove that no GitHub Security alerts remain, that desktop authorization and installation transitions work on every machine, or that recovery has been validated on every legacy installation or customized runner image. Check the exact CI results for the target commit and perform host-level validation for privileged desktop flows, VM provisioning/recovery, and deployment-specific migrations. A source version or merged pull request is not evidence that a signed release artifact has been published; check [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+CI results apply only to the commit and checks they report. A passing workflow does not prove that no security alerts remain or that privileged desktop authorization, real VM provisioning/recovery, custom runner-image migration and target-host repair have all been tested. Check the exact workflow results and use [GitHub Releases](https://github.com/Vider06/GitRun/releases) to distinguish source versions from published artifacts.

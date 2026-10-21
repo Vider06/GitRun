@@ -17,6 +17,12 @@ The dashboard is the operator-facing control surface for:
 
 The Tauri backend shares persistent VM and Logic Containers formats with the scheduler. In particular, VM definitions are stored in `{GITRUN_STATE_DIR}/vm-configs.json`.
 
+## Data freshness and protected state
+
+The dashboard uses cached runner, workflow, repository and host-resource snapshots so navigation does not needlessly repeat equivalent requests. Cached data can be stale or partial; unavailable values must not be presented as trustworthy zeroes. The dashboard is an operator view, not the scheduler itself, and the scheduler continues to reconcile runner state when the window is closed.
+
+Security settings remain protected by filesystem permissions. On a system installation, the dashboard uses the fixed-purpose privileged CLI read only after a real permission-denied result; it does not make protected state user-readable or accept an arbitrary path from the UI. See the [v1.6.2 fixes](../../docs/v1.6.2-fixes.md).
+
 ## Structure
 
 - `src-tauri/` — Rust/Tauri backend, native commands and startup, capability/permission declarations, packaging configuration and application icons.

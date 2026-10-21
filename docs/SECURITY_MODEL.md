@@ -1,4 +1,4 @@
-# Security model — GitRun 1.5.1
+# Security model — GitRun 1.6.2
 
 ## Optional Kitty Smart Scheduler
 
@@ -8,24 +8,34 @@ observations, insufficient history, or persistence failure must not block the
 ordinary scheduler and must never increase its configured runner floor. The
 deterministic reconciler remains the default and the fallback.
 
-Kitty stores only bounded, aggregated per-repository observations: queued-job
-counts, counts of busy/online/managed runners, and optional host-wide CPU,
-memory, and disk percentages. It does not collect secrets, tokens, environment
-values, workflow contents, command strings, or per-job payloads. The historical
-model and decision audit are size-bounded and written via an owner-checked
-private directory and atomic replacement.
+Kitty stores bounded per-repository aggregate observations: queued-job
+counts, busy/online/managed runner counts, and optional host-wide CPU, memory
+and disk percentages. When Adaptive Resource Management is explicitly enabled,
+it also stores bounded per-workload CPU/RAM high-water samples for observed job
+occurrences, plus limited workflow paths, job names, runner labels and GitHub
+run/job IDs for correlation and deduplication. It does not store workflow
+contents, command strings, job payloads, environment values, tokens or secrets.
+Model, occurrence and decision-audit collections are capped and persisted in
+an owner-checked private directory using atomic replacement.
 
-The only automated action implemented in this version is an opt-in increase of
-the minimum runner floor. It requires the master switch, the separate predictive
-warm-pool switch, shadow mode disabled, fresh data, sufficient history, forecast
-quality above the operator threshold, and room under the configured global
-maximum. The increase is also capped by an explicit additional-runner bound.
-Existing resource-pressure backpressure suppresses predictive growth. Kitty
-cannot lower the configured minimum, change security policy, authorize an API,
-execute commands, call Docker, read Vault secrets, force-cancel workflows, or
-terminate processes. Adaptive resource management and Smart Fast Stop triggers
-remain reserved and inactive until they have reliable workload-level evidence
-and their own verified safety contracts.
+The Kitty model itself has no execution authority. Its predictive warm-pool
+recommendation can only increase the effective runner floor, and only when the
+master switch, separate warm-pool switch, fresh/sufficient history, forecast
+quality threshold, global maximum and explicit additional-runner cap all permit
+it. Shadow mode is the default, and resource-pressure backpressure suppresses
+predictive growth. Kitty cannot lower the configured minimum, change security
+policy, authorize an API, execute commands, call Docker, read Vault secrets or
+cancel a workflow.
+
+Two separate scheduler integrations are also available as explicit opt-ins:
+Adaptive Resource Management estimates CPU/RAM limits for newly created local
+Docker runners, while Smart Fast Stop can request cancellation of an entire
+GitHub workflow run under its own Automation-mode, repository-allowlist,
+threshold and fresh GSR-authorization checks. Both are disabled by default and
+require real-host validation before production use. An accepted cancellation
+request is not proof that every runner process has exited. VM-backed workloads
+are deferred by adaptive resource management until per-VM capacity probing is
+available. See [the Kitty guide](SMART_SCHEDULER.md).
 
 
 ## Docker socket access is host-level privilege
@@ -165,11 +175,13 @@ A successful privileged request therefore requires both authenticated transport 
 
 ## Runtime-state recovery and privilege boundaries
 
+The dashboard reads security settings directly when the desktop user has permission. On protected system installs, a real `PermissionDenied` may trigger the fixed-purpose `--read-gitrun-settings-root` helper through administrator authorization; the helper validates trusted configuration and protected-file metadata and bounds the returned payload. This does not make the state directory or settings file user-readable, and authorization/helper failures remain errors rather than permission-relaxation fallbacks. See the [1.6.2 fixes](v1.6.2-fixes.md) and [PR #109](https://github.com/Vider06/GitRun/pull/109).
+
 Several installation-state files are intentionally inaccessible to the unprivileged desktop UI: the setup marker, health state and last-crash record may be root-owned with mode `0600`. A `PermissionDenied` response to an unprivileged read is classified as protected state, not as proof that setup is incomplete or that the record is corrupt. Do not weaken these files to make the UI able to read their contents.
 
 The privileged Repair path is fail-closed. It validates the `/etc/gitrun` and `/etc/systemd/system` directories, checks config/settings file type, ownership, link count and permissions, and only auto-migrates a known legacy desktop-user-owned configuration when its state directory is exactly `/var/lib/gitrun`. It repairs only the validated directory entry and known config/settings files; it does not recursively change ownership, delete health/crash records, or adopt arbitrary Vault, backup, update or registry contents. Noncanonical paths, unexpected owners, symbolic links and hard links are rejected.
 
-Service recovery restores the packaged `gitrun.service` and `gitrun-gsr.service` contracts and restarts both after a systemd reload. The installed unit must match the packaged contract, including its hardening settings; an arbitrary unit with a plausible `ExecStart` is not treated as equivalent. See the [1.5.1 release notes](v1.5.1-release-notes.md) for the migration scope and deployment checks.
+Service recovery restores the packaged `gitrun.service` and `gitrun-gsr.service` contracts and restarts both after a systemd reload. The installed unit must match the packaged contract, including its hardening settings; an arbitrary unit with a plausible `ExecStart` is not treated as equivalent. See the [release history](RELEASE_HISTORY.md) for the historical migration summary and deployment-check boundaries.
 
 ## Verification status — historical v1.5.0 baseline
 
@@ -185,4 +197,4 @@ PR [#103](https://github.com/Vider06/GitRun/pull/103) merged the legacy recovery
 - Direct root/admin policy edits that bypass the sidecar-lock protocol; supported GitRun writers are serialized, but deliberate bypasses are not.
 - The count and disposition of open GitHub Security alerts. A successful CodeQL workflow does not report that count.
 
-See the [1.5.1 release notes](v1.5.1-release-notes.md) for current scope and the [v1.5.0 status report](v1.5.0-refactor-status.md) for the historical audit record.
+See the [release history](RELEASE_HISTORY.md) for the historical audit and migration summary.

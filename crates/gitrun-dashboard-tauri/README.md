@@ -17,10 +17,15 @@ The dashboard is the operator-facing control surface for:
 
 The Tauri backend shares persistent VM and Logic Containers formats with the scheduler. In particular, VM definitions are stored in `{GITRUN_STATE_DIR}/vm-configs.json`.
 
+## Data freshness and protected state
+
+The dashboard uses cached runner, workflow, repository and host-resource snapshots so navigation does not needlessly repeat equivalent requests. Cached data can be stale or partial; unavailable values must not be presented as trustworthy zeroes. The dashboard is an operator view, not the scheduler itself, and the scheduler continues to reconcile runner state when the window is closed.
+
+Security settings remain protected by filesystem permissions. On a system installation, the dashboard uses the fixed-purpose privileged CLI read only after a real permission-denied result; it does not make protected state user-readable or accept an arbitrary path from the UI. See the [v1.6.2 fixes](../../docs/v1.6.2-fixes.md).
+
 ## Structure
 
-- `src-tauri/` — Rust/Tauri application backend.
-- `src-tauri/` — native commands/startup, capability and permission declarations, packaging configuration and application icons.
+- `src-tauri/` — Rust/Tauri backend, native commands and startup, capability/permission declarations, packaging configuration and application icons.
 - `dist/` — built frontend entry point plus its static CSS and JavaScript assets.
 
 The `dist/` tree is a packaged frontend, not the source-of-truth for application behavior; make UI changes in the maintained frontend source and regenerate the distribution using the repository's build workflow.
@@ -28,4 +33,4 @@ The `dist/` tree is a packaged frontend, not the source-of-truth for application
 The dashboard does not replace the scheduler. The scheduler remains the runtime control plane and continues operating when the graphical dashboard is closed.
 
 
-The product/bundle metadata is aligned to GitRun 1.5.1 in this change set; the Rust crate retains its own independent Cargo SemVer. PR #83's source HEAD passed Tauri build/package and trusted privileged-binary resolution tests, but those results are historical and do not verify the current version-alignment branch. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions were not exercised by that CI. See the [1.5.1 release notes](../../docs/v1.5.1-release-notes.md) and [historical status report](../../docs/v1.5.0-refactor-status.md).
+The product/bundle metadata is aligned to GitRun 1.6.2 in this source line; the Rust crate retains its own independent Cargo SemVer. PR #83's source HEAD passed Tauri build/package and trusted privileged-binary resolution tests, but those results are historical. PR [#109](https://github.com/Vider06/GitRun/pull/109) reports its Tauri GUI gates passing; this still does not verify every desktop-specific authorization or install transition. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions were not exercised by that CI. See the [1.6.2 fixes](../../docs/v1.6.2-fixes.md) and [consolidated release history](../../docs/RELEASE_HISTORY.md). The user-facing overview is in the [main README](../../README.md); the dashboard redesign planning document was retired after implemented behavior and remaining validation limits were folded into this crate guide.

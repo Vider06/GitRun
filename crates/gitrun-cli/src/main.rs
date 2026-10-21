@@ -1528,6 +1528,13 @@ fn main() {
                 }
             }
         }
+        Command::ReadGitRunSettingsRoot => match read_gitrun_settings_root_command() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("GitRun security settings read: FAIL — {error}");
+                1
+            }
+        },
         Command::ReadKittyDashboardRoot => match read_kitty_dashboard_root_command() {
             Ok(()) => 0,
             Err(error) => {
@@ -1597,7 +1604,8 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::SaveConfigRoot { .. }
         | Command::SaveGitRunSettingsRoot { .. }
         | Command::SaveKittySettingsRoot { .. }
-        | Command::ReadKittyDashboardRoot => ValidationState::Recovering,
+        | Command::ReadKittyDashboardRoot
+        | Command::ReadGitRunSettingsRoot => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1767,6 +1775,9 @@ enum Command {
         /// Private JSON file containing a GitRunSettings object.
         input_path: String,
     },
+    /// Internal read-only helper for root-protected GitRun security settings.
+    #[command(name = "--read-gitrun-settings-root", hide = true)]
+    ReadGitRunSettingsRoot,
     /// Internal read-only helper for the protected Kitty dashboard state.
     #[command(name = "--read-kitty-dashboard-root", hide = true)]
     ReadKittyDashboardRoot,
@@ -3341,6 +3352,28 @@ fn promote_staged_kitty_settings(
 }
 
 #[cfg(target_os = "linux")]
+fn read_gitrun_settings_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err(
+            "reading system GitRun security settings requires administrator authorization".into(),
+        );
+    }
+    let config = trusted_root_config_for_state_access()?;
+    let path = gitrun_core::GitRunSettings::path_for_state_dir(Path::new(&config.state_dir));
+    // Validate the trusted settings file before decoding; never follow a symlink,
+    // accept another owner's file, or expose an unbounded policy payload.
+    let _ = read_protected_state_file(&path, "GitRun security settings", 1024 * 1024)?;
+    let settings = gitrun_core::GitRunSettings::load_or_default(&path)?;
+    std::println!("{}", serde_json::to_string(&settings)?);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_gitrun_settings_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("system GitRun security settings reading is supported on Linux only".into())
+}
+
+#[cfg(target_os = "linux")]
 fn read_kitty_dashboard_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err(
@@ -3867,6 +3900,10 @@ mod internal_lifecycle_command_tests {
                 if input_path == "/tmp/private-kitty-settings.json"
         ));
 
+        assert!(matches!(
+            parse_internal_command(&["gitrun", "--no-cat", "--read-gitrun-settings-root"]),
+            Command::ReadGitRunSettingsRoot
+        ));
         assert!(matches!(
             parse_internal_command(&["gitrun", "--no-cat", "--read-kitty-dashboard-root"]),
             Command::ReadKittyDashboardRoot

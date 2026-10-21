@@ -1,5 +1,7 @@
 # gitrun-smart-scheduler (Kitty)
 
+For the user-facing feature overview and activation guidance, see [Kitty, Adaptive Resources and Fast Stop](../../docs/SMART_SCHEDULER.md).
+
 Kitty is an optional, deterministic-statistics add-on to GitRun. It is not an LLM or a replacement scheduler. The existing planner remains the authority and default fallback.
 
 ## Current capability

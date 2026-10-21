@@ -1,9 +1,9 @@
-# Fast Stop and Kitty Smart Scheduler
+# Kitty Smart Scheduler, Adaptive Resources & Fast Stop
 
-Updated: 2026-10-20  
-Working source line: GitRun 1.6.0 (feature branch; not yet released; Fast Stop and Kitty originated in 1.5.0)
+Updated: 2026-10-21  
+Working source line: GitRun 1.6.2 (feature branch; check GitHub Releases for published artifacts; Fast Stop and Kitty originated in 1.5.0)
 
-Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and continue in the 1.6.0 working branch. Fast Stop is an operator-triggered workflow-run cancellation request. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The 1.5.1 legacy-recovery changes are documented separately in [the 1.5.1 release notes](v1.5.1-release-notes.md).
+Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and continue in the 1.6.2 working source line. The CLI Fast Stop command is operator-triggered; Smart Fast Stop is a separate optional automatic workflow-run cancellation path with its own policy gates. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The legacy-recovery milestone is summarized in the [consolidated release history](RELEASE_HISTORY.md).
 
 ## Fast Stop
 
@@ -43,7 +43,7 @@ Settings are stored at:
 /var/lib/gitrun/kitty/settings.json
 ```
 
-A missing file means Kitty is disabled. Store the directory with mode 0700 and the settings/model files with mode 0600, owned by the GitRun service identity. The example settings and full field list are in [the crate README](../crates/gitrun-smart-scheduler/README.md).
+A missing file means Kitty is disabled. Store the directory with mode 0700 and the settings/model files with mode 0600, owned by the GitRun service identity. The example settings and implementation-specific field details are in the [Kitty crate README](../crates/gitrun-smart-scheduler/README.md).
 
 By default, Kitty is disabled and Predictive Warm Pool is in shadow mode. Predictive Warm Pool requires the master switch, its own `predictive_warm_pool_enabled` switch, `shadow_mode: false`, fresh/sufficient history and an acceptable forecast-quality score. It may only raise the configured runner floor within both the extra-runner cap and the global maximum. Resource-pressure backpressure still wins, and Kitty cannot lower the operator's configured floor.
 
@@ -63,4 +63,4 @@ The automatic Smart Fast Stop path is implemented but remains an explicit opt-in
 
 The PR #83 source-head checks are historical evidence for the 1.5.0 implementation commit, not proof of calibrated real-world prediction accuracy or complete historical job-start coverage. Review Kitty in shadow mode before enabling predictive capacity changes, and check the exact CI results for the source commit being deployed.
 
-The 1.5.1 source includes the guarded legacy recovery path from [PR #103](https://github.com/Vider06/GitRun/pull/103); real desktop privilege/install flows, repair on the target legacy host, provisioning and recovery on real KVM/VirtualBox hosts, a complete authorized disconnect API request, and migration of customized/pre-existing runner images still require environment-specific validation. See [the 1.5.1 release notes](v1.5.1-release-notes.md) and the [historical v1.5.0 status report](v1.5.0-refactor-status.md).
+The 1.6.2 source line includes the guarded legacy recovery path from [PR #103](https://github.com/Vider06/GitRun/pull/103) and the protected security-settings read path from [PR #109](https://github.com/Vider06/GitRun/pull/109); real desktop privilege/install flows, repair on the target legacy host, provisioning and recovery on real KVM/VirtualBox hosts, a complete authorized disconnect API request, and migration of customized/pre-existing runner images still require environment-specific validation. See [the 1.6.2 fixes](v1.6.2-fixes.md) and the [consolidated release history](RELEASE_HISTORY.md).

@@ -2091,8 +2091,7 @@ fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
         return Err(format!("repository is not configured in GitRun: {repo}"));
     }
     let all_rules = logic_rules_for_dashboard(&config)?;
-    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
-        .map_err(|e| e.to_string())?;
+    let settings = gitrun_settings_for_dashboard(&config)?;
     let docker_policy = settings.effective_for_repository(&repo).docker;
     Ok(RepoDetail {
         vault_groups: config.vault_groups_for_repo(&repo),
@@ -2604,10 +2603,37 @@ fn gitrun_settings_path(config: &Config) -> PathBuf {
     GitRunSettings::path_for_state_dir(&config.state_dir)
 }
 
+/// Read security policy as the desktop user when its permissions allow it.
+/// System installs may keep the state directory root-only; only that explicit
+/// permission failure is retried through the trusted, fixed-purpose root helper.
+fn gitrun_settings_for_dashboard(config: &Config) -> Result<GitRunSettings, String> {
+    let path = gitrun_settings_path(config);
+    match GitRunSettings::load_or_default(&path) {
+        Ok(settings) => Ok(settings),
+        Err(gitrun_core::settings::SettingsError::Io(error))
+            if error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            #[cfg(target_os = "linux")]
+            if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file()
+            {
+                let raw = run_privileged_cli_helper("--read-gitrun-settings-root", &[])?;
+                return serde_json::from_str(raw.trim()).map_err(|error| {
+                    format!("decode authorized GitRun security settings: {error}")
+                });
+            }
+            Err(format!(
+                "cannot read GitRun security settings {}: {error}",
+                path.display()
+            ))
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 #[tauri::command]
 fn get_gitrun_settings() -> Result<GitRunSettings, String> {
     let config = load_config()?;
-    GitRunSettings::load_or_default(gitrun_settings_path(&config)).map_err(|e| e.to_string())
+    gitrun_settings_for_dashboard(&config)
 }
 
 #[tauri::command]
@@ -2631,8 +2657,7 @@ fn save_gitrun_settings(
     }) {
         return Err("GitRun settings contain a repository that is not configured in GitRun".into());
     }
-    let current_settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
-        .map_err(|error| error.to_string())?;
+    let current_settings = gitrun_settings_for_dashboard(&config)?;
     let socket_opt_out = settings.repositories.iter().any(|(name, repository)| {
         repository.docker.direct_socket_enabled
             && !current_settings
@@ -2653,8 +2678,7 @@ fn save_gitrun_settings(
 #[tauri::command]
 fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> {
     let config = load_config()?;
-    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
-        .map_err(|e| e.to_string())?;
+    let settings = gitrun_settings_for_dashboard(&config)?;
     if !config
         .repositories
         .iter()
@@ -2765,8 +2789,7 @@ fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, 
     }
 
     let logic_rules = logic_rules_for_dashboard(&config)?;
-    let settings = GitRunSettings::load_or_default(gitrun_settings_path(&config))
-        .map_err(|e| e.to_string())?;
+    let settings = gitrun_settings_for_dashboard(&config)?;
     let docker_policy = settings.effective_for_repository(&repo).docker;
     let detail = RepoDetail {
         vault_groups: config.vault_groups_for_repo(&repo),
@@ -3323,8 +3346,7 @@ fn save_dashboard_settings(
         return Err("GitRun settings contain a repository that is not configured in GitRun".into());
     }
     let settings_path = gitrun_settings_path(&updated);
-    let current_settings = GitRunSettings::load_or_default(gitrun_settings_path(&current_config))
-        .map_err(|error| error.to_string())?;
+    let current_settings = gitrun_settings_for_dashboard(&current_config)?;
     match std::fs::symlink_metadata(&settings_path) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err("GitRun settings path must be a regular, non-symlink file".into());

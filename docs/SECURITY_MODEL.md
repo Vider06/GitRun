@@ -15,17 +15,24 @@ values, workflow contents, command strings, or per-job payloads. The historical
 model and decision audit are size-bounded and written via an owner-checked
 private directory and atomic replacement.
 
-The only automated action implemented in this version is an opt-in increase of
-the minimum runner floor. It requires the master switch, the separate predictive
-warm-pool switch, shadow mode disabled, fresh data, sufficient history, forecast
-quality above the operator threshold, and room under the configured global
-maximum. The increase is also capped by an explicit additional-runner bound.
-Existing resource-pressure backpressure suppresses predictive growth. Kitty
-cannot lower the configured minimum, change security policy, authorize an API,
-execute commands, call Docker, read Vault secrets, force-cancel workflows, or
-terminate processes. Adaptive resource management and Smart Fast Stop triggers
-remain reserved and inactive until they have reliable workload-level evidence
-and their own verified safety contracts.
+The Kitty model itself has no execution authority. Its predictive warm-pool
+recommendation can only increase the effective runner floor, and only when the
+master switch, separate warm-pool switch, fresh/sufficient history, forecast
+quality threshold, global maximum and explicit additional-runner cap all permit
+it. Shadow mode is the default, and resource-pressure backpressure suppresses
+predictive growth. Kitty cannot lower the configured minimum, change security
+policy, authorize an API, execute commands, call Docker, read Vault secrets or
+cancel a workflow.
+
+Two separate scheduler integrations are also available as explicit opt-ins:
+Adaptive Resource Management estimates CPU/RAM limits for newly created local
+Docker runners, while Smart Fast Stop can request cancellation of an entire
+GitHub workflow run under its own Automation-mode, repository-allowlist,
+threshold and fresh GSR-authorization checks. Both are disabled by default and
+require real-host validation before production use. An accepted cancellation
+request is not proof that every runner process has exited. VM-backed workloads
+are deferred by adaptive resource management until per-VM capacity probing is
+available. See [the Kitty guide](SMART_SCHEDULER.md).
 
 
 ## Docker socket access is host-level privilege

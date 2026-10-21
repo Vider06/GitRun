@@ -171,7 +171,7 @@ The API is an authorization boundary, not a replacement for host isolation. A Li
 
 The CI result linked from PR [#83](https://github.com/Vider06/GitRun/pull/83) is historical evidence for the 1.5.0 source-head checks only. It does not certify later recovery/version-alignment commits or prove an end-to-end adversarial test of every API operation.
 
-PR [#103](https://github.com/Vider06/GitRun/pull/103) changed recovery diagnostics and repair of the host runtime/systemd installation; it does not change the closed Git*Run API operation set described above. Follow the [1.5.1 release notes](v1.5.1-release-notes.md) and check the exact workflow results for the commit being deployed. The complete authorized disconnect API path and real host/hypervisor lifecycle tests remain environment-specific verification obligations.
+PR [#103](https://github.com/Vider06/GitRun/pull/103) changed recovery diagnostics and repair of the host runtime/systemd installation; it does not change the closed Git*Run API operation set described above. Follow the [release history](RELEASE_HISTORY.md) and check the exact workflow results for the commit being deployed. The complete authorized disconnect API path and real host/hypervisor lifecycle tests remain environment-specific verification obligations.
 
 ### GitDispatchRun
 

@@ -64,7 +64,7 @@ Requests are checked against the current runner/container identity, authoritativ
 <summary><strong>Protect secrets, containers and privileged operations</strong></summary>
 
 - **GitVault:** AES-256-GCM encryption at rest, with global, group and repository scopes.
-- **GitSecureRun (GSR):** command/resource policy, workflow validation, security events and a separate watchdog process.
+- **GitSecureRun (GSR):** command/resource policy, workflow validation, security events and a separate watchdog process. An optional, consent-gated `zizmor` integration can add static analysis for GitHub Actions workflows.
 - **Protected execution:** a local Unix API socket, authoritative workflow checks, authenticated GSR-to-executor messages, HMAC-SHA256, random nonces, timestamps and replay protection.
 - **Container hardening:** read-only Linux root filesystem by default, constrained capabilities, no-new-privileges, resource limits and a dedicated runner network.
 - **Safer filesystem access:** approved path prefixes, symlink/hard-link checks and bounded file operations.

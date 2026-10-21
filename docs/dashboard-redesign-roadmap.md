@@ -1,6 +1,6 @@
 # Dashboard redesign roadmap
 
-Status: the dashboard baseline originated in GitRun 1.5.0 through [PR #83](https://github.com/Vider06/GitRun/pull/83) on 2026-10-19 and remains the dashboard baseline for the proposed 1.5.1 source line. This roadmap records dashboard behavior and remaining environment-specific checks; legacy host recovery and release-version changes are summarized in [the 1.5.1 release notes](v1.5.1-release-notes.md).
+Status: the dashboard baseline originated in GitRun 1.5.0 through [PR #83](https://github.com/Vider06/GitRun/pull/83) on 2026-10-19 and has since received runtime recovery and versioned fixes through the 1.6.2 source line. This roadmap records the dashboard's intended behavior and remaining environment-specific checks; protected-state recovery history is summarized in the [1.5.1 notes](v1.5.1-release-notes.md), with the latest dashboard settings fix in [the 1.6.2 notes](v1.6.2-fixes.md).
 
 ## Goals
 
@@ -101,9 +101,9 @@ Refresh windows are defaults, not a reason to poll on every component render. Vi
 - The scheduler reloads GTUU schedule settings each tick, so changes to automatic-update enablement, time or timezone do not require a service restart.
 - The Tauri backend exposes service start/stop/restart commands, a bounded read-only host health report, coordinated config/settings persistence with rollback, and cached runner/workflow/repository/resource snapshots.
 
-PR #83 is merged. Dashboard feature notes below originated against the 1.5.0 source baseline. The proposed 1.5.1 change set updates dashboard product/package metadata and documents the separately merged protected-state/runtime repair; it does not convert the older PR #83 CI result into verification of the new version-alignment branch. Desktop-only authorization and install transitions still require checks on a supported desktop.
+PR #83 is merged and remains historical baseline evidence. The dashboard has since received additional fixes, including protected-state recovery and the 1.6.2 shared settings loader. The PR #83 checks do not certify later source versions. Desktop-only authorization and install transitions still require checks on a supported desktop.
 
 
 ## Verification status
 
-The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. Those results apply to that historical 1.5.0 commit only; verify the exact CI results for the 1.5.1 version-alignment branch before calling it green. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions still need supported-desktop validation. See the [1.5.1 release notes](v1.5.1-release-notes.md) and [historical status report](v1.5.0-refactor-status.md).
+The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afbe14ef3144b8e27770e2058943eff8614bc7c) passed GitRun CI, CodeQL, DevSkim, Rustfmt and Cargo Lock Maintenance before merge. Those results apply to that historical 1.5.0 commit only; verify the exact CI results for the source commit being deployed. PR [#109](https://github.com/Vider06/GitRun/pull/109) reports 22 applicable gates passing for its recorded head, but this does not replace live desktop authorization or installation testing. The actual desktop `pkexec` prompt and install/uninstall/reinstall privilege transitions still need supported-desktop validation. See the [1.6.2 fixes](v1.6.2-fixes.md), [1.5.1 recovery notes](v1.5.1-release-notes.md), and [historical status report](v1.5.0-refactor-status.md).

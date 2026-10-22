@@ -29,7 +29,9 @@ pub enum QueueModelError {
 impl std::fmt::Display for QueueModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
-            Self::InvalidRate => "rates must be finite and non-negative, with positive service rate",
+            Self::InvalidRate => {
+                "rates must be finite and non-negative, with positive service rate"
+            }
             Self::InvalidRunnerCount => "runner count must be between 1 and 10000",
             Self::UnstableQueue => "arrival rate must be strictly below total service capacity",
             Self::TooManyJobs => "simulation input exceeds the 100000-job safety bound",
@@ -58,7 +60,11 @@ pub fn erlang_c(
         return Err(QueueModelError::InvalidRate);
     }
     if arrival_rate_per_second == 0.0 {
-        return Ok(QueueEstimate { probability_of_wait: 0.0, mean_wait_seconds: 0.0, utilization: 0.0 });
+        return Ok(QueueEstimate {
+            probability_of_wait: 0.0,
+            mean_wait_seconds: 0.0,
+            utilization: 0.0,
+        });
     }
     let c = runners as usize;
     let offered_load = arrival_rate_per_second / service_rate_per_runner_per_second;
@@ -78,12 +84,17 @@ pub fn erlang_c(
     let tail = tail_term / (1.0 - utilization);
     denominator += tail;
     let probability_of_wait = (tail / denominator).clamp(0.0, 1.0);
-    let spare_capacity = runners as f64 * service_rate_per_runner_per_second - arrival_rate_per_second;
+    let spare_capacity =
+        runners as f64 * service_rate_per_runner_per_second - arrival_rate_per_second;
     let mean_wait_seconds = probability_of_wait / spare_capacity;
     if !mean_wait_seconds.is_finite() {
         return Err(QueueModelError::UnstableQueue);
     }
-    Ok(QueueEstimate { probability_of_wait, mean_wait_seconds, utilization })
+    Ok(QueueEstimate {
+        probability_of_wait,
+        mean_wait_seconds,
+        utilization,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -116,7 +127,14 @@ pub fn replay_fcfs(jobs: &[QueueJob], runners: u32) -> Result<ReplayMetrics, Que
         return Err(QueueModelError::InvalidJobDuration);
     }
     if jobs.is_empty() {
-        return Ok(ReplayMetrics { jobs: 0, mean_wait_seconds: 0.0, p95_wait_seconds: 0, max_wait_seconds: 0, runner_busy_seconds: 0, makespan_seconds: 0 });
+        return Ok(ReplayMetrics {
+            jobs: 0,
+            mean_wait_seconds: 0.0,
+            p95_wait_seconds: 0,
+            max_wait_seconds: 0,
+            runner_busy_seconds: 0,
+            makespan_seconds: 0,
+        });
     }
 
     let mut ordered = jobs.to_vec();
@@ -167,29 +185,57 @@ pub fn plan_runner_floor(
     service_rate_per_runner_per_second: f64,
     target_wait_seconds: f64,
 ) -> Result<QueueAwarePlan, QueueModelError> {
-    if current_floor == 0 || max_runners == 0 || current_floor > MAX_RUNNERS || max_runners > MAX_RUNNERS {
+    if current_floor == 0
+        || max_runners == 0
+        || current_floor > MAX_RUNNERS
+        || max_runners > MAX_RUNNERS
+    {
         return Err(QueueModelError::InvalidRunnerCount);
     }
     if !target_wait_seconds.is_finite() || target_wait_seconds < 0.0 {
         return Err(QueueModelError::InvalidRate);
     }
     if current_floor >= max_runners {
-        let estimate = erlang_c(arrival_rate_per_second, service_rate_per_runner_per_second, current_floor).ok();
-        return Ok(QueueAwarePlan { runner_floor: current_floor.min(max_runners), estimated_wait_seconds: estimate.map(|v| v.mean_wait_seconds), reason: "runner floor is already at the configured maximum" });
+        let estimate = erlang_c(
+            arrival_rate_per_second,
+            service_rate_per_runner_per_second,
+            current_floor,
+        )
+        .ok();
+        return Ok(QueueAwarePlan {
+            runner_floor: current_floor.min(max_runners),
+            estimated_wait_seconds: estimate.map(|v| v.mean_wait_seconds),
+            reason: "runner floor is already at the configured maximum",
+        });
     }
-    let upper = current_floor.saturating_add(max_additional_runners).min(max_runners);
+    let upper = current_floor
+        .saturating_add(max_additional_runners)
+        .min(max_runners);
     for candidate in current_floor..=upper {
-        if let Ok(estimate) = erlang_c(arrival_rate_per_second, service_rate_per_runner_per_second, candidate) {
+        if let Ok(estimate) = erlang_c(
+            arrival_rate_per_second,
+            service_rate_per_runner_per_second,
+            candidate,
+        ) {
             if estimate.mean_wait_seconds <= target_wait_seconds {
                 return Ok(QueueAwarePlan {
                     runner_floor: candidate,
                     estimated_wait_seconds: Some(estimate.mean_wait_seconds),
-                    reason: if candidate == current_floor { "current floor meets the modeled wait objective" } else { "smallest bounded floor meeting the modeled wait objective" },
+                    reason: if candidate == current_floor {
+                        "current floor meets the modeled wait objective"
+                    } else {
+                        "smallest bounded floor meeting the modeled wait objective"
+                    },
                 });
             }
         }
     }
-    let estimate = erlang_c(arrival_rate_per_second, service_rate_per_runner_per_second, upper).ok();
+    let estimate = erlang_c(
+        arrival_rate_per_second,
+        service_rate_per_runner_per_second,
+        upper,
+    )
+    .ok();
     Ok(QueueAwarePlan {
         runner_floor: current_floor,
         estimated_wait_seconds: estimate.map(|v| v.mean_wait_seconds),
@@ -211,8 +257,14 @@ mod tests {
     #[test]
     fn rejects_unstable_or_invalid_rates() {
         assert_eq!(erlang_c(2.0, 1.0, 2), Err(QueueModelError::UnstableQueue));
-        assert_eq!(erlang_c(f64::NAN, 1.0, 2), Err(QueueModelError::InvalidRate));
-        assert_eq!(erlang_c(0.1, 1.0, 0), Err(QueueModelError::InvalidRunnerCount));
+        assert_eq!(
+            erlang_c(f64::NAN, 1.0, 2),
+            Err(QueueModelError::InvalidRate)
+        );
+        assert_eq!(
+            erlang_c(0.1, 1.0, 0),
+            Err(QueueModelError::InvalidRunnerCount)
+        );
     }
 
     #[test]
@@ -225,9 +277,18 @@ mod tests {
     #[test]
     fn replay_is_deterministic_and_reports_tail() {
         let jobs = [
-            QueueJob { arrival_seconds: 0, service_seconds: 10 },
-            QueueJob { arrival_seconds: 0, service_seconds: 10 },
-            QueueJob { arrival_seconds: 1, service_seconds: 4 },
+            QueueJob {
+                arrival_seconds: 0,
+                service_seconds: 10,
+            },
+            QueueJob {
+                arrival_seconds: 0,
+                service_seconds: 10,
+            },
+            QueueJob {
+                arrival_seconds: 1,
+                service_seconds: 4,
+            },
         ];
         let result = replay_fcfs(&jobs, 2).unwrap();
         assert_eq!(result.jobs, 3);
@@ -255,7 +316,13 @@ mod tests {
     #[test]
     fn replay_rejects_zero_duration() {
         assert_eq!(
-            replay_fcfs(&[QueueJob { arrival_seconds: 0, service_seconds: 0 }], 1),
+            replay_fcfs(
+                &[QueueJob {
+                    arrival_seconds: 0,
+                    service_seconds: 0
+                }],
+                1
+            ),
             Err(QueueModelError::InvalidJobDuration)
         );
     }

@@ -52,3 +52,10 @@ The aggregate forecast estimates next-hour demand using busy managed runners plu
 ## Tests
 
 Unit tests cover disabled-by-default behavior, configuration validation, corrupt settings fallback, bucket aggregation, repository path handling, stale/insufficient forecasts, shadow mode and bounded opt-in warm-pool recommendations. These tests passed in the PR #83 source-head CI; rerun the workspace checks after future implementation or integration changes.
+
+
+## Queue-aware evaluation (1.7.0)
+
+The `queueing` module adds a dependency-free Erlang-C M/M/c estimate, a bounded deterministic FCFS trace replay, and a small runner-floor policy evaluator. Erlang-C is only a baseline: it assumes Poisson arrivals and exponential service times, and reports unstable load explicitly rather than fabricating a finite wait. Replay uses actual service durations from an offline trace and must not leak future durations into historical decision inputs.
+
+These APIs are evaluation primitives in this release, not a replacement for the production deterministic reconciler. No new runner may be created from a model result without the existing maximum-runner, host CPU/RAM budget, resource-pressure, shadow-mode and authorization checks. Compare candidate policies against the existing behavior with replay traces before enabling any future live queue-aware control.

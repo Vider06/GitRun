@@ -413,10 +413,10 @@ jobs:
       - name: Generate release notes
         id: release-notes
         env:
-          GH_TOKEN: \${{ github.token }}
-          VERSION: \${{ steps.version.outputs.version }}
-          VERSION_NUMBER: \${{ steps.version.outputs.version_number }}
-          ROOT: \${{ steps.artifacts.outputs.root }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_NUMBER: ${{ steps.version.outputs.version_number }}
+          ROOT: ${{ steps.artifacts.outputs.root }}
         shell: bash
         run: |
           set -euo pipefail
@@ -447,12 +447,12 @@ jobs:
             echo
             echo "| File | Purpose |"
             echo "| --- | --- |"
-            echo "| [GitRun-$VERSION-linux-x86_64-deb.deb](GitRun-$VERSION-linux-x86_64-deb.deb) | Debian/Ubuntu amd64 package |"
-            echo "| [GitRun-$VERSION-$RELEASE_TARGET-server.tar.gz](GitRun-$VERSION-$RELEASE_TARGET-server.tar.gz) | Standalone Linux x86_64 server archive |"
-            echo "| [release-manifest.json](release-manifest.json) | Signed manifest with SHA-256 hashes for release artifacts |"
-            echo "| [sbom.spdx.json](sbom.spdx.json) | SPDX software bill of materials |"
-            echo "| [provenance.json](provenance.json) | Build provenance metadata |"
-            echo "| [cargo-metadata.json](cargo-metadata.json) | Cargo dependency metadata used for the build |"
+            echo "| [GitRun-$VERSION-linux-x86_64-deb.deb](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/GitRun-$VERSION-linux-x86_64-deb.deb) | Debian/Ubuntu amd64 package |"
+            echo "| [GitRun-$VERSION-$RELEASE_TARGET-server.tar.gz](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/GitRun-$VERSION-$RELEASE_TARGET-server.tar.gz) | Standalone Linux x86_64 server archive |"
+            echo "| [release-manifest.json](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/release-manifest.json) | Signed manifest with SHA-256 hashes for release artifacts |"
+            echo "| [sbom.spdx.json](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/sbom.spdx.json) | SPDX software bill of materials |"
+            echo "| [provenance.json](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/provenance.json) | Build provenance metadata |"
+            echo "| [cargo-metadata.json](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/cargo-metadata.json) | Cargo dependency metadata used for the build |"
             echo
             echo "## Integrity and supply-chain information"
             echo
@@ -481,12 +481,12 @@ jobs:
 
       - name: Publish GitHub release
         env:
-          GH_TOKEN: \${{ github.token }}
-          VERSION: \${{ steps.version.outputs.version }}
-          ROOT: \${{ steps.artifacts.outputs.root }}
-          DEB: \${{ steps.artifacts.outputs.deb }}
-          SERVER_ARCHIVE: \${{ steps.artifacts.outputs.server_archive }}
-          NOTES_FILE: \${{ steps.release-notes.outputs.notes_file }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ROOT: ${{ steps.artifacts.outputs.root }}
+          DEB: ${{ steps.artifacts.outputs.deb }}
+          SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+          NOTES_FILE: ${{ steps.release-notes.outputs.notes_file }}
         shell: bash
         run: |
           set -euo pipefail
@@ -502,9 +502,9 @@ jobs:
           if gh release view "$VERSION" >/dev/null 2>&1; then
             # Re-runs repair/update the same release instead of leaving stale notes.
             gh release edit "$VERSION" --title "GitRun $VERSION" --notes-file "$NOTES_FILE"
-            gh release upload "$VERSION" "\${assets[@]}" --clobber
+            gh release upload "$VERSION" "${assets[@]}" --clobber
           else
-            gh release create "$VERSION" "\${assets[@]}" \
+            gh release create "$VERSION" "${assets[@]}" \
               --target "$GITHUB_SHA" \
               --title "GitRun $VERSION" \
               --notes-file "$NOTES_FILE"

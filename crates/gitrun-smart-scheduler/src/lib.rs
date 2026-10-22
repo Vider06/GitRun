@@ -5,6 +5,8 @@
 //! unavailable, or in shadow mode. This crate emits only a bounded runner-floor
 //! recommendation; it has no GitHub, Docker, shell, secret-store, or GSR authority.
 
+pub mod queueing;
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},

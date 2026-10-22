@@ -1,4 +1,4 @@
-# Security model — GitRun 1.6.2
+# Security model — GitRun 1.7.0
 
 ## Optional Kitty Smart Scheduler
 
@@ -18,7 +18,7 @@ contents, command strings, job payloads, environment values, tokens or secrets.
 Model, occurrence and decision-audit collections are capped and persisted in
 an owner-checked private directory using atomic replacement.
 
-The Kitty model itself has no execution authority. Its predictive warm-pool
+The Kitty model itself has no execution authority. The 1.7.0 queueing helpers provide advisory Erlang-C estimates and offline trace replay only; they do not authorize or execute capacity changes, and they do not bypass deterministic reconciliation or hard host-resource gates. Its predictive warm-pool
 recommendation can only increase the effective runner floor, and only when the
 master switch, separate warm-pool switch, fresh/sufficient history, forecast
 quality threshold, global maximum and explicit additional-runner cap all permit
@@ -198,3 +198,8 @@ PR [#103](https://github.com/Vider06/GitRun/pull/103) merged the legacy recovery
 - The count and disposition of open GitHub Security alerts. A successful CodeQL workflow does not report that count.
 
 See the [release history](RELEASE_HISTORY.md) for the historical audit and migration summary.
+
+
+### Future Mapping and Think
+
+Future Mapping is a private one-hour forecast map with twelve five-minute buckets. Think compares distinct history windows. These optional features are not execution authorities, do not imply host capacity is available, and cannot replace the deterministic scheduler or its resource gates. The scheduler verifies that the same map revision remains current and unexpired after GSR grants a predictive permit; a mismatch fails closed. Both features default to off. See [Kitty Smart Scheduler](SMART_SCHEDULER.md).

@@ -19,3 +19,7 @@
 ## Notes
 
 <!-- Migration, compatibility, rollout, or operational notes. -->
+
+- [ ] Predictive scheduling changes include tests for missing/stale history, bounds, shadow mode and the GSR authorization boundary.
+- [ ] Queue replays do not use future observations or durations to affect earlier decisions.
+- [ ] Product version, affected crate SemVer and Cargo.lock are aligned.

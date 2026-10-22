@@ -1,6 +1,6 @@
-# GitRun architecture — GitRun 1.6.2
+# GitRun architecture — GitRun 1.7.0
 
-> This is the high-level architecture overview for the 1.6.2 source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
+> This is the high-level architecture overview for the 1.7.0 source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 
@@ -15,7 +15,7 @@ The installed Linux service runs the Rust scheduler through the `gitrun` executa
 | `gitrun-scheduler` | GitHub polling, deterministic reconciliation, autoscaling, runner lifecycle, Docker and VM backends |
 | `gitrun-exe` | Internal authorized execution model and IPC/authentication primitives |
 | `gitrun-gsr` | Security enforcement, watchdog, workflow API authorization and API launcher |
-| `gitrun-smart-scheduler` | Optional bounded statistical workload model and forecast-quality evaluation; can recommend a guarded runner-floor increase when explicitly enabled. It has no execution authority and is disabled by default. |
+| `gitrun-smart-scheduler` | Optional bounded statistical workload model, Erlang-C queue-wait estimates, offline FCFS replay, Future Mapping and Think. New capabilities are disabled by default; the model has no execution authority. |
 | `gitrun-vault` | AES-256-GCM encrypted secret storage |
 | `gitrun-setup` | First-run preflight and installation preparation |
 | `gitrun-updater` | Release update, verification and rollback |
@@ -81,3 +81,8 @@ The Docker socket remains a host-level privilege boundary on Linux. See [SECURIT
 ## Verification and deployment boundaries
 
 The PR #83 source-head checks are historical evidence for the 1.5.0 refactor commit, not certification of every later change. PR [#103](https://github.com/Vider06/GitRun/pull/103) added protected-state reporting and guarded legacy runtime/systemd repair; see the [release history](RELEASE_HISTORY.md) and check the exact CI results for the commit being deployed. PR [#109](https://github.com/Vider06/GitRun/pull/109) adds a fixed-purpose privileged read for protected GitRun security settings when the desktop user receives a real permission-denied error; it does not weaken state-file permissions. Live desktop `pkexec` transitions, repair on the actual legacy host, real KVM/VirtualBox provisioning/recovery, the full authorized disconnect API path, and customized/pre-existing runner-image migration still require environment-specific validation.
+
+
+## Future Mapping decision boundary
+
+Future Mapping projects the next hour into twelve five-minute buckets, with an operator-bounded resource envelope and a monotonic map revision. Think compares distinct lookback windows and blocks predictive growth when coverage is incomplete or demand estimates disagree. These features are advisory: the scheduler re-checks the exact current revision before accepting GSR authorization, and deterministic reconciliation, runner maxima, host budgets and resource-pressure backpressure still control the actual operation.

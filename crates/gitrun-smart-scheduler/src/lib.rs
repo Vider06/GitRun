@@ -5,6 +5,9 @@
 //! unavailable, or in shadow mode. This crate emits only a bounded runner-floor
 //! recommendation; it has no GitHub, Docker, shell, secret-store, or GSR authority.
 
+pub mod future_mapping;
+pub mod queueing;
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -79,6 +82,12 @@ pub struct KittySettings {
     /// measurements and workload-class priors. Requires telemetry and applies
     /// only to new containers; operator ceilings and host reserves remain hard.
     pub adaptive_resource_management_enabled: bool,
+    /// Persist a bounded private one-hour map; capacity changes still require GSR.
+    pub future_mapping_enabled: bool,
+    /// Compare independent history windows and hold growth when their estimates conflict.
+    pub think_enabled: bool,
+    /// Number of distinct Think history windows to compare (2–5).
+    pub think_iterations: u8,
     /// Opt-in exact per-occurrence routing for workflows using GitRun's dispatch planner.
     /// Requires Kitty + aggregate telemetry; shadow mode always chooses GitHub fallback.
     pub kitty_dispatch_enabled: bool,
@@ -119,6 +128,9 @@ impl Default for KittySettings {
             workflow_model_visible: true,
             predictive_warm_pool_enabled: false,
             adaptive_resource_management_enabled: false,
+            future_mapping_enabled: false,
+            think_enabled: false,
+            think_iterations: 3,
             kitty_dispatch_enabled: false,
             smart_fast_stop_enabled: false,
             automation_mode: false,
@@ -159,6 +171,27 @@ impl KittySettings {
             return Err(KittyError::Invalid(
                 "Adaptive Resource Management requires Kitty and aggregate telemetry to be enabled"
                     .into(),
+            ));
+        }
+        if self.future_mapping_enabled
+            && (!self.enabled
+                || !self.telemetry_enabled
+                || !self.predictive_analytics_enabled
+                || !self.predictive_warm_pool_enabled
+                || !self.adaptive_resource_management_enabled)
+        {
+            return Err(KittyError::Invalid(
+                "Future Mapping requires Kitty, aggregate telemetry, predictive analytics, Predictive Warm Pool and Adaptive Resource Management".into(),
+            ));
+        }
+        if self.think_enabled && !self.future_mapping_enabled {
+            return Err(KittyError::Invalid(
+                "Think requires Future Mapping to be enabled".into(),
+            ));
+        }
+        if !(2..=5).contains(&self.think_iterations) {
+            return Err(KittyError::Invalid(
+                "think_iterations must be between 2 and 5".into(),
             ));
         }
         if self.kitty_dispatch_enabled
@@ -645,6 +678,10 @@ pub struct DecisionAudit {
     pub sample_count: usize,
     pub planned_action_count: Option<usize>,
     pub execution_outcome: Option<String>,
+    #[serde(default)]
+    pub future_map_revision: Option<u64>,
+    #[serde(default)]
+    pub think_stable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -696,6 +733,9 @@ pub struct WorkflowModel {
     pub lifetime_summary: Option<PeriodSummary>,
     pub predictions: Vec<PredictionRecord>,
     pub latest_forecast: Option<Forecast>,
+    /// Optional private map; absent from older persisted models.
+    #[serde(default)]
+    pub future_mapping: Option<future_mapping::FutureMapping>,
     pub decision_audit: Vec<DecisionAudit>,
 }
 
@@ -979,6 +1019,7 @@ impl WorkflowModel {
             lifetime_summary: None,
             predictions: Vec::new(),
             latest_forecast: None,
+            future_mapping: None,
             decision_audit: Vec::new(),
         }
     }
@@ -1014,6 +1055,9 @@ impl WorkflowModel {
             return Err(KittyError::Invalid(
                 "stored model exceeds its bounded history limits".into(),
             ));
+        }
+        if let Some(mapping) = &self.future_mapping {
+            mapping.validate_for(repository, self.generated_at_epoch)?;
         }
         let mut workload_ids = HashSet::new();
         for pattern in &self.workload_patterns {
@@ -1232,6 +1276,8 @@ impl WorkflowModel {
                 // can legitimately exceed a later reduced retention setting.
                 // The hard on-disk cap still rejects implausible/corrupt counts.
                 || audit.sample_count > MAX_HISTORY_BUCKETS
+                || audit.future_map_revision == Some(0)
+                || (audit.think_stable.is_some() && audit.future_map_revision.is_none())
                 || audit
                     .source_window_start
                     .zip(audit.source_window_end)
@@ -1264,6 +1310,10 @@ pub struct KittyDecision {
     pub shadow_mode: bool,
     pub decision_bucket: Option<u64>,
     #[serde(default)]
+    pub future_map_revision: Option<u64>,
+    #[serde(default)]
+    pub think_stable: Option<bool>,
+    #[serde(default)]
     pub workload_prewarms: Vec<WorkloadPrewarm>,
 }
 
@@ -1285,6 +1335,8 @@ impl KittyDecision {
             sample_count: 0,
             shadow_mode: true,
             decision_bucket: None,
+            future_map_revision: None,
+            think_stable: None,
             workload_prewarms: Vec::new(),
         }
     }
@@ -1309,6 +1361,9 @@ pub struct ObservationInput {
     pub host_cpu_percent: Option<f64>,
     pub host_memory_percent: Option<f64>,
     pub host_disk_percent: Option<f64>,
+    /// Per-runner ceilings from validated operator configuration.
+    pub operator_cpu_limit_cores: f64,
+    pub operator_memory_limit_bytes: u64,
 }
 
 pub struct KittyRuntime {
@@ -1993,15 +2048,71 @@ impl KittyRuntime {
             f.seasonal_predicted_peak_concurrency
                 .unwrap_or(f.predicted_peak_concurrency)
         });
+        let think_report = if self.settings.think_enabled {
+            Some(future_mapping::calculate_think_report(
+                &model.history,
+                bucket,
+                self.settings.think_iterations,
+            )?)
+        } else {
+            None
+        };
+        let think_stable = think_report.as_ref().map(|report| report.stable);
+        let mapped_demand = if self.settings.future_mapping_enabled {
+            let forecast_ready = forecast.is_some_and(|f| {
+                sample_count >= self.settings.minimum_samples
+                    && forecast_actionable_quality(f) >= self.settings.minimum_quality_score
+            });
+            let think_ready = !self.settings.think_enabled
+                || think_report.as_ref().is_some_and(|report| report.stable);
+            let previous_mapping = model.future_mapping.clone();
+            let mapping = future_mapping::FutureMapping::build(
+                &input.repository,
+                input.observed_at_epoch,
+                &model.history,
+                &model.resource_observations,
+                forecast_demand,
+                max_runners,
+                input.operator_cpu_limit_cores,
+                input.operator_memory_limit_bytes,
+                forecast_ready
+                    && !self.settings.shadow_mode
+                    && capacity_growth_allowed
+                    && think_ready,
+                think_report.clone(),
+                previous_mapping.as_ref(),
+            )?;
+            let peak = mapping.forecast_peak_concurrency;
+            model.future_mapping = Some(mapping);
+            self.dirty_models.insert(key.clone());
+            Some(peak)
+        } else {
+            if model.future_mapping.take().is_some() {
+                self.dirty_models.insert(key.clone());
+            }
+            forecast_demand
+        };
+        let future_map_revision = model
+            .future_mapping
+            .as_ref()
+            .map(|mapping| mapping.revision);
         let proposed_min = forecast
             .filter(|f| {
                 self.settings.predictive_warm_pool_enabled
                     && forecast_actionable_quality(f) >= self.settings.minimum_quality_score
+                    && (!self.settings.think_enabled
+                        || think_report.as_ref().is_some_and(|report| report.stable))
             })
             .map(|f| {
-                let desired = f
-                    .seasonal_predicted_peak_concurrency
-                    .unwrap_or(f.predicted_peak_concurrency);
+                let desired = if self.settings.future_mapping_enabled {
+                    mapped_demand.unwrap_or_else(|| {
+                        f.seasonal_predicted_peak_concurrency
+                            .unwrap_or(f.predicted_peak_concurrency)
+                    })
+                } else {
+                    f.seasonal_predicted_peak_concurrency
+                        .unwrap_or(f.predicted_peak_concurrency)
+                };
                 let additional = desired
                     .saturating_sub(configured_min_runners)
                     .min(self.settings.max_additional_warm_runners);
@@ -2032,7 +2143,10 @@ impl KittyRuntime {
             && forecast.is_some_and(|f| {
                 forecast_actionable_quality(f) >= self.settings.minimum_quality_score
                     && sample_count >= self.settings.minimum_samples
-            }) {
+            })
+            && (!self.settings.think_enabled
+                || think_report.as_ref().is_some_and(|report| report.stable))
+        {
             forecast_workload_prewarms(model, bucket, &self.settings, input.poll_interval_seconds)
         } else {
             Vec::new()
@@ -2087,6 +2201,14 @@ impl KittyRuntime {
         } else {
             ""
         };
+        let future_mapping_note = model.future_mapping.as_ref().map(|mapping| format!(
+            " Future Mapping revision {} is {} and projects twelve five-minute buckets; plans are advisory and GSR must authorize the exact current revision.",
+            mapping.revision, if mapping.actionable { "actionable" } else { "observational only" }
+        )).unwrap_or_default();
+        let think_note = think_report
+            .as_ref()
+            .map(|report| format!(" {}", report.reason))
+            .unwrap_or_default();
 
         let (status, effective_min, reason) = if !self.settings.predictive_analytics_enabled {
             (
@@ -2206,15 +2328,17 @@ impl KittyRuntime {
         let mut decision = KittyDecision {
             repository: input.repository.clone(),
             status,
-            reason: format!("{reason}{capability_note}"),
+            reason: format!("{reason}{capability_note}{future_mapping_note}{think_note}"),
             configured_min_runners,
             proposed_min_runners: proposed_min,
             effective_min_runners: effective_min,
-            predicted_peak_concurrency: forecast_demand,
+            predicted_peak_concurrency: mapped_demand.or(forecast_demand),
             confidence_score: forecast.map(forecast_actionable_quality),
             sample_count,
             shadow_mode: self.settings.shadow_mode,
             decision_bucket: Some(bucket),
+            future_map_revision,
+            think_stable,
             workload_prewarms,
         };
         if decision.effective_min_runners > max_runners {
@@ -2242,6 +2366,8 @@ impl KittyRuntime {
             sample_count,
             planned_action_count: None,
             execution_outcome: None,
+            future_map_revision: decision.future_map_revision,
+            think_stable: decision.think_stable,
         };
         let should_add_audit = model
             .decision_audit
@@ -2332,6 +2458,33 @@ impl KittyRuntime {
             })?;
 
         if authorized {
+            if self.settings.future_mapping_enabled {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let current = model.future_mapping.as_ref().filter(|mapping| {
+                    Some(mapping.revision) == decision.future_map_revision
+                        && mapping.repository == decision.repository
+                        && mapping.is_actionable_at(now)
+                });
+                if current.is_none() {
+                    return Err(KittyError::Invalid(
+                        "Future Mapping revision is missing, stale, changed or not GSR-actionable"
+                            .into(),
+                    ));
+                }
+                if self.settings.think_enabled
+                    && !current
+                        .and_then(|map| map.think_report.as_ref())
+                        .is_some_and(|report| report.stable)
+                {
+                    return Err(KittyError::Invalid(
+                        "Think did not establish agreement across its distinct history windows"
+                            .into(),
+                    ));
+                }
+            }
             let raised_floor = matches!(
                 decision.status,
                 DecisionStatus::AppliedWarmPoolFloor | DecisionStatus::WarmPoolHold
@@ -2520,6 +2673,8 @@ impl KittyRuntime {
             sample_count: 0,
             shadow_mode: self.settings.shadow_mode,
             decision_bucket: None,
+            future_map_revision: None,
+            think_stable: None,
             workload_prewarms: Vec::new(),
         }
     }
@@ -2627,6 +2782,7 @@ impl KittyRuntime {
                 latest_observation_epoch: model.history.last().map(|entry| entry.bucket_epoch),
                 latest_forecast: model.latest_forecast.clone(),
                 latest_decision: model.decision_audit.last().cloned(),
+                latest_future_mapping: model.future_mapping.clone(),
                 workload_patterns: workload_pattern_status(model),
                 recent_job_occurrences: model
                     .recent_job_occurrences
@@ -2713,6 +2869,9 @@ pub struct KittyRepositoryStatus {
     pub latest_observation_epoch: Option<u64>,
     pub latest_forecast: Option<Forecast>,
     pub latest_decision: Option<DecisionAudit>,
+    /// Privacy-minimized map; raw telemetry remains in the private model.
+    #[serde(default)]
+    pub latest_future_mapping: Option<future_mapping::FutureMapping>,
     /// Bounded recurring-workload profiles only; detailed observation samples
     /// and raw prediction history stay private in the model file.
     #[serde(default)]
@@ -4729,6 +4888,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn future_mapping_and_think_require_the_full_prerequisite_stack() {
+        let mut settings = enabled_settings();
+        settings.future_mapping_enabled = true;
+        assert!(settings.validate().is_err());
+        settings.predictive_warm_pool_enabled = true;
+        settings.adaptive_resource_management_enabled = true;
+        assert!(settings.validate().is_ok());
+        settings.think_enabled = true;
+        assert!(settings.validate().is_ok());
+        settings.think_iterations = 1;
+        assert!(settings.validate().is_err());
+        settings.think_iterations = 3;
+        settings.future_mapping_enabled = false;
+        assert!(settings.validate().is_err());
+    }
+
     fn input(bucket: u64, queue: u32, busy: u32) -> ObservationInput {
         ObservationInput {
             repository: "owner/repo".into(),
@@ -4744,6 +4920,8 @@ mod tests {
             host_cpu_percent: Some(12.0),
             host_memory_percent: Some(30.0),
             host_disk_percent: Some(20.0),
+            operator_cpu_limit_cores: 2.0,
+            operator_memory_limit_bytes: 4 * 1024 * 1024 * 1024,
         }
     }
 
@@ -4832,6 +5010,8 @@ mod tests {
                     host_cpu_percent: Some(12.0),
                     host_memory_percent: Some(30.0),
                     host_disk_percent: Some(20.0),
+                    operator_cpu_limit_cores: 2.0,
+                    operator_memory_limit_bytes: 4 * 1024 * 1024 * 1024,
                 },
                 2,
                 4,
@@ -4904,6 +5084,8 @@ mod tests {
                         host_cpu_percent: None,
                         host_memory_percent: None,
                         host_disk_percent: None,
+                        operator_cpu_limit_cores: 2.0,
+                        operator_memory_limit_bytes: 4 * 1024 * 1024 * 1024,
                     },
                     2,
                     8,
@@ -4980,6 +5162,7 @@ mod tests {
                 latest_observation_epoch: Some(20_000),
                 latest_forecast: None,
                 latest_decision: None,
+                latest_future_mapping: None,
                 workload_patterns: Vec::new(),
                 recent_job_occurrences: Vec::new(),
             }],
@@ -5175,6 +5358,8 @@ mod tests {
             sample_count: 30,
             planned_action_count: Some(0),
             execution_outcome: Some("no_actions_required".into()),
+            future_map_revision: None,
+            think_stable: None,
         });
         let path = model_dir.join(format!("model-{key}.json"));
         fs::write(&path, serde_json::to_vec(&model).unwrap()).unwrap();
@@ -5452,6 +5637,8 @@ mod tests {
                 sample_count: 24,
                 planned_action_count: Some(1),
                 execution_outcome: Some("plan_executed".into()),
+                future_map_revision: None,
+                think_stable: None,
             });
         }
         runtime.persist_model(&key).unwrap();
@@ -5532,6 +5719,8 @@ mod tests {
             sample_count: 100,
             planned_action_count: Some(1),
             execution_outcome: Some("plan_executed".into()),
+            future_map_revision: None,
+            think_stable: None,
         });
         assert_eq!(
             retained_warm_pool_floor(&model, 10_600, 2, 5, 2, 900),

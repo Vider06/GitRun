@@ -52,3 +52,24 @@ The aggregate forecast estimates next-hour demand using busy managed runners plu
 ## Tests
 
 Unit tests cover disabled-by-default behavior, configuration validation, corrupt settings fallback, bucket aggregation, repository path handling, stale/insufficient forecasts, shadow mode and bounded opt-in warm-pool recommendations. These tests passed in the PR #83 source-head CI; rerun the workspace checks after future implementation or integration changes.
+
+
+## Queue-aware evaluation (1.7.0)
+
+The `queueing` module adds a dependency-free Erlang-C M/M/c estimate, a bounded deterministic FCFS trace replay, and a small runner-floor policy evaluator. Erlang-C is only a baseline: it assumes Poisson arrivals and exponential service times, and reports unstable load explicitly rather than fabricating a finite wait. Replay uses actual service durations from an offline trace and must not leak future durations into historical decision inputs.
+
+These APIs are evaluation primitives in this release, not a replacement for the production deterministic reconciler. No new runner may be created from a model result without the existing maximum-runner, host CPU/RAM budget, resource-pressure, shadow-mode and authorization checks. Compare candidate policies against the existing behavior with replay traces before enabling any future live queue-aware control.
+
+
+## Future Mapping and Think (1.7.0 source line)
+
+These capabilities are experimental and disabled by default. Future Mapping requires Kitty, aggregate telemetry, predictive analytics, Predictive Warm Pool and Adaptive Resource Management. It builds a private rolling map containing twelve five-minute buckets, predicted concurrency and per-runner CPU/RAM envelopes. It increments a revision on every reconciliation and records typed patches that expire after 60 seconds and can only apply to the immediately preceding revision.
+
+The map's CPU/RAM values are advisory. They are clamped to `GITRUN_CONTAINER_CPUS` and `GITRUN_CONTAINER_MEMORY`; the scheduler's adaptive allocation path still performs host-capacity checks and can defer creation. GSR authorization must match the exact current revision and expiry. Future Mapping itself never creates containers or grants authority.
+
+Think requires Future Mapping and compares 2–5 distinct windows: 1 hour, 6 hours, 24 hours, 3.5 days and 7 days. Each window requires at least 75% of its five-minute sample slots. The default compares 1-hour, 6-hour and 24-hour windows. Missing coverage or disagreement beyond a bounded tolerance blocks new predictive floor growth and workload prewarms; the configured deterministic minimum and normal resource-pressure controls remain in force.
+
+Settings:
+- `future_mapping_enabled`: `false` by default; requires Kitty, telemetry, predictive analytics, Predictive Warm Pool and Adaptive Resource Management.
+- `think_enabled`: `false` by default; requires Future Mapping.
+- `think_iterations`: integer from 2 to 5; defaults to 3.

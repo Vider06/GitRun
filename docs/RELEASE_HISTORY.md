@@ -1,5 +1,13 @@
 # Release history and historical verification
 
+## GitRun 1.7.0 — Kitty queue-aware evaluation primitives
+
+- **Working branch:** `feat/kitty-queue-aware-control-v1.7.0` (pull request checks must verify the final commit).
+- Added dependency-free Erlang-C M/M/c queue-wait estimation, deterministic bounded FCFS replay metrics and a capped runner-floor evaluation helper in `gitrun-smart-scheduler::queueing`.
+- The new helpers are evaluation primitives, not a live MPC controller. Production scaling remains behind the existing deterministic reconciliation and resource/policy gates. Erlang-C assumptions and future-data leakage are explicitly documented.
+- This source history entry does not imply a published signed 1.7.0 artifact; use GitHub Releases for installable artifacts.
+
+
 This page keeps the major historical milestones in one place. It is **not** a release download page and does not imply that every source version listed here was published as a signed binary. Use [GitHub Releases](https://github.com/Vider06/GitRun/releases) for published artifacts and inspect CI for the exact commit you intend to deploy.
 
 ## GitRun 1.5.0 — core refactor baseline
@@ -29,3 +37,14 @@ See [v1.6.2 fixes](v1.6.2-fixes.md) for the shared settings loader and narrowly 
 ## Verification rule
 
 A green workflow is evidence only for the jobs and commit it actually checked. It does not prove that no open security alerts remain, that privileged desktop authorization works on every supported machine, that VM provisioning/recovery was tested on a real hypervisor, or that a customized runner image migrates safely. Validate those flows in the target environment before production rollout.
+
+
+## 1.7.0 source-line additions — Future Mapping and Think
+
+- Added optional Future Mapping: a private, revisioned one-hour map with twelve five-minute demand buckets and CPU/RAM envelopes bounded by operator settings.
+- Added optional Think: comparison of independent lookback windows that holds predictive growth when sample coverage is incomplete or estimates disagree.
+- Added revision-bound, 60-second typed patches; GSR must authorize the exact current map revision before predictive capacity changes. The deterministic scheduler and shared host budget remain authoritative.
+- Improved the Erlang-C implementation to use a stable Erlang-B recurrence for large runner pools, with a regression test at the configured model bound.
+- Bumped the smart-scheduler crate to 0.4.0 and the scheduler/dashboard crates to 0.11.0. `version.txt` remains 1.7.0 for the product source line.
+
+These capabilities are experimental and disabled by default. This history does not assert real-world forecast calibration or that all environment-specific release gates have passed.

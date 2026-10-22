@@ -9,7 +9,7 @@ Start with the [main README](../README.md) for a readable overview of GitRun's f
 - [IPC and socket architecture](IPC.md) — local socket transport and authenticated executor protocol.
 - [VM-backed runners](VM.md) — KVM/libvirt, VirtualBox, Logic Containers, TLS and lifecycle limits.
 - [Security model](SECURITY_MODEL.md) — enforcement details, deployment assumptions and residual risks.
-- [Kitty, Adaptive Resources and Fast Stop](SMART_SCHEDULER.md) — forecasting, bounded history, optional capacity automation and cancellation semantics.
+- [Kitty, Adaptive Resources and Fast Stop](SMART_SCHEDULER.md) — forecasts, bounded history, queue-aware evaluation, Future Mapping, Think, optional capacity automation and cancellation semantics.
 
 ## Version history
 

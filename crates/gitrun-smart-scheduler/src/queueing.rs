@@ -314,6 +314,22 @@ mod tests {
     }
 
     #[test]
+    fn burst_replay_quantifies_tail_wait_reduction_from_extra_capacity() {
+        let jobs: Vec<_> = (0..6)
+            .map(|_| QueueJob {
+                arrival_seconds: 0,
+                service_seconds: 10,
+            })
+            .collect();
+        let one_runner = replay_fcfs(&jobs, 1).unwrap();
+        let two_runners = replay_fcfs(&jobs, 2).unwrap();
+        assert_eq!(one_runner.p95_wait_seconds, 50);
+        assert_eq!(two_runners.p95_wait_seconds, 20);
+        assert!(two_runners.mean_wait_seconds < one_runner.mean_wait_seconds);
+        assert_eq!(one_runner.runner_busy_seconds, two_runners.runner_busy_seconds);
+    }
+
+    #[test]
     fn replay_rejects_zero_duration() {
         assert_eq!(
             replay_fcfs(

@@ -1,6 +1,6 @@
-# GitRun architecture — GitRun 1.6.2
+# GitRun architecture — GitRun 1.7.0
 
-> This is the high-level architecture overview for the 1.6.2 source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
+> This is the high-level architecture overview for the 1.7.0 source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 
@@ -15,7 +15,7 @@ The installed Linux service runs the Rust scheduler through the `gitrun` executa
 | `gitrun-scheduler` | GitHub polling, deterministic reconciliation, autoscaling, runner lifecycle, Docker and VM backends |
 | `gitrun-exe` | Internal authorized execution model and IPC/authentication primitives |
 | `gitrun-gsr` | Security enforcement, watchdog, workflow API authorization and API launcher |
-| `gitrun-smart-scheduler` | Optional bounded statistical workload model and forecast-quality evaluation; can recommend a guarded runner-floor increase when explicitly enabled. It has no execution authority and is disabled by default. |
+| `gitrun-smart-scheduler` | Optional bounded statistical workload model and forecast-quality evaluation; queue-aware Erlang-C estimates and deterministic offline replay were added in 1.7.0. Production runner-floor changes remain separately gated; the module has no execution authority and Kitty is disabled by default. |
 | `gitrun-vault` | AES-256-GCM encrypted secret storage |
 | `gitrun-setup` | First-run preflight and installation preparation |
 | `gitrun-updater` | Release update, verification and rollback |

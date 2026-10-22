@@ -305,7 +305,6 @@ jobs:
         env:
           GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
           GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
-          ROOT: ${{ steps.artifacts.outputs.root }}
         shell: bash
         run: |
           set -euo pipefail
@@ -415,7 +414,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
-          VERSION_NUMBER: ${{ steps.version.outputs.version_number }}
           ROOT: ${{ steps.artifacts.outputs.root }}
         shell: bash
         run: |

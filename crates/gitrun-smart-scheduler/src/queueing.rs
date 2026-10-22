@@ -326,7 +326,10 @@ mod tests {
         assert_eq!(one_runner.p95_wait_seconds, 50);
         assert_eq!(two_runners.p95_wait_seconds, 20);
         assert!(two_runners.mean_wait_seconds < one_runner.mean_wait_seconds);
-        assert_eq!(one_runner.runner_busy_seconds, two_runners.runner_busy_seconds);
+        assert_eq!(
+            one_runner.runner_busy_seconds,
+            two_runners.runner_busy_seconds
+        );
     }
 
     #[test]

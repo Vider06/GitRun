@@ -32,3 +32,8 @@ Runtime configuration should use environment variables or secret-management syst
 ## Documentation structure
 
 Architecture and operator behavior are documented under `docs/`. Major source/configuration directories should have a local `README.md` describing their responsibility. Keep existing directory READMEs aligned when adding, removing or repurposing a directory, and add one when a new directory introduces a distinct component or operational responsibility. Changes to public behavior must update the relevant top-level documentation and detailed architecture/API/security documentation.
+
+
+## Predictive scheduling changes
+
+Kitty forecasting, queueing, Future Mapping and Think changes must include bounded deterministic tests for stale/missing data, configured maxima and resource-pressure fallback. Offline queue replay must not leak future job durations into an earlier decision. Preserve shadow-mode behavior and the exact-revision GSR authorization path, and update the top-level README, scheduler guide, security model and affected crate README when configuration or behavior changes.

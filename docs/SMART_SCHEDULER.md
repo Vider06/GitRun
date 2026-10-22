@@ -3,7 +3,7 @@
 Updated: 2026-10-21  
 Working source line: GitRun 1.7.0 (feature branch; check GitHub Releases for published artifacts; Fast Stop and Kitty originated in 1.5.0)
 
-Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and continue in the 1.6.2 working source line. The CLI Fast Stop command is operator-triggered; Smart Fast Stop is a separate optional automatic workflow-run cancellation path with its own policy gates. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The legacy-recovery milestone is summarized in the [consolidated release history](RELEASE_HISTORY.md).
+Fast Stop and Kitty were introduced in the 1.5.0 source through [PR #83](https://github.com/Vider06/GitRun/pull/83) and continue in the 1.7.0 working source line. The CLI Fast Stop command is operator-triggered; Smart Fast Stop is a separate optional automatic workflow-run cancellation path with its own policy gates. Kitty is an optional statistical model that remains disabled by default and subordinate to deterministic reconciliation. The legacy-recovery milestone is summarized in the [consolidated release history](RELEASE_HISTORY.md).
 
 ## Fast Stop
 
@@ -75,3 +75,14 @@ The `gitrun-smart-scheduler::queueing` module provides three deliberately small 
 - **Bounded runner-floor evaluator:** finds the smallest candidate floor meeting a configured modeled-wait target within the explicit growth cap. If the target cannot be met, it retains the deterministic floor. The result is advisory and does not authorize creation of runners.
 
 This release does not silently switch production scaling to MPC or to Erlang-C. Queue estimates are sensitive to their assumptions; bursty arrivals, variable job durations, runner startup delays and host contention must be evaluated with replay/simulation. All live capacity changes remain subject to the deterministic scheduler, hard runner maxima, CPU/RAM budgets, resource-pressure backpressure, explicit opt-in and shadow-mode gates. The module has no external dependencies and is bounded to 100,000 replay jobs and 10,000 modeled runners.
+
+
+## Future Mapping and Think (1.7.0)
+
+Future Mapping builds a private rolling one-hour projection containing twelve five-minute demand buckets. Each bucket carries predicted concurrency and a per-runner CPU/RAM envelope. When enough distinct workload resource observations exist, the envelope uses a bounded P80 estimate plus headroom; otherwise it uses the configured per-runner ceilings. Neither case replaces the adaptive allocator's shared host budget or proves that resources are currently available.
+
+Every map has a monotonic revision and a one-hour lifetime. A typed patch captures changed fields and has a 60-second expiry; it is accepted only against the immediately preceding revision, with validated bucket indices, timestamps, runner bounds and CPU/RAM ceilings. GSR authorization is accepted for capacity growth only if the exact current revision is still present and actionable at authorization time. A changed, stale or expired map fails closed to the deterministic floor.
+
+Think is an optional guard that compares 2–5 genuinely distinct history windows: 1 hour, 6 hours, 24 hours, 3.5 days and 7 days. Each window requires at least 75% sample coverage. The default uses the first three windows. Incomplete coverage or disagreement beyond a bounded tolerance withholds new predictive floor growth and workload prewarms. Think does not lower the configured minimum, override shadow mode or bypass GSR, resource-pressure controls or operator capacity limits.
+
+Both settings default to disabled and require explicit opt-in. Future Mapping requires Kitty, aggregate telemetry, predictive analytics, Predictive Warm Pool and Adaptive Resource Management. Think requires Future Mapping. Start with shadow-mode observations and review the exact source commit's CI and host-specific behavior; the forecasts are not calibrated service-level guarantees.

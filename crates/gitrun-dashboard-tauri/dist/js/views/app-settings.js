@@ -16,7 +16,8 @@ export async function renderAppSettings() {
   const kittySettings = kittyData?.settings || {
     schema_version:1, enabled:false, telemetry_enabled:true, predictive_analytics_enabled:true,
     workflow_model_visible:true, predictive_warm_pool_enabled:false,
-    adaptive_resource_management_enabled:false, kitty_dispatch_enabled:false, smart_fast_stop_enabled:false, automation_mode:false,
+    adaptive_resource_management_enabled:false, future_mapping_enabled:false, think_enabled:false, think_iterations:3,
+    kitty_dispatch_enabled:false, smart_fast_stop_enabled:false, automation_mode:false,
     automation_allowed_repositories:[], fast_stop_max_runtime_seconds:0, shadow_mode:true,
     minimum_samples:576, history_buckets:2016, max_additional_warm_runners:2,
     warm_pool_min_hold_seconds:900, warm_pool_lead_seconds:300, minimum_quality_score:0.85
@@ -56,6 +57,25 @@ export async function renderAppSettings() {
       : "Not enough evaluated forecasts";
     const decisionText = decision ? String(decision.status).replaceAll("_", " ") : "No decision recorded";
     const explanation = decision ? String(decision.reason || "") : "No decision recorded yet.";
+    const futureMap = entry.latest_future_mapping;
+    const futureMapBlock = futureMap
+      ? '<div class="field-hint mt-8"><strong>Future Mapping · revision ' + esc(String(futureMap.revision)) +
+        ' · ' + (futureMap.actionable ? 'ready for GSR review' : 'observational only') + '</strong><small>' +
+        esc(String(futureMap.status_reason || '')) + ' · generated ' + esc(formatEpoch(futureMap.generated_at_epoch)) +
+        ' · expires ' + esc(formatEpoch(futureMap.expires_at_epoch)) + '</small>' +
+        (futureMap.think_report ? '<small>Think: ' + (futureMap.think_report.stable ? 'windows agree' : 'growth held') +
+          ' · ' + esc(String(futureMap.think_report.reason || '')) + '</small>' : '') +
+        (futureMap.last_patch ? '<small>Latest patch: r' + esc(String(futureMap.last_patch.base_revision)) +
+          ' → r' + esc(String(futureMap.last_patch.revision)) + ' · ' +
+          esc(String(futureMap.last_patch.source)) + ' · expires ' +
+          esc(formatEpoch(futureMap.last_patch.expires_at_epoch)) + '</small>' : '') +
+        (futureMap.buckets || []).slice(0,12).map((bucket,index) =>
+          '<small>+' + String(index*5) + '–' + String((index+1)*5) + ' min · ' +
+          esc(String(bucket.predicted_concurrency)) + ' runners · ' +
+          esc(Number(bucket.cpu_cores_per_runner).toFixed(2)) + ' CPU cores/runner · ' +
+          esc((Number(bucket.memory_bytes_per_runner)/(1024**3)).toFixed(2)) + ' GiB/runner</small>'
+        ).join('') + '</div>'
+      : '';
     const decisionAt = decision ? formatEpoch(decision.bucket_epoch) : "Not recorded";
     const plannedActions = Number.isInteger(decision?.planned_action_count)
       ? String(decision.planned_action_count)
@@ -123,6 +143,7 @@ export async function renderAppSettings() {
       '<small>Last decision: ' + esc(decisionAt) + ' · planned actions: ' + esc(plannedActions) +
       ' · outcome: ' + esc(outcome) + '</small><small>' +
       esc(decisionText) + ': ' + esc(explanation) + '</small>' +
+      futureMapBlock +
       (workloadRows ? '<div class="mt-10"><strong>Recurring job profiles</strong>' + workloadRows + '</div>' : '') +
       (recentJobs ? '<div class="mt-10"><strong>Recent GitRun occurrence IDs</strong>' + recentJobs + '</div>' : '') +
       '</div>' +
@@ -144,6 +165,9 @@ export async function renderAppSettings() {
     '<label class="checkbox-row"><input id="kitty-fast-stop-enabled" type="checkbox" ' + (kittySettings.smart_fast_stop_enabled ? "checked" : "") + '><span><strong>Smart Fast Stop</strong>Cancel an overlong workflow run only after its configured deadline, allowlist check and GSR audit. Cancellation affects the entire run, not a single job.</span></label>' +
     '<div class="field mt-10"><label for="kitty-fast-stop-runtime">Fast Stop deadline (seconds)</label><input id="kitty-fast-stop-runtime" type="number" min="300" max="604800" step="300" value="' + esc(String(kittySettings.fast_stop_max_runtime_seconds || 14400)) + '"><small class="field-hint">Default proposal: 14400 seconds (4 hours). The deadline is inactive unless Smart Fast Stop is enabled; runs with unknown start time are never cancelled.</small></div>' +
     '<label class="checkbox-row"><input id="kitty-adaptive-resources" type="checkbox" ' + (kittySettings.adaptive_resource_management_enabled ? "checked" : "") + '><span><strong>Adaptive Resource Management</strong>Learn per-job CPU/RAM demand from active managed containers and assign workload-specific Docker limits. Kitty never exceeds GITRUN_CONTAINER_CPUS or GITRUN_CONTAINER_MEMORY, and defers creation when safe host capacity cannot be measured.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-future-mapping" type="checkbox" ' + (kittySettings.future_mapping_enabled ? "checked" : "") + '><span><strong>Future Mapping (experimental)</strong>Private rolling one-hour map with twelve five-minute buckets, predicted demand and bounded CPU/RAM envelopes. Revisions are checked again at GSR authorization time; host-budget checks remain authoritative.</span></label>' +
+    '<label class="checkbox-row"><input id="kitty-think" type="checkbox" ' + (kittySettings.think_enabled ? "checked" : "") + '><span><strong>Think (experimental)</strong>Compare 1-hour, 6-hour, 24-hour and optional longer history windows. Missing coverage or conflicting estimates holds new predictive growth.</span></label>' +
+    '<div class="field mt-10"><label for="kitty-think-iterations">Think history windows (2–5)</label><input id="kitty-think-iterations" type="number" min="2" max="5" step="1" value="' + esc(String(kittySettings.think_iterations ?? 3)) + '"><small class="field-hint">Default 3 compares the 1-hour, 6-hour and 24-hour windows. Longer windows need sufficient retained samples.</small></div>' +
     '<label class="checkbox-row"><input id="kitty-dispatch-enabled" type="checkbox" ' + (kittySettings.kitty_dispatch_enabled ? "checked" : "") + '><span><strong>Kitty Dispatch (experimental)</strong>Opt in to unique per-occurrence routes for the supported GitRun Premade planner workflows. It never rewrites a job already queued by GitHub; the planner must run first. When routing prerequisites are not satisfied, the planner records the reason and emits GitHub fallback labels.</span></label>' +
     '<div class="two-col mt-12">' +
       '<div class="field"><label for="kitty-min-samples">Minimum five-minute samples</label><input id="kitty-min-samples" type="number" min="24" max="2016" value="' + esc(String(kittySettings.minimum_samples)) + '"><small class="field-hint">Default 576 samples (48 hours); forecast quality needs later outcomes too.</small></div>' +
@@ -211,6 +235,7 @@ export async function renderAppSettings() {
       '<div class="notice"><div><strong>Shadow mode</strong><p>Does not disable data collection. It prevents Kitty from acting: dispatch uses GitHub fallback while Shadow mode is ON. Turn it OFF only after reviewing observations and forecasts.</p></div></div>' +
       '<div class="notice"><div><strong>Predictive analytics</strong><p>Used for forecasts and forecast evaluation. Not required for a one-off dispatch decision when a workload profile is already known; required for the predictive warm-pool workflow.</p></div></div>' +
       '<div class="notice"><div><strong>Predictive Warm Pool</strong><p>Optional. Requires Kitty, telemetry, predictive analytics, Shadow mode OFF and a GSR-authorized capacity change. It can create compatible capacity before a predicted workload slot; configured minimum/maximum and extra-runner caps remain authoritative.</p></div></div>' +
+      '<div class="notice"><div><strong>Future Mapping and Think</strong><p>Future Mapping exposes twelve five-minute demand/resource buckets for the next hour. Think compares independent history windows and blocks predictive growth when coverage is incomplete or forecasts disagree. CPU/RAM envelopes are estimates, not allocations; adaptive host-budget checks and exact-revision GSR authorization remain mandatory. Both are experimental and disabled by default.</p></div></div>' +
       '<div class="notice"><div><strong>Automation mode, repository allowlist and Smart Fast Stop</strong><p>Separate from dispatch. Automation mode requires Kitty and a non-empty repository allowlist. Smart Fast Stop additionally requires Automation mode and a runtime threshold; cancellation is workflow-run-wide and GSR authorization/audit remain mandatory.</p></div></div>' +
       '<div class="notice"><div><strong>Model/history thresholds and resource ceilings</strong><p>Minimum samples, retained history, forecast readiness, warm-pool hold/lead and max extra warm runners tune learning/prewarming; they do not grant permissions. GITRUN_CONTAINER_CPUS / GITRUN_CONTAINER_MEMORY cap per-container requests. GitHub decides runner assignment from runs-on/groups; GitRun gives each dispatched occurrence a unique label on an ephemeral, no-default-label runner and verifies the resulting job/runner identity.</p></div></div>' +
       '<p><strong>Important availability limit:</strong> a planner must execute on the dedicated gitrun-control runner to query the local Unix-socket API. If Kitty is unavailable but that control runner is online, the workflow can choose GitHub fallback. If the control runner itself is offline, no planner can run to make that decision; GitHub will leave the planner queued.</p>' +
@@ -235,6 +260,9 @@ export async function renderAppSettings() {
       shadow_mode: document.getElementById("kitty-shadow-mode").checked,
       predictive_warm_pool_enabled: document.getElementById("kitty-warm-pool-enabled").checked,
       adaptive_resource_management_enabled: document.getElementById("kitty-adaptive-resources").checked,
+      future_mapping_enabled: document.getElementById("kitty-future-mapping").checked,
+      think_enabled: document.getElementById("kitty-think").checked,
+      think_iterations: Number(document.getElementById("kitty-think-iterations").value),
       kitty_dispatch_enabled: document.getElementById("kitty-dispatch-enabled").checked,
       automation_mode: document.getElementById("kitty-automation-mode").checked,
       automation_allowed_repositories: [...new Set(document.getElementById("kitty-automation-repositories").value
@@ -253,6 +281,11 @@ export async function renderAppSettings() {
         !Number.isInteger(updated.max_additional_warm_runners) || updated.minimum_samples < 24 ||
         updated.history_buckets < updated.minimum_samples || updated.history_buckets > 2016 ||
         updated.max_additional_warm_runners < 0 || updated.max_additional_warm_runners > 100 ||
+        !Number.isInteger(updated.think_iterations) || updated.think_iterations < 2 || updated.think_iterations > 5 ||
+        (updated.future_mapping_enabled && (!updated.enabled || !updated.telemetry_enabled ||
+          !updated.predictive_analytics_enabled || !updated.predictive_warm_pool_enabled ||
+          !updated.adaptive_resource_management_enabled)) ||
+        (updated.think_enabled && !updated.future_mapping_enabled) ||
         !Number.isInteger(updated.warm_pool_min_hold_seconds) ||
         updated.warm_pool_min_hold_seconds < 300 || updated.warm_pool_min_hold_seconds > 3600 ||
         updated.warm_pool_min_hold_seconds % 300 !== 0 ||
@@ -291,6 +324,24 @@ export async function renderAppSettings() {
         "Premade planner workflows can ask GitRun for a one-use route. Actual routing requires Kitty, aggregate telemetry, Adaptive Resource Management, Shadow mode OFF, a known workload profile, the GitDispatchRun/Plan GSR policy, and a live dedicated runner labeled gitrun-control. Otherwise the workflow reports GitHub fallback and uses configured default runner labels. Unique route labels prevent unrelated jobs from claiming a reserved runner; the controller does not pin a job through a GitHub API. Continue only after setting up the control runner and API permission.",
         "Enable Kitty Dispatch",
         true
+      );
+      if (!confirmed) return;
+    }
+    const futureMappingRiskChanged = updated.future_mapping_enabled && !kittySettings.future_mapping_enabled;
+    if (futureMappingRiskChanged) {
+      const confirmed = await confirmModal(
+        "Enable Future Mapping?",
+        "Kitty will persist a private, versioned one-hour demand/resource map. CPU/RAM plans remain capped by operator settings, while host-budget checks decide actual allocations. GSR must authorize the exact current revision. This requires predictive analytics, Predictive Warm Pool and Adaptive Resource Management.",
+        "Enable Future Mapping", true
+      );
+      if (!confirmed) return;
+    }
+    const thinkRiskChanged = updated.think_enabled && !kittySettings.think_enabled;
+    if (thinkRiskChanged) {
+      const confirmed = await confirmModal(
+        "Enable Think?",
+        "Think compares independent history windows. When data coverage is incomplete or their estimates conflict, Kitty withholds new predictive growth. Prewarming may be reduced while enough history is collected; GSR and operator limits still apply.",
+        "Enable Think", true
       );
       if (!confirmed) return;
     }

@@ -86,7 +86,9 @@ Requests are checked against the current runner/container identity, authoritativ
 - Optionally recommend a predictive warm pool, only after separate opt-in, fresh history, acceptable forecast quality and explicit exit from shadow mode.
 - Optionally estimate CPU/RAM needs for new local Docker runners from observed workload samples, while respecting operator ceilings and reserving host headroom.
 - Optionally trigger Smart Fast Stop under explicit policy and authorization.
-- Evaluate Erlang-C queue-wait estimates and deterministic FCFS replay traces through the new queueing research module; these are measurement tools, not an automatic production policy.
+- Evaluate Erlang-C queue-wait estimates and deterministic FCFS replay through the bounded queueing module; these are evaluation tools, not an automatic live scaling policy.
+- Optionally enable **Future Mapping**, a private rolling one-hour projection with twelve five-minute demand/resource buckets and typed, short-lived revision patches.
+- Optionally enable **Think**, which compares independent history windows and withholds predictive growth when coverage is incomplete or the estimates disagree. Both capabilities are experimental, disabled by default and remain subordinate to the deterministic scheduler, operator limits and exact-revision GSR authorization.
 
 Kitty is disabled by default; resource adaptation and automatic cancellation are opt-in. Forecast scores are heuristics, not calibrated probabilities. Adaptive resource management does not resize existing containers, and VM-backed workloads are deferred while per-VM capacity probing is unavailable. Fast Stop requests cancellation of an entire GitHub workflow run; an accepted request does not prove every process has exited.
 

@@ -198,3 +198,8 @@ PR [#103](https://github.com/Vider06/GitRun/pull/103) merged the legacy recovery
 - The count and disposition of open GitHub Security alerts. A successful CodeQL workflow does not report that count.
 
 See the [release history](RELEASE_HISTORY.md) for the historical audit and migration summary.
+
+
+### Future Mapping and Think
+
+Future Mapping is a private one-hour forecast map with twelve five-minute buckets. Think compares distinct history windows. These optional features are not execution authorities, do not imply host capacity is available, and cannot replace the deterministic scheduler or its resource gates. The scheduler verifies that the same map revision remains current and unexpired after GSR grants a predictive permit; a mismatch fails closed. Both features default to off. See [Kitty Smart Scheduler](SMART_SCHEDULER.md).

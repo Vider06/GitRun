@@ -73,17 +73,14 @@ pub fn erlang_c(
         return Err(QueueModelError::UnstableQueue);
     }
 
-    // Iterative Erlang-C sum avoids factorial overflow.
-    let mut term = 1.0;
-    let mut denominator = 1.0;
-    for n in 1..c {
-        term *= offered_load / n as f64;
-        denominator += term;
+    // Evaluate Erlang-B with its stable recurrence, then convert to Erlang-C.
+    let mut blocking = 1.0_f64;
+    for n in 1..=c {
+        let weighted = offered_load * blocking;
+        blocking = weighted / (n as f64 + weighted);
     }
-    let tail_term = term * offered_load / c as f64;
-    let tail = tail_term / (1.0 - utilization);
-    denominator += tail;
-    let probability_of_wait = (tail / denominator).clamp(0.0, 1.0);
+    let probability_of_wait =
+        (blocking / (1.0 - utilization + utilization * blocking)).clamp(0.0, 1.0);
     let spare_capacity =
         runners as f64 * service_rate_per_runner_per_second - arrival_rate_per_second;
     let mean_wait_seconds = probability_of_wait / spare_capacity;
@@ -272,6 +269,15 @@ mod tests {
         let one = erlang_c(0.08, 0.1, 1).unwrap();
         let two = erlang_c(0.08, 0.1, 2).unwrap();
         assert!(two.mean_wait_seconds < one.mean_wait_seconds);
+    }
+
+    #[test]
+    fn large_runner_pool_wait_estimate_stays_finite() {
+        let estimate = erlang_c(9_995.0, 1.0, 10_000).unwrap();
+        assert!(estimate.probability_of_wait.is_finite());
+        assert!((0.0..=1.0).contains(&estimate.probability_of_wait));
+        assert!(estimate.mean_wait_seconds.is_finite());
+        assert!(estimate.mean_wait_seconds >= 0.0);
     }
 
     #[test]

@@ -1204,6 +1204,8 @@ fn reconcile_repo(
             host_cpu_percent: host_resources.map(|snapshot| f64::from(snapshot.cpu_percent)),
             host_memory_percent: host_resources.map(|snapshot| f64::from(snapshot.memory_percent)),
             host_disk_percent: host_resources.map(|snapshot| f64::from(snapshot.disk_percent)),
+            operator_cpu_limit_cores: config.container_cpus.parse::<f64>().unwrap_or(0.0),
+            operator_memory_limit_bytes: docker::parse_docker_bytes(&config.container_memory).unwrap_or(0),
         },
         config.min_runners,
         config.max_runners,

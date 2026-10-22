@@ -10,7 +10,7 @@ GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It
 
 It is designed for developers and teams who want to use their own runner infrastructure without turning every workflow into an unrestricted host administrator. **No Kubernetes cluster is required.**
 
-> **Source version:** this branch targets `1.6.2`. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+> **Source version:** this branch targets `1.7.0`. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## What can GitRun do?
 
@@ -86,6 +86,7 @@ Requests are checked against the current runner/container identity, authoritativ
 - Optionally recommend a predictive warm pool, only after separate opt-in, fresh history, acceptable forecast quality and explicit exit from shadow mode.
 - Optionally estimate CPU/RAM needs for new local Docker runners from observed workload samples, while respecting operator ceilings and reserving host headroom.
 - Optionally trigger Smart Fast Stop under explicit policy and authorization.
+- Evaluate Erlang-C queue-wait estimates and deterministic FCFS replay traces through the new queueing research module; these are measurement tools, not an automatic production policy.
 
 Kitty is disabled by default; resource adaptation and automatic cancellation are opt-in. Forecast scores are heuristics, not calibrated probabilities. Adaptive resource management does not resize existing containers, and VM-backed workloads are deferred while per-VM capacity probing is unavailable. Fast Stop requests cancellation of an entire GitHub workflow run; an accepted request does not prove every process has exited.
 

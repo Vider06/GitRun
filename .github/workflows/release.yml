@@ -410,13 +410,83 @@ jobs:
           command -v jq >/dev/null 2>&1
           jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["cargo-metadata", "linux-x86_64-deb", "provenance", "sbom-spdx", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 5) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
           echo "Release manifest: PASS"
+      - name: Generate release notes
+        id: release-notes
+        env:
+          GH_TOKEN: \${{ github.token }}
+          VERSION: \${{ steps.version.outputs.version }}
+          VERSION_NUMBER: \${{ steps.version.outputs.version_number }}
+          ROOT: \${{ steps.artifacts.outputs.root }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/gitrun-release-notes.md"
+          generated="$RUNNER_TEMP/gitrun-generated-notes.md"
+
+          # Ask GitHub to build the compare/PR changelog for this exact tag.
+          # Keep release publication working even when GitHub has no generated
+          # notes (for example, for an initial release or a tag with no PRs).
+          if gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$VERSION" \
+            -f target_commitish="$GITHUB_SHA" \
+            --jq '.body' > "$generated"; then
+            :
+          else
+            echo "GitHub-generated changelog unavailable; publishing the release with the artifact summary only."
+            : > "$generated"
+          fi
+
+          {
+            echo "# GitRun $VERSION"
+            echo
+            echo "GitRun is a Rust-native manager for self-hosted GitHub Actions runners."
+            echo
+            echo "This release was built from commit [\`$GITHUB_SHA\`](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA)."
+            echo
+            echo "## Downloads"
+            echo
+            echo "| File | Purpose |"
+            echo "| --- | --- |"
+            echo "| [GitRun-$VERSION-linux-x86_64-deb.deb](GitRun-$VERSION-linux-x86_64-deb.deb) | Debian/Ubuntu amd64 package |"
+            echo "| [GitRun-$VERSION-$RELEASE_TARGET-server.tar.gz](GitRun-$VERSION-$RELEASE_TARGET-server.tar.gz) | Standalone Linux x86_64 server archive |"
+            echo "| [release-manifest.json](release-manifest.json) | Signed manifest with SHA-256 hashes for release artifacts |"
+            echo "| [sbom.spdx.json](sbom.spdx.json) | SPDX software bill of materials |"
+            echo "| [provenance.json](provenance.json) | Build provenance metadata |"
+            echo "| [cargo-metadata.json](cargo-metadata.json) | Cargo dependency metadata used for the build |"
+            echo
+            echo "## Integrity and supply-chain information"
+            echo
+            echo "- The release manifest is signed with Ed25519 and verified by the release workflow."
+            echo "- The manifest records SHA-256 hashes for the distributable artifacts and metadata."
+            echo "- The SBOM, provenance record, and Cargo metadata are published alongside the binaries for inspection."
+            echo
+            echo "Verify downloaded files against the SHA-256 values in \`release-manifest.json\` before installing or distributing them. The manifest signature can be checked with the public key configured for GitRun's updater."
+            echo
+            echo "## Changes"
+            echo
+            if [ -s "$generated" ] && [ -n "$(tr -d '[:space:]' < "$generated")" ]; then
+              cat "$generated"
+            else
+              echo "GitHub did not return an automatic changelog for this tag. Review the [compare view](https://github.com/$GITHUB_REPOSITORY/compare/$(git describe --tags --abbrev=0 "$GITHUB_SHA"^ 2>/dev/null || echo main)...$VERSION) and the linked pull requests for changes."
+            fi
+            echo
+            echo "---"
+            echo
+            echo "For installation and configuration instructions, see the [README](https://github.com/$GITHUB_REPOSITORY/blob/$VERSION/README.md) and the example configuration included with the server archive."
+          } > "$notes"
+
+          test -s "$notes"
+          echo "Release notes prepared: $(wc -l < "$notes") lines"
+          echo "notes_file=$notes" >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-          ROOT: ${{ steps.artifacts.outputs.root }}
-          DEB: ${{ steps.artifacts.outputs.deb }}
-          SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+          GH_TOKEN: \${{ github.token }}
+          VERSION: \${{ steps.version.outputs.version }}
+          ROOT: \${{ steps.artifacts.outputs.root }}
+          DEB: \${{ steps.artifacts.outputs.deb }}
+          SERVER_ARCHIVE: \${{ steps.artifacts.outputs.server_archive }}
+          NOTES_FILE: \${{ steps.release-notes.outputs.notes_file }}
         shell: bash
         run: |
           set -euo pipefail
@@ -428,11 +498,14 @@ jobs:
             "$ROOT/sbom.spdx.json"
             "$ROOT/release-manifest.json"
           )
+
           if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release upload "$VERSION" "${assets[@]}" --clobber
+            # Re-runs repair/update the same release instead of leaving stale notes.
+            gh release edit "$VERSION" --title "GitRun $VERSION" --notes-file "$NOTES_FILE"
+            gh release upload "$VERSION" "\${assets[@]}" --clobber
           else
-            gh release create "$VERSION" "${assets[@]}" \
+            gh release create "$VERSION" "\${assets[@]}" \
               --target "$GITHUB_SHA" \
               --title "GitRun $VERSION" \
-              --generate-notes
+              --notes-file "$NOTES_FILE"
           fi

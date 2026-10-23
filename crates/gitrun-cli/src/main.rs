@@ -1145,6 +1145,9 @@ fn terminal_setup_command(
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         presenter.transition(presenter::ValidationState::Working);
         let executable = std::env::current_exe()?;
+        // The elevated helper owns the terminal while it performs installation.
+        // Stop the inline renderer first and explicitly disable the child mascot.
+        presenter.prepare_for_external_process();
         println!();
         println!("Installing GitRun with elevated privileges...");
         let uid = std::process::Command::new("/usr/bin/id")
@@ -1154,12 +1157,14 @@ fn terminal_setup_command(
             uid.status.success() && String::from_utf8_lossy(&uid.stdout).trim() == "0";
         let status = if running_as_root {
             std::process::Command::new(&executable)
+                .arg("--no-cat")
                 .arg("--install-root")
                 .arg(&path)
                 .status()?
         } else {
             std::process::Command::new("/usr/bin/sudo")
                 .arg(&executable)
+                .arg("--no-cat")
                 .arg("--install-root")
                 .arg(&path)
                 .status()?
@@ -1265,19 +1270,30 @@ fn rollback_command(
     Ok(())
 }
 
-fn validate_version_flag_order() {
+fn validate_version_flag_order(presenter: &mut presenter::CatPresenter) -> bool {
     let mut version_seen = false;
 
     for argument in std::env::args().skip(1) {
         match argument.as_str() {
             "--version" | "-V" | "-v" => version_seen = true,
             "--gitrun" if !version_seen => {
+                presenter.transition(presenter::ValidationState::Failure);
                 eprintln!("error: --gitrun must follow -V, -v, or --version");
-                std::process::exit(2);
+                return false;
             }
             _ => {}
         }
     }
+
+    true
+}
+
+fn no_cat_override_requested(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> bool {
+    arguments
+        .into_iter()
+        .any(|argument| argument == std::ffi::OsStr::new("--no-cat"))
 }
 
 #[cfg(unix)]
@@ -1333,9 +1349,30 @@ fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("gsr-watchdog")) {
         std::process::exit(run_gsr_watchdog());
     }
-    validate_version_flag_order();
-    let cli = Cli::parse();
-    let mut presenter = presenter::CatPresenter::new(cli.no_cat);
+    // Initialize the shared presenter before Clap so help and argument errors
+    // follow the same mascot policy as normal commands. Internal callers can
+    // still explicitly suppress it with --no-cat.
+    let mut presenter =
+        presenter::CatPresenter::new(no_cat_override_requested(std::env::args_os().skip(1)));
+
+    if !validate_version_flag_order(&mut presenter) {
+        std::process::exit(2);
+    }
+
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            let exit_code = error.exit_code();
+            match error.kind() {
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                    presenter.transition(presenter::ValidationState::Ready);
+                }
+                _ => presenter.transition(presenter::ValidationState::Failure),
+            }
+            let _ = error.print();
+            std::process::exit(exit_code);
+        }
+    };
 
     if cli.gitrun {
         presenter.start_live();
@@ -3778,6 +3815,17 @@ mod internal_lifecycle_command_tests {
             "--no-cat must remain available before internal commands"
         );
         cli.command.expect("internal command must be selected")
+    }
+
+    #[test]
+    fn no_cat_override_is_detected_before_clap_parsing() {
+        assert!(super::no_cat_override_requested([
+            std::ffi::OsString::from("--no-cat"),
+            std::ffi::OsString::from("doctor"),
+        ]));
+        assert!(!super::no_cat_override_requested([
+            std::ffi::OsString::from("doctor"),
+        ]));
     }
 
     #[test]

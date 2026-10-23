@@ -11,13 +11,13 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::{
     env,
     error::Error,
@@ -36,7 +36,6 @@ const ACCENT: Color = Color::Rgb(177, 245, 103);
 const CYAN: Color = Color::Rgb(125, 211, 252);
 const MUTED: Color = Color::Rgb(137, 151, 172);
 const TEXT: Color = Color::Rgb(232, 238, 247);
-const PANEL: Color = Color::Rgb(24, 30, 42);
 const BORDER: Color = Color::Rgb(53, 65, 83);
 const GOOD: Color = Color::Rgb(112, 214, 160);
 const WARN: Color = Color::Rgb(255, 194, 102);
@@ -136,7 +135,8 @@ const SETTINGS_ACTIONS: &[Action] = &[
     Action { title: "Add VM definition", hint: "Create a VM definition through the backend's validated writer." },
     Action { title: "Edit VM definition", hint: "Select a VM and edit its structured JSON definition." },
     Action { title: "Delete VM definition", hint: "Delete a VM definition after confirmation; does not delete its disk." },
-    Action { title: "Pending hypervisor decisions", hint: "View requests and choose retry KVM or use VirtualBox." },
+    Action { title: "Pending hypervisor decisions", hint: "View requests that are waiting for an operator choice." },
+    Action { title: "Resolve hypervisor decision", hint: "Choose retry KVM or use VirtualBox for one pending request." },
     Action { title: "View Logic Containers rules", hint: "Read routing rules and their order." },
     Action { title: "Edit Logic Containers rules (JSON)", hint: "Edit the full rule list; validated by the scheduler's shared loader." },
 ];
@@ -210,13 +210,8 @@ impl State {
 
     fn set_result(&mut self, title: impl Into<String>, value: Value) {
         let title = title.into();
-        let value = if title.to_ascii_lowercase().contains("config") || title.to_ascii_lowercase().contains("settings") {
-            let mut value = value;
-            redact_sensitive(&mut value);
-            value
-        } else {
-            value
-        };
+        let mut value = value;
+        redact_sensitive(&mut value);
         let formatted = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
         self.body_title = title;
         self.body = formatted.lines().map(str::to_owned).collect();
@@ -286,13 +281,7 @@ fn event_loop(terminal: &mut ManagementTerminal, state: &mut State) -> Result<()
 
 fn handle_key(terminal: &mut ManagementTerminal, state: &mut State, key: KeyEvent) -> Result<bool, String> {
     match key.code {
-        KeyCode::Char('q') if key.modifiers.is_empty() => {
-            if state.focus != Focus::Pages {
-                state.focus = Focus::Pages;
-            } else {
-                return Ok(true);
-            }
-        }
+        KeyCode::Char('q') if key.modifiers.is_empty() => return Ok(true),
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Tab => {
             state.focus = match state.focus {
@@ -326,7 +315,7 @@ fn handle_key(terminal: &mut ManagementTerminal, state: &mut State, key: KeyEven
             Focus::Pages => {
                 state.page = state.page.saturating_sub(1);
                 state.action = 0;
-                execute_action(terminal, state)?;
+                state.scroll = 0;
             }
             Focus::Actions => state.action = state.action.saturating_sub(1),
             Focus::Details => state.scroll = state.scroll.saturating_sub(1),
@@ -335,22 +324,29 @@ fn handle_key(terminal: &mut ManagementTerminal, state: &mut State, key: KeyEven
             Focus::Pages => {
                 state.page = (state.page + 1).min(PAGES.len() - 1);
                 state.action = 0;
-                execute_action(terminal, state)?;
+                state.scroll = 0;
             }
             Focus::Actions => state.action = (state.action + 1).min(state.actions().len().saturating_sub(1)),
             Focus::Details => state.scroll = state.scroll.saturating_add(1),
         },
         KeyCode::Home => match state.focus {
-            Focus::Pages => { state.page = 0; state.action = 0; execute_action(terminal, state)?; }
+            Focus::Pages => { state.page = 0; state.action = 0; state.scroll = 0; }
             Focus::Actions => state.action = 0,
             Focus::Details => state.scroll = 0,
         },
         KeyCode::End => match state.focus {
-            Focus::Pages => { state.page = PAGES.len() - 1; state.action = 0; execute_action(terminal, state)?; }
+            Focus::Pages => { state.page = PAGES.len() - 1; state.action = 0; state.scroll = 0; }
             Focus::Actions => state.action = state.actions().len().saturating_sub(1),
             Focus::Details => state.scroll = state.body.len().saturating_sub(1).min(u16::MAX as usize) as u16,
         },
-        KeyCode::Enter => execute_action(terminal, state)?,
+        KeyCode::Enter => {
+            if state.focus == Focus::Pages {
+                state.focus = Focus::Actions;
+                execute_action(terminal, state)?;
+            } else if state.focus == Focus::Actions {
+                execute_action(terminal, state)?;
+            }
+        },
         KeyCode::Esc => {
             if state.focus == Focus::Details {
                 state.focus = Focus::Actions;
@@ -363,8 +359,8 @@ fn handle_key(terminal: &mut ManagementTerminal, state: &mut State, key: KeyEven
             }
         }
         KeyCode::Char('r') if key.modifiers.is_empty() => execute_action(terminal, state)?,
-        KeyCode::Char('1'..='9') if key.modifiers.is_empty() => {
-            let page = key.code.to_string().parse::<usize>().unwrap_or(1) - 1;
+        KeyCode::Char(ch @ '1'..='9') if key.modifiers.is_empty() => {
+            let page = ch.to_digit(10).unwrap_or(1) as usize - 1;
             if page < PAGES.len() {
                 state.page = page;
                 state.action = 0;
@@ -373,7 +369,7 @@ fn handle_key(terminal: &mut ManagementTerminal, state: &mut State, key: KeyEven
             }
         }
         KeyCode::Char('0') if key.modifiers.is_empty() => {
-            state.page = 9.min(PAGES.len() - 1);
+            state.page = 10.min(PAGES.len() - 1);
             state.action = 0;
             state.focus = Focus::Actions;
             execute_action(terminal, state)?;
@@ -495,7 +491,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 Line::from("← / → or h / l    Move focus"),
                 Line::from("Enter             Run the selected operation"),
                 Line::from("r                 Refresh the selected operation"),
-                Line::from("1–9 / 0           Jump to sections"),
+                Line::from("1–9 / 0           Jump to sections / App settings"),
                 Line::from("Esc               Back to operations / Overview"),
                 Line::from("q / Ctrl+C        Exit the management console"),
                 Line::from(""),
@@ -593,8 +589,9 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (9, 4) => edit_vm(terminal).map(|v| ("VM definition".into(),v)),
         (9, 5) => delete_vm(terminal).map(|v| ("VM definition".into(),v)),
         (9, 6) => app_read("hypervisor_decisions", json!({})).map(|v| ("Pending hypervisor decisions".into(),v)),
-        (9, 7) => app_read("logic_rules", json!({})).map(|v| ("Logic Containers rules".into(),v)),
-        (9, 8) => edit_logic_rules(terminal).map(|v| ("Logic Containers rules".into(),v)),
+        (9, 7) => resolve_hypervisor_decision(terminal).map(|v| ("Hypervisor decision".into(),v)),
+        (9, 8) => app_read("logic_rules", json!({})).map(|v| ("Logic Containers rules".into(),v)),
+        (9, 9) => edit_logic_rules(terminal).map(|v| ("Logic Containers rules".into(),v)),
         (10, 1) | (10, 2) => {
             if state.action == 2 { edit_kitty(terminal) } else { app_read("kitty", json!({})) }.map(|v| ("Kitty settings".into(),v))
         }
@@ -632,7 +629,7 @@ fn inspect_repository(terminal: &mut ManagementTerminal, state: &mut State) -> R
     if repos.is_empty() {
         return Err("No repositories are configured. Use Connect repository first.".into());
     }
-    let labels = repos.iter().enumerate().map(|(i,r)|format!("{}: {}", i+1,r)).collect::<Vec<_>>();
+    let labels = repos.clone();
     let selected = prompt_number(terminal, "Select configured repository", &labels, repos.len())?;
     let repo = repos[selected].clone();
     state.selected_repo = Some(repo.clone());
@@ -761,12 +758,12 @@ fn delete_secret(terminal: &mut ManagementTerminal) -> Result<Value,String> {
     let secrets=app_read("vault_secrets",json!({}))?;
     let items=secrets.as_array().cloned().unwrap_or_default();
     if items.is_empty() { return Ok(json!({"message":"No GitVault secrets are configured."})); }
-    let labels=items.iter().enumerate().map(|(i,v)|format!("{}: {} · {}",i+1,v.get("name").and_then(Value::as_str).unwrap_or("unknown"),scope_label(v.get("scope")))).collect::<Vec<_>>();
+    let labels=items.iter().map(|v|format!("{} · {}",v.get("name").and_then(Value::as_str).unwrap_or("unknown"),scope_label(v.get("scope")))).collect::<Vec<_>>();
     let index=prompt_number(terminal,"Select secret to delete",&labels,items.len())?;
     let secret=&items[index];
     let name=secret.get("name").and_then(Value::as_str).ok_or("secret entry has no name")?;
     let scope=secret.get("scope").cloned().ok_or("secret entry has no scope")?;
-    if !confirm(terminal,&format!("Permanently delete secret metadata/value for {name} ({})? [y/N]",scope_label(Some(&scope)))?) {
+    if !confirm(terminal,&format!("Permanently delete secret metadata/value for {name} ({})? [y/N]",scope_label(Some(&scope))))? {
         return Ok(json!({"cancelled":true}));
     }
     app_write("vault_delete",json!({"name":name,"scope":scope}))
@@ -780,6 +777,27 @@ fn scope_label(scope: Option<&Value>) -> String {
         Some("Repo")=>format!("repo {}",scope.get("value").and_then(Value::as_str).unwrap_or("?")),
         _ =>scope.to_string(),
     }
+}
+
+fn resolve_hypervisor_decision(terminal: &mut ManagementTerminal) -> Result<Value,String> {
+    let decisions = app_read("hypervisor_decisions", json!({}))?;
+    let items = decisions.as_array().cloned().unwrap_or_default();
+    if items.is_empty() {
+        return Ok(json!({"message":"No pending hypervisor decisions are waiting."}));
+    }
+    let labels = items.iter().map(|item| {
+        format!("{} · {}", item.get("vm_name").and_then(Value::as_str).unwrap_or("unknown VM"),
+            item.get("error").and_then(Value::as_str).unwrap_or("no error detail"))
+    }).collect::<Vec<_>>();
+    let index = prompt_number(terminal, "Select pending VM decision", &labels, items.len())?;
+    let vm_name = items[index].get("vm_name").and_then(Value::as_str).ok_or("pending decision has no VM name")?;
+    let choice_index = prompt_number(terminal, &format!("Choose action for {vm_name}"),
+        &["Retry KVM".into(), "Use VirtualBox".into()], 2)?;
+    let choice = if choice_index == 0 { "retry_kvm" } else { "use_virtual_box" };
+    if !confirm(terminal, &format!("Record {choice} for {vm_name}? The scheduler will perform the operation. [y/N]"))? {
+        return Ok(json!({"cancelled":true}));
+    }
+    app_write("hypervisor_respond", json!({"vm_name":vm_name,"choice":choice}))
 }
 
 fn add_vm(terminal: &mut ManagementTerminal) -> Result<Value,String> {
@@ -811,7 +829,7 @@ fn edit_vm(terminal: &mut ManagementTerminal) -> Result<Value,String> {
     let vms=app_read("vm_configs",json!({}))?;
     let items=vms.as_array().cloned().unwrap_or_default();
     if items.is_empty() { return Err("No VM definitions exist yet. Use Add VM definition first.".into()); }
-    let labels=items.iter().enumerate().map(|(i,v)|format!("{}: {}",i+1,v.get("name").and_then(Value::as_str).unwrap_or("unnamed"))).collect::<Vec<_>>();
+    let labels=items.iter().map(|v|v.get("name").and_then(Value::as_str).unwrap_or("unnamed").to_owned()).collect::<Vec<_>>();
     let index=prompt_number(terminal,"Select VM to edit",&labels,items.len())?;
     let edited=edit_json_document(terminal,&redact_copy(items[index].clone()))?;
     if edited.get("name") != items[index].get("name") { return Err("VM names are identity keys; editing cannot rename a VM. Delete and recreate it instead.".into()); }
@@ -832,8 +850,15 @@ fn delete_vm(terminal: &mut ManagementTerminal) -> Result<Value,String> {
 }
 
 fn service_action(terminal: &mut ManagementTerminal, action: &str) -> Result<Value,String> {
-    if action=="stop" && !confirm(terminal,"Stop the GitRun service? Active workloads may be interrupted. [y/N]")? {
-        return Ok(json!({"cancelled":true}));
+    let prompt_text = match action {
+        "stop" => Some("Stop the GitRun service? Active workloads may be interrupted. [y/N]"),
+        "restart" => Some("Restart gitrun.service? Active workloads may be interrupted. [y/N]"),
+        _ => None,
+    };
+    if let Some(prompt_text) = prompt_text {
+        if !confirm(terminal, prompt_text)? {
+            return Ok(json!({"cancelled":true}));
+        }
     }
     service_control(action)
 }
@@ -879,9 +904,12 @@ fn prompt(terminal: &mut ManagementTerminal, label: &str) -> Result<String,Strin
 fn prompt_secret(terminal: &mut ManagementTerminal, label: &str) -> Result<String,String> {
     suspend_terminal(terminal, || {
         #[cfg(unix)]
-        let echo_disabled = ProcessCommand::new("stty").arg("-echo").status().map(|s|s.success()).unwrap_or(false);
+        {
+            let echo_disabled = ProcessCommand::new("stty").arg("-echo").status().map(|s|s.success()).unwrap_or(false);
+            if !echo_disabled { return Err("could not disable terminal echo; refusing to accept a secret visibly".into()); }
+        }
         #[cfg(not(unix))]
-        let echo_disabled = false;
+        return Err("hidden secret input is supported only on Unix terminals".into());
         print!("{label}: ");
         io::stdout().flush().map_err(|e|e.to_string())?;
         let mut value=String::new();
@@ -898,7 +926,7 @@ fn prompt_secret(terminal: &mut ManagementTerminal, label: &str) -> Result<Strin
 fn prompt_number(terminal: &mut ManagementTerminal, title: &str, choices: &[String], max: usize) -> Result<usize,String> {
     suspend_terminal(terminal, || {
         println!("\n{title}");
-        for choice in choices { println!("  {choice}"); }
+        for (index, choice) in choices.iter().enumerate() { println!("  {}. {choice}",index+1); }
         loop {
             print!("Select 1-{} (0 cancels): ",max);
             io::stdout().flush().map_err(|e|e.to_string())?;

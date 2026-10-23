@@ -1277,7 +1277,25 @@ mod linux {
             }
 
             let mut status = 0;
-            assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+            let wait_result = loop {
+                let result = unsafe { libc::waitpid(child, &mut status, 0) };
+                if result == child {
+                    break result;
+                }
+                if result == -1
+                    && std::io::Error::last_os_error().kind()
+                        == std::io::ErrorKind::Interrupted
+                {
+                    continue;
+                }
+                break result;
+            };
+            assert_eq!(
+                wait_result,
+                child,
+                "waitpid failed while collecting seccomp test child: {}",
+                std::io::Error::last_os_error()
+            );
             assert!(
                 is_exited(status),
                 "filter test subprocess did not exit normally"

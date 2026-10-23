@@ -1371,6 +1371,7 @@ fn main() {
             std::process::exit(exit_code);
         }
     };
+    debug_assert_eq!(cli.no_cat, no_cat_override);
 
     if cli.gitrun {
         presenter.start_live();

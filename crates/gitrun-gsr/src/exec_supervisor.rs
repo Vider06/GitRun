@@ -1208,6 +1208,10 @@ mod linux {
         use std::sync::atomic::AtomicU64;
         use std::time::Duration;
 
+        // These OS-level tests fork and use ptrace/waitpid. Serialize them so
+        // the freezer test cannot reap the seccomp test's unrelated child.
+        static OS_PROCESS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
         fn test_pid() -> libc::pid_t {
             123
         }
@@ -1220,6 +1224,9 @@ mod linux {
 
         #[test]
         fn seccomp_blocks_untraced_clone_and_makes_clone3_fall_back() {
+            let _process_test_guard = OS_PROCESS_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let child = unsafe { libc::fork() };
             assert!(child >= 0, "fork for seccomp filter test failed");
             if child == 0 {
@@ -1436,6 +1443,9 @@ mod linux {
         // continuously changes a word while the tracer freezes a target thread.
         #[test]
         fn freezer_stops_a_shared_address_space_mutator_until_exec_check_finishes() {
+            let _process_test_guard = OS_PROCESS_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             const TEST_STACK_SIZE: usize = 1024 * 1024;
 
             let counter = unsafe {

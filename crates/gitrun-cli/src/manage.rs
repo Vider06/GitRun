@@ -206,7 +206,8 @@ const SECURITY_ACTIONS: &[Action] = &[
     },
     Action {
         title: "Run security baseline check",
-        hint: "Apply the same nine configuration and process checks as App Settings in the dashboard.",
+        hint:
+            "Apply the same nine configuration and process checks as App Settings in the dashboard.",
     },
     Action {
         title: "Edit runtime security config",

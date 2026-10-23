@@ -205,6 +205,10 @@ const SECURITY_ACTIONS: &[Action] = &[
         hint: "Show configured controls and runtime verification separately.",
     },
     Action {
+        title: "Run security baseline check",
+        hint: "Apply the same nine configuration and process checks as App Settings in the dashboard.",
+    },
+    Action {
         title: "Edit runtime security config",
         hint: "Edit a redacted Config document and save through backend validation.",
     },
@@ -1033,9 +1037,10 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
             let summary = app_read("security_summary", json!({}))?;
             Ok(("Security posture".into(), json!({ "configuration": config, "policy": settings, "runtime": summary })))
         }
-        (4, 1) => edit_config(terminal).map(|v| ("Runtime security configuration".into(),v)),
-        (4, 2) => edit_security_policy(terminal).map(|v| ("API and security policy".into(),v)),
-        (4, 3) => run_external(terminal, &["--no-cat", "api-list"]).map(|v| ("GitRun API capabilities".into(),v)),
+        (4, 1) => security_baseline_check().map(|v| ("Security baseline".into(),v)),
+        (4, 2) => edit_config(terminal).map(|v| ("Runtime security configuration".into(),v)),
+        (4, 3) => edit_security_policy(terminal).map(|v| ("API and security policy".into(),v)),
+        (4, 4) => run_external(terminal, &["--no-cat", "api-list"]).map(|v| ("GitRun API capabilities".into(),v)),
         (5, 0) => app_read("vault_secrets", json!({})).map(|v| ("GitVault secret metadata".into(),v)),
         (5, 1) => add_secret(terminal).map(|v| ("GitVault secret".into(),v)),
         (5, 2) => delete_secret(terminal).map(|v| ("GitVault delete".into(),v)),
@@ -1109,6 +1114,117 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         ),
     }
     Ok(())
+}
+
+fn security_baseline_check() -> Result<Value, String> {
+    let config = app_read("config", json!({}))?;
+    let settings = app_read("gitrun_settings", json!({}))?;
+    let gsr = app_read("gsr_status", json!({}))?;
+    let direct_socket_repos = settings
+        .get("repositories")
+        .and_then(Value::as_object)
+        .map(|repositories| {
+            repositories
+                .iter()
+                .filter_map(|(repository, value)| {
+                    value
+                        .get("docker")
+                        .and_then(|docker| docker.get("direct_socket_enabled"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        .then(|| repository.clone())
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let network = config
+        .get("runner_network")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let cache_scope = config
+        .get("shared_cache_scope")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let hardening = config
+        .get("gsr_docker_socket_hardening")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let unsafe_runner = config
+        .get("gsr_allow_unsafe_runner")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let gsr_watching = gsr
+        .get("watching")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let checks = vec![
+        json!({
+            "label": "Runner network is dedicated",
+            "ok": !network.is_empty() && network != "bridge" && network != "host" && !network.starts_with("container:"),
+            "detail": format!("Configured network: {}", if network.is_empty() { "not set" } else { network })
+        }),
+        json!({
+            "label": "Read-only runner root filesystem",
+            "ok": config.get("runner_rootfs_read_only").and_then(Value::as_bool).unwrap_or(false),
+            "detail": "Configured root filesystem posture"
+        }),
+        json!({
+            "label": "Docker socket hardening",
+            "ok": hardening && !unsafe_runner,
+            "detail": format!("Hardening {}; unsafe gate {}", if hardening { "enabled" } else { "disabled" }, if unsafe_runner { "enabled" } else { "disabled" })
+        }),
+        json!({
+            "label": "GSR command policy and baseline blacklist",
+            "ok": config.get("gsr_command_policy_enabled").and_then(Value::as_bool).unwrap_or(false)
+                && config.get("gsr_command_baseline_blacklist_enabled").and_then(Value::as_bool).unwrap_or(false),
+            "detail": "Built-in command policy configuration"
+        }),
+        json!({
+            "label": "Workflow validation",
+            "ok": config.get("gsr_workflow_validation_enabled").and_then(Value::as_bool).unwrap_or(false),
+            "detail": "Pre-admission validation configuration"
+        }),
+        json!({
+            "label": "Resource-pressure backpressure",
+            "ok": config.get("resource_pressure_enabled").and_then(Value::as_bool).unwrap_or(false),
+            "detail": "Host pressure thresholds configured"
+        }),
+        json!({
+            "label": "Cache scope is not global",
+            "ok": cache_scope != "global",
+            "detail": format!("Configured cache scope: {}", if cache_scope.is_empty() { "not set" } else { cache_scope })
+        }),
+        json!({
+            "label": "No direct socket exceptions",
+            "ok": direct_socket_repos.is_empty(),
+            "detail": if direct_socket_repos.is_empty() {
+                "No repository-specific direct socket exceptions".to_owned()
+            } else {
+                direct_socket_repos.join(", ")
+            }
+        }),
+        json!({
+            "label": "GSR process observed",
+            "ok": gsr_watching,
+            "detail": if gsr_watching {
+                "Process-name observation succeeded; enforcement is still not verified."
+            } else {
+                "The expected GSR process name was not detected."
+            }
+        }),
+    ];
+    let passed = checks
+        .iter()
+        .filter(|check| check.get("ok").and_then(Value::as_bool) == Some(true))
+        .count();
+    Ok(json!({
+        "passed": passed,
+        "total": checks.len(),
+        "checks": checks,
+        "interpretation": "Policy configuration and one process-name observation only. This is not an end-to-end proof of runtime enforcement."
+    }))
 }
 
 fn selected_repo(state: &State) -> Option<String> {

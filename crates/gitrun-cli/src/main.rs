@@ -1288,9 +1288,7 @@ fn validate_version_flag_order(presenter: &mut presenter::CatPresenter) -> bool 
     true
 }
 
-fn no_cat_override_requested(
-    arguments: impl IntoIterator<Item = std::ffi::OsString>,
-) -> bool {
+fn no_cat_override_requested(arguments: impl IntoIterator<Item = std::ffi::OsString>) -> bool {
     arguments
         .into_iter()
         .any(|argument| argument == std::ffi::OsStr::new("--no-cat"))

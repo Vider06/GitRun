@@ -942,7 +942,9 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 Line::from(""),
                 Line::from("↑ / ↓ or j / k    Move the focused list or scroll output"),
                 Line::from("Tab / Shift+Tab   Switch between sections, operations, and details"),
-                Line::from("← / → or h / l    Move focus"),
+                Line::from(
+                    "← / → or h / l    Move focus",
+                ),
                 Line::from("Enter             Run the selected operation"),
                 Line::from("r                 Refresh the selected operation"),
                 Line::from(

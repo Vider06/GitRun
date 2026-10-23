@@ -3822,6 +3822,12 @@ mod internal_lifecycle_command_tests {
             std::ffi::OsString::from("--no-cat"),
             std::ffi::OsString::from("doctor"),
         ]));
+        // Clap global flags may appear after the subcommand too; mascot
+        // suppression must be recognized before parsing in either position.
+        assert!(super::no_cat_override_requested([
+            std::ffi::OsString::from("doctor"),
+            std::ffi::OsString::from("--no-cat"),
+        ]));
         assert!(!super::no_cat_override_requested([
             std::ffi::OsString::from("doctor"),
         ]));

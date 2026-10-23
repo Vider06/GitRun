@@ -1283,8 +1283,7 @@ mod linux {
                     break result;
                 }
                 if result == -1
-                    && std::io::Error::last_os_error().kind()
-                        == std::io::ErrorKind::Interrupted
+                    && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
                 {
                     continue;
                 }

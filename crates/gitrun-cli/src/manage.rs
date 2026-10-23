@@ -30,7 +30,7 @@ use std::{
 
 type ManagementTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
-const VERSION: &str = include_str!("../../../version.txt").trim();
+const VERSION_FILE: &str = include_str!("../../../version.txt");
 const REDACTED: &str = "__GITRUN_KEEP_EXISTING_REDACTED_VALUE__";
 const ACCENT: Color = Color::Rgb(177, 245, 103);
 const CYAN: Color = Color::Rgb(125, 211, 252);
@@ -396,7 +396,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         Span::styled("GitRun", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
         Span::styled("  /  MANAGEMENT CONSOLE", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::raw("   "),
-        Span::styled(format!("v{VERSION}"), Style::default().fg(MUTED)),
+        Span::styled(format!("v{}", VERSION_FILE.trim()), Style::default().fg(MUTED)),
         Span::raw("   "),
         Span::styled("LOCAL CONTROL PLANE", Style::default().fg(GOOD)),
     ]))
@@ -904,10 +904,9 @@ fn prompt(terminal: &mut ManagementTerminal, label: &str) -> Result<String,Strin
 fn prompt_secret(terminal: &mut ManagementTerminal, label: &str) -> Result<String,String> {
     suspend_terminal(terminal, || {
         #[cfg(unix)]
-        {
-            let echo_disabled = ProcessCommand::new("stty").arg("-echo").status().map(|s|s.success()).unwrap_or(false);
-            if !echo_disabled { return Err("could not disable terminal echo; refusing to accept a secret visibly".into()); }
-        }
+        let echo_disabled = ProcessCommand::new("stty").arg("-echo").status().map(|s|s.success()).unwrap_or(false);
+        #[cfg(unix)]
+        if !echo_disabled { return Err("could not disable terminal echo; refusing to accept a secret visibly".into()); }
         #[cfg(not(unix))]
         return Err("hidden secret input is supported only on Unix terminals".into());
         print!("{label}: ");
@@ -932,10 +931,11 @@ fn prompt_number(terminal: &mut ManagementTerminal, title: &str, choices: &[Stri
             io::stdout().flush().map_err(|e|e.to_string())?;
             let mut input=String::new();
             io::stdin().read_line(&mut input).map_err(|e|e.to_string())?;
-            let value=input.trim().parse::<usize>().map_err(|_|"enter a number from the listed choices".to_owned())?;
-            if value==0 {return Err("Selection cancelled.".into());}
-            if (1..=max).contains(&value) {return Ok(value-1);}
-            println!("Selection must be between 1 and {max}.");
+            match input.trim().parse::<usize>() {
+                Ok(0) => return Err("Selection cancelled.".into()),
+                Ok(value) if (1..=max).contains(&value) => return Ok(value-1),
+                _ => println!("Enter a number from 1 to {max}, or 0 to cancel."),
+            }
         }
     })
 }

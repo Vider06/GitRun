@@ -548,6 +548,7 @@ pub fn restart_service() -> Result<(), String> {
     let pkexec = find_trusted_pkexec().ok_or("trusted /usr/bin/pkexec executable was not found")?;
     let status = Command::new(pkexec)
         .arg(gitrun)
+        .arg("--no-cat")
         .arg("repair-service")
         .status()
         .map_err(|error| format!("unable to request privileged service repair: {error}"))?;
@@ -599,7 +600,7 @@ fn is_root() -> bool {
 pub fn launch_dashboard() -> Result<std::process::ExitStatus, String> {
     let binary = find_gitrun_binary().ok_or("GitRun executable was not found")?;
     Command::new(binary)
-        .arg("dashboard")
+        .args(["--no-cat", "dashboard"])
         .status()
         .map_err(|error| format!("unable to launch GitRun dashboard: {error}"))
 }
@@ -607,7 +608,7 @@ pub fn launch_dashboard() -> Result<std::process::ExitStatus, String> {
 pub fn launch_scheduler() -> Result<std::process::ExitStatus, String> {
     let binary = find_gitrun_binary().ok_or("GitRun CLI executable was not found")?;
     Command::new(binary)
-        .args(["scheduler"])
+        .args(["--no-cat", "scheduler"])
         .status()
         .map_err(|error| format!("unable to launch GitRun scheduler: {error}"))
 }

@@ -1066,7 +1066,10 @@ fn security_baseline_check() -> Result<Value, String> {
     let settings = app_read("gitrun_settings", json!({}))?;
     let gsr = app_read("gsr_status", json!({}))?;
 
-    let network = config.get("runner_network").and_then(Value::as_str).unwrap_or("");
+    let network = config
+        .get("runner_network")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let unsafe_runner = config
         .get("gsr_allow_unsafe_runner")
         .and_then(Value::as_bool)

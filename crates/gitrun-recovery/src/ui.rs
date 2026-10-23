@@ -18,6 +18,7 @@ fn run_gtuu() -> Result<super::RecoveryReport, String> {
             .ok_or("trusted /usr/bin/pkexec executable was not found")?;
         let output = std::process::Command::new(pkexec)
             .arg(gitrun)
+            .arg("--no-cat")
             .arg("recovery-gtuu")
             .output()
             .map_err(|error| format!("unable to request privileged GTUU: {error}"))?;

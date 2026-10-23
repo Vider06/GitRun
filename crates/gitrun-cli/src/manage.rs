@@ -611,29 +611,38 @@ fn handle_key(
                 execute_action(terminal, state)?;
             }
         }
-        KeyCode::Esc => {
-            if state.focus == Focus::Details {
+        KeyCode::Esc => match state.focus {
+            Focus::Details => {
                 state.focus = Focus::Actions;
                 state.scroll = 0;
-            } else {
+            }
+            Focus::Actions => state.focus = Focus::Pages,
+            Focus::Pages => {
                 state.page = 0;
                 state.action = 0;
                 state.focus = Focus::Actions;
                 execute_action(terminal, state)?;
             }
-        }
+        },
         KeyCode::Char('r') if key.modifiers.is_empty() => execute_action(terminal, state)?,
         KeyCode::Char(ch @ '1'..='9') if key.modifiers.is_empty() => {
-            let page = ch.to_digit(10).unwrap_or(1) as usize - 1;
-            if page < PAGES.len() {
-                state.page = page;
-                state.action = 0;
-                state.focus = Focus::Actions;
-                execute_action(terminal, state)?;
+            let index = ch.to_digit(10).unwrap_or(1) as usize - 1;
+            match state.focus {
+                Focus::Actions if index < state.actions().len() => {
+                    state.action = index;
+                    execute_action(terminal, state)?;
+                }
+                Focus::Pages if index < PAGES.len() => {
+                    state.page = index;
+                    state.action = 0;
+                    state.focus = Focus::Actions;
+                    execute_action(terminal, state)?;
+                }
+                _ => {}
             }
         }
-        KeyCode::Char('0') if key.modifiers.is_empty() => {
-            state.page = 10.min(PAGES.len() - 1);
+        KeyCode::Char('0') if key.modifiers.is_empty() && state.focus == Focus::Pages => {
+            state.page = PAGES.len() - 1;
             state.action = 0;
             state.focus = Focus::Actions;
             execute_action(terminal, state)?;

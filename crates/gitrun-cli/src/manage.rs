@@ -23,7 +23,6 @@ use std::{
     error::Error,
     fs::{self, OpenOptions},
     io::{self, IsTerminal, Read, Write},
-    path::PathBuf,
     process::Command as ProcessCommand,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -1357,7 +1356,7 @@ fn edit_kitty(terminal: &mut ManagementTerminal) -> Result<Value, String> {
 
 fn edit_logic_rules(terminal: &mut ManagementTerminal) -> Result<Value, String> {
     let rules = app_read("logic_rules", json!({}))?;
-    let mut edited = edit_json_document(terminal, &rules)?;
+    let edited = edit_json_document(terminal, &rules)?;
     if !edited.is_array() {
         return Err("Logic Containers rule document must remain a JSON array.".into());
     }
@@ -1764,7 +1763,7 @@ fn edit_json_document(terminal: &mut ManagementTerminal, value: &Value) -> Resul
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
-    let mut path = PathBuf::from(env::temp_dir());
+    let mut path = env::temp_dir();
     path.push(format!("gitrun-manage-{}-{now}.json", std::process::id()));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -1908,7 +1907,7 @@ mod tests {
     #[test]
     fn every_management_page_has_actions() {
         assert_eq!(PAGES.len(), 11);
-        for index in 0..PAGES.len() {
+        for (index, page) in PAGES.iter().enumerate() {
             let state = State {
                 page: index,
                 ..State::new()
@@ -1916,7 +1915,7 @@ mod tests {
             assert!(
                 !state.actions().is_empty(),
                 "missing actions for {}",
-                PAGES[index].name
+                page.name
             );
         }
     }

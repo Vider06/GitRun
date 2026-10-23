@@ -109,7 +109,7 @@ The native **Tauri 2 dashboard** brings together:
 - Setup diagnostics, protected-state recovery and repair actions.
 - Configuration, update and lifecycle controls.
 
-The CLI supports setup, repository connection, diagnostics, update checks, dashboard launch, rollback and terminal utilities. The scheduler continues to run when the dashboard is closed. The dashboard does not treat inaccessible protected files as proof of corruption and does not relax file permissions as a workaround.
+The CLI supports setup, repository connection, diagnostics, update checks, dashboard launch, rollback and terminal utilities. `gitrun manage` opens a keyboard-driven terminal management console for headless servers; it reuses the dashboard's validated backend operations instead of maintaining a second settings implementation. The scheduler continues to run when the dashboard is closed. The dashboard does not treat inaccessible protected files as proof of corruption and does not relax file permissions as a workaround.
 
 </details>
 
@@ -151,6 +151,7 @@ gitrun setup --terminal
 gitrun connect OWNER/REPOSITORY
 gitrun config
 gitrun doctor
+gitrun manage
 gitrun dashboard
 gitrun update --check
 gitrun fast-stop OWNER/REPOSITORY WORKFLOW_RUN_ID --yes

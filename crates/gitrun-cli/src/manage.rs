@@ -518,18 +518,21 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         ];
         state.notice = "Setup required".into();
     }
-    terminal
-        .draw(|frame| render(frame, &state))
-        .map_err(|error| Box::new(error) as Box<dyn Error>)?;
-    if !first_run {
-        execute_action(&mut terminal, &mut state)
-            .map_err(|error| Box::new(io::Error::other(error)) as Box<dyn Error>)?;
-    }
-    let result = event_loop(&mut terminal, &mut state);
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        terminal
+            .draw(|frame| render(frame, &state))
+            .map_err(|error| Box::new(error) as Box<dyn Error>)?;
+        if !first_run {
+            execute_action(&mut terminal, &mut state)
+                .map_err(|error| Box::new(io::Error::other(error)) as Box<dyn Error>)?;
+        }
+        event_loop(&mut terminal, &mut state)
+            .map_err(|error| Box::new(io::Error::other(error)) as Box<dyn Error>)
+    })();
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen, Show);
     let _ = terminal.show_cursor();
-    result.map_err(|error| Box::new(io::Error::other(error)) as Box<dyn Error>)
+    result
 }
 
 fn event_loop(terminal: &mut ManagementTerminal, state: &mut State) -> Result<(), String> {
@@ -667,12 +670,19 @@ fn handle_key(
                 _ => {}
             }
         }
-        KeyCode::Char('0') if key.modifiers.is_empty() && state.focus == Focus::Pages => {
-            state.page = PAGES.len() - 1;
-            state.action = 0;
-            state.focus = Focus::Actions;
-            execute_action(terminal, state)?;
-        }
+        KeyCode::Char('0') if key.modifiers.is_empty() => match state.focus {
+            Focus::Pages => {
+                state.page = PAGES.len() - 1;
+                state.action = 0;
+                state.focus = Focus::Actions;
+                execute_action(terminal, state)?;
+            }
+            Focus::Actions if state.actions().len() >= 10 => {
+                state.action = 9;
+                execute_action(terminal, state)?;
+            }
+            _ => {}
+        },
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(true),
         _ => {}
     }
@@ -944,7 +954,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 Line::from(
                     "1–9              Run numbered action, or jump to page when Sections has focus",
                 ),
-                Line::from("0                Jump to App Settings when Sections has focus"),
+                Line::from("0                Action 10, or App Settings when Sections has focus"),
                 Line::from("Esc               Back to operations / Overview"),
                 Line::from("q / Ctrl+C        Exit the management console"),
                 Line::from(""),

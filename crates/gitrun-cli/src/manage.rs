@@ -945,7 +945,9 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 Line::from("← / → or h / l    Move focus"),
                 Line::from("Enter             Run the selected operation"),
                 Line::from("r                 Refresh the selected operation"),
-                Line::from("1–9              Run numbered action, or jump to page when Sections has focus"),
+                Line::from(
+                    "1–9              Run numbered action, or jump to page when Sections has focus",
+                ),
                 Line::from("0                Jump to App Settings when Sections has focus"),
                 Line::from("Esc               Back to operations / Overview"),
                 Line::from("q / Ctrl+C        Exit the management console"),

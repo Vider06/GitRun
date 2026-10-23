@@ -520,7 +520,7 @@ fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
 fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Result<(), String> {
     state.error = false;
     state.notice = "Working…".into();
-    let result: Result<(String, Value), String> = match (state.page, state.action) {
+    let result: Result<(String, Value), String> = (|| match (state.page, state.action) {
         (0, 0) => {
             let overview = app_read("overview", json!({}))?;
             let health = app_read("health", json!({ "force_refresh": true }))?;
@@ -584,7 +584,7 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (8, 3) => external_with_confirmation(terminal, &["--no-cat","update"], "Apply the verified GitRun update now? [y/N]", "GitRun update"),
         (8, 4) => external_with_confirmation(terminal, &["--no-cat","update","--only-containers"], "Update eligible permanent runner containers now? [y/N]", "Permanent runner update"),
         (8, 5) => external_with_confirmation(terminal, &["--no-cat","reinstall"], "Reinstall GitRun from the official release? [y/N]", "GitRun reinstall"),
-        (8, 6) => service_action(terminal, "restart"),
+        (8, 6) => service_action(terminal, "restart").map(|v| ("GitRun service".into(), v)),
         (8, 7) => external_with_confirmation(terminal, &["--no-cat","uninstall"], "UNINSTALL GitRun and its managed components? [y/N]", "GitRun uninstall"),
         (9, 0) => app_read("config", json!({})).map(|v| ("Global configuration".into(),v)),
         (9, 1) => edit_config(terminal).map(|v| ("Global configuration".into(),v)),
@@ -612,7 +612,7 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
             Ok(("Repository security settings".into(),json!({"config":config,"settings":settings,"runtime":runtime})))
         }
         _ => Err("This operation is not implemented for the selected section.".into()),
-    };
+    })();
 
     match result {
         Ok((title, value)) => state.set_result(title, value),
@@ -672,14 +672,14 @@ fn edit_repository_policy(terminal: &mut ManagementTerminal, state: &State) -> R
     let repo = selected_repo(state);
     let mut document = json!({
         "_instructions": format!("Edit config/settings. Selected repository context: {}. Remove _instructions before saving or leave it unchanged; it will be stripped.", repo.as_deref().unwrap_or("none selected")),
-        "config": config,
-        "settings": settings
+        "config": config.clone(),
+        "settings": settings.clone()
     });
     redact_sensitive(&mut document);
     let edited = edit_json_document(terminal, &document)?;
     let mut edited = edited;
     if let Some(object) = edited.as_object_mut() { object.remove("_instructions"); }
-    restore_redacted(&mut edited, &json!({"config":config,"settings":settings}));
+    restore_redacted(&mut edited, &json!({"config":config.clone(),"settings":settings.clone()}));
     let updated = edited.get("config").cloned().ok_or("edited document needs a config object")?;
     let next_settings = edited.get("settings").cloned().ok_or("edited document needs a settings object")?;
     app_write("dashboard_settings_save",json!({
@@ -705,10 +705,10 @@ fn edit_config(terminal: &mut ManagementTerminal) -> Result<Value, String> {
 fn edit_security_policy(terminal: &mut ManagementTerminal) -> Result<Value, String> {
     let config = app_read("config",json!({}))?;
     let settings = app_read("gitrun_settings",json!({}))?;
-    let mut document = redact_copy(json!({"config":config,"settings":settings}));
+    let mut document = redact_copy(json!({"config":config.clone(),"settings":settings.clone()}));
     let edited = edit_json_document(terminal,&document)?;
     document=edited;
-    restore_redacted(&mut document,&json!({"config":config,"settings":settings}));
+    restore_redacted(&mut document,&json!({"config":config.clone(),"settings":settings.clone()}));
     let changed = document.get("settings").and_then(|v|v.get("repositories")).is_some();
     let confirm_socket = if changed {
         confirm(terminal,"Confirm newly enabled direct Docker socket access (if any)? [y/N]")?

@@ -3425,7 +3425,6 @@ fn save_config(updated: Config) -> Result<(), String> {
     persist_dashboard_config(&updated)
 }
 
-
 /// Stable, Tauri-independent management entry points shared by the desktop UI and
 /// the terminal management console. The console deliberately calls the same
 /// validated handlers rather than reimplementing persistence or policy checks.
@@ -3456,33 +3455,47 @@ pub fn management_tui_read(
         "first_run" => Ok(serde_json::Value::Bool(is_first_run())),
         "overview" => management_tui_value(get_overview()?),
         "health" => management_tui_value(get_dashboard_health(Some(
-            args.get("force_refresh").and_then(serde_json::Value::as_bool).unwrap_or(false),
+            args.get("force_refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
         ))?),
         "runners" => management_tui_value(get_runner_snapshot(Some(
-            args.get("force_refresh").and_then(serde_json::Value::as_bool).unwrap_or(false),
+            args.get("force_refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
         ))?),
         "host_resources" => management_tui_value(get_host_resource_snapshot(Some(
-            args.get("force_refresh").and_then(serde_json::Value::as_bool).unwrap_or(false),
+            args.get("force_refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
         ))?),
         "repository_activity" => management_tui_value(get_repository_activity(Some(
-            args.get("force_refresh").and_then(serde_json::Value::as_bool).unwrap_or(false),
+            args.get("force_refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
         ))?),
         "repo_detail" => management_tui_value(get_repo_detail(management_tui_arg(&args, "repo")?)?),
-        "repo_bootstrap" => {
-            management_tui_value(get_repo_dashboard_bootstrap(management_tui_arg(&args, "repo")?)?)
-        }
+        "repo_bootstrap" => management_tui_value(get_repo_dashboard_bootstrap(
+            management_tui_arg(&args, "repo")?,
+        )?),
         "config" => management_tui_value(get_config()?),
         "gitrun_settings" => management_tui_value(get_gitrun_settings()?),
         "security_summary" => management_tui_value(get_security_runtime_summary()?),
         "vault_secrets" => management_tui_value(list_vault_secrets()?),
         "gsr_status" => management_tui_value(get_gsr_status()?),
         "gsr_events" => {
-            let limit = args.get("limit").and_then(serde_json::Value::as_u64).unwrap_or(30) as usize;
+            let limit = args
+                .get("limit")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(30) as usize;
             management_tui_value(list_gsr_events(Some(limit))?)
         }
         "service_logs" => {
             let source: String = management_tui_arg(&args, "source")?;
-            let limit = args.get("limit").and_then(serde_json::Value::as_u64).map(|v| v as usize);
+            let limit = args
+                .get("limit")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as usize);
             management_tui_value(list_service_logs(source, limit)?)
         }
         "zizmor" => management_tui_value(get_zizmor_info()?),
@@ -3583,9 +3596,9 @@ pub fn management_tui_write(
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
-        "service_control" => management_tui_value(control_gitrun_service(
-            management_tui_arg(&args, "action")?,
-        )?),
+        "service_control" => management_tui_value(control_gitrun_service(management_tui_arg(
+            &args, "action",
+        )?)?),
         other => Err(format!("unsupported management write action: {other}")),
     }
 }

@@ -3425,6 +3425,171 @@ fn save_config(updated: Config) -> Result<(), String> {
     persist_dashboard_config(&updated)
 }
 
+
+/// Stable, Tauri-independent management entry points shared by the desktop UI and
+/// the terminal management console. The console deliberately calls the same
+/// validated handlers rather than reimplementing persistence or policy checks.
+fn management_tui_arg<T: serde::de::DeserializeOwned>(
+    args: &serde_json::Value,
+    field: &str,
+) -> Result<T, String> {
+    let value = args
+        .get(field)
+        .cloned()
+        .ok_or_else(|| format!("missing required management argument: {field}"))?;
+    serde_json::from_value(value)
+        .map_err(|error| format!("invalid management argument {field}: {error}"))
+}
+
+fn management_tui_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, String> {
+    serde_json::to_value(value)
+        .map_err(|error| format!("could not encode management response: {error}"))
+}
+
+/// Read live dashboard data from its existing command handlers. Args use
+/// snake_case field names and JSON so callers do not need private response DTOs.
+pub fn management_tui_read(
+    action: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match action {
+        "first_run" => Ok(serde_json::Value::Bool(is_first_run())),
+        "overview" => management_tui_value(get_overview()?),
+        "health" => management_tui_value(get_dashboard_health(Some(
+            args.get("force_refresh").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        ))?),
+        "runners" => management_tui_value(get_runner_snapshot(Some(
+            args.get("force_refresh").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        ))?),
+        "host_resources" => management_tui_value(get_host_resource_snapshot(Some(
+            args.get("force_refresh").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        ))?),
+        "repository_activity" => management_tui_value(get_repository_activity(Some(
+            args.get("force_refresh").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        ))?),
+        "repo_detail" => management_tui_value(get_repo_detail(management_tui_arg(&args, "repo")?)?),
+        "repo_bootstrap" => {
+            management_tui_value(get_repo_dashboard_bootstrap(management_tui_arg(&args, "repo")?)?)
+        }
+        "config" => management_tui_value(get_config()?),
+        "gitrun_settings" => management_tui_value(get_gitrun_settings()?),
+        "security_summary" => management_tui_value(get_security_runtime_summary()?),
+        "vault_secrets" => management_tui_value(list_vault_secrets()?),
+        "gsr_status" => management_tui_value(get_gsr_status()?),
+        "gsr_events" => {
+            let limit = args.get("limit").and_then(serde_json::Value::as_u64).unwrap_or(30) as usize;
+            management_tui_value(list_gsr_events(Some(limit))?)
+        }
+        "service_logs" => {
+            let source: String = management_tui_arg(&args, "source")?;
+            let limit = args.get("limit").and_then(serde_json::Value::as_u64).map(|v| v as usize);
+            management_tui_value(list_service_logs(source, limit)?)
+        }
+        "zizmor" => management_tui_value(get_zizmor_info()?),
+        "logic_rules" => management_tui_value(list_logic_rules()?),
+        "vm_configs" => management_tui_value(list_vm_configs()?),
+        "hypervisor_decisions" => management_tui_value(list_pending_hypervisor_decisions()?),
+        "kitty" => management_tui_value(get_kitty_dashboard_data()?),
+        "repo_api_policies" => {
+            management_tui_value(get_repo_api_policies(management_tui_arg(&args, "repo")?)?)
+        }
+        "dock_requirements" => {
+            management_tui_value(get_dock_requirements(management_tui_arg(&args, "repo")?)?)
+        }
+        "updates" => management_tui_value(check_gitrun_updates()),
+        other => Err(format!("unsupported management read action: {other}")),
+    }
+}
+
+/// Perform a dashboard operation with the exact same validation, privileged
+/// helper routing and danger gates used by the graphical dashboard.
+pub fn management_tui_write(
+    action: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match action {
+        "fast_stop" => {
+            let message = fast_stop_workflow_run(
+                management_tui_arg(&args, "repository")?,
+                management_tui_arg(&args, "run_id")?,
+            )?;
+            management_tui_value(serde_json::json!({ "message": message }))
+        }
+        "vault_set" => {
+            set_vault_secret(
+                management_tui_arg(&args, "name")?,
+                management_tui_arg(&args, "value")?,
+                management_tui_arg(&args, "scope")?,
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "vault_delete" => {
+            delete_vault_secret(
+                management_tui_arg(&args, "name")?,
+                management_tui_arg(&args, "scope")?,
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "zizmor_install" => management_tui_value(accept_zizmor_license_and_install()?),
+        "zizmor_disable" => {
+            disable_zizmor()?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "logic_rules_save" => {
+            save_logic_rules(management_tui_arg(&args, "rules")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "vm_save" => {
+            save_vm_config(management_tui_arg(&args, "config_entry")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "vm_delete" => {
+            delete_vm_config(management_tui_arg(&args, "name")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "hypervisor_respond" => {
+            respond_hypervisor_decision(
+                management_tui_arg(&args, "vm_name")?,
+                management_tui_arg(&args, "choice")?,
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "kitty_save" => {
+            save_kitty_settings(management_tui_arg(&args, "settings")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "gitrun_settings_save" => {
+            save_gitrun_settings(
+                management_tui_arg(&args, "settings")?,
+                args.get("confirm_socket_opt_out")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "config_save" => {
+            save_config(management_tui_arg(&args, "updated")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "dashboard_settings_save" => {
+            save_dashboard_settings(
+                management_tui_arg(&args, "updated")?,
+                management_tui_arg(&args, "settings")?,
+                args.get("confirm_socket_opt_out")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                management_tui_arg(&args, "expected_config")?,
+                management_tui_arg(&args, "expected_settings")?,
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "service_control" => management_tui_value(control_gitrun_service(
+            management_tui_arg(&args, "action")?,
+        )?),
+        other => Err(format!("unsupported management write action: {other}")),
+    }
+}
+
 /// Small bridge module: writing back to the same env-file format
 /// `gitrun-setup` without depending on any legacy dashboard crate. Mirrors the MANAGED_CONFIG_KEYS approach documented in that
 /// crate.

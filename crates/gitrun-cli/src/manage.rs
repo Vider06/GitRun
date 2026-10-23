@@ -538,9 +538,8 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (2, 0) => app_read("runners", json!({ "force_refresh": true })).map(|v| ("Live runner pool".into(),v)),
         (2, 1) => app_read("host_resources", json!({ "force_refresh": true })).map(|v| ("Host resource snapshot".into(),v)),
         (2, 2) => app_read("config", json!({})).map(|v| ("Runner configuration".into(),v)),
-        (3, 0) | (3, 1) => {
-            if state.action == 1 { edit_kitty(terminal) } else { app_read("kitty", json!({})) }.map(|v| ("Kitty runtime".into(),v))
-        }
+        (3, 0) => app_read("kitty", json!({})).map(|v| ("Kitty runtime".into(),v)),
+        (3, 1) => edit_kitty(terminal).map(|v| ("Kitty settings saved".into(),v)),
         (3, 2) => app_read("host_resources", json!({ "force_refresh": true })).map(|v| ("Host resources".into(),v)),
         (4, 0) => {
             let config = app_read("config", json!({}))?;
@@ -592,9 +591,8 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (9, 7) => resolve_hypervisor_decision(terminal).map(|v| ("Hypervisor decision".into(),v)),
         (9, 8) => app_read("logic_rules", json!({})).map(|v| ("Logic Containers rules".into(),v)),
         (9, 9) => edit_logic_rules(terminal).map(|v| ("Logic Containers rules".into(),v)),
-        (10, 1) | (10, 2) => {
-            if state.action == 2 { edit_kitty(terminal) } else { app_read("kitty", json!({})) }.map(|v| ("Kitty settings".into(),v))
-        }
+        (10, 1) => app_read("kitty", json!({})).map(|v| ("Kitty settings".into(),v)),
+        (10, 2) => edit_kitty(terminal).map(|v| ("Kitty settings saved".into(),v)),
         (10, 3) => service_action(terminal, "start").map(|v| ("GitRun service".into(),v)),
         (10, 4) => {
             if confirm(terminal, "Stop gitrun.service? Active workloads may be interrupted. [y/N]")? {
@@ -666,9 +664,9 @@ fn fast_stop(terminal: &mut ManagementTerminal) -> Result<Value, String> {
 fn edit_repository_policy(terminal: &mut ManagementTerminal, state: &State) -> Result<Value, String> {
     let config = app_read("config", json!({}))?;
     let settings = app_read("gitrun_settings", json!({}))?;
-    let repo = selected_repo(state);
+    let repo = selected_repo(state).ok_or("Select a repository first.")?;
     let mut document = json!({
-        "_instructions": format!("Edit config/settings. Selected repository context: {}. Remove _instructions before saving or leave it unchanged; it will be stripped.", repo.as_deref().unwrap_or("none selected")),
+        "_instructions": format!("Edit config/settings. Selected repository context: {}. Remove _instructions before saving or leave it unchanged; it will be stripped.", repo),
         "config": config.clone(),
         "settings": settings.clone()
     });
@@ -901,25 +899,38 @@ fn prompt(terminal: &mut ManagementTerminal, label: &str) -> Result<String,Strin
     })
 }
 
-fn prompt_secret(terminal: &mut ManagementTerminal, label: &str) -> Result<String,String> {
-    suspend_terminal(terminal, || {
-        #[cfg(unix)]
-        let echo_disabled = ProcessCommand::new("stty").arg("-echo").status().map(|s|s.success()).unwrap_or(false);
-        #[cfg(unix)]
-        if !echo_disabled { return Err("could not disable terminal echo; refusing to accept a secret visibly".into()); }
-        #[cfg(not(unix))]
-        return Err("hidden secret input is supported only on Unix terminals".into());
-        print!("{label}: ");
-        io::stdout().flush().map_err(|e|e.to_string())?;
-        let mut value=String::new();
-        let read_result=io::stdin().read_line(&mut value).map_err(|e|e.to_string());
-        #[cfg(unix)]
-        if echo_disabled { let _=ProcessCommand::new("stty").arg("echo").status(); println!(); }
-        #[cfg(not(unix))]
+#[cfg(unix)]
+struct TerminalEchoGuard;
+
+#[cfg(unix)]
+impl Drop for TerminalEchoGuard {
+    fn drop(&mut self) {
+        let _ = ProcessCommand::new("stty").arg("echo").status();
         println!();
-        read_result?;
-        Ok(value.trim_end_matches(['\r','\n']).to_owned())
-    })
+    }
+}
+
+fn prompt_secret(terminal: &mut ManagementTerminal, label: &str) -> Result<String,String> {
+    #[cfg(unix)]
+    {
+        suspend_terminal(terminal, || {
+            let disabled = ProcessCommand::new("stty").arg("-echo").status().map(|s|s.success()).unwrap_or(false);
+            if !disabled {
+                return Err("could not disable terminal echo; refusing to accept a secret visibly".into());
+            }
+            let _echo_guard = TerminalEchoGuard;
+            print!("{label}: ");
+            io::stdout().flush().map_err(|e|e.to_string())?;
+            let mut value=String::new();
+            io::stdin().read_line(&mut value).map_err(|e|e.to_string())?;
+            Ok(value.trim_end_matches(['\r','\n']).to_owned())
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (terminal, label);
+        Err("hidden secret input is supported only on Unix terminals".into())
+    }
 }
 
 fn prompt_number(terminal: &mut ManagementTerminal, title: &str, choices: &[String], max: usize) -> Result<usize,String> {

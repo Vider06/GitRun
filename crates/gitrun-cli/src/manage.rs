@@ -496,8 +496,39 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         return Err(Box::new(error));
     }
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = match Terminal::new(backend) {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            let _ = disable_raw_mode();
+            let mut stdout = io::stdout();
+            let _ = execute!(stdout, LeaveAlternateScreen, Show);
+            return Err(Box::new(error));
+        }
+    };
     let mut state = State::new();
+    let first_run = app_read("first_run", json!({}))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if first_run {
+        state.page = 8;
+        state.action = 2;
+        state.focus = Focus::Actions;
+        state.body_title = "First-run setup required".into();
+        state.body = vec![
+            "This installation has not completed the first-run setup.".into(),
+            "Choose “Run terminal setup” to configure GitRun in this SSH session.".into(),
+            "The setup wizard runs in the same terminal and returns here when it exits.".into(),
+        ];
+        state.notice = "Setup required".into();
+    }
+    terminal
+        .draw(|frame| render(frame, &state))
+        .map_err(|error| Box::new(error) as Box<dyn Error>)?;
+    if !first_run {
+        execute_action(&mut terminal, &mut state)
+            .map_err(|error| Box::new(io::Error::other(error)) as Box<dyn Error>)?;
+    }
     let result = event_loop(&mut terminal, &mut state);
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen, Show);
@@ -914,7 +945,8 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 Line::from("← / → or h / l    Move focus"),
                 Line::from("Enter             Run the selected operation"),
                 Line::from("r                 Refresh the selected operation"),
-                Line::from("1–9 / 0           Jump to sections / App settings"),
+                Line::from("1–9              Run numbered action, or jump to page when Sections has focus"),
+                Line::from("0                Jump to App Settings when Sections has focus"),
                 Line::from("Esc               Back to operations / Overview"),
                 Line::from("q / Ctrl+C        Exit the management console"),
                 Line::from(""),
@@ -958,6 +990,9 @@ fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
 fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Result<(), String> {
     state.error = false;
     state.notice = "Working…".into();
+    terminal
+        .draw(|frame| render(frame, state))
+        .map_err(|error| error.to_string())?;
     let result: Result<(String, Value), String> = (|| {
         match (state.page, state.action) {
         (0, 0) => {

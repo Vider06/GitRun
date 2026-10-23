@@ -1350,8 +1350,8 @@ fn main() {
     // Initialize the shared presenter before Clap so help and argument errors
     // follow the same mascot policy as normal commands. Internal callers can
     // still explicitly suppress it with --no-cat.
-    let mut presenter =
-        presenter::CatPresenter::new(no_cat_override_requested(std::env::args_os().skip(1)));
+    let no_cat_override = no_cat_override_requested(std::env::args_os().skip(1));
+    let mut presenter = presenter::CatPresenter::new(no_cat_override);
 
     if !validate_version_flag_order(&mut presenter) {
         std::process::exit(2);

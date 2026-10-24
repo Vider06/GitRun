@@ -2971,7 +2971,8 @@ pub fn save_system_settings_for_state_dir(
             || metadata.len() > MAX_SETTINGS_BYTES
         {
             return Err(KittyError::Invalid(
-                "existing system Kitty settings have unsafe type, ownership, mode, links, or size".into(),
+                "existing system Kitty settings have unsafe type, ownership, mode, links, or size"
+                    .into(),
             ));
         }
     } else if let Err(error) = fs::symlink_metadata(&path) {

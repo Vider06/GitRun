@@ -497,6 +497,25 @@ fn update_command(
             config_path.as_deref(),
         )?;
 
+        // Install/repair the persistent privileged control plane as part of
+        // a system upgrade. The user UI stays unprivileged; no per-operation
+        // sudo prompt is needed after the service is active.
+        let desktop_uid = std::env::var("PKEXEC_UID")
+            .or_else(|_| std::env::var("SUDO_UID"))
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|uid| *uid != 0);
+        if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
+            let rollback_error =
+                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
+            let restart_error = restart_scheduler_service().err();
+            return Err(format!(
+                "Control Manager installation failed: {error}; rollback: {}; scheduler recovery: {}",
+                rollback_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string()),
+                restart_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string())
+            ).into());
+        }
+
         if let Some(image) = &plan.runner_image {
             if let Err(error) = update_runner_image(image) {
                 let rollback_error =

@@ -476,10 +476,28 @@ impl State {
 }
 
 fn app_read(action: &str, args: Value) -> Result<Value, String> {
+    if gitrun_dashboard_tauri_lib::control_manager_enabled() {
+        return gitrun_dashboard_tauri_lib::control_manager_request("read", action, args);
+    }
     gitrun_dashboard_tauri_lib::management_tui_read(action, args)
 }
 
-fn app_write(action: &str, args: Value) -> Result<Value, String> {
+fn app_write(action: &str, mut args: Value) -> Result<Value, String> {
+    if gitrun_dashboard_tauri_lib::control_manager_enabled() {
+        // The TUI asks for confirmation before invoking these operations. Carry
+        // that explicit acknowledgement over IPC so the service enforces it too.
+        if matches!(
+            action,
+            "vault_delete" | "vm_delete" | "zizmor_install" | "zizmor_disable" | "fast_stop"
+        ) || (action == "service_control"
+            && matches!(args.get("action").and_then(Value::as_str), Some("stop" | "restart")))
+        {
+            if let Some(object) = args.as_object_mut() {
+                object.insert("confirmed".into(), Value::Bool(true));
+            }
+        }
+        return gitrun_dashboard_tauri_lib::control_manager_request("write", action, args);
+    }
     gitrun_dashboard_tauri_lib::management_tui_write(action, args)
 }
 

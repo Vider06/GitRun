@@ -2825,7 +2825,11 @@ fn save_gitrun_settings(
                 .into(),
         );
     }
-    persist_gitrun_settings(&settings, &gitrun_settings_path(&config), confirm_socket_opt_out)
+    persist_gitrun_settings(
+        &settings,
+        &gitrun_settings_path(&config),
+        confirm_socket_opt_out,
+    )
 }
 
 #[tauri::command]
@@ -3667,7 +3671,9 @@ fn save_dashboard_settings(
         });
     }
 
-    if let Err(save_error) = persist_gitrun_settings(&settings, &settings_path, confirm_socket_opt_out) {
+    if let Err(save_error) =
+        persist_gitrun_settings(&settings, &settings_path, confirm_socket_opt_out)
+    {
         let config_rollback = persist_dashboard_config_unlocked(&current_config);
         // Writing the previously effective defaults as an explicit settings
         // file is semantically equivalent to restoring an absent file, and it

@@ -274,7 +274,8 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
                 }
                 if request.action == "maintenance_task" {
                     schedule_maintenance_task(
-                        request.args
+                        request
+                            .args
                             .get("task")
                             .and_then(Value::as_str)
                             .ok_or("maintenance task name is required")?,
@@ -332,9 +333,7 @@ fn schedule_maintenance_task(task: &str) -> Result<Value, String> {
         .status()
         .map_err(|error| format!("unable to inspect maintenance task state: {error}"))?;
     if active.success() {
-        return Err(
-            "another GitRun Control Manager maintenance task is already running".into(),
-        );
+        return Err("another GitRun Control Manager maintenance task is already running".into());
     }
 
     // reset-failed clears a previous failed transient unit; it does not change
@@ -363,7 +362,10 @@ fn schedule_maintenance_task(task: &str) -> Result<Value, String> {
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
-            format!("systemd could not schedule {label} (status {})", output.status)
+            format!(
+                "systemd could not schedule {label} (status {})",
+                output.status
+            )
         } else {
             format!("systemd could not schedule {label}: {detail}")
         });

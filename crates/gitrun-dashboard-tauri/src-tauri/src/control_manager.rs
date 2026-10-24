@@ -272,7 +272,16 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
                         request.action
                     ));
                 }
-                super::management_tui_write(&request.action, request.args)
+                if request.action == "maintenance_task" {
+                    schedule_maintenance_task(
+                        request.args
+                            .get("task")
+                            .and_then(Value::as_str)
+                            .ok_or("maintenance task name is required")?,
+                    )
+                } else {
+                    super::management_tui_write(&request.action, request.args)
+                }
             }
             _ => unreachable!("operation was validated above"),
         };
@@ -293,6 +302,87 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
     }
 }
 
+/// Start one fixed, allowlisted maintenance command in a transient system
+/// service. This deliberately does not forward caller-provided arguments,
+/// paths, or environment variables to a root process.
+#[cfg(target_os = "linux")]
+fn schedule_maintenance_task(task: &str) -> Result<Value, String> {
+    use std::process::Command;
+
+    let (arguments, label): (&[&str], &str) = match task {
+        "update" => (&["--no-cat", "update"], "signed GitRun update"),
+        "update_containers" => (
+            &["--no-cat", "update", "--only-containers"],
+            "permanent runner update",
+        ),
+        "reinstall_latest" => (
+            &["--no-cat", "--reinstall-latest-root"],
+            "verified GitRun reinstall",
+        ),
+        "reinstall_saved" => (
+            &["--no-cat", "--reinstall-existing-root"],
+            "GitRun runtime rebuild",
+        ),
+        "uninstall" => (&["--no-cat", "--uninstall-root"], "GitRun uninstall"),
+        _ => return Err("unsupported Control Manager maintenance task".into()),
+    };
+
+    let active = Command::new("/usr/bin/systemctl")
+        .args(["is-active", "--quiet", "gitrun-control-maintenance.service"])
+        .status()
+        .map_err(|error| format!("unable to inspect maintenance task state: {error}"))?;
+    if active.success() {
+        return Err(
+            "another GitRun Control Manager maintenance task is already running".into(),
+        );
+    }
+
+    // reset-failed clears a previous failed transient unit; it does not change
+    // any installed service or retry an earlier command.
+    let _ = Command::new("/usr/bin/systemctl")
+        .args(["reset-failed", "gitrun-control-maintenance.service"])
+        .status();
+
+    let executable = super::trusted_system_cli_path()
+        .ok_or("trusted system GitRun CLI was not found; refusing maintenance task")?;
+    let output = Command::new("/usr/bin/systemd-run")
+        .args([
+            "--system",
+            "--unit=gitrun-control-maintenance",
+            "--collect",
+            "--no-block",
+            "--property=Type=oneshot",
+            "--property=TimeoutStartSec=0",
+            "--description",
+            &format!("GitRun Control Manager: {label}"),
+        ])
+        .arg(executable)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("unable to schedule {label}: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!("systemd could not schedule {label} (status {})", output.status)
+        } else {
+            format!("systemd could not schedule {label}: {detail}")
+        });
+    }
+
+    Ok(serde_json::json!({
+        "scheduled": true,
+        "task": task,
+        "label": label,
+        "unit": "gitrun-control-maintenance.service",
+        "message": format!("{label} was handed to systemd. Follow its journal for progress and final status.")
+    }))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn schedule_maintenance_task(_task: &str) -> Result<Value, String> {
+    Err("GitRun Control Manager maintenance tasks are Linux-only".into())
+}
+
 #[cfg(target_os = "linux")]
 fn needs_confirmation(action: &str, args: &Value) -> bool {
     match action {
@@ -300,6 +390,7 @@ fn needs_confirmation(action: &str, args: &Value) -> bool {
         "gitrun_settings_save" => {
             args.get("confirm_socket_opt_out").and_then(Value::as_bool) == Some(true)
         }
+        "maintenance_task" => true,
         "service_control" => matches!(
             args.get("action").and_then(Value::as_str),
             Some("stop" | "restart")
@@ -312,6 +403,11 @@ fn needs_confirmation(action: &str, args: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maintenance_tasks_are_allowlisted() {
+        assert!(schedule_maintenance_task("arbitrary-command").is_err());
+    }
 
     #[test]
     fn request_schema_rejects_unknown_fields() {

@@ -1208,6 +1208,20 @@ fn connect_command(
         return Err("usage: gitrun connect <owner/repository>".into());
     }
 
+    // On a protected system install, repository connection is routed through
+    // the persistent Control Manager. This keeps the credential-bearing config
+    // root-only and avoids a per-connect sudo/pkexec prompt.
+    if gitrun_dashboard_tauri_lib::control_manager_enabled() && !running_as_root() {
+        let result = gitrun_dashboard_tauri_lib::control_manager_request(
+            "write",
+            "connect_repository",
+            serde_json::json!({ "repository": repository }),
+        )?;
+        presenter.transition(presenter::ValidationState::Success);
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+
     let path = persistent_config_path()
         .ok_or("persistent GitRun configuration not found; run 'gitrun setup --terminal' first")?;
     let config = Config::from_env_file(&path)?;

@@ -201,6 +201,19 @@ fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), Stri
         )?;
         return Ok(());
     }
+    if control_manager_enabled() && current_process_is_root() {
+        let config = load_config()?;
+        let path = gitrun_settings_path(&config);
+        settings.save(&path).map_err(|error| error.to_string())?;
+        gitrun_setup::secure_system_settings_file(&path, None)
+            .map_err(|error| error.to_string())?;
+        if let Some(parent) = path.parent() {
+            std::fs::File::open(parent)
+                .and_then(|file| file.sync_all())
+                .map_err(|error| format!("sync GitRun settings directory: {error}"))?;
+        }
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -269,6 +282,13 @@ fn persist_logic_rules_as_root(
     use std::os::unix::fs::OpenOptionsExt;
 
     gitrun_scheduler::logic_containers::validate_rules(rules).map_err(|error| error.to_string())?;
+    if control_manager_enabled() && current_process_is_root() {
+        let config = load_config()?;
+        let path = PathBuf::from(&config.state_dir).join("logic-containers.json");
+        gitrun_scheduler::logic_containers::save_rules(&path, rules)
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; Logic Containers rules cannot be saved safely.",
     )?;
@@ -330,6 +350,12 @@ fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Res
             "vm_configs_replace",
             serde_json::json!({ "configs": configs }),
         )?;
+        return Ok(());
+    }
+    if control_manager_enabled() && current_process_is_root() {
+        let config = load_config()?;
+        gitrun_scheduler::vm::save_vm_configs(Path::new(&config.state_dir), configs)
+            .map_err(|error| error.to_string())?;
         return Ok(());
     }
     use std::io::Write;
@@ -425,6 +451,15 @@ fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String
         )?;
         return Ok(());
     }
+    if control_manager_enabled() && current_process_is_root() {
+        let config = load_config()?;
+        gitrun_smart_scheduler::save_system_settings_for_state_dir(
+            Path::new(&config.state_dir),
+            settings,
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -500,7 +535,13 @@ fn persist_dashboard_config_unlocked(config: &Config) -> Result<(), String> {
     match std::fs::OpenOptions::new().write(true).open(&path) {
         Ok(file) => {
             drop(file);
-            gitrun_setup::update_env_file(&path, config).map_err(|error| error.to_string())
+            gitrun_setup::update_env_file(&path, config).map_err(|error| error.to_string())?;
+            if path == Path::new("/etc/gitrun/gitrun.env") {
+                #[cfg(target_os = "linux")]
+                gitrun_setup::secure_system_config_file(&path, None)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
         }
         Err(error)
             if error.kind() == std::io::ErrorKind::PermissionDenied

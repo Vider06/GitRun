@@ -1594,7 +1594,7 @@ fn get_overview() -> Result<OverviewData, String> {
 // as a standalone top-level section)
 // ---------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardRunnerRecord {
     repository: String,
     id: u64,
@@ -1606,7 +1606,7 @@ struct DashboardRunnerRecord {
     container_status: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardWorkflowRunSummary {
     repository: String,
     total: u32,
@@ -1617,7 +1617,7 @@ struct DashboardWorkflowRunSummary {
     cancelled: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardActiveWorkflowRun {
     repository: String,
     id: u64,
@@ -1625,7 +1625,7 @@ struct DashboardActiveWorkflowRun {
     status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardRunnerSnapshot {
     checked_at: u64,
     stale: bool,
@@ -1751,6 +1751,15 @@ fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, Str
 
 #[tauri::command]
 fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "read",
+            "runners",
+            serde_json::json!({ "force_refresh": force_refresh.unwrap_or(false) }),
+        )?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode runner snapshot from Control Manager: {error}"));
+    }
     const CACHE_TTL: Duration = Duration::from_secs(60);
     let cache = DASHBOARD_RUNNER_CACHE.get_or_init(|| std::sync::Mutex::new(None));
     let config_key = dashboard_config_cache_key();
@@ -2057,7 +2066,7 @@ fn get_host_resource_snapshot(
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardRepositoryActivity {
     repository: String,
     stars: u64,
@@ -2067,7 +2076,7 @@ struct DashboardRepositoryActivity {
     pushed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardRepositoryActivitySnapshot {
     checked_at: u64,
     stale: bool,
@@ -2093,6 +2102,15 @@ static DASHBOARD_REPOSITORY_ACTIVITY_CACHE: std::sync::OnceLock<
 fn get_repository_activity(
     force_refresh: Option<bool>,
 ) -> Result<DashboardRepositoryActivitySnapshot, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "read",
+            "repository_activity",
+            serde_json::json!({ "force_refresh": force_refresh.unwrap_or(false) }),
+        )?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode repository activity from Control Manager: {error}"));
+    }
     const CACHE_TTL: Duration = Duration::from_secs(300);
     let cache = DASHBOARD_REPOSITORY_ACTIVITY_CACHE.get_or_init(|| std::sync::Mutex::new(None));
     let config_key = dashboard_config_cache_key();

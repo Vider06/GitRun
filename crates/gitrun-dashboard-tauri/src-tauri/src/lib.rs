@@ -189,14 +189,18 @@ fn persist_config_as_root(_config: &Config) -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
-fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), String> {
+fn persist_gitrun_settings_as_root(
+    settings: &GitRunSettings,
+    confirm_socket_opt_out: bool,
+) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
             "write",
             "gitrun_settings_save",
             serde_json::json!({
                 "settings": settings,
-                "confirm_socket_opt_out": true
+                "confirm_socket_opt_out": confirm_socket_opt_out,
+                "confirmed": confirm_socket_opt_out
             }),
         )?;
         return Ok(());
@@ -517,9 +521,13 @@ fn persist_kitty_settings_as_root(_settings: &KittySettings) -> Result<(), Strin
 /// Persist security policy through the privileged helper for system installs.
 /// The state directory is root-owned so user-level atomic rename is intentionally
 /// unavailable; developer installations retain their configurable local path.
-fn persist_gitrun_settings(settings: &GitRunSettings, path: &Path) -> Result<(), String> {
+fn persist_gitrun_settings(
+    settings: &GitRunSettings,
+    path: &Path,
+    confirm_socket_opt_out: bool,
+) -> Result<(), String> {
     if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
-        persist_gitrun_settings_as_root(settings)
+        persist_gitrun_settings_as_root(settings, confirm_socket_opt_out)
     } else {
         settings.save(path).map_err(|error| error.to_string())
     }
@@ -2817,7 +2825,7 @@ fn save_gitrun_settings(
                 .into(),
         );
     }
-    persist_gitrun_settings(&settings, &gitrun_settings_path(&config))
+    persist_gitrun_settings(&settings, &gitrun_settings_path(&config), confirm_socket_opt_out)
 }
 
 #[tauri::command]
@@ -3659,12 +3667,12 @@ fn save_dashboard_settings(
         });
     }
 
-    if let Err(save_error) = persist_gitrun_settings(&settings, &settings_path) {
+    if let Err(save_error) = persist_gitrun_settings(&settings, &settings_path, confirm_socket_opt_out) {
         let config_rollback = persist_dashboard_config_unlocked(&current_config);
         // Writing the previously effective defaults as an explicit settings
         // file is semantically equivalent to restoring an absent file, and it
         // also works when the system state directory is root-owned.
-        let settings_rollback = persist_gitrun_settings(&current_settings, &settings_path);
+        let settings_rollback = persist_gitrun_settings(&current_settings, &settings_path, true);
         let rollback_detail = match (config_rollback, settings_rollback) {
             (Ok(()), Ok(())) => "Previous configuration and settings were restored.".to_owned(),
             (config_result, settings_result) => format!(

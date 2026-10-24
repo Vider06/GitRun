@@ -3111,6 +3111,102 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     Ok(format!("Requested system service action: {action_arg}"))
 }
 
+fn connect_repository_through_manager(repository: String) -> Result<serde_json::Value, String> {
+    let repository = repository.trim().to_owned();
+    if !valid_setup_repository(&repository) {
+        return Err("repository must be in owner/name form and contain only valid GitHub name characters".into());
+    }
+
+    let mut config = load_config()?;
+    // Verify repository visibility and the API permission required to inspect
+    // runner registration before mutating the protected configuration.
+    let client = dashboard_github_client(&config)?;
+    let mut runners = client
+        .list_runners(&repository)
+        .map_err(|error| format!("GitHub repository/runner access check failed for {repository}: {error}"))?;
+
+    let already_configured = config
+        .repositories
+        .iter()
+        .any(|configured| configured.eq_ignore_ascii_case(&repository));
+    let scheduler_restarted = if already_configured {
+        false
+    } else {
+        config.repositories.push(repository.clone());
+        config.validate().map_err(|error| format!("updated repository configuration is invalid: {error}"))?;
+        persist_dashboard_config(&config).map_err(|error| {
+            format!("repository access was verified, but saving {repository} failed: {error}")
+        })?;
+        control_gitrun_service(ServiceAction::Restart).map_err(|error| {
+            format!("{repository} was saved, but the scheduler could not be restarted: {error}")
+        })?;
+        let health = get_dashboard_health(Some(true))?;
+        if !health.service_active {
+            return Err(format!(
+                "{repository} was saved, but gitrun.service is not active after the restart"
+            ));
+        }
+        true
+    };
+
+    // Runner creation/registration is asynchronous scheduler work. Observe the
+    // GitHub inventory for a short bounded window, but report pending honestly
+    // rather than claiming a runner exists simply because configuration saved.
+    let runner_expected = config.min_runners > 0;
+    let mut attempts = 0usize;
+    loop {
+        attempts += 1;
+        let online = runners.iter().filter(|runner| runner.is_online()).count();
+        if online > 0 || !runner_expected || attempts >= 5 {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(4));
+        match client.list_runners(&repository) {
+            Ok(latest) => runners = latest,
+            Err(error) => {
+                return Err(format!(
+                    "{repository} is configured and the scheduler restarted, but runner verification failed: {error}"
+                ));
+            }
+        }
+    }
+
+    let online_count = runners.iter().filter(|runner| runner.is_online()).count();
+    let busy_count = runners.iter().filter(|runner| runner.busy).count();
+    let runner_names = runners.iter().map(|runner| runner.name.clone()).collect::<Vec<_>>();
+    let status = if !scheduler_restarted && already_configured {
+        "already_configured"
+    } else if !runner_expected {
+        "connected_runner_pool_disabled"
+    } else if online_count > 0 {
+        "connected_runner_online"
+    } else {
+        "connected_runner_pending"
+    };
+
+    Ok(serde_json::json!({
+        "repository": repository,
+        "repository_access": "verified",
+        "configuration_saved": true,
+        "already_configured": already_configured,
+        "scheduler_restarted": scheduler_restarted,
+        "scheduler_active": true,
+        "minimum_runners": config.min_runners,
+        "runner_inventory_count": runners.len(),
+        "online_runner_count": online_count,
+        "busy_runner_count": busy_count,
+        "runner_names": runner_names,
+        "status": status,
+        "message": if !runner_expected {
+            "Repository is configured; min_runners is zero, so no runner is expected to be started automatically."
+        } else if online_count > 0 {
+            "Repository access verified, configuration saved, scheduler active, and at least one online GitHub runner observed."
+        } else {
+            "Repository access verified and scheduler restarted. No online runner was observed during the verification window; inspect scheduler logs and runner provisioning policy."
+        }
+    }))
+}
+
 #[tauri::command]
 fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, String> {
     const CACHE_TTL: Duration = Duration::from_secs(10);
@@ -3641,6 +3737,9 @@ pub fn management_tui_write(
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match action {
+        "connect_repository" => management_tui_value(connect_repository_through_manager(
+            management_tui_arg(&args, "repository")?,
+        )?),
         "vm_configs_replace" => {
             let configs: Vec<gitrun_scheduler::vm::VmConfig> =
                 management_tui_arg(&args, "configs")?;

@@ -909,7 +909,11 @@ fn stream_privileged_command(
     );
 
     let mut command = std::process::Command::new(pkexec);
-    command.arg(cli).args(args);
+    command.arg(cli);
+    if !args.iter().any(|argument| argument == "--no-cat") {
+        command.arg("--no-cat");
+    }
+    command.args(args);
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1052,7 +1056,11 @@ fn stream_unprivileged_command(
         false,
     );
 
-    let mut child = std::process::Command::new(cli)
+    let mut command = std::process::Command::new(cli);
+    if !args.iter().any(|argument| argument == "--no-cat") {
+        command.arg("--no-cat");
+    }
+    let mut child = command
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

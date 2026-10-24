@@ -1900,6 +1900,7 @@ jobs:
           ci_run "Setup installs the shared CLI and GSR watchdog" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
           ci_run "Partial dashboard repository settings use safe defaults" cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults || rc=1
           ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt || rc=1
+          ci_run "Control Manager rejects malformed IPC and enforces confirmations" cargo test --locked -p gitrun-dashboard-tauri control_manager::tests || rc=1
 
           validate_systemd_units() {
             command -v systemd-analyze >/dev/null 2>&1 || {
@@ -1913,17 +1914,23 @@ jobs:
             sudo install -Dm0600 config/config.example.env /etc/gitrun/gitrun.env || return 1
             sudo install -Dm0644 systemd/gitrun.service /etc/systemd/system/gitrun.service || return 1
             sudo install -Dm0644 systemd/gitrun-gsr.service /etc/systemd/system/gitrun-gsr.service || return 1
-            sudo systemd-analyze verify gitrun.service gitrun-gsr.service || return 1
+            sudo install -Dm0644 systemd/gitrun-control.service /etc/systemd/system/gitrun-control.service || return 1
+            getent group gitrun-control >/dev/null 2>&1 || sudo groupadd --system gitrun-control || return 1
+            sudo systemd-analyze verify gitrun.service gitrun-gsr.service gitrun-control.service || return 1
 
             # Catch regressions in reboot enablement and restart-on-crash policy.
             grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || return 1
             grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || return 1
+            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-control.service || return 1
             grep -Fq 'Restart=on-failure' systemd/gitrun.service || return 1
             grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || return 1
+            grep -Fq 'Restart=on-failure' systemd/gitrun-control.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || return 1
+            grep -Fq 'ExecStart=/usr/local/bin/gitrun control-manager' systemd/gitrun-control.service || return 1
             grep -Fq 'systemctl").args(["enable", "gitrun.service"])' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'systemctl").args(["enable", "gitrun-gsr.service"])' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'systemctl").args(["enable", "gitrun-control.service"])' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs || return 1
           }
@@ -1970,7 +1977,7 @@ jobs:
     steps:
       - *checkout
       - *boot
-      - name: Verify scheduler and watchdog units with systemd-analyze
+      - name: Verify scheduler, watchdog and Control Manager units with systemd-analyze
         run: |
           set -euo pipefail
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -1991,6 +1998,8 @@ jobs:
           chmod 0755 "$stub"
           sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun.service > "$unit_dir/gitrun.service"
           sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun-gsr.service > "$unit_dir/gitrun-gsr.service"
+          sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun-control.service > "$unit_dir/gitrun-control.service"
+          getent group gitrun-control >/dev/null 2>&1 || sudo groupadd --system gitrun-control
           cat > "$unit_dir/docker.service" <<'SYSTEMD_STUB'
           [Unit]
           Description=GitRun CI-only Docker dependency stub
@@ -2005,15 +2014,18 @@ jobs:
             env TERM=dumb SYSTEMD_COLORS=0 SYSTEMD_PAGER=cat \
             SYSTEMD_UNIT_PATH="$unit_dir:/etc/systemd/system:/usr/lib/systemd/system:/lib/systemd/system" \
             systemd-analyze --man=no --recursive-errors=yes verify \
-              "$unit_dir/gitrun.service" "$unit_dir/gitrun-gsr.service" "$unit_dir/docker.service" || rc=1
+              "$unit_dir/gitrun.service" "$unit_dir/gitrun-gsr.service" "$unit_dir/gitrun-control.service" "$unit_dir/docker.service" || rc=1
 
           # Verify boot/restart contracts as well as parser acceptance.
           grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || { ci_err "scheduler unit is not enabled for multi-user boot"; rc=1; }
           grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || { ci_err "GSR unit is not enabled for multi-user boot"; rc=1; }
+          grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-control.service || { ci_err "Control Manager unit is not enabled for multi-user boot"; rc=1; }
           grep -Fq 'Restart=on-failure' systemd/gitrun.service || { ci_err "scheduler restart policy missing"; rc=1; }
           grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || { ci_err "GSR restart policy missing"; rc=1; }
+          grep -Fq 'Restart=on-failure' systemd/gitrun-control.service || { ci_err "Control Manager restart policy missing"; rc=1; }
           grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || { ci_err "scheduler ExecStart contract changed"; rc=1; }
           grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || { ci_err "GSR ExecStart contract changed"; rc=1; }
+          grep -Fq 'ExecStart=/usr/local/bin/gitrun control-manager' systemd/gitrun-control.service || { ci_err "Control Manager ExecStart contract changed"; rc=1; }
           exit "$rc"
       - *report
       - *logs

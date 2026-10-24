@@ -3668,7 +3668,14 @@ async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
             .get("message")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("Permanent runner update was scheduled by systemd.");
-        emit_first_setup_event(&app, FIRST_SETUP_TOTAL, message.to_owned(), "system", true, true);
+        emit_first_setup_event(
+            &app,
+            FIRST_SETUP_TOTAL,
+            message.to_owned(),
+            "system",
+            true,
+            true,
+        );
         return Ok(());
     }
     let pkexec = pkexec_path()

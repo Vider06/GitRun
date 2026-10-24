@@ -332,13 +332,13 @@ mod tests {
         assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
         assert!(SYSTEMD_GSR_SERVICE.contains("ExecStart=/usr/local/bin/gitrun gsr-watchdog"));
         assert!(SYSTEMD_GSR_SERVICE.contains("After=gitrun.service"));
-        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains(
-            "ExecStart=/usr/local/bin/gitrun control-manager"
-        ));
+        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE
+            .contains("ExecStart=/usr/local/bin/gitrun control-manager"));
         assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("WantedBy=multi-user.target"));
         assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("Restart=on-failure"));
         assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("Group=gitrun-control"));
-        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("Environment=GITRUN_CONFIG_FILE=/etc/gitrun/gitrun.env"));
+        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE
+            .contains("Environment=GITRUN_CONFIG_FILE=/etc/gitrun/gitrun.env"));
     }
 
     #[test]

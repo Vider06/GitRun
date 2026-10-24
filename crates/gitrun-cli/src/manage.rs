@@ -1718,11 +1718,8 @@ fn maintenance_task_with_confirmation(
     }
 
     if gitrun_dashboard_tauri_lib::control_manager_enabled() {
-        return app_write(
-            "maintenance_task",
-            json!({"task": task, "confirmed": true}),
-        )
-        .map(|value| (title.to_owned(), value));
+        return app_write("maintenance_task", json!({"task": task, "confirmed": true}))
+            .map(|value| (title.to_owned(), value));
     }
 
     let output = run_external_args(terminal, fallback_args)?;

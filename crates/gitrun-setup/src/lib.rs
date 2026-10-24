@@ -1354,16 +1354,10 @@ pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), Se
         0o644,
     )?;
     run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "enable",
-        "gitrun-control.service",
-    ]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-control.service"]))?;
     // The system binary may have just been replaced by an upgrade. Restart
     // an already-active manager so it loads the new executable on disk.
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "restart",
-        "gitrun-control.service",
-    ]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-control.service"]))?;
     run_command(Command::new("/usr/bin/systemctl").args([
         "is-active",
         "--quiet",

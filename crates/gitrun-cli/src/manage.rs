@@ -1127,14 +1127,14 @@ fn security_baseline_check() -> Result<Value, String> {
         .map(|repositories| {
             repositories
                 .iter()
-                .filter_map(|(repository, value)| {
+                .filter(|(_, value)| {
                     value
                         .get("docker")
                         .and_then(|docker| docker.get("direct_socket_enabled"))
                         .and_then(Value::as_bool)
                         .unwrap_or(false)
-                        .then(|| repository.clone())
                 })
+                .map(|(repository, _)| repository.clone())
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();

@@ -1897,7 +1897,7 @@ jobs:
           ci_run "Example environment parses with the runtime loader" cargo test --locked -p gitrun-core example_env_file_parses_and_validates_with_runtime_loader || rc=1
           ci_run "Example environment variables have runtime owners" cargo test --locked -p gitrun-core example_env_keys_have_runtime_consumers_or_explicit_external_owners || rc=1
           ci_run "Setup-generated environment and service contracts" cargo test --locked -p gitrun-setup generated_bootstrap_env_parses_and_validates_with_runtime_loader || rc=1
-          ci_run "Setup installs the shared CLI and GSR watchdog" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
+          ci_run "Setup installs the shared CLI, watchdog and Control Manager" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
           ci_run "Partial dashboard repository settings use safe defaults" cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults || rc=1
           ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt || rc=1
           ci_run "Control Manager rejects malformed IPC and enforces confirmations" cargo test --locked -p gitrun-dashboard-tauri control_manager::tests || rc=1

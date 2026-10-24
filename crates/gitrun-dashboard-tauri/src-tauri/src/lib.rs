@@ -23,7 +23,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
 mod control_manager;
-pub use control_manager::{enabled as control_manager_enabled, request as control_manager_request, serve as run_control_manager};
+pub use control_manager::{
+    enabled as control_manager_enabled, request as control_manager_request,
+    serve as run_control_manager,
+};
 
 /// Serializes dashboard-side writes to the shared config/settings files.
 /// The snapshot check alone is vulnerable to two Tauri commands checking the

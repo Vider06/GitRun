@@ -32,11 +32,19 @@ struct Reply {
 
 impl Reply {
     fn success(result: Value) -> Self {
-        Self { ok: true, result: Some(result), error: None }
+        Self {
+            ok: true,
+            result: Some(result),
+            error: None,
+        }
     }
 
     fn failure(error: impl Into<String>) -> Self {
-        Self { ok: false, result: None, error: Some(error.into()) }
+        Self {
+            ok: false,
+            result: None,
+            error: Some(error.into()),
+        }
     }
 }
 
@@ -106,7 +114,9 @@ pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, Stri
                 .result
                 .ok_or_else(|| "control-manager returned no result".to_owned())
         } else {
-            Err(reply.error.unwrap_or_else(|| "control-manager operation failed".into()))
+            Err(reply
+                .error
+                .unwrap_or_else(|| "control-manager operation failed".into()))
         }
     }
 
@@ -133,7 +143,9 @@ pub fn serve() -> i32 {
         let directory_meta = match std::fs::symlink_metadata(directory) {
             Ok(metadata) => metadata,
             Err(error) => {
-                eprintln!("gitrun control-manager: systemd runtime directory is unavailable: {error}");
+                eprintln!(
+                    "gitrun control-manager: systemd runtime directory is unavailable: {error}"
+                );
                 return 1;
             }
         };
@@ -165,7 +177,8 @@ pub fn serve() -> i32 {
                 return 1;
             }
         };
-        if let Err(error) = std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o660)) {
+        if let Err(error) = std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o660))
+        {
             eprintln!("gitrun control-manager: cannot secure socket permissions: {error}");
             let _ = std::fs::remove_file(socket);
             return 1;
@@ -248,9 +261,16 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
             "read" => super::management_tui_read(&request.action, request.args),
             "write" => {
                 if needs_confirmation(&request.action, &request.args)
-                    && !request.args.get("confirmed").and_then(Value::as_bool).unwrap_or(false)
+                    && !request
+                        .args
+                        .get("confirmed")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
                 {
-                    return Err(format!("operation {} requires explicit confirmation", request.action));
+                    return Err(format!(
+                        "operation {} requires explicit confirmation",
+                        request.action
+                    ));
                 }
                 super::management_tui_write(&request.action, request.args)
             }

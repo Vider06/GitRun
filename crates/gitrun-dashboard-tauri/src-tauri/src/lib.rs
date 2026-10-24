@@ -114,6 +114,22 @@ fn trusted_system_cli_path() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
+fn authorized_cli_command(cli: &Path) -> Result<std::process::Command, String> {
+    let mut command = if current_process_is_root() {
+        std::process::Command::new(cli)
+    } else {
+        let pkexec = pkexec_path().ok_or(
+            "trusted pkexec was not found; this protected operation cannot continue safely",
+        )?;
+        let mut command = std::process::Command::new(pkexec);
+        command.arg(cli);
+        command
+    };
+    command.arg("--no-cat");
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
 fn persist_config_as_root(config: &Config) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
@@ -126,9 +142,6 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let pkexec = pkexec_path().ok_or(
-        "Saving system settings requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; system settings cannot be saved safely.",
     )?;
@@ -153,9 +166,7 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
 
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-config-root")
             .arg(&path)
             .status()
@@ -193,9 +204,6 @@ fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), Stri
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let pkexec = pkexec_path().ok_or(
-        "Saving system security settings requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; security settings cannot be saved safely.",
     )?;
@@ -223,9 +231,7 @@ fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), Stri
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
 
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-gitrun-settings-root")
             .arg(&path)
             .status()
@@ -263,9 +269,6 @@ fn persist_logic_rules_as_root(
     use std::os::unix::fs::OpenOptionsExt;
 
     gitrun_scheduler::logic_containers::validate_rules(rules).map_err(|error| error.to_string())?;
-    let pkexec = pkexec_path().ok_or(
-        "Saving Logic Containers rules requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; Logic Containers rules cannot be saved safely.",
     )?;
@@ -295,9 +298,7 @@ fn persist_logic_rules_as_root(
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
 
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-logic-rules-root")
             .arg(&path)
             .status()
@@ -334,9 +335,6 @@ fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Res
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let pkexec = pkexec_path().ok_or(
-        "Saving VM configuration requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; VM configuration cannot be saved safely.",
     )?;
@@ -364,9 +362,7 @@ fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Res
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-vm-configs-root")
             .arg(&path)
             .status()
@@ -432,9 +428,6 @@ fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let pkexec = pkexec_path().ok_or(
-        "Saving Kitty settings requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; Kitty settings cannot be saved safely.",
     )?;
@@ -464,9 +457,7 @@ fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
 
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-kitty-settings-root")
             .arg(&path)
             .status()
@@ -1403,26 +1394,62 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
 
 #[cfg(target_os = "linux")]
 fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result<String, String> {
-    let pkexec = pkexec_path().ok_or(
-        "This protected GitRun operation requires administrator authorization, but trusted pkexec was not found.",
-    )?;
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = match command_name {
+            "--read-gsr-events-root" if arguments.len() == 1 => {
+                let limit = arguments[0]
+                    .parse::<usize>()
+                    .map_err(|_| "invalid GSR event limit".to_owned())?;
+                if !(1..=500).contains(&limit) {
+                    return Err("GSR event limit must be between 1 and 500".into());
+                }
+                control_manager_request("read", "gsr_events", serde_json::json!({ "limit": limit }))?
+            }
+            "--read-logic-rules-root" if arguments.is_empty() => {
+                control_manager_request("read", "logic_rules", serde_json::json!({}))?
+            }
+            "--read-gitrun-settings-root" if arguments.is_empty() => {
+                control_manager_request("read", "gitrun_settings", serde_json::json!({}))?
+            }
+            "--read-vm-configs-root" if arguments.is_empty() => {
+                control_manager_request("read", "vm_configs", serde_json::json!({}))?
+            }
+            "--read-pending-hypervisor-decisions-root" if arguments.is_empty() => {
+                control_manager_request("read", "hypervisor_decisions", serde_json::json!({}))?
+            }
+            "--respond-hypervisor-decision-root"
+                if arguments.len() == 3 && arguments[0] == "--" =>
+            {
+                control_manager_request(
+                    "write",
+                    "hypervisor_respond",
+                    serde_json::json!({
+                        "vm_name": arguments[1],
+                        "choice": arguments[2],
+                        "confirmed": true
+                    }),
+                )?
+            }
+            _ => return Err(format!(
+                "protected helper operation is not available through the Control Manager: {command_name}"
+            )),
+        };
+        return serde_json::to_string(&value)
+            .map_err(|error| format!("encode Control Manager response: {error}"));
+    }
+
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; protected GitRun state cannot be accessed safely.",
     )?;
-    let output = std::process::Command::new(pkexec)
-        .arg(cli)
-        .arg("--no-cat")
+    let output = authorized_cli_command(&cli)?
         .arg(command_name)
         .args(arguments)
         .output()
-        .map_err(|error| format!("unable to request authorized GitRun state access: {error}"))?;
+        .map_err(|error| format!("unable to launch protected GitRun state helper: {error}"))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
-            format!(
-                "authorized GitRun state helper exited with status {}",
-                output.status
-            )
+            format!("authorized GitRun state helper exited with status {}", output.status)
         } else {
             format!("authorized GitRun state helper failed: {detail}")
         });

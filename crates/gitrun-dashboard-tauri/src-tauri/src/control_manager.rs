@@ -354,8 +354,8 @@ fn schedule_maintenance_task(task: &str) -> Result<Value, String> {
             "--property=Type=oneshot",
             "--property=TimeoutStartSec=0",
             "--description",
-            &format!("GitRun Control Manager: {label}"),
         ])
+        .arg(format!("GitRun Control Manager: {label}"))
         .arg(executable)
         .args(arguments)
         .output()

@@ -2937,6 +2937,92 @@ pub fn save_settings_for_local_state_dir(state_dir: &Path, settings: &KittySetti
     atomic_write_private(&KittyRuntime::settings_path(state_dir), &bytes)
 }
 
+/// Save system Kitty settings from the trusted, persistent Control Manager.
+/// Unlike the legacy pkexec staging path this writes as the already-privileged
+/// service identity and keeps the file root-only; unprivileged UIs must use IPC.
+pub fn save_system_settings_for_state_dir(
+    state_dir: &Path,
+    settings: &KittySettings,
+) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    settings.validate()?;
+    if !KittyRuntime::uses_system_settings_path(state_dir) {
+        return Err(KittyError::Invalid(
+            "system Kitty settings require the trusted /var/lib/gitrun installation".into(),
+        ));
+    }
+    let path = KittyRuntime::settings_path(state_dir);
+    validate_system_parent(&path)?;
+    let bytes = serde_json::to_vec(settings)?;
+    if bytes.len() as u64 > MAX_SETTINGS_BYTES {
+        return Err(KittyError::Invalid(
+            "Kitty settings exceed the size limit".into(),
+        ));
+    }
+
+    if let Ok(metadata) = fs::symlink_metadata(&path) {
+        let mode = metadata.mode() & 0o777;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.uid() != 0
+            || metadata.nlink() != 1
+            || !matches!(mode, 0o600 | 0o640)
+            || metadata.len() > MAX_SETTINGS_BYTES
+        {
+            return Err(KittyError::Invalid(
+                "existing system Kitty settings have unsafe type, ownership, mode, links, or size"
+                    .into(),
+            ));
+        }
+    } else if let Err(error) = fs::symlink_metadata(&path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            return Err(error.into());
+        }
+    }
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| KittyError::Invalid("system Kitty settings have no parent".into()))?;
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".kitty-manager-{}-{sequence}.tmp",
+        std::process::id()
+    ));
+    let result = (|| -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.write_all(b"\\n")?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, &path)?;
+        fs::File::open(parent)?.sync_all()?;
+
+        let final_metadata = fs::symlink_metadata(&path)?;
+        if final_metadata.file_type().is_symlink()
+            || !final_metadata.is_file()
+            || final_metadata.uid() != 0
+            || final_metadata.nlink() != 1
+            || final_metadata.permissions().mode() & 0o777 != 0o600
+            || final_metadata.len() > MAX_SETTINGS_BYTES
+        {
+            return Err(KittyError::Invalid(
+                "saved system Kitty settings failed ownership/permission verification".into(),
+            ));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 /// Root-only writer called by the authenticated internal CLI command. The CLI
 /// then grants the desktop user's primary group read-only access.
 pub fn load_dashboard_status(state_dir: &Path) -> Result<KittyDashboardStatus> {
@@ -3114,7 +3200,7 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
         || !metadata.is_file()
         || metadata.uid() != 0
         || metadata.nlink() != 1
-        || metadata.mode() & 0o777 != 0o640
+        || !matches!(metadata.mode() & 0o777, 0o600 | 0o640)
         || metadata.len() > max_bytes
     {
         return Err(KittyError::Invalid(format!(
@@ -3130,7 +3216,7 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     if !opened.is_file()
         || opened.uid() != 0
         || opened.nlink() != 1
-        || opened.mode() & 0o777 != 0o640
+        || !matches!(opened.mode() & 0o777, 0o600 | 0o640)
         || opened.len() > max_bytes
     {
         return Err(KittyError::Invalid(format!(

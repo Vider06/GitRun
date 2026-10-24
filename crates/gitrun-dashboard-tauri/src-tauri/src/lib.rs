@@ -1087,6 +1087,19 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical uninstall currently targets Linux x86_64".into());
     }
+    if control_manager_enabled() {
+        let scheduled = control_manager_request(
+            "write",
+            "maintenance_task",
+            serde_json::json!({ "task": "uninstall", "confirmed": true }),
+        )?;
+        let message = scheduled
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("GitRun uninstall was scheduled by systemd.");
+        emit_first_setup_event(&app, 0, message.to_owned(), "system", true, true);
+        return Ok(());
+    }
 
     let pkexec = pkexec_path().ok_or(
         "trusted pkexec was not found at a root-owned, non-writable system path; graphical uninstall cannot safely continue",
@@ -1217,6 +1230,19 @@ fn stream_unprivileged_command(
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical reinstall currently targets Linux x86_64".into());
+    }
+    if control_manager_enabled() {
+        let scheduled = control_manager_request(
+            "write",
+            "maintenance_task",
+            serde_json::json!({ "task": "reinstall_latest", "confirmed": true }),
+        )?;
+        let message = scheduled
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("GitRun reinstall was scheduled by systemd.");
+        emit_first_setup_event(&app, 0, message.to_owned(), "system", true, true);
+        return Ok(());
     }
     let cli = dashboard_cli_path(&app)
         .ok_or("trusted GitRun CLI was not found; the reinstall cannot safely continue")?;
@@ -2558,6 +2584,19 @@ fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
 /// the operator immediately rather than silently at the next job.
 #[tauri::command]
 fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request("write", "zizmor_install", serde_json::json!({}))?;
+        return match value.get("status").and_then(serde_json::Value::as_str) {
+            Some("Installed") => Ok(gitrun_core::InstallOutcome::Installed),
+            Some("AlreadyInstalled") => Ok(gitrun_core::InstallOutcome::AlreadyInstalled),
+            Some("Failed") => Err(value
+                .get("detail")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("zizmor installation failed")
+                .to_owned()),
+            _ => Err("Control Manager returned an invalid zizmor installation result".into()),
+        };
+    }
     let mut config = load_config()?;
     config.gsr_zizmor_license_accepted = true;
 
@@ -2591,6 +2630,10 @@ fn persist_zizmor_config(config: &Config) -> Result<(), String> {
 /// later should not require a second download.
 #[tauri::command]
 fn disable_zizmor() -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request("write", "zizmor_disable", serde_json::json!({}))?;
+        return Ok(());
+    }
     let mut config = load_config()?;
     config.gsr_zizmor_enabled = false;
     persist_dashboard_config(&config)
@@ -3614,6 +3657,19 @@ fn check_gitrun_updates() -> UpdateCheckResult {
 async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("privileged runner-image update currently targets Linux x86_64".into());
+    }
+    if control_manager_enabled() {
+        let scheduled = control_manager_request(
+            "write",
+            "maintenance_task",
+            serde_json::json!({ "task": "update_containers", "confirmed": true }),
+        )?;
+        let message = scheduled
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Permanent runner update was scheduled by systemd.");
+        emit_first_setup_event(&app, FIRST_SETUP_TOTAL, message.to_owned(), "system", true, true);
+        return Ok(());
     }
     let pkexec = pkexec_path()
         .ok_or("trusted pkexec was not found; runner update cannot safely continue")?;

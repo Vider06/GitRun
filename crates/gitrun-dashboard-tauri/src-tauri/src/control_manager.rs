@@ -203,7 +203,7 @@ pub fn serve() -> i32 {
         for incoming in listener.incoming() {
             match incoming {
                 Ok(stream) => {
-                    std::thread::spawn(move || serve_client(stream));
+                    let _ = std::thread::spawn(move || serve_client(stream));
                 }
                 Err(error) => {
                     eprintln!("gitrun control-manager: failed to accept local connection: {error}");
@@ -297,11 +297,53 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
 fn needs_confirmation(action: &str, args: &Value) -> bool {
     match action {
         "vault_delete" | "vm_delete" | "zizmor_install" | "zizmor_disable" => true,
+        "gitrun_settings_save" => {
+            args.get("confirm_socket_opt_out").and_then(Value::as_bool) == Some(true)
+        }
         "service_control" => matches!(
             args.get("action").and_then(Value::as_str),
             Some("stop" | "restart")
         ),
         "fast_stop" => true,
         _ => false,
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_schema_rejects_unknown_fields() {
+        let raw = r#"{"operation":"read","action":"config","args":{},"executable":"/bin/sh"}"#;
+        assert!(serde_json::from_str::<Request>(raw).is_err());
+    }
+
+    #[test]
+    fn confirmation_gate_covers_destructive_operations() {
+        assert!(needs_confirmation("vault_delete", &serde_json::json!({})));
+        assert!(needs_confirmation("vm_delete", &serde_json::json!({})));
+        assert!(needs_confirmation("fast_stop", &serde_json::json!({})));
+        assert!(needs_confirmation(
+            "service_control",
+            &serde_json::json!({"action":"restart"})
+        ));
+        assert!(!needs_confirmation(
+            "service_control",
+            &serde_json::json!({"action":"start"})
+        ));
+    }
+
+    #[test]
+    fn privileged_socket_policy_change_requires_confirmation() {
+        assert!(needs_confirmation(
+            "gitrun_settings_save",
+            &serde_json::json!({"confirm_socket_opt_out":true})
+        ));
+        assert!(!needs_confirmation(
+            "gitrun_settings_save",
+            &serde_json::json!({"confirm_socket_opt_out":false})
+        ));
     }
 }

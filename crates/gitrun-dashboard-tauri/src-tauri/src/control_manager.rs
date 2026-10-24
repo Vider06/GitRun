@@ -309,7 +309,6 @@ fn needs_confirmation(action: &str, args: &Value) -> bool {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

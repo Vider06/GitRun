@@ -3114,16 +3114,19 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
 fn connect_repository_through_manager(repository: String) -> Result<serde_json::Value, String> {
     let repository = repository.trim().to_owned();
     if !valid_setup_repository(&repository) {
-        return Err("repository must be in owner/name form and contain only valid GitHub name characters".into());
+        return Err(
+            "repository must be in owner/name form and contain only valid GitHub name characters"
+                .into(),
+        );
     }
 
     let mut config = load_config()?;
     // Verify repository visibility and the API permission required to inspect
     // runner registration before mutating the protected configuration.
     let client = dashboard_github_client(&config)?;
-    let mut runners = client
-        .list_runners(&repository)
-        .map_err(|error| format!("GitHub repository/runner access check failed for {repository}: {error}"))?;
+    let mut runners = client.list_runners(&repository).map_err(|error| {
+        format!("GitHub repository/runner access check failed for {repository}: {error}")
+    })?;
 
     let already_configured = config
         .repositories
@@ -3133,7 +3136,9 @@ fn connect_repository_through_manager(repository: String) -> Result<serde_json::
         false
     } else {
         config.repositories.push(repository.clone());
-        config.validate().map_err(|error| format!("updated repository configuration is invalid: {error}"))?;
+        config
+            .validate()
+            .map_err(|error| format!("updated repository configuration is invalid: {error}"))?;
         persist_dashboard_config(&config).map_err(|error| {
             format!("repository access was verified, but saving {repository} failed: {error}")
         })?;
@@ -3173,7 +3178,10 @@ fn connect_repository_through_manager(repository: String) -> Result<serde_json::
 
     let online_count = runners.iter().filter(|runner| runner.is_online()).count();
     let busy_count = runners.iter().filter(|runner| runner.busy).count();
-    let runner_names = runners.iter().map(|runner| runner.name.clone()).collect::<Vec<_>>();
+    let runner_names = runners
+        .iter()
+        .map(|runner| runner.name.clone())
+        .collect::<Vec<_>>();
     let status = if !scheduler_restarted && already_configured {
         "already_configured"
     } else if !runner_expected {

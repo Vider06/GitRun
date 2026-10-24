@@ -1348,6 +1348,13 @@ fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("gsr-watchdog")) {
         std::process::exit(run_gsr_watchdog());
     }
+    // The persistent Control Manager is a systemd-only internal entry point. It
+    // bypasses the interactive presenter and refuses to run without root.
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new("control-manager"))
+    {
+        std::process::exit(gitrun_dashboard_tauri_lib::run_control_manager());
+    }
     // Initialize the shared presenter before Clap so help and argument errors
     // follow the same mascot policy as normal commands. Internal callers can
     // still explicitly suppress it with --no-cat.

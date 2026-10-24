@@ -1463,6 +1463,9 @@ fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result
             "--read-vm-configs-root" if arguments.is_empty() => {
                 control_manager_request("read", "vm_configs", serde_json::json!({}))?
             }
+            "--read-kitty-dashboard-root" if arguments.is_empty() => {
+                control_manager_request("read", "kitty", serde_json::json!({}))?
+            }
             "--read-pending-hypervisor-decisions-root" if arguments.is_empty() => {
                 control_manager_request("read", "hypervisor_decisions", serde_json::json!({}))?
             }
@@ -1723,6 +1726,22 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
 fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, String> {
     if run_id == 0 {
         return Err("workflow run ID must be greater than zero".into());
+    }
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "write",
+            "fast_stop",
+            serde_json::json!({
+                "repository": repository,
+                "run_id": run_id,
+                "confirmed": true
+            }),
+        )?;
+        return value
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "Control Manager returned an invalid Fast Stop result".into());
     }
     let config = load_config()?;
     if !config
@@ -2316,6 +2335,11 @@ fn open_vault(config: &Config) -> Result<Vault, String> {
 
 #[tauri::command]
 fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request("read", "vault_secrets", serde_json::json!({}))?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode GitVault metadata from Control Manager: {error}"));
+    }
     let config = load_config()?;
     let vault = open_vault(&config)?;
     Ok(vault
@@ -2342,6 +2366,14 @@ fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), 
     if value.len() > MAX_VAULT_SECRET_BYTES {
         return Err("GitVault secret exceeds the 1 MiB safety limit".into());
     }
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "vault_set",
+            serde_json::json!({ "name": name, "value": value, "scope": scope }),
+        )?;
+        return Ok(());
+    }
     let config = load_config()?;
     let mut vault = open_vault(&config)?;
     vault
@@ -2351,6 +2383,14 @@ fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), 
 
 #[tauri::command]
 fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "vault_delete",
+            serde_json::json!({ "name": name, "scope": scope, "confirmed": true }),
+        )?;
+        return Ok(());
+    }
     let config = load_config()?;
     let mut vault = open_vault(&config)?;
     vault

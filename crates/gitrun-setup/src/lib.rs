@@ -266,7 +266,11 @@ fn deb_package_registered() -> bool {
 
 fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
     println!("[GitRun uninstall] Stopping and disabling GitRun systemd units");
-    for unit in ["gitrun-control.service", "gitrun-gsr.service", "gitrun.service"] {
+    for unit in [
+        "gitrun-control.service",
+        "gitrun-gsr.service",
+        "gitrun.service",
+    ] {
         let _ = Command::new("/usr/bin/systemctl")
             .args(["disable", "--now", unit])
             .status();
@@ -909,7 +913,10 @@ pub fn bootstrap_linux_with_auth_and_profile(
         ));
     }
 
-    setup_progress(9, "Enabling and starting the GitRun Control Manager and services");
+    setup_progress(
+        9,
+        "Enabling and starting the GitRun Control Manager and services",
+    );
     run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-control.service"]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-control.service"]))?;
@@ -1288,7 +1295,6 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
     result
 }
 
-
 fn ensure_control_manager_group() -> Result<(), SetupError> {
     let exists = Command::new("/usr/bin/getent")
         .args(["group", "gitrun-control"])
@@ -1348,7 +1354,11 @@ pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), Se
         0o644,
     )?;
     run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "--now", "gitrun-control.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "enable",
+        "--now",
+        "gitrun-control.service",
+    ]))?;
     run_command(Command::new("/usr/bin/systemctl").args([
         "is-active",
         "--quiet",

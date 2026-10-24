@@ -1449,7 +1449,10 @@ fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
-            format!("authorized GitRun state helper exited with status {}", output.status)
+            format!(
+                "authorized GitRun state helper exited with status {}",
+                output.status
+            )
         } else {
             format!("authorized GitRun state helper failed: {detail}")
         });

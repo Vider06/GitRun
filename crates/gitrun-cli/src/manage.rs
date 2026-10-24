@@ -490,7 +490,10 @@ fn app_write(action: &str, mut args: Value) -> Result<Value, String> {
             action,
             "vault_delete" | "vm_delete" | "zizmor_install" | "zizmor_disable" | "fast_stop"
         ) || (action == "service_control"
-            && matches!(args.get("action").and_then(Value::as_str), Some("stop" | "restart")))
+            && matches!(
+                args.get("action").and_then(Value::as_str),
+                Some("stop" | "restart")
+            ))
         {
             if let Some(object) = args.as_object_mut() {
                 object.insert("confirmed".into(), Value::Bool(true));

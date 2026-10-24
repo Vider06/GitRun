@@ -494,6 +494,8 @@ fn app_write(action: &str, mut args: Value) -> Result<Value, String> {
                 args.get("action").and_then(Value::as_str),
                 Some("stop" | "restart")
             ))
+            || (action == "gitrun_settings_save"
+                && args.get("confirm_socket_opt_out").and_then(Value::as_bool) == Some(true))
         {
             if let Some(object) = args.as_object_mut() {
                 object.insert("confirmed".into(), Value::Bool(true));

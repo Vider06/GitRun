@@ -3289,6 +3289,23 @@ fn connect_repository_through_manager(repository: String) -> Result<serde_json::
     let scheduler_restarted = if already_configured {
         false
     } else {
+        // Restarting the scheduler can interrupt active workloads. Refuse to
+        // change its configuration mid-run rather than silently stopping jobs.
+        for configured in &config.repositories {
+            let active = client.list_active_workflow_runs(configured).map_err(|error| {
+                format!(
+                    "cannot safely add {repository}: active-workflow state for {configured} could not be verified ({error})"
+                )
+            })?;
+            if !active.is_empty() {
+                return Err(format!(
+                    "cannot apply {repository} yet: {} active workflow run(s) exist in {configured}. Wait for them to finish and retry; GitRun did not modify the configuration.",
+                    active.len()
+                ));
+            }
+        }
+
+        let previous_config = config.clone();
         config.repositories.push(repository.clone());
         config
             .validate()
@@ -3296,13 +3313,33 @@ fn connect_repository_through_manager(repository: String) -> Result<serde_json::
         persist_dashboard_config(&config).map_err(|error| {
             format!("repository access was verified, but saving {repository} failed: {error}")
         })?;
-        control_gitrun_service(ServiceAction::Restart).map_err(|error| {
-            format!("{repository} was saved, but the scheduler could not be restarted: {error}")
-        })?;
-        let health = get_dashboard_health(Some(true))?;
-        if !health.service_active {
+
+        if let Err(restart_error) = control_gitrun_service(ServiceAction::Restart) {
+            let rollback = persist_dashboard_config(&previous_config);
             return Err(format!(
-                "{repository} was saved, but gitrun.service is not active after the restart"
+                "{repository} was saved but the scheduler could not be restarted: {restart_error}. Configuration rollback: {}",
+                rollback.map_or_else(|error| format!("FAILED ({error})"), |_| "restored".to_owned())
+            ));
+        }
+        let health = match get_dashboard_health(Some(true)) {
+            Ok(health) => health,
+            Err(error) => {
+                let rollback = persist_dashboard_config(&previous_config);
+                let restart = control_gitrun_service(ServiceAction::Restart);
+                return Err(format!(
+                    "{repository} was saved but scheduler health could not be verified: {error}. Configuration rollback: {}; scheduler recovery: {}",
+                    rollback.map_or_else(|failure| format!("FAILED ({failure})"), |_| "restored".to_owned()),
+                    restart.map_or_else(|failure| format!("FAILED ({failure})"), |_| "requested".to_owned())
+                ));
+            }
+        };
+        if !health.service_active {
+            let rollback = persist_dashboard_config(&previous_config);
+            let restart = control_gitrun_service(ServiceAction::Restart);
+            return Err(format!(
+                "{repository} was saved but gitrun.service is not active after restart. Configuration rollback: {}; scheduler recovery: {}",
+                rollback.map_or_else(|failure| format!("FAILED ({failure})"), |_| "restored".to_owned()),
+                restart.map_or_else(|failure| format!("FAILED ({failure})"), |_| "requested".to_owned())
             ));
         }
         true

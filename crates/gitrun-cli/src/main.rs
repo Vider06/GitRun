@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cat;
+mod manage;
 mod presenter;
 
 include!(concat!(env!("OUT_DIR"), "/gitrun_crate_versions.rs"));
@@ -1391,10 +1392,11 @@ fn main() {
     let command = cli.command.unwrap_or(Command::Dashboard);
     let is_cat_command = matches!(&command, Command::Cat);
     let is_status_command = matches!(&command, Command::Status { .. });
-    if !is_cat_command && !is_status_command {
+    let is_manage_command = matches!(&command, Command::Manage);
+    if !is_cat_command && !is_status_command && !is_manage_command {
         presenter.start_live();
     }
-    if !is_cat_command {
+    if !is_cat_command && !is_manage_command {
         presenter.transition(validation_state_for_command(&command));
     }
 
@@ -1461,6 +1463,16 @@ fn main() {
             // graphical dashboard owns the process and terminal.
             presenter.prepare_for_external_process();
             run_dashboard()
+        }
+        Command::Manage => {
+            presenter.prepare_for_external_process();
+            match manage::run() {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun management console: FAIL — {error}");
+                    1
+                }
+            }
         }
         Command::RecoveryGtuu => run_recovery_gtuu(&mut presenter),
         Command::RepairService => run_repair_service(),
@@ -1600,7 +1612,7 @@ fn main() {
         } => run_api_policy(&api, operation.as_deref(), enabled),
     };
 
-    if !is_cat_command && !is_status_command {
+    if !is_cat_command && !is_status_command && !is_manage_command {
         presenter.finish(exit_code);
     }
     std::process::exit(exit_code);
@@ -1622,6 +1634,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         // requested release is already installed or otherwise rejected.
         Command::Update { .. } => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
+        Command::Manage => ValidationState::Reading,
         Command::Uninstall
         | Command::Reinstall
         | Command::UninstallRoot
@@ -1833,6 +1846,8 @@ enum Command {
     Scheduler,
     /// Launch the GitRun dashboard (default when no command is given).
     Dashboard,
+    /// Launch the interactive terminal management console for headless hosts.
+    Manage,
     /// Internal recovery command used by the protected recovery UI.
     #[command(name = "recovery-gtuu", hide = true)]
     RecoveryGtuu,
@@ -3814,6 +3829,18 @@ mod internal_lifecycle_command_tests {
             "--no-cat must remain available before internal commands"
         );
         cli.command.expect("internal command must be selected")
+    }
+
+    #[test]
+    fn manage_is_public_and_cat_remains_a_separate_command() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "manage"]).unwrap().command,
+            Some(Command::Manage)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,
+            Some(Command::Cat)
+        ));
     }
 
     #[test]

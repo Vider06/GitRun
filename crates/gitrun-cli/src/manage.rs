@@ -494,6 +494,7 @@ fn app_write(action: &str, mut args: Value) -> Result<Value, String> {
                 args.get("action").and_then(Value::as_str),
                 Some("stop" | "restart")
             ))
+            || action == "maintenance_task"
             || (action == "gitrun_settings_save"
                 && args.get("confirm_socket_opt_out").and_then(Value::as_bool) == Some(true))
         {
@@ -1091,11 +1092,11 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (7, 3) => app_read("service_logs", json!({ "source":"all", "limit":200 })).map(|v| ("Combined service journal".into(),v)),
         (8, 1) => app_read("updates", json!({})).map(|v| ("Update check".into(),v)),
         (8, 2) => run_external(terminal, &["--no-cat","setup","--terminal"]).map(|v| ("Terminal setup".into(),v)),
-        (8, 3) => external_with_confirmation(terminal, &["--no-cat","update"], "Apply the verified GitRun update now? [y/N]", "GitRun update"),
-        (8, 4) => external_with_confirmation(terminal, &["--no-cat","update","--only-containers"], "Update eligible permanent runner containers now? [y/N]", "Permanent runner update"),
-        (8, 5) => external_with_confirmation(terminal, &["--no-cat","reinstall"], "Reinstall GitRun from the official release? [y/N]", "GitRun reinstall"),
+        (8, 3) => maintenance_task_with_confirmation(terminal, "update", &["--no-cat", "update"], "Apply the verified GitRun update now? [y/N]", "GitRun update"),
+        (8, 4) => maintenance_task_with_confirmation(terminal, "update_containers", &["--no-cat", "update", "--only-containers"], "Update eligible permanent runner containers now? [y/N]", "Permanent runner update"),
+        (8, 5) => maintenance_task_with_confirmation(terminal, "reinstall_latest", &["--no-cat", "reinstall"], "Reinstall GitRun from the official release? [y/N]", "GitRun reinstall"),
         (8, 6) => service_action(terminal, "restart").map(|v| ("GitRun service".into(), v)),
-        (8, 7) => external_with_confirmation(terminal, &["--no-cat","uninstall"], "UNINSTALL GitRun and its managed components? [y/N]", "GitRun uninstall"),
+        (8, 7) => maintenance_task_with_confirmation(terminal, "uninstall", &["--no-cat", "uninstall"], "UNINSTALL GitRun and its managed components? [y/N]", "GitRun uninstall"),
         (9, 0) => app_read("config", json!({})).map(|v| ("Global configuration".into(),v)),
         (9, 1) => edit_config(terminal).map(|v| ("Global configuration".into(),v)),
         (9, 2) => app_read("vm_configs", json!({})).map(|v| ("VM definitions".into(),v)),
@@ -1703,6 +1704,33 @@ fn service_action(terminal: &mut ManagementTerminal, action: &str) -> Result<Val
 
 fn service_control(action: &str) -> Result<Value, String> {
     app_write("service_control", json!({"action":action}))
+}
+
+fn maintenance_task_with_confirmation(
+    terminal: &mut ManagementTerminal,
+    task: &str,
+    fallback_args: &[&str],
+    prompt_text: &str,
+    title: &str,
+) -> Result<(String, Value), String> {
+    if !confirm(terminal, prompt_text)? {
+        return Ok((format!("{title} cancelled"), json!({"cancelled": true})));
+    }
+
+    if gitrun_dashboard_tauri_lib::control_manager_enabled() {
+        return app_write(
+            "maintenance_task",
+            json!({"task": task, "confirmed": true}),
+        )
+        .map(|value| (title.to_owned(), value));
+    }
+
+    let output = run_external_args(terminal, fallback_args)?;
+    if output.get("exit_code").and_then(Value::as_i64) == Some(0) {
+        Ok((title.to_owned(), output))
+    } else {
+        Err(format!("{title} did not complete successfully: {output}"))
+    }
 }
 
 fn external_with_confirmation(

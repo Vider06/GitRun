@@ -12,6 +12,7 @@ TimeoutStopSec=15
 RuntimeDirectory=gitrun-control
 RuntimeDirectoryMode=0750
 Group=gitrun-control
+Environment=GITRUN_CONFIG_FILE=/etc/gitrun/gitrun.env
 UMask=0007
 # The manager is the sole privileged control-plane entry point for dashboard
 # operations. The UIs remain unprivileged and can only use its typed local IPC.

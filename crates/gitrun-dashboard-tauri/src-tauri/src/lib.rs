@@ -22,6 +22,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
+mod control_manager;
+pub use control_manager::{enabled as control_manager_enabled, request as control_manager_request, serve as run_control_manager};
+
 /// Serializes dashboard-side writes to the shared config/settings files.
 /// The snapshot check alone is vulnerable to two Tauri commands checking the
 /// same old state before either one writes it.
@@ -56,6 +59,14 @@ fn resolve_config_path(explicit: Option<&std::ffi::OsStr>) -> Result<Option<Path
 }
 
 fn load_config() -> Result<Config, String> {
+    // System configuration contains credentials and stays root-owned 0600.
+    // Desktop processes read it only through the persistent, allowlisted IPC
+    // service. The manager itself runs as root and follows the local path below.
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request("read", "config", serde_json::json!({}))?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode authorized GitRun configuration: {error}"));
+    }
     let explicit = std::env::var_os("GITRUN_CONFIG_FILE");
     let path = resolve_config_path(explicit.as_deref())?;
     match path {
@@ -101,6 +112,14 @@ fn trusted_system_cli_path() -> Option<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn persist_config_as_root(config: &Config) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "config_save",
+            serde_json::json!({ "updated": config }),
+        )?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -157,6 +176,17 @@ fn persist_config_as_root(_config: &Config) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "gitrun_settings_save",
+            serde_json::json!({
+                "settings": settings,
+                "confirm_socket_opt_out": true
+            }),
+        )?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -218,6 +248,14 @@ fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), Str
 fn persist_logic_rules_as_root(
     rules: &[gitrun_scheduler::logic_containers::LogicRule],
 ) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "logic_rules_save",
+            serde_json::json!({ "rules": rules }),
+        )?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -282,6 +320,14 @@ fn persist_logic_rules_as_root(
 
 #[cfg(target_os = "linux")]
 fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "vm_configs_replace",
+            serde_json::json!({ "configs": configs }),
+        )?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -372,6 +418,14 @@ fn respond_hypervisor_decision_as_root(
 
 #[cfg(target_os = "linux")]
 fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "kitty_save",
+            serde_json::json!({ "settings": settings }),
+        )?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -2263,6 +2317,15 @@ fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
 
 #[tauri::command]
 fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "read",
+            "service_logs",
+            serde_json::json!({ "source": source, "limit": limit }),
+        )?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode service logs from Control Manager: {error}"));
+    }
     if !cfg!(target_os = "linux") {
         return Err("System journal logs are currently available only on Linux.".into());
     }
@@ -2957,6 +3020,22 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
         return Err("GitRun system service controls currently target Linux".into());
     }
+    if control_manager_enabled() && !current_process_is_root() {
+        let action_arg = match action {
+            ServiceAction::Start => "start",
+            ServiceAction::Stop => "stop",
+            ServiceAction::Restart => "restart",
+        };
+        let value = control_manager_request(
+            "write",
+            "service_control",
+            serde_json::json!({ "action": action_arg, "confirmed": true }),
+        )?;
+        return value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "Control Manager returned an invalid service-control result".into());
+    }
     let systemctl = trusted_systemctl_path()
         .ok_or("trusted systemctl binary was not found at a root-owned system path")?;
     let action_arg = match action {
@@ -3529,6 +3608,22 @@ pub fn management_tui_write(
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match action {
+        "vm_configs_replace" => {
+            let configs: Vec<gitrun_scheduler::vm::VmConfig> =
+                management_tui_arg(&args, "configs")?;
+            // Reuse the scheduler's loader validation by temporarily using its
+            // public save API only in developer installs; system installs use
+            // the existing fixed-purpose privileged writer after structural
+            // validation of the complete configuration set.
+            if control_manager_enabled() {
+                persist_vm_configs_as_root(&configs)?;
+            } else {
+                let config = load_config()?;
+                gitrun_scheduler::vm::save_vm_configs(Path::new(&config.state_dir), &configs)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(serde_json::json!({ "ok": true }))
+        }
         "fast_stop" => {
             let message = fast_stop_workflow_run(
                 management_tui_arg(&args, "repository")?,

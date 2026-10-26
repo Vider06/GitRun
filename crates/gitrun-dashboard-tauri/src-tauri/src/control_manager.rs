@@ -461,7 +461,7 @@ fn schedule_maintenance_task(_task: &str) -> Result<Value, String> {
 fn needs_confirmation(action: &str, args: &Value) -> bool {
     match action {
         "vault_delete" | "vm_delete" | "zizmor_install" | "zizmor_disable" => true,
-        "gitrun_settings_save" => {
+        "gitrun_settings_save" | "dashboard_settings_save" => {
             args.get("confirm_socket_opt_out").and_then(Value::as_bool) == Some(true)
         }
         "maintenance_task" => true,
@@ -521,6 +521,14 @@ mod tests {
         ));
         assert!(!needs_confirmation(
             "gitrun_settings_save",
+            &serde_json::json!({"confirm_socket_opt_out":false})
+        ));
+        assert!(needs_confirmation(
+            "dashboard_settings_save",
+            &serde_json::json!({"confirm_socket_opt_out":true})
+        ));
+        assert!(!needs_confirmation(
+            "dashboard_settings_save",
             &serde_json::json!({"confirm_socket_opt_out":false})
         ));
     }

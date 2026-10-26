@@ -273,7 +273,7 @@ jobs:
           # ci_download URL DEST [SHA256]
           ci_download() {
             local url="$1" dest="$2" sha="${3:-}" optional="${4:-false}" t0 got
-            local candidate="${dest}.partial.$"
+            local candidate="${dest}.partial.$$"
             t0=$(date +%s)
             rm -f "$candidate"
             if ! ci_retry 4 3 curl --fail --silent --show-error --location --connect-timeout 15 --max-time 600 -o "$candidate" "$url"; then

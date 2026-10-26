@@ -965,7 +965,9 @@ pub fn apply_installed_update(
         for (index, artifact) in artifacts.iter().enumerate() {
             let backup = match fs::symlink_metadata(&artifact.destination) {
                 Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-                    let name = artifact.destination.file_name()
+                    let name = artifact
+                        .destination
+                        .file_name()
                         .and_then(|value| value.to_str())
                         .unwrap_or("artifact");
                     let path = backup_dir.join(format!("artifact-{index}-{name}"));
@@ -1274,15 +1276,22 @@ pub fn health_check_installed_binary(
     }
     let mut command = Command::new(binary);
     command.arg("doctor").arg("--no-cat");
-    if let Some(config) = config_file { command.env("GITRUN_CONFIG_FILE", config); }
+    if let Some(config) = config_file {
+        command.env("GITRUN_CONFIG_FILE", config);
+    }
     let output = command.output()?;
     if !output.status.success() {
         return Err(UpdateError::Command(format!(
             "post-update doctor check failed (exit {}): {}{}",
             output.status,
             String::from_utf8_lossy(&output.stderr).trim(),
-            if output.stdout.is_empty() { String::new() } else {
-                format!("; stdout: {}", String::from_utf8_lossy(&output.stdout).trim())
+            if output.stdout.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; stdout: {}",
+                    String::from_utf8_lossy(&output.stdout).trim()
+                )
             }
         )));
     }
@@ -1385,7 +1394,9 @@ fn sync_parent_directory(path: &Path) -> Result<(), UpdateError> {
         fs::File::open(path.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()?;
     }
     #[cfg(not(unix))]
-    { let _ = path; }
+    {
+        let _ = path;
+    }
     Ok(())
 }
 
@@ -1393,11 +1404,15 @@ fn copy_file_durable(source: &Path, destination: &Path) -> Result<(), UpdateErro
     let metadata = fs::symlink_metadata(source)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(UpdateError::InvalidManifest(format!(
-            "refusing to back up a non-regular file: {}", source.display()
+            "refusing to back up a non-regular file: {}",
+            source.display()
         )));
     }
     let mut input = fs::File::open(source)?;
-    let mut output = fs::OpenOptions::new().write(true).create_new(true).open(destination)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
     io::copy(&mut input, &mut output)?;
     output.sync_all()?;
     copy_permissions(&metadata, destination)?;
@@ -1933,7 +1948,11 @@ fn is_sha256_digest(value: &str) -> bool {
         && value[7..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn extract_archive(archive_path: &Path, _target: &str, destination: &Path) -> Result<(), UpdateError> {
+fn extract_archive(
+    archive_path: &Path,
+    _target: &str,
+    destination: &Path,
+) -> Result<(), UpdateError> {
     let archive_meta = fs::symlink_metadata(archive_path)?;
     if archive_meta.file_type().is_symlink() || !archive_meta.is_file() {
         return Err(UpdateError::InvalidManifest(
@@ -1957,8 +1976,10 @@ fn extract_archive(archive_path: &Path, _target: &str, destination: &Path) -> Re
         Err(error) => return Err(error.into()),
     }
     fs::create_dir_all(destination)?;
-    let name = archive_path.file_name()
-        .and_then(|value| value.to_str()).unwrap_or_default();
+    let name = archive_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
     let mut seen_paths = std::collections::HashSet::new();
     let mut expanded_bytes = 0u64;
 
@@ -1968,16 +1989,20 @@ fn extract_archive(archive_path: &Path, _target: &str, destination: &Path) -> Re
         let mut entry_count = 0usize;
         for entry in archive.entries()? {
             let mut entry = entry?;
-            entry_count = entry_count.checked_add(1)
-                .ok_or_else(|| UpdateError::InvalidManifest("archive entry count overflow".into()))?;
+            entry_count = entry_count.checked_add(1).ok_or_else(|| {
+                UpdateError::InvalidManifest("archive entry count overflow".into())
+            })?;
             if entry_count > MAX_ARCHIVE_ENTRIES {
                 return Err(UpdateError::InvalidManifest(format!(
                     "archive contains more than {MAX_ARCHIVE_ENTRIES} entries"
                 )));
             }
             let kind = entry.header().entry_type();
-            if kind.is_symlink() || kind.is_hard_link() || kind.is_character_special()
-                || kind.is_block_special() || kind.is_fifo()
+            if kind.is_symlink()
+                || kind.is_hard_link()
+                || kind.is_character_special()
+                || kind.is_block_special()
+                || kind.is_fifo()
             {
                 return Err(UpdateError::InvalidManifest(
                     "archive contains links or special filesystem entries".into(),
@@ -1993,14 +2018,17 @@ fn extract_archive(archive_path: &Path, _target: &str, destination: &Path) -> Re
             let size = entry.size();
             if size > MAX_ARCHIVE_ENTRY_BYTES {
                 return Err(UpdateError::InvalidManifest(format!(
-                    "archive entry exceeds size limit: {}", entry_path.display()
+                    "archive entry exceeds size limit: {}",
+                    entry_path.display()
                 )));
             }
-            expanded_bytes = expanded_bytes.checked_add(size)
-                .ok_or_else(|| UpdateError::InvalidManifest("expanded archive size overflow".into()))?;
+            expanded_bytes = expanded_bytes.checked_add(size).ok_or_else(|| {
+                UpdateError::InvalidManifest("expanded archive size overflow".into())
+            })?;
             if expanded_bytes > MAX_ARCHIVE_EXPANDED_BYTES {
                 return Err(UpdateError::InvalidManifest(format!(
-                    "archive expands beyond the {}-byte limit", MAX_ARCHIVE_EXPANDED_BYTES
+                    "archive expands beyond the {}-byte limit",
+                    MAX_ARCHIVE_EXPANDED_BYTES
                 )));
             }
             let mode = entry.header().mode().unwrap_or(0o644);
@@ -2022,15 +2050,16 @@ fn extract_archive(archive_path: &Path, _target: &str, destination: &Path) -> Re
         }
     } else if name.ends_with(".zip") {
         let file = fs::File::open(archive_path)?;
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
         if archive.len() > MAX_ARCHIVE_ENTRIES {
             return Err(UpdateError::InvalidManifest(format!(
                 "archive contains more than {MAX_ARCHIVE_ENTRIES} entries"
             )));
         }
         for index in 0..archive.len() {
-            let mut entry = archive.by_index(index)
+            let mut entry = archive
+                .by_index(index)
                 .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
             let Some(relative) = entry.enclosed_name().map(Path::to_path_buf) else {
                 return Err(UpdateError::InvalidManifest(
@@ -2039,23 +2068,30 @@ fn extract_archive(archive_path: &Path, _target: &str, destination: &Path) -> Re
             };
             if !seen_paths.insert(relative.clone()) {
                 return Err(UpdateError::InvalidManifest(format!(
-                    "archive contains duplicate path: {}", relative.display()
+                    "archive contains duplicate path: {}",
+                    relative.display()
                 )));
             }
             let size = entry.size();
             if size > MAX_ARCHIVE_ENTRY_BYTES {
                 return Err(UpdateError::InvalidManifest(format!(
-                    "archive entry exceeds size limit: {}", relative.display()
+                    "archive entry exceeds size limit: {}",
+                    relative.display()
                 )));
             }
-            expanded_bytes = expanded_bytes.checked_add(size)
-                .ok_or_else(|| UpdateError::InvalidManifest("expanded archive size overflow".into()))?;
+            expanded_bytes = expanded_bytes.checked_add(size).ok_or_else(|| {
+                UpdateError::InvalidManifest("expanded archive size overflow".into())
+            })?;
             if expanded_bytes > MAX_ARCHIVE_EXPANDED_BYTES {
                 return Err(UpdateError::InvalidManifest(format!(
-                    "archive expands beyond the {}-byte limit", MAX_ARCHIVE_EXPANDED_BYTES
+                    "archive expands beyond the {}-byte limit",
+                    MAX_ARCHIVE_EXPANDED_BYTES
                 )));
             }
-            let original_mode = entry.unix_mode().unwrap_or(if entry.is_dir() { 0o755 } else { 0o644 });
+            let original_mode =
+                entry
+                    .unix_mode()
+                    .unwrap_or(if entry.is_dir() { 0o755 } else { 0o644 });
             let file_type = original_mode & 0o170000;
             if file_type != 0 && file_type != 0o100000 && file_type != 0o040000 {
                 return Err(UpdateError::InvalidManifest(
@@ -2067,9 +2103,17 @@ fn extract_archive(archive_path: &Path, _target: &str, destination: &Path) -> Re
                 fs::create_dir_all(&out)?;
                 set_file_mode(&out, 0o755)?;
             } else {
-                if let Some(parent) = out.parent() { fs::create_dir_all(parent)?; }
-                let mut output = fs::OpenOptions::new().write(true).create_new(true).open(&out)?;
-                let copied = io::copy(&mut entry.by_ref().take(size.saturating_add(1)), &mut output)?;
+                if let Some(parent) = out.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut output = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&out)?;
+                let copied = io::copy(
+                    &mut entry.by_ref().take(size.saturating_add(1)),
+                    &mut output,
+                )?;
                 if copied != size {
                     return Err(UpdateError::InvalidManifest(format!(
                         "archive entry size mismatch for {}: expected {size}, got {copied}",

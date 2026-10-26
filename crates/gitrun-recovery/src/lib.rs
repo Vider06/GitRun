@@ -11,8 +11,7 @@ use std::{
 
 const SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun.service");
 const GSR_SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun-gsr.service");
-const CONTROL_SYSTEMD_UNIT: &str =
-    include_str!("../../../systemd/gitrun-control.service");
+const CONTROL_SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun-control.service");
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Severity {

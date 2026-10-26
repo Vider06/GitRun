@@ -1479,7 +1479,9 @@ fn check_installed_binary(
     if let Some(expected_version) = expected_version {
         let installed_version = combined.lines().find_map(|line| {
             let mut parts = line.split_whitespace();
-            (parts.next() == Some("GitRun")).then(|| parts.next()).flatten()
+            (parts.next() == Some("GitRun"))
+                .then(|| parts.next())
+                .flatten()
         });
         let matches_expected = installed_version.is_some_and(|installed| {
             compare_versions(installed, expected_version)

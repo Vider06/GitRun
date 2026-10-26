@@ -3265,7 +3265,7 @@ mod tests {
             flate2::Compression::default(),
         );
         let mut archive = tar::Builder::new(encoder);
-        let payload = b"#!/bin/sh\nexit 0\n";
+        let payload = b"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"GitRun 1.2.3\"; exit 0; fi\nexit 0\n";
         let mut header = tar::Header::new_gnu();
         header.set_size(payload.len() as u64);
         header.set_mode(0o755);

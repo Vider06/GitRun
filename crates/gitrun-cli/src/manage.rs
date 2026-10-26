@@ -7,6 +7,7 @@ use crossterm::{
     cursor::{Hide, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
+    style::Print,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
@@ -458,7 +459,11 @@ impl State {
         }
         self.scroll = 0;
         self.error = false;
-        self.notice = "Completed · data returned by GitRun backend".into();
+        self.notice = if self.page == 7 {
+            "Logs loaded".into()
+        } else {
+            "Completed · data returned by GitRun backend".into()
+        };
     }
 
     fn set_text(
@@ -687,6 +692,18 @@ fn handle_key(
                 execute_action(terminal, state)?;
             }
         },
+        KeyCode::Char('y') if key.modifiers.is_empty() && state.page == 7 => {
+            match copy_logs_to_terminal(terminal, state) {
+                Ok(()) => {
+                    state.error = false;
+                    state.notice = "Clipboard request sent (OSC 52)".into();
+                }
+                Err(error) => {
+                    state.error = true;
+                    state.notice = error;
+                }
+            }
+        }
         KeyCode::Char('r') if key.modifiers.is_empty() => execute_action(terminal, state)?,
         KeyCode::Char(ch @ '1'..='9') if key.modifiers.is_empty() => {
             let index = ch.to_digit(10).unwrap_or(1) as usize - 1;
@@ -1084,12 +1101,13 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .scroll((state.scroll, 0));
     frame.render_widget(body, body_area);
 
-    let footer = Paragraph::new(Line::from(vec![
+    let nav_label = if state.page == 7 { "Nav" } else { "Navigate" };
+    let mut footer_spans = vec![
         Span::styled(
             " ↑↓ ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ),
-        Span::styled("Navigate", Style::default().fg(MUTED)),
+        Span::styled(nav_label, Style::default().fg(MUTED)),
         Span::raw("  "),
         Span::styled(
             "Enter",
@@ -1103,6 +1121,14 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         Span::styled(" Focus  ", Style::default().fg(MUTED)),
         Span::styled("r", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::styled(" Refresh  ", Style::default().fg(MUTED)),
+    ];
+    if state.page == 7 {
+        footer_spans.extend([
+            Span::styled("y", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+            Span::styled(" Copy logs  ", Style::default().fg(MUTED)),
+        ]);
+    }
+    footer_spans.extend([
         Span::styled("?", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::styled(" Help  ", Style::default().fg(MUTED)),
         Span::styled("q", Style::default().fg(BAD).add_modifier(Modifier::BOLD)),
@@ -1112,7 +1138,8 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             state.notice.as_str(),
             Style::default().fg(if state.error { BAD } else { GOOD }),
         ),
-    ]))
+    ]);
+    let footer = Paragraph::new(Line::from(footer_spans))
     .style(Style::default().bg(PANEL_BG))
     .block(
         Block::default()
@@ -1136,6 +1163,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 Line::from("← / → or h / l    Move focus"),
                 Line::from("Enter             Run the selected operation"),
                 Line::from("r                 Refresh the selected operation"),
+                Line::from("y                 Copy Logs output through terminal clipboard (OSC 52)"),
                 Line::from(
                     "1–9              Run numbered action, or jump to page when Sections has focus",
                 ),
@@ -1301,6 +1329,82 @@ fn render_cat_panel(frame: &mut Frame<'_>, area: Rect, state: &State) {
                 .style(Style::default().bg(PANEL_BG)),
         );
     frame.render_widget(panel, area);
+}
+
+const MAX_OSC52_TEXT_BYTES: usize = 48 * 1024;
+
+fn logs_clipboard_text(state: &State) -> Result<String, String> {
+    if state.page != 7 {
+        return Err("Log copying is available only in the Logs section.".into());
+    }
+
+    let rendered = state.body.join("\n");
+    if rendered.trim().is_empty() || rendered.trim() == "(no output)" {
+        return Err("No log output is loaded. Select a Logs operation first.".into());
+    }
+
+    // Log handlers return JSON arrays of strings. Unwrap those entries so the
+    // clipboard contains readable journal lines, not JSON quoting/escaping.
+    let content = match serde_json::from_str::<Value>(&rendered) {
+        Ok(Value::Array(entries)) if entries.iter().all(Value::is_string) => entries
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Ok(Value::String(value)) => value,
+        _ => rendered,
+    };
+
+    if content.trim().is_empty() {
+        return Err("No log output is loaded. Select a Logs operation first.".into());
+    }
+    if content.len() > MAX_OSC52_TEXT_BYTES {
+        return Err(format!(
+            "Logs exceed the 48 KiB clipboard limit ({} bytes); use terminal selection or a smaller journal query.",
+            content.len()
+        ));
+    }
+    Ok(content)
+}
+
+fn base64_encode(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut encoded = String::with_capacity(input.len().saturating_add(2) / 3 * 4);
+    for chunk in input.chunks(3) {
+        let first = chunk[0];
+        let second = chunk.get(1).copied().unwrap_or(0);
+        let third = chunk.get(2).copied().unwrap_or(0);
+
+        encoded.push(ALPHABET[(first >> 2) as usize] as char);
+        encoded.push(ALPHABET[(((first & 0x03) << 4) | (second >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            encoded.push(ALPHABET[(((second & 0x0f) << 2) | (third >> 6)) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+        if chunk.len() > 2 {
+            encoded.push(ALPHABET[(third & 0x3f) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+    encoded
+}
+
+fn copy_logs_to_terminal(
+    terminal: &mut ManagementTerminal,
+    state: &State,
+) -> Result<(), String> {
+    let content = logs_clipboard_text(state)?;
+    let encoded = base64_encode(content.as_bytes());
+    // OSC 52 transports clipboard content through the active terminal session,
+    // so this also works for a remote SSH host when the terminal permits it.
+    let sequence = format!("\x1b]52;c;{encoded}\x07");
+    execute!(terminal.backend_mut(), Print(sequence))
+        .map_err(|error| format!("Could not send clipboard request to terminal: {error}"))?;
+    Ok(())
 }
 
 fn body_line(line: &str) -> Line<'_> {
@@ -2463,7 +2567,11 @@ mod tests {
 
 #[cfg(test)]
 mod visual_design_tests {
-    use super::{header_separator, mascot_state, State, PAGES, WIDE_HEADER_TAGLINE};
+    use super::{
+        base64_encode, header_separator, logs_clipboard_text, mascot_state, State, PAGES,
+        WIDE_HEADER_TAGLINE, MAX_OSC52_TEXT_BYTES,
+    };
+    use serde_json::json;
 
     #[test]
     fn wide_header_separator_fits_the_available_terminal_width() {
@@ -2479,6 +2587,40 @@ mod visual_design_tests {
     fn settings_icon_avoids_emoji_dependent_presentation() {
         assert_eq!(PAGES[9].icon, "≡");
         assert!(!PAGES[9].icon.contains('\u{FE0E}'));
+    }
+
+    #[test]
+    fn osc52_base64_encoder_matches_standard_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode("日志".as_bytes()), "5pel5b+X");
+    }
+
+    #[test]
+    fn log_copy_text_unwraps_json_string_arrays_and_enforces_bounds() {
+        let mut state = State::new();
+        state.page = 7;
+        state.body = serde_json::to_string_pretty(&json!([
+            "first journal line",
+            "second journal line"
+        ]))
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(
+            logs_clipboard_text(&state).unwrap(),
+            "first journal line\nsecond journal line"
+        );
+
+        state.page = 0;
+        assert!(logs_clipboard_text(&state).unwrap_err().contains("only in the Logs"));
+
+        state.page = 7;
+        state.body = vec!["x".repeat(MAX_OSC52_TEXT_BYTES + 1)];
+        assert!(logs_clipboard_text(&state).unwrap_err().contains("48 KiB"));
     }
 
     #[test]

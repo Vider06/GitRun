@@ -809,11 +809,11 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let header = Paragraph::new(header_lines)
         .style(Style::default().bg(PANEL_BG))
         .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT)),
-    );
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT)),
+        );
     frame.render_widget(header, layout[0]);
 
     // Three columns on wide terminals; stack the navigation and operation
@@ -932,7 +932,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                     format!("{:>2} ", index + 1),
                     Style::default()
                         .fg(if selected { CYAN } else { MUTED })
-                        .bg(if selected { SELECTED_BG } else { Color::Reset })
+                        .bg(if selected { SELECTED_BG } else { PANEL_BG })
                         .add_modifier(if selected {
                             Modifier::BOLD
                         } else {
@@ -1188,8 +1188,11 @@ fn mascot_state(state: &State) -> &'static str {
     if notice.contains("warning") || notice.contains("confirm") {
         return "confused";
     }
-    if state.notice == "Ready" && state.body_title == "Welcome to GitRun" {
-        return "curious";
+    if state.notice == "Ready" {
+        if state.page == 0 && state.body_title == "Welcome to GitRun" {
+            return "curious";
+        }
+        return section_mascot_state(state.page);
     }
 
     let action = state
@@ -1220,7 +1223,11 @@ fn mascot_state(state: &State) -> &'static str {
         return "reading";
     }
 
-    match state.page {
+    section_mascot_state(state.page)
+}
+
+fn section_mascot_state(page: usize) -> &'static str {
+    match page {
         2 => "runner",
         3 => "kitty",
         4 => "thinking",
@@ -2492,7 +2499,6 @@ mod visual_design_tests {
 
         state.notice = "Ready".into();
         state.page = 8;
-        state.action = usize::MAX;
         assert_eq!(mascot_state(&state), "recovery");
     }
 }

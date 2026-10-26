@@ -3370,6 +3370,8 @@ mod tests {
             }],
             version_file: version_file.clone(),
             version_file_backup: None,
+            config_file: None,
+            config_file_backup: None,
         };
 
         assert!(
@@ -3396,11 +3398,14 @@ mod tests {
         let binary = root.join("bin/gitrun");
         let version_file = root.join("share/version.txt");
         let backup_root = root.join("backups");
+        let config_file = root.join("gitrun.env");
         fs::create_dir_all(binary.parent().unwrap()).unwrap();
         fs::create_dir_all(version_file.parent().unwrap()).unwrap();
         fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(&version_file, b"0.9.0\n").unwrap();
+        fs::write(&config_file, b"GITRUN_TEST=before\n").unwrap();
+        fs::set_permissions(&config_file, fs::Permissions::from_mode(0o640)).unwrap();
 
         let archive_path = root.join("release.tar.gz");
         let encoder = flate2::write::GzEncoder::new(
@@ -3431,7 +3436,7 @@ mod tests {
             &version_file,
             &backup_root,
             &binary,
-            None,
+            Some(&config_file),
         )
         .unwrap();
 
@@ -3447,10 +3452,20 @@ mod tests {
             b"#!/bin/sh\nexit 0\n"
         );
 
-        rollback_installed_update(&record, &artifacts, &version_file, &backup_root)
-            .expect("a freshly written recovery record must pass the trusted rollback validator");
+        fs::write(&config_file, b"GITRUN_TEST=after\n").unwrap();
+        rollback_installed_update_with_config(
+            &record,
+            &artifacts,
+            &version_file,
+            Some(&config_file),
+            &backup_root,
+        )
+        .expect("the recovery journal must restore the binary, version and config");
         assert_eq!(fs::read_to_string(&version_file).unwrap(), "0.9.0\n");
         assert_eq!(fs::read(&binary).unwrap(), b"#!/bin/sh\nexit 0\n");
+        assert_eq!(fs::read(&config_file).unwrap(), b"GITRUN_TEST=before\n");
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(fs::metadata(&config_file).unwrap().mode() & 0o777, 0o640);
         let _ = fs::remove_dir_all(&root);
     }
 

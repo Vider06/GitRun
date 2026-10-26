@@ -425,6 +425,7 @@ fn update_command(
         return update_check_command(args);
     }
 
+    println!("GitRun update: fetching and verifying the release manifest");
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = if let Some(url) = args.get(1) {
         fetch_manifest(url)?
@@ -460,6 +461,7 @@ fn update_command(
         );
     }
 
+    println!("GitRun update: checking required host dependencies");
     let updated_dependencies = update_incompatible_dependencies(&plan)?;
     if !updated_dependencies.is_empty() {
         println!("dependencies updated: {}", updated_dependencies.join(", "));
@@ -471,14 +473,17 @@ fn update_command(
             std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| ".gitrun-update".into()),
         ),
     };
+    println!("GitRun update: preparing transaction and backup locations");
     std::fs::create_dir_all(&work_root)?;
     let archive = work_root.join(&plan.artifact);
     let artifact = manifest.artifact_for(&target)?;
+    println!("GitRun update: downloading release artifact and verifying SHA-256");
     download_and_verify(&plan.artifact_url, &artifact.sha256, &archive)?;
     presenter.transition(presenter::ValidationState::Working);
-    println!("checksum: PASS");
+    println!("GitRun update: artifact integrity PASS");
 
     if let Some((gitrun_binary, version_file)) = system_install {
+        println!("GitRun update: applying the verified binary transaction");
         // System-update backup destinations are fixed even when running as root.
         let backup_root = PathBuf::from("/var/lib/gitrun/backups");
         let artifacts = [InstalledArtifact {
@@ -505,6 +510,7 @@ fn update_command(
             .ok()
             .and_then(|value| value.parse::<u32>().ok())
             .filter(|uid| *uid != 0);
+        println!("GitRun update: reconciling systemd units, control group and GitRun services");
         if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
             let rollback_error =
                 rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
@@ -548,6 +554,7 @@ fn update_command(
         }
 
         presenter.transition(presenter::ValidationState::Running);
+        println!("GitRun update: restarting and verifying the scheduler");
         if let Err(error) = restart_scheduler_service() {
             let rollback_result =
                 rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
@@ -2520,6 +2527,9 @@ fn doctor_service_check(service: &str) -> Result<String, String> {
 }
 
 fn run_doctor() -> i32 {
+    #[cfg(unix)]
+    use std::os::unix::fs::FileTypeExt;
+
     println!("GitRun doctor: checking installation, configuration and runtime health");
     let mut failures = 0usize;
     let mut warnings = 0usize;
@@ -2694,6 +2704,12 @@ fn run_doctor() -> i32 {
             &mut failures,
             &mut warnings,
         );
+        doctor_check(
+            "GSR service",
+            doctor_service_check("gitrun-gsr.service"),
+            &mut failures,
+            &mut warnings,
+        );
         let socket_path = Path::new("/run/gitrun-control/manager.sock");
         match std::fs::symlink_metadata(socket_path) {
             Ok(metadata) if metadata.file_type().is_socket() => doctor_check(
@@ -2857,13 +2873,14 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|uid| *uid != 0);
 
-    println!("GitRun fix-update: repairing the privileged control service");
+    println!("GitRun fix-update: reconciling systemd units, control group and GitRun services");
     if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
         eprintln!("GitRun fix-update: control service repair failed: {error}");
         return 1;
     }
     println!("GitRun fix-update: control service PASS");
 
+    println!("GitRun fix-update: checking the latest official signed release");
     let manifest = match latest_manifest("Vider06/GitRun") {
         Ok(manifest) => manifest,
         Err(error) => {
@@ -2905,8 +2922,9 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
 
     // The updater may have replaced the on-disk executable. Reconcile the
     // control service once more against that final binary and verify it is active.
+    println!("GitRun fix-update: verifying final systemd and runtime state");
     if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
-        eprintln!("GitRun fix-update: final control service verification failed: {error}");
+        eprintln!("GitRun fix-update: final systemd verification failed: {error}");
         return 1;
     }
     println!("GitRun fix-update: PASS");

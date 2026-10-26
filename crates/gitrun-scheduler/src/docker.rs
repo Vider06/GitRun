@@ -1903,6 +1903,13 @@ fn missing_network_error(detail: &str, network: &str) -> bool {
         || detail.contains(&format!("network {network} does not exist"))
 }
 
+fn missing_network_inspect_error(detail: &str, network: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    detail.contains("no such network")
+        || detail.contains("network not found")
+        || missing_network_error(&detail, network)
+}
+
 fn ensure_runner_network(
     host: &DockerHost,
     network: &str,
@@ -1927,7 +1934,11 @@ fn ensure_runner_network(
     let stderr = String::from_utf8_lossy(&output.stderr)
         .trim()
         .to_ascii_lowercase();
-    if !(stderr.contains("no such network") || stderr.contains("network not found")) {
+    // Docker emits version-dependent wording here. In particular, the common
+    // daemon response "network <name> not found" is not a match for the generic
+    // substring "network not found"; treat the configured network as absent so
+    // the secure create path below can bootstrap it.
+    if !missing_network_inspect_error(&stderr, network) {
         return Err(DockerError::Command(if stderr.is_empty() {
             format!("docker network inspect {network} failed")
         } else {
@@ -3746,6 +3757,30 @@ mod tests {
             "gitrun-runner"
         ));
         assert!(!missing_network_error(
+            "permission denied while connecting to Docker",
+            "gitrun-runner"
+        ));
+    }
+
+    #[test]
+    fn network_inspect_recognizes_the_named_missing_network() {
+        assert!(missing_network_inspect_error(
+            "Error response from daemon: network gitrun-runner not found",
+            "gitrun-runner"
+        ));
+        assert!(missing_network_inspect_error(
+            "network gitrun-runner does not exist",
+            "gitrun-runner"
+        ));
+        assert!(missing_network_inspect_error(
+            "network not found",
+            "gitrun-runner"
+        ));
+        assert!(!missing_network_inspect_error(
+            "network unrelated not found",
+            "gitrun-runner"
+        ));
+        assert!(!missing_network_inspect_error(
             "permission denied while connecting to Docker",
             "gitrun-runner"
         ));

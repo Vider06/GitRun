@@ -1292,14 +1292,11 @@ fn check_installed_binary(
         )));
     }
 
-    // Check the executable itself before asking the not-yet-repaired services
-    // to pass the full doctor suite. In particular, a missing Control Manager
-    // must not trigger rollback before systemd reconciliation can repair it.
+    // The executable check must not require healthy services: that would roll
+    // back a new binary before it has the chance to repair missing service units.
     let mut command = Command::new(binary);
     command.arg("--version");
-    if let Some(config) = config_file {
-        command.env("GITRUN_CONFIG_FILE", config);
-    }
+    if let Some(config) = config_file { command.env("GITRUN_CONFIG_FILE", config); }
     let output = command.output()?;
     let combined = format!(
         "{}\n{}",
@@ -1309,8 +1306,7 @@ fn check_installed_binary(
     if !output.status.success() || combined.trim().is_empty() {
         return Err(UpdateError::Command(format!(
             "post-update executable check failed (exit {}): {}",
-            output.status,
-            combined.trim()
+            output.status, combined.trim()
         )));
     }
     if let Some(expected_version) = expected_version {

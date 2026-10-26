@@ -1510,17 +1510,17 @@ fn atomic_replace_installed_file(
         )));
     }
     reject_symlink_components(destination)?;
-    match fs::symlink_metadata(destination) {
+    let destination_metadata = match fs::symlink_metadata(destination) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(UpdateError::Command(format!(
                 "installed artifact destination is not a regular file: {}",
                 destination.display()
             )));
         }
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
-    }
+    };
     let parent = destination
         .parent()
         .ok_or_else(|| UpdateError::Command("installed artifact has no parent".into()))?;
@@ -1533,7 +1533,10 @@ fn atomic_replace_installed_file(
             .create_new(true)
             .open(&temp)?;
         io::copy(&mut input, &mut output)?;
-        copy_file_owner(&output, &source_meta)?;
+        copy_file_owner(
+            &output,
+            destination_metadata.as_ref().unwrap_or(&source_meta),
+        )?;
         set_file_mode(&temp, mode)?;
         output.sync_all()?;
         drop(output);

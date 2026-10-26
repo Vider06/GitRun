@@ -2674,22 +2674,29 @@ fn run_doctor() -> i32 {
 
     if system_install && cfg!(target_os = "linux") {
         match std::fs::read_to_string("/usr/share/gitrun/version.txt") {
-            Ok(version) if version.trim() == current_version() => doctor_check(
+            Ok(version) if version.trim().is_empty() => doctor_check(
                 "Installed version metadata",
-                Ok(version.trim().to_owned()),
+                Err("version.txt is empty".into()),
                 &mut failures,
                 &mut warnings,
             ),
-            Ok(version) => doctor_check(
-                "Installed version metadata",
-                Err(format!(
-                    "binary reports {}, version.txt says {}",
-                    current_version(),
-                    version.trim()
-                )),
-                &mut failures,
-                &mut warnings,
-            ),
+            Ok(version) => {
+                let version = version.trim().to_owned();
+                match std::env::var("GITRUN_VERSION") {
+                    Ok(binary_version) if binary_version.trim() != version => doctor_check(
+                        "Installed version metadata",
+                        Err(format!("GITRUN_VERSION reports {}, version.txt says {version}", binary_version.trim())),
+                        &mut failures,
+                        &mut warnings,
+                    ),
+                    _ => doctor_check(
+                        "Installed version metadata",
+                        Ok(format!("version.txt is present ({version})")),
+                        &mut failures,
+                        &mut warnings,
+                    ),
+                }
+            }
             Err(error) => doctor_check(
                 "Installed version metadata",
                 Err(format!("/usr/share/gitrun/version.txt: {error}")),

@@ -11,6 +11,11 @@ use std::{
 };
 use thiserror::Error;
 
+const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 100_000;
+const MAX_ARCHIVE_ENTRY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const MAX_ARCHIVE_EXPANDED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReleaseArtifact {
     pub target: String,
@@ -226,15 +231,23 @@ impl ReleaseManifest {
                 "name/version/git_commit/artifacts are required".into(),
             ));
         }
+        let mut seen_targets = std::collections::HashSet::new();
+        let mut seen_files = std::collections::HashSet::new();
         for artifact in &self.artifacts {
-            if artifact.target.is_empty()
+            if artifact.target.trim().is_empty()
+                || artifact.target.chars().any(char::is_control)
                 || !is_safe_filename(&artifact.file)
                 || !is_sha256(&artifact.sha256)
+                || !seen_targets.insert(artifact.target.as_str())
+                || !seen_files.insert(artifact.file.as_str())
             {
                 return Err(UpdateError::InvalidManifest(format!(
-                    "invalid artifact {}",
-                    artifact.file
+                    "invalid or duplicate artifact target/file: {} ({})",
+                    artifact.target, artifact.file
                 )));
+            }
+            if let Some(url) = artifact.download_url.as_deref() {
+                validate_https_url(url)?;
             }
         }
         for dependency in &self.dependencies {
@@ -539,17 +552,39 @@ pub fn download_and_verify(
     }
 
     let destination = destination.as_ref();
+    reject_symlink_components(destination)?;
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(UpdateError::InvalidManifest(format!(
+                "download destination must be a regular file: {}",
+                destination.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let temp = temporary_sibling(destination, ".gitrun-download");
 
     let result = (|| -> Result<(), UpdateError> {
         let mut response = http_client()?.get(url).send()?.error_for_status()?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_RELEASE_ARTIFACT_BYTES)
+        {
+            return Err(UpdateError::InvalidManifest(format!(
+                "release artifact exceeds the {}-byte download limit",
+                MAX_RELEASE_ARTIFACT_BYTES
+            )));
+        }
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temp)?;
         let mut hasher = Sha256::new();
+        let mut total_bytes = 0u64;
         let mut buffer = [0u8; 64 * 1024];
 
         loop {
@@ -557,22 +592,30 @@ pub fn download_and_verify(
             if read == 0 {
                 break;
             }
+            total_bytes = total_bytes
+                .checked_add(read as u64)
+                .ok_or_else(|| UpdateError::InvalidManifest("artifact size overflow".into()))?;
+            if total_bytes > MAX_RELEASE_ARTIFACT_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "release artifact exceeds the {}-byte download limit",
+                    MAX_RELEASE_ARTIFACT_BYTES
+                )));
+            }
             hasher.update(&buffer[..read]);
             file.write_all(&buffer[..read])?;
         }
         file.sync_all()?;
         drop(file);
 
-        let digest = hasher.finalize();
-        let actual = hex_encode(digest.as_ref());
+        let actual = hex_encode(hasher.finalize().as_ref());
         if actual != expected_sha256.to_ascii_lowercase() {
             return Err(UpdateError::ChecksumMismatch {
                 expected: expected_sha256.to_ascii_lowercase(),
                 actual,
             });
         }
-
         replace_temp_file(&temp, destination)?;
+        sync_parent_directory(destination)?;
         Ok(())
     })();
 
@@ -868,6 +911,7 @@ pub struct InstalledBackupRecord {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn apply_installed_update(
     archive: &Path,
     target: &str,
@@ -884,29 +928,58 @@ pub fn apply_installed_update(
         )));
     }
     validate_installed_artifacts(artifacts, version_file)?;
+    reject_symlink_components(backup_root)?;
+    if paths_overlap(backup_root, version_file)
+        || artifacts.iter().any(|artifact| {
+            paths_overlap(backup_root, &artifact.destination)
+                || paths_overlap(version_file, &artifact.destination)
+        })
+    {
+        return Err(UpdateError::InvalidManifest(
+            "backup, version metadata and artifact paths must not overlap".into(),
+        ));
+    }
+    let archive_meta = fs::symlink_metadata(archive)?;
+    if archive_meta.file_type().is_symlink() || !archive_meta.is_file() {
+        return Err(UpdateError::InvalidManifest(
+            "release archive must be a regular non-symlink file".into(),
+        ));
+    }
+    if archive_meta.len() > MAX_RELEASE_ARTIFACT_BYTES {
+        return Err(UpdateError::InvalidManifest(
+            "release archive exceeds the configured download size limit".into(),
+        ));
+    }
+
     let _lock = UpdateLock::acquire(backup_root)?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let backup_dir = backup_root.join(format!("system-{version}-{timestamp}"));
-    fs::create_dir_all(&backup_dir)?;
+    fs::create_dir(&backup_dir)?;
     let staging = backup_dir.join("staging");
     let mut backups = Vec::with_capacity(artifacts.len());
 
     let backup_result = (|| -> Result<(), UpdateError> {
-        for artifact in artifacts {
-            let backup = if artifact.destination.is_file() {
-                let name = artifact
-                    .destination
-                    .file_name()
-                    .and_then(|v| v.to_str())
-                    .unwrap_or("artifact");
-                let path = backup_dir.join(format!("artifact-{name}"));
-                fs::copy(&artifact.destination, &path)?;
-                Some(path)
-            } else {
-                None
+        for (index, artifact) in artifacts.iter().enumerate() {
+            let backup = match fs::symlink_metadata(&artifact.destination) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    let name = artifact.destination.file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("artifact");
+                    let path = backup_dir.join(format!("artifact-{index}-{name}"));
+                    copy_file_durable(&artifact.destination, &path)?;
+                    Some(path)
+                }
+                Ok(_) => {
+                    return Err(UpdateError::Command(format!(
+                        "installed artifact is not a regular file: {}",
+                        artifact.destination.display()
+                    )));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
             };
             backups.push(InstalledArtifactBackup {
                 archive_name: artifact.archive_name.clone(),
@@ -915,19 +988,20 @@ pub fn apply_installed_update(
             });
         }
 
-        if let Ok(meta) = fs::symlink_metadata(version_file) {
-            if meta.is_dir() {
+        match fs::symlink_metadata(version_file) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                copy_file_durable(version_file, &backup_dir.join("version.txt"))?;
+            }
+            Ok(_) => {
                 return Err(UpdateError::Command(format!(
-                    "version file path is a directory: {}",
+                    "version metadata is not a regular file: {}",
                     version_file.display()
                 )));
             }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
-
-        if version_file.is_file() {
-            let path = backup_dir.join("version.txt");
-            fs::copy(version_file, &path)?;
-        }
+        sync_parent_directory(&backup_dir.join("version.txt"))?;
         Ok(())
     })();
 
@@ -936,12 +1010,11 @@ pub fn apply_installed_update(
         return Err(error);
     }
 
-    let version_file_backup = if version_file.is_file() {
+    let version_file_backup = if backup_dir.join("version.txt").is_file() {
         Some(backup_dir.join("version.txt"))
     } else {
         None
     };
-
     let record = InstalledBackupRecord {
         created_at: timestamp as u64,
         version: version.to_owned(),
@@ -950,20 +1023,35 @@ pub fn apply_installed_update(
         version_file_backup,
     };
 
+    // The rollback journal must be durable before the first live-file replacement.
+    if let Err(error) = write_json_durable(&backup_dir.join("backup.json"), &record) {
+        let _ = fs::remove_dir_all(&backup_dir);
+        return Err(error);
+    }
+
     let result = (|| -> Result<(), UpdateError> {
         extract_archive(archive, target, &staging)?;
         for artifact in artifacts {
             let source = staging.join(&artifact.archive_name);
-            if !source.is_file() {
-                if artifact.required {
+            match fs::symlink_metadata(&source) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    atomic_replace_installed_file(&source, &artifact.destination, 0o755)?;
+                }
+                Ok(_) => {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "release artifact is not a regular file: {}",
+                        artifact.archive_name
+                    )));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound && !artifact.required => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     return Err(UpdateError::InvalidManifest(format!(
                         "release archive is missing required artifact {}",
                         artifact.archive_name
                     )));
                 }
-                continue;
+                Err(error) => return Err(error.into()),
             }
-            atomic_replace_installed_file(&source, &artifact.destination, 0o755)?;
         }
         atomic_write_installed_file(version_file, version.as_bytes(), 0o644)?;
         health_check_installed_binary(health_binary, config_file)?;
@@ -971,33 +1059,22 @@ pub fn apply_installed_update(
     })();
 
     if let Err(error) = result {
-        if let Err(rollback_error) = rollback_installed_update_unchecked(&record) {
-            return Err(UpdateError::RolledBack(format!(
-                "{error}; rollback also failed: {rollback_error}"
-            )));
-        }
-        return Err(UpdateError::RolledBack(error.to_string()));
-    }
-
-    let _ = fs::remove_dir_all(&staging);
-    let backup_json = (|| -> Result<(), UpdateError> {
-        let bytes = serde_json::to_vec_pretty(&record)?;
-        fs::write(backup_dir.join("backup.json"), bytes)?;
-        Ok(())
-    })();
-
-    if let Err(error) = backup_json {
         let rollback_result = rollback_installed_update_unchecked(&record);
+        let _ = fs::remove_dir_all(&staging);
         if let Err(rollback_error) = rollback_result {
             return Err(UpdateError::RolledBack(format!(
-                "backup record write failed: {error}; rollback also failed: {rollback_error}"
+                "{error}; rollback also failed: {rollback_error}; recovery journal: {}",
+                backup_dir.join("backup.json").display()
             )));
         }
         return Err(UpdateError::RolledBack(format!(
-            "backup record write failed; installed update was rolled back: {error}"
+            "{error}; installed files were rolled back; recovery journal: {}",
+            backup_dir.join("backup.json").display()
         )));
     }
 
+    let _ = fs::remove_dir_all(&staging);
+    sync_parent_directory(&backup_dir.join("backup.json"))?;
     Ok(record)
 }
 
@@ -1187,22 +1264,26 @@ pub fn health_check_installed_binary(
     binary: &Path,
     config_file: Option<&Path>,
 ) -> Result<(), UpdateError> {
-    if !binary.is_file() {
+    reject_symlink_components(binary)?;
+    let metadata = fs::symlink_metadata(binary)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(UpdateError::Command(format!(
-            "installed GitRun binary not found: {}",
+            "installed GitRun binary is not a regular file: {}",
             binary.display()
         )));
     }
     let mut command = Command::new(binary);
-    command.arg("doctor");
-    if let Some(config) = config_file {
-        command.env("GITRUN_CONFIG_FILE", config);
-    }
+    command.arg("doctor").arg("--no-cat");
+    if let Some(config) = config_file { command.env("GITRUN_CONFIG_FILE", config); }
     let output = command.output()?;
     if !output.status.success() {
         return Err(UpdateError::Command(format!(
-            "post-update health check failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "post-update doctor check failed (exit {}): {}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim(),
+            if output.stdout.is_empty() { String::new() } else {
+                format!("; stdout: {}", String::from_utf8_lossy(&output.stdout).trim())
+            }
         )));
     }
     Ok(())
@@ -1272,6 +1353,61 @@ fn atomic_write_installed_file(
         let _ = fs::remove_file(&temp);
     }
     result
+}
+
+fn reject_symlink_components(path: &Path) -> Result<(), UpdateError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut current = PathBuf::new();
+    for component in absolute.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "update path contains a symlink component: {}",
+                    current.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn sync_parent_directory(path: &Path) -> Result<(), UpdateError> {
+    #[cfg(unix)]
+    {
+        fs::File::open(path.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    { let _ = path; }
+    Ok(())
+}
+
+fn copy_file_durable(source: &Path, destination: &Path) -> Result<(), UpdateError> {
+    let metadata = fs::symlink_metadata(source)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(UpdateError::InvalidManifest(format!(
+            "refusing to back up a non-regular file: {}", source.display()
+        )));
+    }
+    let mut input = fs::File::open(source)?;
+    let mut output = fs::OpenOptions::new().write(true).create_new(true).open(destination)?;
+    io::copy(&mut input, &mut output)?;
+    output.sync_all()?;
+    copy_permissions(&metadata, destination)?;
+    drop(output);
+    sync_parent_directory(destination)?;
+    Ok(())
+}
+
+fn write_json_durable(path: &Path, value: &impl Serialize) -> Result<(), UpdateError> {
+    atomic_write_installed_file(path, &serde_json::to_vec_pretty(value)?, 0o600)
 }
 
 fn set_file_mode(path: &Path, mode: u32) -> Result<(), UpdateError> {
@@ -1797,62 +1933,152 @@ fn is_sha256_digest(value: &str) -> bool {
         && value[7..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<(), UpdateError> {
+fn extract_archive(archive_path: &Path, _target: &str, destination: &Path) -> Result<(), UpdateError> {
+    let archive_meta = fs::symlink_metadata(archive_path)?;
+    if archive_meta.file_type().is_symlink() || !archive_meta.is_file() {
+        return Err(UpdateError::InvalidManifest(
+            "release archive must be a regular non-symlink file".into(),
+        ));
+    }
+    if archive_meta.len() > MAX_RELEASE_ARTIFACT_BYTES {
+        return Err(UpdateError::InvalidManifest(
+            "release archive exceeds the configured download size limit".into(),
+        ));
+    }
+    reject_symlink_components(destination)?;
+    match fs::symlink_metadata(destination) {
+        Ok(_) => {
+            return Err(UpdateError::InvalidManifest(format!(
+                "staging destination already exists: {}",
+                destination.display()
+            )));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     fs::create_dir_all(destination)?;
-    let name = archive
-        .file_name()
-        .and_then(|v| v.to_str())
-        .unwrap_or_default();
+    let name = archive_path.file_name()
+        .and_then(|value| value.to_str()).unwrap_or_default();
+    let mut seen_paths = std::collections::HashSet::new();
+    let mut expanded_bytes = 0u64;
 
     if name.ends_with(".tar.gz") {
-        let decoder = flate2::read::GzDecoder::new(fs::File::open(archive)?);
+        let decoder = flate2::read::GzDecoder::new(fs::File::open(archive_path)?);
         let mut archive = tar::Archive::new(decoder);
+        let mut entry_count = 0usize;
         for entry in archive.entries()? {
             let mut entry = entry?;
+            entry_count = entry_count.checked_add(1)
+                .ok_or_else(|| UpdateError::InvalidManifest("archive entry count overflow".into()))?;
+            if entry_count > MAX_ARCHIVE_ENTRIES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive contains more than {MAX_ARCHIVE_ENTRIES} entries"
+                )));
+            }
             let kind = entry.header().entry_type();
-            if kind.is_symlink()
-                || kind.is_hard_link()
-                || kind.is_character_special()
-                || kind.is_block_special()
-                || kind.is_fifo()
+            if kind.is_symlink() || kind.is_hard_link() || kind.is_character_special()
+                || kind.is_block_special() || kind.is_fifo()
             {
                 return Err(UpdateError::InvalidManifest(
                     "archive contains links or special filesystem entries".into(),
                 ));
             }
-            let unpacked = entry.unpack_in(destination)?;
-            if !unpacked {
+            let entry_path = entry.path()?.into_owned();
+            if !seen_paths.insert(entry_path.clone()) {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive contains duplicate path: {}",
+                    entry_path.display()
+                )));
+            }
+            let size = entry.size();
+            if size > MAX_ARCHIVE_ENTRY_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive entry exceeds size limit: {}", entry_path.display()
+                )));
+            }
+            expanded_bytes = expanded_bytes.checked_add(size)
+                .ok_or_else(|| UpdateError::InvalidManifest("expanded archive size overflow".into()))?;
+            if expanded_bytes > MAX_ARCHIVE_EXPANDED_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive expands beyond the {}-byte limit", MAX_ARCHIVE_EXPANDED_BYTES
+                )));
+            }
+            let mode = entry.header().mode().unwrap_or(0o644);
+            if !entry.unpack_in(destination)? {
                 return Err(UpdateError::InvalidManifest(
                     "archive entry escapes the update staging directory".into(),
                 ));
             }
+            let out = destination.join(&entry_path);
+            if let Ok(metadata) = fs::symlink_metadata(&out) {
+                if metadata.is_file() {
+                    let safe_mode = ((mode & 0o755) | 0o600) & !0o6000;
+                    set_file_mode(&out, safe_mode)?;
+                } else if metadata.is_dir() {
+                    let safe_mode = ((mode & 0o755) | 0o700) & !0o6000;
+                    set_file_mode(&out, safe_mode)?;
+                }
+            }
         }
     } else if name.ends_with(".zip") {
-        let file = fs::File::open(archive)?;
+        let file = fs::File::open(archive_path)?;
         let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| UpdateError::InvalidManifest(e.to_string()))?;
+            zip::ZipArchive::new(file).map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+        if archive.len() > MAX_ARCHIVE_ENTRIES {
+            return Err(UpdateError::InvalidManifest(format!(
+                "archive contains more than {MAX_ARCHIVE_ENTRIES} entries"
+            )));
+        }
         for index in 0..archive.len() {
-            let mut entry = archive
-                .by_index(index)
-                .map_err(|e| UpdateError::InvalidManifest(e.to_string()))?;
-            let Some(enclosed) = entry.enclosed_name() else {
+            let mut entry = archive.by_index(index)
+                .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+            let Some(relative) = entry.enclosed_name().map(Path::to_path_buf) else {
                 return Err(UpdateError::InvalidManifest(
                     "archive contains unsafe path".into(),
                 ));
             };
-            let out = destination.join(enclosed);
+            if !seen_paths.insert(relative.clone()) {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive contains duplicate path: {}", relative.display()
+                )));
+            }
+            let size = entry.size();
+            if size > MAX_ARCHIVE_ENTRY_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive entry exceeds size limit: {}", relative.display()
+                )));
+            }
+            expanded_bytes = expanded_bytes.checked_add(size)
+                .ok_or_else(|| UpdateError::InvalidManifest("expanded archive size overflow".into()))?;
+            if expanded_bytes > MAX_ARCHIVE_EXPANDED_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive expands beyond the {}-byte limit", MAX_ARCHIVE_EXPANDED_BYTES
+                )));
+            }
+            let original_mode = entry.unix_mode().unwrap_or(if entry.is_dir() { 0o755 } else { 0o644 });
+            let file_type = original_mode & 0o170000;
+            if file_type != 0 && file_type != 0o100000 && file_type != 0o040000 {
+                return Err(UpdateError::InvalidManifest(
+                    "archive contains a link or special filesystem entry".into(),
+                ));
+            }
+            let out = destination.join(&relative);
             if entry.is_dir() {
                 fs::create_dir_all(&out)?;
+                set_file_mode(&out, 0o755)?;
             } else {
-                if let Some(parent) = out.parent() {
-                    fs::create_dir_all(parent)?;
+                if let Some(parent) = out.parent() { fs::create_dir_all(parent)?; }
+                let mut output = fs::OpenOptions::new().write(true).create_new(true).open(&out)?;
+                let copied = io::copy(&mut entry.by_ref().take(size.saturating_add(1)), &mut output)?;
+                if copied != size {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "archive entry size mismatch for {}: expected {size}, got {copied}",
+                        relative.display()
+                    )));
                 }
-                let mut output = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&out)?;
-                io::copy(&mut entry, &mut output)?;
                 output.sync_all()?;
+                let safe_mode = ((original_mode & 0o755) | 0o600) & !0o6000;
+                set_file_mode(&out, safe_mode)?;
             }
         }
     } else {
@@ -1860,6 +2086,7 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
             "unsupported archive type".into(),
         ));
     }
+    sync_parent_directory(destination)?;
     Ok(())
 }
 
@@ -2139,45 +2366,48 @@ fn validate_installed_artifacts(
             "installed update requires at least one artifact".into(),
         ));
     }
+    let mut archive_names = std::collections::HashSet::new();
+    let mut destinations = std::collections::HashSet::new();
     for artifact in artifacts {
-        if artifact.archive_name.is_empty()
-            || artifact.archive_name.contains(['/', '\\'])
-            || artifact.archive_name == "."
-            || artifact.archive_name == ".."
+        if !is_safe_filename(&artifact.archive_name)
+            || !archive_names.insert(artifact.archive_name.as_str())
+            || !destinations.insert(&artifact.destination)
         {
             return Err(UpdateError::InvalidManifest(format!(
-                "invalid installed artifact archive name: {}",
-                artifact.archive_name
+                "invalid or duplicate installed artifact mapping: {} -> {}",
+                artifact.archive_name,
+                artifact.destination.display()
             )));
         }
-        if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
-            if meta.file_type().is_symlink() {
+        reject_symlink_components(&artifact.destination)?;
+        match fs::symlink_metadata(&artifact.destination) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 return Err(UpdateError::Command(format!(
-                    "installed artifact destination is a symlink: {}",
+                    "installed artifact destination is not a regular file: {}",
                     artifact.destination.display()
                 )));
             }
-            if meta.is_dir() {
-                return Err(UpdateError::Command(format!(
-                    "installed artifact destination is a directory: {}",
-                    artifact.destination.display()
-                )));
-            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if paths_overlap(version_file, &artifact.destination) {
+            return Err(UpdateError::InvalidManifest(
+                "version metadata path must not overlap an installed artifact".into(),
+            ));
         }
     }
-    if let Ok(meta) = fs::symlink_metadata(version_file) {
-        if meta.file_type().is_symlink() {
+    reject_symlink_components(version_file)?;
+    match fs::symlink_metadata(version_file) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(UpdateError::Command(format!(
-                "version file is a symlink: {}",
+                "version metadata is not a regular file: {}",
                 version_file.display()
             )));
         }
-        if meta.is_dir() {
-            return Err(UpdateError::Command(format!(
-                "version file path is a directory: {}",
-                version_file.display()
-            )));
-        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     Ok(())
 }

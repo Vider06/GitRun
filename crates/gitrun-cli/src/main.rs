@@ -2534,6 +2534,20 @@ fn run_doctor() -> i32 {
     let mut failures = 0usize;
     let mut warnings = 0usize;
     let system_install = system_install_paths().is_some();
+    if cfg!(target_os = "linux") {
+        for (label, program, args) in [
+            ("Git executable", "git", vec!["--version"]),
+            ("Docker executable", "docker", vec!["--version"]),
+        ] {
+            let result = doctor_command_status(program, &args)
+                .map_err(|error| format!("WARN: {error}"));
+            doctor_check(label, result, &mut failures, &mut warnings);
+        }
+        match doctor_command_status("docker", &["info", "--format", "{{.ServerVersion}}"]) {
+            Ok(version) => doctor_check("Docker daemon", Ok(format!("available ({version})")), &mut failures, &mut warnings),
+            Err(error) => doctor_check("Docker daemon", Err(format!("WARN: {error}")), &mut failures, &mut warnings),
+        }
+    }
     match std::env::current_exe() {
         Ok(path) if path.is_file() => doctor_check(
             "CLI binary",
@@ -2688,6 +2702,9 @@ fn run_doctor() -> i32 {
         ]
         .iter()
         .find(|path| Path::new(path).is_file());
+        let systemd_dir = doctor_file_check("/etc/systemd/system", true)
+            .map(|_| "/etc/systemd/system is present and root-owned".to_owned());
+        doctor_check("Systemd unit directory", systemd_dir, &mut failures, &mut warnings);
         doctor_check(
             "Control Manager systemd unit",
             control_unit
@@ -2741,6 +2758,17 @@ fn run_doctor() -> i32 {
         ]
         .iter()
         .find(|path| Path::new(path).is_file());
+        let gsr_unit = [
+            "/etc/systemd/system/gitrun-gsr.service",
+            "/usr/lib/systemd/system/gitrun-gsr.service",
+            "/lib/systemd/system/gitrun-gsr.service",
+        ].iter().find(|path| Path::new(path).is_file());
+        doctor_check(
+            "GSR systemd unit",
+            gsr_unit.map(|path| Ok((*path).to_owned())).unwrap_or_else(|| Err("gitrun-gsr.service unit is missing; run sudo gitrun fix-update".into())),
+            &mut failures,
+            &mut warnings,
+        );
         doctor_check(
             "Scheduler systemd unit",
             scheduler_unit

@@ -69,7 +69,7 @@ Requests are checked against the current runner/container identity, authoritativ
 - **Container hardening:** read-only Linux root filesystem by default, constrained capabilities, no-new-privileges, resource limits and a dedicated runner network.
 - **Safer filesystem access:** approved path prefixes, symlink/hard-link checks and bounded file operations.
 - **Controlled host mounts:** GitDockRun mounts are a separately gated capability for local Linux Docker; policy, destination capability and runner identity must all permit the operation.
-- **Signed updates:** release-manifest verification, checksums and rollback support.
+- **Signed updates:** Ed25519 release-manifest verification, streamed SHA-256 artifact verification, bounded archive extraction, durable recovery journals written before live mutation, symlink/path validation, health verification and rollback on failed installation.
 
 **Important:** direct Docker-socket access for workflow runners is disabled by default. Enabling it gives workflow code host-level Docker authority; only enable it for repositories and contributors you fully trust. GitRun is intended for infrastructure you administer, not as an open runner service for arbitrary public repositories.
 
@@ -160,7 +160,9 @@ gitrun rollback BACKUP_PATH
 gitrun cat
 ```
 
-The `fix-update` command repairs the installed GitRun systemd integration (scheduler, GSR and Control Manager units), the `gitrun-control` group and service startup, then applies the latest official signed release only if it is newer. It uses the normal updater and rollback path; it never downgrades the installed binary just to force an update. `gitrun doctor` reports configuration, dependency, installation metadata, systemd-unit, service and Control Manager socket health, with actionable failures and warnings. The command requires sudo for system installations. Use `--no-cat` to suppress the mascot.\n\nThe `fast-stop` command requires confirmation and requests force-cancellation of the **whole workflow run**, not a single job. It does not directly kill containers.
+The `fix-update` command repairs the installed GitRun systemd integration (scheduler, GSR and Control Manager units), the `gitrun-control` group and service startup, then applies the latest official signed release only if it is newer. It never downgrades the installed binary to force an update. System updates verify the artifact against the signed manifest checksum, reject unsafe archive entries and symlinked destinations, and write a durable rollback journal before replacing installed files. The updater checks the executable independently before repairing services, then runs the full `doctor` check after systemd reconciliation. Failed health checks trigger rollback and an attempt to restart the previous scheduler. The generic updater also writes its recovery journal before moving the previous installation. `gitrun doctor` reports configuration, dependency, installation metadata, systemd-unit, service and Control Manager socket health, with actionable failures and warnings. System repair requires sudo. Use `--no-cat` to suppress the mascot.
+
+The `fast-stop` command requires confirmation and requests force-cancellation of the **whole workflow run**, not a single job. It does not directly kill containers.
 
 ## Configuration at a glance
 

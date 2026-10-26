@@ -397,12 +397,45 @@ jobs:
           # ------------------------------------------------ system prerequisites ----
           ci_apt() {
             command -v apt-get >/dev/null 2>&1 || return 1
-            local sudo=""
+            local sudo="" started rc
             if [ "$(id -u)" != 0 ]; then
               if sudo -n true 2>/dev/null; then sudo="sudo -n"; else return 1; fi
             fi
-            if [ ! -f "$CI_DIR/apt-updated" ]; then $sudo apt-get update -qq >/dev/null 2>&1 || true; : > "$CI_DIR/apt-updated"; fi
-            $sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" > "$CI_LOGS/apt.log" 2>&1
+
+            # GitHub-hosted images occasionally hit slow or unreachable apt mirrors.
+            # Bound network waits without changing the workflow/job timeout, and keep
+            # the package-manager output visible in every job that uses this helper.
+            if [ ! -f "$CI_DIR/apt-updated" ]; then
+              started=$(date +%s)
+              echo "[$(date -Is)] apt-get update started"
+              if $sudo apt-get \
+                -o Acquire::http::Timeout=30 \
+                -o Acquire::https::Timeout=30 \
+                -o Acquire::Retries=2 \
+                update 2>&1 | tee "$CI_LOGS/apt-update.log"; then
+                : > "$CI_DIR/apt-updated"
+                echo "[$(date -Is)] apt-get update finished in $(($(date +%s) - started))s"
+              else
+                rc=$?
+                echo "[$(date -Is)] apt-get update failed after $(($(date +%s) - started))s (exit $rc); see $CI_LOGS/apt-update.log"
+                return "$rc"
+              fi
+            fi
+
+            started=$(date +%s)
+            echo "[$(date -Is)] apt-get install started: $*"
+            if $sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 \
+              -o Acquire::Retries=2 \
+              install -y --no-install-recommends "$@" 2>&1 | tee "$CI_LOGS/apt.log"; then
+              echo "[$(date -Is)] apt-get install finished in $(($(date +%s) - started))s"
+              return 0
+            else
+              rc=$?
+              echo "[$(date -Is)] apt-get install failed after $(($(date +%s) - started))s (exit $rc); see $CI_LOGS/apt.log"
+              return "$rc"
+            fi
           }
           # ci_need CMD [APT_PACKAGE]  -> installs the package when possible, otherwise records it
           ci_need() {

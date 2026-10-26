@@ -654,6 +654,25 @@ pub fn apply_update(
         .service_config
         .as_ref()
         .map(|_| backup_dir.join("service-config"));
+    let record = BackupRecord {
+        created_at: timestamp as u64,
+        version: version.into(),
+        install_backup: install_backup.clone(),
+        state_backup: if paths.state_dir.is_dir() {
+            Some(state_backup.clone())
+        } else {
+            None
+        },
+        config_backup: config_backup.clone(),
+        service_config_backup: service_config_backup.clone(),
+    };
+
+    // Write a durable journal before the current installation can be moved.
+    // A power loss after this point leaves enough trusted information for recovery.
+    if let Err(error) = write_json_durable(&backup_dir.join("backup.json"), &record) {
+        let _ = fs::remove_dir_all(&backup_dir);
+        return Err(error);
+    }
 
     let backup_result = (|| -> Result<(), UpdateError> {
         if paths.state_dir.exists() {
@@ -734,40 +753,9 @@ pub fn apply_update(
         return Err(UpdateError::RolledBack(error.to_string()));
     }
 
-    let record = BackupRecord {
-        created_at: timestamp as u64,
-        version: version.into(),
-        install_backup,
-        state_backup: state_backup.exists().then_some(state_backup),
-        config_backup,
-        service_config_backup,
-    };
-    let backup_json = (|| -> Result<(), UpdateError> {
-        let bytes = serde_json::to_vec_pretty(&record)?;
-        fs::write(backup_dir.join("backup.json"), bytes)?;
-        Ok(())
-    })();
-
-    if let Err(error) = backup_json {
-        let rollback_result = rollback_install(
-            paths,
-            &record.install_backup,
-            record.state_backup.as_deref(),
-            record.config_backup.as_deref(),
-            paths.service_config.as_deref(),
-            record.service_config_backup.as_deref(),
-            true,
-        );
-        if let Err(rollback_error) = rollback_result {
-            return Err(UpdateError::RolledBack(format!(
-                "backup record write failed: {error}; rollback also failed: {rollback_error}"
-            )));
-        }
-        return Err(UpdateError::RolledBack(format!(
-            "backup record write failed; GitRun was rolled back: {error}"
-        )));
-    }
-
+    // The journal is already on disk, before any live state was changed.
+    // Keep it for both manual rollback and post-crash recovery.
+    sync_parent_directory(&backup_dir.join("backup.json"))?;
     Ok(record)
 }
 

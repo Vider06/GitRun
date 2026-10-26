@@ -3218,9 +3218,13 @@ mod tests {
     fn installed_update_persists_recovery_journal_and_can_restore_previous_artifacts() {
         use std::os::unix::fs::PermissionsExt;
 
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "gitrun-updater-journal-{}-{nonce}", std::process::id()
+            "gitrun-updater-journal-{}-{nonce}",
+            std::process::id()
         ));
         let binary = root.join("bin/gitrun");
         let version_file = root.join("share/version.txt");
@@ -3242,7 +3246,9 @@ mod tests {
         header.set_size(payload.len() as u64);
         header.set_mode(0o755);
         header.set_cksum();
-        archive.append_data(&mut header, "gitrun", &payload[..]).unwrap();
+        archive
+            .append_data(&mut header, "gitrun", &payload[..])
+            .unwrap();
         archive.into_inner().unwrap().finish().unwrap();
 
         let artifacts = [InstalledArtifact {
@@ -3259,12 +3265,20 @@ mod tests {
             &backup_root,
             &binary,
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
-        let transaction = backup_root.join(format!("system-{}-{}", record.version, record.created_at));
-        assert!(transaction.join("backup.json").is_file(), "journal must survive a completed install");
+        let transaction =
+            backup_root.join(format!("system-{}-{}", record.version, record.created_at));
+        assert!(
+            transaction.join("backup.json").is_file(),
+            "journal must survive a completed install"
+        );
         assert_eq!(fs::read_to_string(&version_file).unwrap(), "1.2.3");
-        assert_eq!(fs::read(record.artifacts[0].backup.as_ref().unwrap()).unwrap(), b"#!/bin/sh\nexit 0\n");
+        assert_eq!(
+            fs::read(record.artifacts[0].backup.as_ref().unwrap()).unwrap(),
+            b"#!/bin/sh\nexit 0\n"
+        );
 
         rollback_installed_update(&record, &artifacts, &version_file, &backup_root)
             .expect("a freshly written recovery record must pass the trusted rollback validator");
@@ -3278,9 +3292,13 @@ mod tests {
     fn installed_update_rejects_symlink_destination_before_mutation() {
         use std::os::unix::fs::symlink;
 
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "gitrun-updater-symlink-dest-{}-{nonce}", std::process::id()
+            "gitrun-updater-symlink-dest-{}-{nonce}",
+            std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
         let outside = root.join("outside");
@@ -3301,7 +3319,9 @@ mod tests {
         header.set_size(payload.len() as u64);
         header.set_mode(0o755);
         header.set_cksum();
-        archive.append_data(&mut header, "gitrun", &payload[..]).unwrap();
+        archive
+            .append_data(&mut header, "gitrun", &payload[..])
+            .unwrap();
         archive.into_inner().unwrap().finish().unwrap();
 
         let artifacts = [InstalledArtifact {
@@ -3310,9 +3330,16 @@ mod tests {
             required: true,
         }];
         assert!(apply_installed_update(
-            &archive_path, "x86_64-unknown-linux-gnu", "1.2.3", &artifacts,
-            &version_file, &root.join("backups"), &destination, None,
-        ).is_err());
+            &archive_path,
+            "x86_64-unknown-linux-gnu",
+            "1.2.3",
+            &artifacts,
+            &version_file,
+            &root.join("backups"),
+            &destination,
+            None,
+        )
+        .is_err());
         assert_eq!(fs::read(&outside).unwrap(), b"must remain untouched");
         assert_eq!(fs::read_to_string(&version_file).unwrap(), "0.9.0\n");
         let _ = fs::remove_dir_all(&root);
@@ -3321,7 +3348,9 @@ mod tests {
     #[test]
     fn release_manifest_rejects_duplicate_artifact_targets_and_files() {
         let mut duplicate_target = manifest();
-        duplicate_target.artifacts.push(duplicate_target.artifacts[0].clone());
+        duplicate_target
+            .artifacts
+            .push(duplicate_target.artifacts[0].clone());
         assert!(duplicate_target.validate().is_err());
 
         let mut duplicate_file = manifest();
@@ -3330,5 +3359,4 @@ mod tests {
         duplicate_file.artifacts.push(second);
         assert!(duplicate_file.validate().is_err());
     }
-
 }

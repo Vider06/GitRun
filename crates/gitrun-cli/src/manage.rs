@@ -881,7 +881,11 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .highlight_symbol("› ")
         // Do not set foreground/background here: item-level accent colors
         // must survive selection rendering and keep the text legible.
-        .highlight_style(Style::default().bg(SELECTED_BG).add_modifier(Modifier::BOLD));
+        .highlight_style(
+            Style::default()
+                .bg(SELECTED_BG)
+                .add_modifier(Modifier::BOLD),
+        );
     let mut page_state = ListState::default();
     page_state.select(Some(state.page));
     frame.render_stateful_widget(page_list, page_area, &mut page_state);
@@ -928,7 +932,11 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let action_list = List::new(actions)
         .block(action_block)
         .highlight_symbol("› ")
-        .highlight_style(Style::default().bg(SELECTED_BG).add_modifier(Modifier::BOLD));
+        .highlight_style(
+            Style::default()
+                .bg(SELECTED_BG)
+                .add_modifier(Modifier::BOLD),
+        );
     let mut action_state = ListState::default();
     action_state.select(Some(state.action));
     frame.render_stateful_widget(action_list, action_area, &mut action_state);
@@ -1024,7 +1032,13 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         detail_area[1]
     };
 
-    let body_text = Text::from(state.body.iter().map(|line| body_line(line)).collect::<Vec<_>>());
+    let body_text = Text::from(
+        state
+            .body
+            .iter()
+            .map(|line| body_line(line))
+            .collect::<Vec<_>>(),
+    );
     let body = Paragraph::new(body_text)
         .block(
             Block::default()
@@ -1173,7 +1187,10 @@ fn json_value_style(value: &str) -> Style {
         _ if value
             .chars()
             .next()
-            .is_some_and(|ch| ch.is_ascii_digit() || ch == '-') => WARN,
+            .is_some_and(|ch| ch.is_ascii_digit() || ch == '-') =>
+        {
+            WARN
+        }
         _ => TEXT,
     };
     Style::default().fg(color)
@@ -2274,7 +2291,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod visual_design_tests {
     use super::{header_separator, PAGES, WIDE_HEADER_TAGLINE};
@@ -2283,7 +2299,8 @@ mod visual_design_tests {
     fn wide_header_separator_fits_the_available_terminal_width() {
         for width in [110_u16, 120, 132, 160, 240] {
             let separator = header_separator(width, WIDE_HEADER_TAGLINE);
-            let rendered_width = 2 + separator.chars().count() + WIDE_HEADER_TAGLINE.chars().count();
+            let rendered_width =
+                2 + separator.chars().count() + WIDE_HEADER_TAGLINE.chars().count();
             assert_eq!(rendered_width, usize::from(width.saturating_sub(2)));
         }
     }

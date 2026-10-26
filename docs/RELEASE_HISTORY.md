@@ -11,7 +11,7 @@
 
 ## GitRun 1.7.0 — Kitty queue-aware evaluation primitives
 
-- **Working branch:** `feat/kitty-queue-aware-control-v1.7.0` (pull request checks must verify the final commit).
+- **Implementation PR:** [#110](https://github.com/Vider06/GitRun/pull/110). The feature's introduction remains a 1.7.0 historical milestone.
 - Added dependency-free Erlang-C M/M/c queue-wait estimation, deterministic bounded FCFS replay metrics and a capped runner-floor evaluation helper in `gitrun-smart-scheduler::queueing`.
 - The new helpers are evaluation primitives, not a live MPC controller. Production scaling remains behind the existing deterministic reconciliation and resource/policy gates. Erlang-C assumptions and future-data leakage are explicitly documented.
 - This source history entry does not imply a published signed 1.7.0 artifact; use GitHub Releases for installable artifacts.

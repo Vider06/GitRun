@@ -1584,8 +1584,9 @@ dependencies = [
 
 [[package]]
 name = "gitrun-cli"
-version = "0.13.6"
+version = "0.13.7"
 dependencies = [
+ "base64 0.23.1",
  "clap",
  "crossterm",
  "gitrun-core",
@@ -1676,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "base64 0.23.1",
  "filetime",

@@ -1186,7 +1186,8 @@ fn terminal_setup_command(
         _ => unreachable!(),
     };
 
-    presenter.transition(presenter::ValidationState::Connecting);
+    // Do not render mascot transitions between interactive prompts: in an
+    // SSH terminal they can appear exactly where the next answer is expected.
     println!();
     let repositories_raw = read_terminal_line("Repositories (owner/repository[,owner/other]): ")?;
     let repositories = repositories_raw
@@ -1477,6 +1478,10 @@ fn run_gsr_watchdog() -> i32 {
     2
 }
 
+fn is_interactive_terminal_setup(command: &Command) -> bool {
+    matches!(command, Command::Setup { terminal: true })
+}
+
 fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("gsr-watchdog")) {
         std::process::exit(run_gsr_watchdog());
@@ -1531,10 +1536,14 @@ fn main() {
     let is_cat_command = matches!(&command, Command::Cat);
     let is_status_command = matches!(&command, Command::Status { .. });
     let is_manage_command = matches!(&command, Command::Manage);
-    if !is_cat_command && !is_status_command && !is_manage_command {
+    let is_interactive_setup = is_interactive_terminal_setup(&command);
+    // Interactive setup reads credentials and paths from stdin. Keep the live
+    // mascot viewport out of that terminal so it cannot overwrite or obscure
+    // the prompt where the user is typing.
+    if !is_cat_command && !is_status_command && !is_manage_command && !is_interactive_setup {
         presenter.start_live();
     }
-    if !is_cat_command && !is_manage_command {
+    if !is_cat_command && !is_manage_command && !is_interactive_setup {
         presenter.transition(validation_state_for_command(&command));
     }
 
@@ -4416,6 +4425,13 @@ mod internal_lifecycle_command_tests {
         TRUSTED_SYSTEM_CONFIG_FILE,
     };
     use clap::Parser;
+
+    #[test]
+    fn terminal_setup_disables_live_mascot_during_prompts() {
+        assert!(super::is_interactive_terminal_setup(&Command::Setup { terminal: true }));
+        assert!(!super::is_interactive_terminal_setup(&Command::Setup { terminal: false }));
+        assert!(!super::is_interactive_terminal_setup(&Command::Doctor));
+    }
 
     #[test]
     fn fix_update_commands_are_registered() {

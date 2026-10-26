@@ -88,12 +88,13 @@ jobs:
           # or update a docs-only PR from a temporary worktree based on origin/main.
           if ! git diff --quiet -- '*.md'; then
             git fetch origin main
-            main_version="$(git show origin/main:version.txt | tr -d '[:space:]')"
+            main_sha="$(git rev-parse FETCH_HEAD)"
+            main_version="$(git show "$main_sha:version.txt" | tr -d '[:space:]')"
             if [ "$main_version" = "$VERSION" ]; then
               sync_branch="automation/sync-markdown-version-v${VERSION//./-}"
               sync_dir="${RUNNER_TEMP}/gitrun-markdown-sync-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
               trap 'git worktree remove --force "$sync_dir" >/dev/null 2>&1 || true' EXIT
-              git worktree add --detach "$sync_dir" origin/main
+              git worktree add --detach "$sync_dir" "$main_sha"
               python3 "$sync_dir/scripts/sync-markdown-version.py" --version "$VERSION"
               python3 "$sync_dir/scripts/sync-markdown-version.py" --check --version "$VERSION"
               mapfile -t changed_markdown < <(git -C "$sync_dir" diff --name-only -- '*.md')

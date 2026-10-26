@@ -905,7 +905,6 @@ pub struct InstalledBackupRecord {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn apply_installed_update(
     archive: &Path,
     target: &str,
@@ -2759,15 +2758,6 @@ fn replace_temp_file(temp: &Path, destination: &Path) -> Result<(), UpdateError>
     }
     fs::rename(temp, destination)?;
     sync_parent_directory(destination)?;
-    Ok(())
-}
-
-fn sync_parent_directory(path: &Path) -> Result<(), UpdateError> {
-    #[cfg(unix)]
-    {
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        fs::File::open(parent)?.sync_all()?;
-    }
     Ok(())
 }
 

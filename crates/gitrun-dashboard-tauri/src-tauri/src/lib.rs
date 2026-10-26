@@ -145,8 +145,7 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
     if control_manager_enabled() && current_process_is_root() {
         let path = config_path_for_write()?;
         gitrun_setup::update_env_file(&path, config).map_err(|error| error.to_string())?;
-        gitrun_setup::secure_system_config_file(&path, None)
-            .map_err(|error| error.to_string())?;
+        gitrun_setup::secure_system_config_file(&path, None).map_err(|error| error.to_string())?;
         if let Some(parent) = path.parent() {
             std::fs::File::open(parent)
                 .and_then(|file| file.sync_all())

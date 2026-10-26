@@ -2086,7 +2086,7 @@ fn extract_archive(
             let mut entry = archive
                 .by_index(index)
                 .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
-            let Some(relative) = entry.enclosed_name().map(Path::to_path_buf) else {
+            let Some(relative) = entry.enclosed_name() else {
                 return Err(UpdateError::InvalidManifest(
                     "archive contains unsafe path".into(),
                 ));
@@ -3213,4 +3213,123 @@ mod tests {
         assert_eq!(fs::read(&version_file).unwrap(), b"1.2.3\n");
         let _ = fs::remove_dir_all(&root);
     }
+    #[cfg(unix)]
+    #[test]
+    fn installed_update_persists_recovery_journal_and_can_restore_previous_artifacts() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-journal-{}-{nonce}", std::process::id()
+        ));
+        let binary = root.join("bin/gitrun");
+        let version_file = root.join("share/version.txt");
+        let backup_root = root.join("backups");
+        fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        fs::create_dir_all(version_file.parent().unwrap()).unwrap();
+        fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&version_file, b"0.9.0\n").unwrap();
+
+        let archive_path = root.join("release.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive_path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"#!/bin/sh\nexit 0\n";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive.append_data(&mut header, "gitrun", &payload[..]).unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let artifacts = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: binary.clone(),
+            required: true,
+        }];
+        let record = apply_installed_update(
+            &archive_path,
+            "x86_64-unknown-linux-gnu",
+            "1.2.3",
+            &artifacts,
+            &version_file,
+            &backup_root,
+            &binary,
+            None,
+        ).unwrap();
+
+        let transaction = backup_root.join(format!("system-{}-{}", record.version, record.created_at));
+        assert!(transaction.join("backup.json").is_file(), "journal must survive a completed install");
+        assert_eq!(fs::read_to_string(&version_file).unwrap(), "1.2.3");
+        assert_eq!(fs::read(record.artifacts[0].backup.as_ref().unwrap()).unwrap(), b"#!/bin/sh\nexit 0\n");
+
+        rollback_installed_update(&record, &artifacts, &version_file, &backup_root)
+            .expect("a freshly written recovery record must pass the trusted rollback validator");
+        assert_eq!(fs::read_to_string(&version_file).unwrap(), "0.9.0\n");
+        assert_eq!(fs::read(&binary).unwrap(), b"#!/bin/sh\nexit 0\n");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installed_update_rejects_symlink_destination_before_mutation() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-symlink-dest-{}-{nonce}", std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let outside = root.join("outside");
+        let destination = root.join("gitrun");
+        let version_file = root.join("version.txt");
+        fs::write(&outside, b"must remain untouched").unwrap();
+        symlink(&outside, &destination).unwrap();
+        fs::write(&version_file, b"0.9.0\n").unwrap();
+
+        let archive_path = root.join("release.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive_path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"#!/bin/sh\nexit 0\n";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive.append_data(&mut header, "gitrun", &payload[..]).unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let artifacts = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: destination.clone(),
+            required: true,
+        }];
+        assert!(apply_installed_update(
+            &archive_path, "x86_64-unknown-linux-gnu", "1.2.3", &artifacts,
+            &version_file, &root.join("backups"), &destination, None,
+        ).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"must remain untouched");
+        assert_eq!(fs::read_to_string(&version_file).unwrap(), "0.9.0\n");
+        let _ = fs::remove_dir_all(&root);
+        let _ = PermissionsExt::from_mode; // Keep the import lint-free across cfg toolchains.
+    }
+
+    #[test]
+    fn release_manifest_rejects_duplicate_artifact_targets_and_files() {
+        let mut duplicate_target = manifest();
+        duplicate_target.artifacts.push(duplicate_target.artifacts[0].clone());
+        assert!(duplicate_target.validate().is_err());
+
+        let mut duplicate_file = manifest();
+        let mut second = duplicate_file.artifacts[0].clone();
+        second.target = "aarch64-unknown-linux-gnu".into();
+        duplicate_file.artifacts.push(second);
+        assert!(duplicate_file.validate().is_err());
+    }
+
 }

@@ -1358,7 +1358,11 @@ pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), Se
     } else {
         resources::SYSTEMD_SERVICE_DIRECT
     };
-    write_resource(&service_dir.join("gitrun.service"), scheduler_service, 0o644)?;
+    write_resource(
+        &service_dir.join("gitrun.service"),
+        scheduler_service,
+        0o644,
+    )?;
     write_resource(
         &service_dir.join("gitrun-gsr.service"),
         resources::SYSTEMD_GSR_SERVICE,
@@ -1374,14 +1378,14 @@ pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), Se
     // Enable and restart each component explicitly, then verify its final state.
     // Control Manager runs first so the dashboard's privileged API is available
     // before the scheduler/GSR services resume.
-    for service in ["gitrun-control.service", "gitrun.service", "gitrun-gsr.service"] {
+    for service in [
+        "gitrun-control.service",
+        "gitrun.service",
+        "gitrun-gsr.service",
+    ] {
         run_command(Command::new("/usr/bin/systemctl").args(["enable", service]))?;
         run_command(Command::new("/usr/bin/systemctl").args(["restart", service]))?;
-        run_command(Command::new("/usr/bin/systemctl").args([
-            "is-active",
-            "--quiet",
-            service,
-        ]))?;
+        run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", service]))?;
     }
     Ok(())
 }

@@ -1584,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-cli"
-version = "0.13.4"
+version = "0.13.5"
 dependencies = [
  "clap",
  "crossterm",
@@ -1662,7 +1662,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-recovery"
-version = "0.6.7"
+version = "0.6.8"
 dependencies = [
  "gitrun-core",
  "gitrun-scheduler",
@@ -1676,7 +1676,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "base64 0.23.1",
  "filetime",
@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-setup"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "gitrun-core",
  "gitrun-updater",
@@ -1706,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-smart-scheduler"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "libc",
  "serde",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-updater"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "flate2",
  "gitrun-core",

@@ -38,6 +38,7 @@ const CYAN: Color = Color::Rgb(125, 211, 252);
 const MUTED: Color = Color::Rgb(137, 151, 172);
 const TEXT: Color = Color::Rgb(232, 238, 247);
 const BORDER: Color = Color::Rgb(53, 65, 83);
+const SELECTED_BG: Color = Color::Rgb(28, 39, 53);
 const GOOD: Color = Color::Rgb(112, 214, 160);
 const WARN: Color = Color::Rgb(255, 194, 102);
 const BAD: Color = Color::Rgb(255, 116, 128);
@@ -109,7 +110,8 @@ const PAGES: &[Page] = &[
         name: "General Settings",
         short: "Settings",
         subtitle: "Runner capacity, lifecycle policy, VMs and global configuration.",
-        icon: "⚙",
+        // U+FE0E requests text presentation so terminals do not render an emoji gear.
+        icon: "⚙︎",
     },
     Page {
         name: "App Settings",
@@ -723,6 +725,14 @@ fn handle_key(
     Ok(false)
 }
 
+const WIDE_HEADER_TAGLINE: &str = "  SSH-FIRST  ·  LIVE OPERATIONS  ·  SAFE BY DEFAULT";
+
+fn header_separator(area_width: u16, tagline: &str) -> String {
+    let tagline_width = u16::try_from(tagline.chars().count()).unwrap_or(u16::MAX);
+    let separator_width = area_width.saturating_sub(tagline_width).saturating_sub(4);
+    "━".repeat(usize::from(separator_width))
+}
+
 fn render(frame: &mut Frame<'_>, state: &State) {
     let area = frame.area();
     frame.render_widget(Clear, area);
@@ -767,13 +777,10 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             ]),
             Line::from(vec![
                 Span::styled(
-                    "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                    format!("  {}", header_separator(area.width, WIDE_HEADER_TAGLINE)),
                     Style::default().fg(BORDER),
                 ),
-                Span::styled(
-                    "  SSH-FIRST  ·  LIVE OPERATIONS  ·  SAFE BY DEFAULT",
-                    Style::default().fg(MUTED),
-                ),
+                Span::styled(WIDE_HEADER_TAGLINE, Style::default().fg(MUTED)),
             ]),
         ]
     } else {
@@ -834,11 +841,13 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .enumerate()
         .map(|(index, page)| {
             let selected = index == state.page;
-            // Keep selection as a visible marker + accent text, not a solid
-            // background. Crossterm/Ratatui highlight overlays can otherwise
-            // repaint the foreground and make the selected label disappear.
+            // Use a low-contrast row tint while keeping each icon's foreground
+            // color explicit for reliable contrast across terminal themes.
             let style = if selected {
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(ACCENT)
+                    .bg(SELECTED_BG)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(TEXT)
             };
@@ -846,7 +855,10 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 Span::styled(
                     format!("{} ", page.icon),
                     if selected {
-                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(ACCENT)
+                            .bg(SELECTED_BG)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(CYAN)
                     },
@@ -869,7 +881,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .highlight_symbol("› ")
         // Do not set foreground/background here: item-level accent colors
         // must survive selection rendering and keep the text legible.
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+        .highlight_style(Style::default().bg(SELECTED_BG).add_modifier(Modifier::BOLD));
     let mut page_state = ListState::default();
     page_state.select(Some(state.page));
     frame.render_stateful_widget(page_list, page_area, &mut page_state);
@@ -881,7 +893,10 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .map(|(index, action)| {
             let selected = index == state.action;
             let style = if selected {
-                Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(CYAN)
+                    .bg(SELECTED_BG)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(TEXT)
             };
@@ -890,6 +905,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                     format!("{:>2} ", index + 1),
                     Style::default()
                         .fg(if selected { CYAN } else { MUTED })
+                        .bg(if selected { SELECTED_BG } else { Color::Reset })
                         .add_modifier(if selected {
                             Modifier::BOLD
                         } else {
@@ -912,7 +928,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let action_list = List::new(actions)
         .block(action_block)
         .highlight_symbol("› ")
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+        .highlight_style(Style::default().bg(SELECTED_BG).add_modifier(Modifier::BOLD));
     let mut action_state = ListState::default();
     action_state.select(Some(state.action));
     frame.render_stateful_widget(action_list, action_area, &mut action_state);
@@ -1008,27 +1024,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         detail_area[1]
     };
 
-    let body_text = Text::from(
-        state
-            .body
-            .iter()
-            .map(|line| {
-                let mut style = Style::default().fg(TEXT);
-                if line.starts_with("Error:") {
-                    style = style.fg(BAD).add_modifier(Modifier::BOLD);
-                } else if line.starts_with("Warning:") || line.contains("\"stale\": true") {
-                    style = style.fg(WARN);
-                } else if line.starts_with('{')
-                    || line.starts_with('}')
-                    || line.starts_with('[')
-                    || line.starts_with(']')
-                {
-                    style = style.fg(CYAN);
-                }
-                Line::from(Span::styled(line.as_str(), style))
-            })
-            .collect::<Vec<_>>(),
-    );
+    let body_text = Text::from(state.body.iter().map(|line| body_line(line)).collect::<Vec<_>>());
     let body = Paragraph::new(body_text)
         .block(
             Block::default()
@@ -1121,6 +1117,66 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             popup,
         );
     }
+}
+
+fn body_line(line: &str) -> Line<'_> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("Error:") {
+        return Line::from(Span::styled(
+            line,
+            Style::default().fg(BAD).add_modifier(Modifier::BOLD),
+        ));
+    }
+    if trimmed.starts_with("Warning:") || trimmed.contains("\"stale\": true") {
+        return Line::from(Span::styled(line, Style::default().fg(WARN)));
+    }
+    if matches!(trimmed, "{" | "}" | "[" | "]" | "}," | "],") {
+        return Line::from(Span::styled(line, Style::default().fg(CYAN)));
+    }
+
+    // Pretty-printed JSON object entries get separate key, separator and value
+    // colors. serde_json serializes the object keys, so this delimiter is safe
+    // even when an actual key contains a colon.
+    let indent = line.len() - trimmed.len();
+    if trimmed.starts_with('"') {
+        if let Some(separator) = trimmed.find("\":") {
+            let key_end = indent + separator + 1;
+            let colon_end = key_end + 1;
+            let value_start = line[colon_end..]
+                .find(|ch: char| !ch.is_whitespace())
+                .map(|offset| colon_end + offset)
+                .unwrap_or(line.len());
+            let value = &line[value_start..];
+            return Line::from(vec![
+                Span::raw(&line[..indent]),
+                Span::styled(
+                    &line[indent..key_end],
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(&line[key_end..colon_end], Style::default().fg(MUTED)),
+                Span::raw(&line[colon_end..value_start]),
+                Span::styled(value, json_value_style(value)),
+            ]);
+        }
+    }
+    Line::from(Span::styled(line, Style::default().fg(TEXT)))
+}
+
+fn json_value_style(value: &str) -> Style {
+    let value = value.trim().trim_end_matches(',').trim();
+    let color = match value {
+        "true" => GOOD,
+        "false" => BAD,
+        "null" => MUTED,
+        _ if value.starts_with('"') => TEXT,
+        _ if value.starts_with('{') || value.starts_with('[') => CYAN,
+        _ if value
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit() || ch == '-') => WARN,
+        _ => TEXT,
+    };
+    Style::default().fg(color)
 }
 
 /// Extract only explicitly named percentage metrics from the live backend JSON.
@@ -2215,5 +2271,25 @@ mod tests {
         restore_redacted(&mut edited, &original);
         assert_eq!(edited["token"], "original");
         assert_eq!(edited["setting"], 2);
+    }
+}
+
+
+#[cfg(test)]
+mod visual_design_tests {
+    use super::{header_separator, PAGES, WIDE_HEADER_TAGLINE};
+
+    #[test]
+    fn wide_header_separator_fits_the_available_terminal_width() {
+        for width in [110_u16, 120, 132, 160, 240] {
+            let separator = header_separator(width, WIDE_HEADER_TAGLINE);
+            let rendered_width = 2 + separator.chars().count() + WIDE_HEADER_TAGLINE.chars().count();
+            assert_eq!(rendered_width, usize::from(width.saturating_sub(2)));
+        }
+    }
+
+    #[test]
+    fn settings_gear_requests_monochrome_text_presentation() {
+        assert!(PAGES[9].icon.ends_with('\u{FE0E}'));
     }
 }

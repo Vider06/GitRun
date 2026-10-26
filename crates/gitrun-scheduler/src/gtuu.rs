@@ -532,7 +532,9 @@ mod tests {
     #[test]
     fn local_default_runner_reference_is_not_treated_as_a_registry_image() {
         assert!(!is_registry_image_reference("gitrun-runner:latest"));
-        assert!(is_registry_image_reference("ghcr.io/vider06/gitrun-runner:latest"));
+        assert!(is_registry_image_reference(
+            "ghcr.io/vider06/gitrun-runner:latest"
+        ));
         assert!(is_registry_image_reference("vider06/gitrun-runner:latest"));
     }
 

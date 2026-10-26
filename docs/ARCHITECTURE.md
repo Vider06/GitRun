@@ -11,7 +11,7 @@ The installed Linux service runs the Rust scheduler through the `gitrun` executa
 | Component | Responsibility |
 |---|---|
 | `gitrun-core` | Shared configuration, policy, authentication, state and domain models |
-| `gitrun-cli` | Operator CLI and terminal utilities |
+| `gitrun-cli` | Operator CLI, keyboard-driven headless management console, and shared terminal mascot/presentation layer |
 | `gitrun-scheduler` | GitHub polling, deterministic reconciliation, autoscaling, runner lifecycle, Docker and VM backends |
 | `gitrun-exe` | Internal authorized execution model and IPC/authentication primitives |
 | `gitrun-gsr` | Security enforcement, watchdog, workflow API authorization and API launcher |

@@ -7,5 +7,6 @@ Installation, release-build and verification scripts for Linux, macOS and Window
 `sync-markdown-version.py` keeps the visible current-source version labels synchronized with `version.txt`. GitHub renders Markdown but does not expand arbitrary environment variables, so the script updates values stored inside invisible HTML comments rather than leaving placeholders visible to readers.
 
 - Run `python3 scripts/sync-markdown-version.py` to update the marked values from `version.txt`.
-- Run `python3 scripts/sync-markdown-version.py --check` in CI to detect stale or missing markers.
-- The release workflow refreshes the markers before packaging and persists the correction to `main` only when the tagged source commit is still the current main head. Historical release numbers outside the markers are intentionally preserved.
+- Run `python3 scripts/sync-markdown-version.py --check` to detect markers whose displayed values differ from the requested/current product version.
+- Run `python3 scripts/sync-markdown-version.py --check-structure` in general PR CI to validate paired markers and required coverage while allowing version synchronization to remain deferred.
+- The release workflow updates markers to the selected release version and then runs strict `--check` before packaging. If the tagged source commit is still the current `main` head with the same product version, the workflow also commits the resulting documentation correction to `main`; otherwise it updates the release workspace only. Historical release numbers outside the marked current-source references are intentionally preserved.

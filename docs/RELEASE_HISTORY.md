@@ -8,7 +8,7 @@ Current source target: GitRun <!-- gitrun-version:start -->1.8.4<!-- gitrun-vers
 - Reconciled independent patch versions for crates with source changes after their previous version bumps: `gitrun-cli` 0.13.4 → 0.13.5, `gitrun-updater` 0.8.3 → 0.8.4, `gitrun-recovery` 0.6.7 → 0.6.8, `gitrun-setup` 0.9.4 → 0.9.5, `gitrun-scheduler` 0.11.0 → 0.11.1, and `gitrun-smart-scheduler` 0.4.0 → 0.4.1. Crates whose code did not change retain their versions.
 - Added invisible Markdown version markers and a standard-library-only synchronizer. CI checks that the documented current version matches `version.txt`; release packaging refreshes markers and writes a documentation commit back to `main` when it is still building the current `main` head.
 - Synced the Tauri bundle, frontend package and npm lockfile product metadata to 1.8.4, with the release workflow deriving those values from the selected product version.
-- Polished the terminal management console: monochrome Settings glyph, width-aware header, restrained selected-row tint and semantic JSON output colors.
+- Polished the terminal management console: requested text presentation for the Settings gear, width-aware header, restrained selected-row tint and semantic JSON output colors. The variation selector does not force text rendering on every terminal/font combination; the follow-up TUI polish replaces that icon with a neutral text glyph.
 - **Implementation PR:** [#123](https://github.com/Vider06/GitRun/pull/123).
 
 ## GitRun 1.8.3 — updater resilience and explicit force mode

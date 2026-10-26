@@ -11,7 +11,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
@@ -39,6 +39,7 @@ const MUTED: Color = Color::Rgb(137, 151, 172);
 const TEXT: Color = Color::Rgb(232, 238, 247);
 const BORDER: Color = Color::Rgb(53, 65, 83);
 const SELECTED_BG: Color = Color::Rgb(28, 39, 53);
+const PANEL_BG: Color = Color::Rgb(17, 24, 35);
 const GOOD: Color = Color::Rgb(112, 214, 160);
 const WARN: Color = Color::Rgb(255, 194, 102);
 const BAD: Color = Color::Rgb(255, 116, 128);
@@ -110,8 +111,8 @@ const PAGES: &[Page] = &[
         name: "General Settings",
         short: "Settings",
         subtitle: "Runner capacity, lifecycle policy, VMs and global configuration.",
-        // U+FE0E requests text presentation so terminals do not render an emoji gear.
-        icon: "⚙︎",
+        // Prefer a neutral, consistently rendered settings glyph over emoji-dependent symbols.
+        icon: "≡",
     },
     Page {
         name: "App Settings",
@@ -805,17 +806,19 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             ),
         ])]
     };
-    let header = Paragraph::new(header_lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT)),
-    );
+    let header = Paragraph::new(header_lines)
+        .style(Style::default().bg(PANEL_BG))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT)),
+        );
     frame.render_widget(header, layout[0]);
 
     // Three columns on wide terminals; stack the navigation and operation
     // lists on narrow SSH terminals so the selected labels remain readable.
-    let (page_area, action_area, detail_parent) = if area.width < 110 {
+    let (mut page_area, action_area, detail_parent) = if area.width < 110 {
         let columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
@@ -835,6 +838,22 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             ])
             .split(layout[1]);
         (columns[0], columns[1], columns[2])
+    };
+    // Reserve a compact mascot footer only when the terminal can show every
+    // section plus the full sprite without clipping. Narrow SSH layouts keep
+    // the entire height for navigation.
+    let mascot_area = if area.width >= 110 && area.height >= 24 {
+        let sidebar = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(PAGES.len() as u16 + 2),
+                Constraint::Length(6),
+            ])
+            .split(page_area);
+        page_area = sidebar[0];
+        Some(sidebar[1])
+    } else {
+        None
     };
     let page_items: Vec<ListItem<'_>> = PAGES
         .iter()
@@ -878,6 +897,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         }));
     let page_list = List::new(page_items)
         .block(page_block)
+        .style(Style::default().bg(PANEL_BG))
         .highlight_symbol("› ")
         // Selection adds a low-contrast background and bold weight only;
         // item-level foreground colors remain visible.
@@ -889,6 +909,9 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let mut page_state = ListState::default();
     page_state.select(Some(state.page));
     frame.render_stateful_widget(page_list, page_area, &mut page_state);
+    if let Some(mascot_area) = mascot_area {
+        render_cat_panel(frame, mascot_area, state);
+    }
 
     let actions: Vec<ListItem<'_>> = state
         .actions()
@@ -909,7 +932,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                     format!("{:>2} ", index + 1),
                     Style::default()
                         .fg(if selected { CYAN } else { MUTED })
-                        .bg(if selected { SELECTED_BG } else { Color::Reset })
+                        .bg(if selected { SELECTED_BG } else { PANEL_BG })
                         .add_modifier(if selected {
                             Modifier::BOLD
                         } else {
@@ -931,6 +954,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         }));
     let action_list = List::new(actions)
         .block(action_block)
+        .style(Style::default().bg(PANEL_BG))
         .highlight_symbol("› ")
         .highlight_style(
             Style::default()
@@ -984,6 +1008,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         Line::from(Span::styled(page.subtitle, Style::default().fg(MUTED))),
         Line::from(Span::styled(selected_hint, Style::default().fg(MUTED))),
     ])
+    .style(Style::default().bg(PANEL_BG))
     .block(
         Block::default()
             .borders(Borders::ALL)
@@ -1015,6 +1040,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 GOOD
             };
             let gauge = Gauge::default()
+                .style(Style::default().bg(PANEL_BG))
                 .block(
                     Block::default()
                         .title(format!(" {} ", label))
@@ -1040,6 +1066,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             .collect::<Vec<_>>(),
     );
     let body = Paragraph::new(body_text)
+        .style(Style::default().bg(PANEL_BG))
         .block(
             Block::default()
                 .title(format!(" {} ", PAGES[state.page].name))
@@ -1086,6 +1113,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             Style::default().fg(if state.error { BAD } else { GOOD }),
         ),
     ]))
+    .style(Style::default().bg(PANEL_BG))
     .block(
         Block::default()
             .borders(Borders::TOP)
@@ -1131,6 +1159,148 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             popup,
         );
     }
+}
+
+fn mascot_state(state: &State) -> &'static str {
+    if state.error {
+        return "failed";
+    }
+
+    let notice = state.notice.to_ascii_lowercase();
+    if notice.contains("working") || notice.contains("running") {
+        return "working";
+    }
+    if [
+        "completed",
+        "success",
+        "saved",
+        "started",
+        "restarted",
+        "updated",
+        "passed",
+        "healthy",
+    ]
+    .iter()
+    .any(|marker| notice.contains(marker))
+    {
+        return "success";
+    }
+    if notice.contains("warning") || notice.contains("confirm") {
+        return "confused";
+    }
+    if state.notice == "Ready" {
+        if state.page == 0 && state.body_title == "Welcome to GitRun" {
+            return "curious";
+        }
+        return section_mascot_state(state.page);
+    }
+
+    let action = state
+        .actions()
+        .get(state.action)
+        .map(|action| action.title.to_ascii_lowercase())
+        .unwrap_or_default();
+    if action.contains("update") || action.contains("reinstall") {
+        return "updating";
+    }
+    if action.contains("edit") {
+        return "typing";
+    }
+    if action.contains("diagnostic") || action.contains("health check") {
+        return "testing";
+    }
+    if action.contains("refresh") || action.contains("check") {
+        return "loading";
+    }
+    if action.contains("connect") || action.contains("add repository") {
+        return "github";
+    }
+    if action.contains("read")
+        || action.contains("inspect")
+        || action.contains("list")
+        || action.contains("view")
+    {
+        return "reading";
+    }
+
+    section_mascot_state(state.page)
+}
+
+fn section_mascot_state(page: usize) -> &'static str {
+    match page {
+        2 => "runner",
+        3 => "kitty",
+        4 => "thinking",
+        5 => "reading",
+        6 => "thinking",
+        7 => "reading",
+        8 => "recovery",
+        9 | 10 => "working",
+        _ => "seated",
+    }
+}
+
+fn mascot_caption(state_name: &str) -> &'static str {
+    match state_name {
+        "failed" => "Needs attention",
+        "success" => "Operation complete",
+        "working" => "Working now",
+        "loading" => "Gathering status",
+        "reading" => "Reading status",
+        "testing" => "Running checks",
+        "updating" => "Updating GitRun",
+        "confused" => "Review required",
+        "github" => "Connecting",
+        "kitty" => "Kitty / resources",
+        "runner" => "Runner operations",
+        "recovery" => "Recovery tools",
+        "typing" => "Editing settings",
+        "thinking" => "Reviewing activity",
+        "curious" => "Ready to help",
+        _ => "Standing by",
+    }
+}
+
+fn render_cat_panel(frame: &mut Frame<'_>, area: Rect, state: &State) {
+    let state_name = mascot_state(state);
+    let color = match state_name {
+        "failed" => BAD,
+        "success" => GOOD,
+        "confused" => WARN,
+        _ => ACCENT,
+    };
+    let sprite = crate::presenter::cat_state_lines(state_name).unwrap_or_else(|| {
+        vec![
+            " /\\_/\\     ".into(),
+            "( o.o )    ".into(),
+            " > ^ <     ".into(),
+        ]
+    });
+    let mut lines: Vec<Line<'_>> = sprite
+        .iter()
+        .map(|line| {
+            Line::from(Span::styled(
+                line.as_str(),
+                Style::default().fg(color).bg(PANEL_BG),
+            ))
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        mascot_caption(state_name),
+        Style::default().fg(MUTED).bg(PANEL_BG),
+    )));
+    let panel = Paragraph::new(lines)
+        .alignment(Alignment::Center)
+        .style(Style::default().bg(PANEL_BG))
+        .block(
+            Block::default()
+                .title(format!(" GITRUN / {} ", state_name.to_ascii_uppercase()))
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(color))
+                .style(Style::default().bg(PANEL_BG)),
+        );
+    frame.render_widget(panel, area);
 }
 
 fn body_line(line: &str) -> Line<'_> {
@@ -2293,7 +2463,7 @@ mod tests {
 
 #[cfg(test)]
 mod visual_design_tests {
-    use super::{header_separator, PAGES, WIDE_HEADER_TAGLINE};
+    use super::{header_separator, mascot_state, State, PAGES, WIDE_HEADER_TAGLINE};
 
     #[test]
     fn wide_header_separator_fits_the_available_terminal_width() {
@@ -2306,7 +2476,34 @@ mod visual_design_tests {
     }
 
     #[test]
-    fn settings_gear_requests_monochrome_text_presentation() {
-        assert!(PAGES[9].icon.ends_with('\u{FE0E}'));
+    fn settings_icon_avoids_emoji_dependent_presentation() {
+        assert_eq!(PAGES[9].icon, "≡");
+        assert!(!PAGES[9].icon.contains('\u{FE0E}'));
+    }
+
+    #[test]
+    fn mascot_reflects_operation_outcomes_and_active_sections() {
+        let mut state = State::new();
+        assert_eq!(mascot_state(&state), "curious");
+
+        state.set_text(
+            "Read failed",
+            vec!["permission denied".into()],
+            "Read failed",
+            true,
+        );
+        assert_eq!(mascot_state(&state), "failed");
+
+        state.set_text(
+            "Overview refreshed",
+            vec!["OK".into()],
+            "Completed · data returned by GitRun backend",
+            false,
+        );
+        assert_eq!(mascot_state(&state), "success");
+
+        state.notice = "Ready".into();
+        state.page = 8;
+        assert_eq!(mascot_state(&state), "recovery");
     }
 }

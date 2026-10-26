@@ -474,6 +474,25 @@ fn deactivate_terminal(terminal: &SharedTerminal) {
     }
 }
 
+/// Return a validated ASCII sprite from the canonical cat-state catalogue.
+/// The management TUI uses this accessor so both interfaces share the same
+/// sprite definitions without reparsing the JSON on each redraw.
+pub(crate) fn cat_state_lines(state_name: &str) -> Option<Vec<String>> {
+    static MASCOT_STATES: OnceLock<Option<CatStates>> = OnceLock::new();
+
+    let states = MASCOT_STATES
+        .get_or_init(|| {
+            serde_json::from_str::<CatStates>(CAT_STATES)
+                .ok()
+                .filter(validate_states)
+        })
+        .as_ref()?;
+    states
+        .states
+        .get(state_name)
+        .map(|sprite| sprite.lines.clone())
+}
+
 fn validate_states(states: &CatStates) -> bool {
     if states.width == 0 || states.height == 0 {
         return false;
@@ -669,6 +688,18 @@ mod tests {
     fn cat_states_file_matches_declared_geometry() {
         let states = serde_json::from_str::<CatStates>(CAT_STATES).unwrap();
         assert!(validate_states(&states));
+    }
+
+    #[test]
+    fn management_tui_can_read_validated_cat_sprites() {
+        for name in [
+            "seated", "curious", "working", "reading", "success", "failed", "recovery",
+        ] {
+            let lines = cat_state_lines(name).expect("known cat state should exist");
+            assert_eq!(lines.len(), 3, "{name}");
+            assert!(lines.iter().all(|line| line.is_ascii()));
+        }
+        assert!(cat_state_lines("not-a-real-state").is_none());
     }
 
     #[test]

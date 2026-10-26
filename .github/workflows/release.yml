@@ -107,6 +107,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Avoid the intermittently stalled Azure Ubuntu archive on hosted runners.
+          # Keep security.ubuntu.com and all Ubuntu suites/components unchanged.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo -n sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' /etc/apt/apt-mirrors.txt
+            echo "APT mirror list after override:"
+            sudo -n cat /etc/apt/apt-mirrors.txt
+          fi
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -f "$source" ] || continue
+            sudo -n sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' "$source"
+          done
           sudo -n apt-get update -qq
           sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             pkg-config \

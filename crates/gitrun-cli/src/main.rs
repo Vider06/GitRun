@@ -243,6 +243,7 @@ fn initialize_update_signing_environment(force_trusted_values: bool) {
 
 fn elevate_system_update(
     manifest_url: Option<&str>,
+    force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     // sudo writes its password prompt directly to the inherited TTY. End the
@@ -256,6 +257,9 @@ fn elevate_system_update(
         command.arg("env").arg(format!("{key}={value}"));
     }
     command.arg(executable).arg("--no-cat").arg("update");
+    if force {
+        command.arg("--force");
+    }
     if let Some(url) = manifest_url {
         command.arg(url);
     }
@@ -433,6 +437,7 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
 fn update_command(
     args: &[String],
     presenter: &mut presenter::CatPresenter,
+    force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.get(1).is_some_and(|argument| argument == "--check") {
         return update_check_command(args);
@@ -613,7 +618,11 @@ fn update_command(
             };
         }
 
-        if let Err(error) = verify_post_update_doctor(&gitrun_binary) {
+        if force {
+            eprintln!(
+                "GitRun update: WARNING — --force requested; skipping only the post-update doctor gate. Manifest signature, artifact SHA-256, executable validation, systemd reconciliation and scheduler restart checks remain enabled."
+            );
+        } else if let Err(error) = verify_post_update_doctor(&gitrun_binary) {
             let rollback_result = rollback_installed_update_with_config(
                 &backup,
                 &artifacts,
@@ -639,7 +648,11 @@ fn update_command(
         }
 
         presenter.transition(presenter::ValidationState::Success);
-        println!("GitRun update: PASS (binary, systemd and doctor verified)");
+        if force {
+            println!("GitRun update: PASS (binary and systemd verified; post-update doctor skipped by --force)");
+        } else {
+            println!("GitRun update: PASS (binary, systemd and doctor verified)");
+        }
         println!(
             "backup: {}",
             backup_root
@@ -1598,10 +1611,12 @@ fn main() {
             manifest_url,
             only_containers,
             check,
+            force,
         } => run_update(
             manifest_url.as_deref(),
             only_containers,
             check,
+            force,
             &mut presenter,
         ),
         Command::FixUpdate => run_fix_update(&mut presenter),
@@ -1902,6 +1917,9 @@ enum Command {
         /// Update only the permanent runner pool without replacing GitRun itself.
         #[arg(long, conflicts_with = "check")]
         only_containers: bool,
+        /// Skip the post-update doctor gate. Signed-manifest, checksum, executable and service checks remain enabled.
+        #[arg(long, conflicts_with_all = ["check", "only_containers"])]
+        force: bool,
         /// Optional manifest URL to inspect instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
@@ -3074,7 +3092,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
                 "GitRun fix-update: applying latest release {} -> {}",
                 plan.current_version, plan.target_version
             );
-            let code = run_update(None, false, false, presenter);
+            let code = run_update(None, false, false, false, presenter);
             if code != 0 {
                 eprintln!("GitRun fix-update: latest-release update failed");
                 return code;
@@ -3103,6 +3121,7 @@ fn run_update(
     manifest_url: Option<&str>,
     only_containers: bool,
     check_only: bool,
+    force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
     // Installed-system invocations must never inherit caller-selected update
@@ -3200,7 +3219,7 @@ fn run_update(
                 }
             }
         };
-        match elevate_system_update(Some(&resolved_manifest_url), presenter) {
+        match elevate_system_update(Some(&resolved_manifest_url), force, presenter) {
             Ok(code) => return code,
             Err(error) => {
                 eprintln!("GitRun update: unable to elevate system update: {error}");
@@ -3217,7 +3236,7 @@ fn run_update(
         Some(url) => vec!["update".to_owned(), url.to_owned()],
         None => vec!["update".to_owned()],
     };
-    match update_command(&args, presenter) {
+    match update_command(&args, presenter, force) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("GitRun update: FAIL — {error}");
@@ -4577,6 +4596,23 @@ mod internal_lifecycle_command_tests {
             Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,
             Some(Command::Cat)
         ));
+    }
+
+    #[test]
+    fn update_force_skips_only_the_post_update_doctor_gate_option() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "update", "--force"]).map(|cli| cli.command),
+            Ok(Some(Command::Update {
+                force: true,
+                check: false,
+                only_containers: false,
+                ..
+            }))
+        ));
+        assert!(Cli::try_parse_from(["gitrun", "update", "--force", "--check"]).is_err());
+        assert!(
+            Cli::try_parse_from(["gitrun", "update", "--force", "--only-containers"]).is_err()
+        );
     }
 
     #[test]

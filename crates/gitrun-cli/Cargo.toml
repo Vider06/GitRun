@@ -1,6 +1,6 @@
 [package]
 name = "gitrun-cli"
-version = "0.13.6"
+version = "0.13.7"
 edition = "2021"
 license = "Apache-2.0"
 description = "Command-line interface for GitRun"
@@ -10,6 +10,7 @@ name = "gitrun"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.23"
 gitrun-scheduler = { path = "../gitrun-scheduler" }
 gitrun-smart-scheduler = { path = "../gitrun-smart-scheduler" }
 gitrun-core = { path = "../gitrun-core" }

@@ -714,8 +714,13 @@ fn verify_post_update_doctor(binary: &Path) -> Result<(), Box<dyn std::error::Er
             "gitrun doctor exited with {}: {}{}",
             output.status,
             stderr,
-            if stdout.is_empty() { String::new() } else { format!("; {stdout}") }
-        ).into());
+            if stdout.is_empty() {
+                String::new()
+            } else {
+                format!("; {stdout}")
+            }
+        )
+        .into());
     }
     Ok(())
 }

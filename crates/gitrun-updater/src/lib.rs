@@ -1243,6 +1243,13 @@ fn validate_installed_rollback_record(
                     )));
                 }
             }
+        } else {
+            require_backup_path(
+                &expected_backup,
+                "unexpected installed artifact backup",
+                false,
+                Some(false),
+            )?;
         }
         require_backup_path(
             &expected.destination,
@@ -1250,13 +1257,16 @@ fn validate_installed_rollback_record(
             false,
             None,
         )?;
-        if let Ok(metadata) = fs::symlink_metadata(&expected.destination) {
-            if !metadata.is_file() {
+        match fs::symlink_metadata(&expected.destination) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 return Err(UpdateError::InvalidManifest(format!(
                     "installed artifact destination is not a regular file: {}",
                     expected.destination.display()
                 )));
             }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
     }
 
@@ -1268,6 +1278,13 @@ fn validate_installed_rollback_record(
             ));
         }
         require_backup_path(backup, "installed version backup", true, Some(false))?;
+    } else {
+        require_backup_path(
+            &expected_version_backup,
+            "unexpected installed version backup",
+            false,
+            Some(false),
+        )?;
     }
     require_backup_path(
         expected_version_file,
@@ -1286,17 +1303,23 @@ fn validate_installed_rollback_record(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    if let (Some(config), Some(backup)) = (
-        record.config_file.as_deref(),
-        record.config_file_backup.as_deref(),
-    ) {
-        let expected_backup = transaction_dir.join("config.env");
-        if backup != expected_backup {
-            return Err(UpdateError::InvalidManifest(
-                "installed config backup is outside its trusted transaction directory".into(),
-            ));
+    let expected_config_backup = transaction_dir.join("config.env");
+    if let Some(config) = record.config_file.as_deref() {
+        if let Some(backup) = record.config_file_backup.as_deref() {
+            if backup != expected_config_backup {
+                return Err(UpdateError::InvalidManifest(
+                    "installed config backup is outside its trusted transaction directory".into(),
+                ));
+            }
+            require_backup_path(backup, "installed config backup", true, Some(false))?;
+        } else {
+            require_backup_path(
+                &expected_config_backup,
+                "unexpected installed config backup",
+                false,
+                Some(false),
+            )?;
         }
-        require_backup_path(backup, "installed config backup", true, Some(false))?;
         require_backup_path(config, "installed config destination", false, Some(false))?;
     } else if record.config_file_backup.is_some() {
         return Err(UpdateError::InvalidManifest(

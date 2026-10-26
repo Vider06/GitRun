@@ -1424,7 +1424,10 @@ pub fn health_check_installed_binary(
             if output.stdout.is_empty() {
                 String::new()
             } else {
-                format!("; stdout: {}", String::from_utf8_lossy(&output.stdout).trim())
+                format!(
+                    "; stdout: {}",
+                    String::from_utf8_lossy(&output.stdout).trim()
+                )
             }
         )));
     }

@@ -408,11 +408,11 @@ jobs:
             if [ ! -f "$CI_DIR/apt-updated" ]; then
               started=$(date +%s)
               echo "[$(date -Is)] apt-get update started"
-              if $sudo apt-get \
+              if (set -o pipefail; $sudo apt-get \
                 -o Acquire::http::Timeout=30 \
                 -o Acquire::https::Timeout=30 \
                 -o Acquire::Retries=2 \
-                update 2>&1 | tee "$CI_LOGS/apt-update.log"; then
+                update 2>&1 | tee "$CI_LOGS/apt-update.log"); then
                 : > "$CI_DIR/apt-updated"
                 echo "[$(date -Is)] apt-get update finished in $(($(date +%s) - started))s"
               else
@@ -424,11 +424,11 @@ jobs:
 
             started=$(date +%s)
             echo "[$(date -Is)] apt-get install started: $*"
-            if $sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+            if (set -o pipefail; $sudo env DEBIAN_FRONTEND=noninteractive apt-get \
               -o Acquire::http::Timeout=30 \
               -o Acquire::https::Timeout=30 \
               -o Acquire::Retries=2 \
-              install -y --no-install-recommends "$@" 2>&1 | tee "$CI_LOGS/apt.log"; then
+              install -y --no-install-recommends "$@" 2>&1 | tee "$CI_LOGS/apt.log"); then
               echo "[$(date -Is)] apt-get install finished in $(($(date +%s) - started))s"
               return 0
             else

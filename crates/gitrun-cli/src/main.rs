@@ -1494,6 +1494,8 @@ fn main() {
             check,
             &mut presenter,
         ),
+        Command::FixUpdate => run_fix_update(&mut presenter),
+        Command::FixUpdateRoot => run_fix_update(&mut presenter),
         Command::Scheduler => run_scheduler(),
         Command::Dashboard => {
             // The Tauri runtime may write native GTK/EGL diagnostics directly to
@@ -1670,7 +1672,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         // Update validates the release plan before entering the updating state.
         // Keeping the initial state neutral avoids showing "updating" when the
         // requested release is already installed or otherwise rejected.
-        Command::Update { .. } => ValidationState::Ready,
+        Command::Update { .. } | Command::FixUpdate => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
         Command::Manage => ValidationState::Reading,
         Command::Uninstall
@@ -1692,7 +1694,8 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::SaveGitRunSettingsRoot { .. }
         | Command::SaveKittySettingsRoot { .. }
         | Command::ReadKittyDashboardRoot
-        | Command::ReadGitRunSettingsRoot => ValidationState::Recovering,
+        | Command::ReadGitRunSettingsRoot
+        | Command::FixUpdateRoot => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1792,6 +1795,11 @@ enum Command {
         /// Optional manifest URL to inspect instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
+    /// Repair the system update integration and then apply the latest official release if newer.
+    FixUpdate,
+    /// Internal privileged entry point for `fix-update`.
+    #[command(name = "--fix-update-root", hide = true)]
+    FixUpdateRoot,
     /// Remove GitRun services, runtime resources, package registration and app data.
     Uninstall,
     /// Download, verify and reinstall the latest official GitRun release.
@@ -2478,6 +2486,107 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     // GTUU compares container image IDs and skips busy permanent runners. Those
     // runners remain intact and are reconciled on a later GTUU run.
     gitrun_scheduler::run_gtuu_once()
+}
+
+/// Repair the privileged control service even when the installed release is already current,
+/// then run the normal signed updater only when GitHub advertises a newer release.
+/// Never downgrade the installed executable to trick the version comparison.
+fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
+    if system_install_paths().is_none() {
+        eprintln!("GitRun fix-update: requires the trusted system installation at /usr/bin/gitrun or /usr/local/bin/gitrun.");
+        return 2;
+    }
+
+    if !running_as_root() {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("GitRun fix-update: unable to resolve installed executable: {error}");
+                return 1;
+            }
+        };
+        presenter.prepare_for_external_process();
+        let status = match std::process::Command::new("/usr/bin/sudo")
+            .arg(executable)
+            .arg("--no-cat")
+            .arg("--fix-update-root")
+            .status()
+        {
+            Ok(status) => status,
+            Err(error) => {
+                eprintln!("GitRun fix-update: unable to start privileged repair: {error}");
+                return 1;
+            }
+        };
+        return status.code().unwrap_or(1);
+    }
+
+    initialize_update_signing_environment(true);
+    initialize_system_update_config_path(true);
+    // Do not allow inherited environment variables to redirect a privileged
+    // repair to a fork or a caller-selected repository.
+    std::env::set_var("GITRUN_REPOSITORY", "Vider06/GitRun");
+
+    let desktop_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|uid| *uid != 0);
+
+    println!("GitRun fix-update: repairing the privileged control service");
+    if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
+        eprintln!("GitRun fix-update: control service repair failed: {error}");
+        return 1;
+    }
+    println!("GitRun fix-update: control service PASS");
+
+    let manifest = match latest_manifest("Vider06/GitRun") {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            eprintln!("GitRun fix-update: unable to read the latest signed release: {error}");
+            return 1;
+        }
+    };
+    let current = current_version();
+    let target = match target_triple() {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!("GitRun fix-update: unsupported update target: {error}");
+            return 1;
+        }
+    };
+
+    match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
+        Ok(plan) => {
+            println!(
+                "GitRun fix-update: applying latest release {} -> {}",
+                plan.current_version, plan.target_version
+            );
+            let code = run_update(None, false, false, presenter);
+            if code != 0 {
+                eprintln!("GitRun fix-update: latest-release update failed");
+                return code;
+            }
+        }
+        Err(UpdateError::NotNewer) => {
+            println!(
+                "GitRun fix-update: already on the latest release ({current}); no downgrade needed"
+            );
+        }
+        Err(error) => {
+            eprintln!("GitRun fix-update: release validation failed: {error}");
+            return 1;
+        }
+    }
+
+    // The updater may have replaced the on-disk executable. Reconcile the
+    // control service once more against that final binary and verify it is active.
+    if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
+        eprintln!("GitRun fix-update: final control service verification failed: {error}");
+        return 1;
+    }
+    println!("GitRun fix-update: PASS");
+    0
 }
 
 fn run_update(
@@ -3809,6 +3918,17 @@ mod internal_lifecycle_command_tests {
     use clap::Parser;
 
     #[test]
+    fn fix_update_commands_are_registered() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "fix-update"]).map(|cli| cli.command),
+            Ok(Some(Command::FixUpdate))
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "--no-cat", "--fix-update-root"]).map(|cli| cli.command),
+            Ok(Some(Command::FixUpdateRoot))
+        ));
+    }
+
     fn system_update_signing_policy_overrides_every_preexisting_value() {
         let changes = update_signing_environment_changes(true, |_| true);
         assert_eq!(changes, update_signing_environment());

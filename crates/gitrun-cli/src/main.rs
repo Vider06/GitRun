@@ -733,7 +733,8 @@ fn update_command(
 
 fn verify_post_update_doctor(binary: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let output = std::process::Command::new(binary)
-        .args(["doctor", "--no-cat"])
+        // Global CLI flags must precede the subcommand for Clap to parse them.
+        .args(["--no-cat", "doctor"])
         .env("GITRUN_CONFIG_FILE", TRUSTED_SYSTEM_CONFIG_FILE)
         .env_remove("GITRUN_CONFIG_DIR")
         .output()?;

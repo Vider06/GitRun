@@ -5,6 +5,7 @@ Start with the [main README](../README.md) for a readable overview of GitRun's f
 ## Understand GitRun
 
 - [Architecture](ARCHITECTURE.md) — runtime components, request flow, state and trust boundaries.
+- [Terminal management console](../crates/gitrun-cli/README.md#terminal-management-console) — keyboard controls, headless operations, validated writes and responsive mascot behavior.
 - [Git*Run API reference](GITRUN_API.md) — exact workflow API commands, arguments and authorization requirements.
 - [IPC and socket architecture](IPC.md) — local socket transport and authenticated executor protocol.
 - [VM-backed runners](VM.md) — KVM/libvirt, VirtualBox, Logic Containers, TLS and lifecycle limits.

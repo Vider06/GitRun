@@ -4610,9 +4610,7 @@ mod internal_lifecycle_command_tests {
             }))
         ));
         assert!(Cli::try_parse_from(["gitrun", "update", "--force", "--check"]).is_err());
-        assert!(
-            Cli::try_parse_from(["gitrun", "update", "--force", "--only-containers"]).is_err()
-        );
+        assert!(Cli::try_parse_from(["gitrun", "update", "--force", "--only-containers"]).is_err());
     }
 
     #[test]

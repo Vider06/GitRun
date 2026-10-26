@@ -1440,7 +1440,7 @@ fn build_osc52_sequence(text: &str) -> Result<(String, bool), &'static str> {
     let clipped = start > 0;
     let payload = &text[start..];
     let encoded = base64::engine::general_purpose::STANDARD.encode(payload.as_bytes());
-    Ok((format!("\\x1b]52;c;{encoded}\\x07"), clipped))
+    Ok((format!("\x1b]52;c;{encoded}\x07"), clipped))
 }
 
 fn request_osc52_clipboard(text: &str) -> io::Result<bool> {
@@ -2538,28 +2538,28 @@ mod visual_design_tests {
     fn osc52_clipboard_sequence_encodes_text_and_bounds_large_log_payloads() {
         use base64::Engine as _;
 
-        let text = "docker network gitrun-runner not found\\nretry required";
+        let text = "docker network gitrun-runner not found\nretry required";
         let (sequence, truncated) = build_osc52_sequence(text).unwrap();
         assert!(!truncated);
-        assert!(sequence.starts_with("\\x1b]52;c;"));
-        assert!(sequence.ends_with('\\x07'));
+        assert!(sequence.starts_with("\x1b]52;c;"));
+        assert!(sequence.ends_with('\x07'));
         let encoded = sequence
-            .strip_prefix("\\x1b]52;c;")
+            .strip_prefix("\x1b]52;c;")
             .unwrap()
-            .strip_suffix('\\x07')
+            .strip_suffix('\x07')
             .unwrap();
         assert_eq!(
             base64::engine::general_purpose::STANDARD.decode(encoded).unwrap(),
             text.as_bytes()
         );
 
-        let large = format!("prefix\\n{}", "x".repeat(OSC52_MAX_COPY_BYTES + 32));
+        let large = format!("prefix\n{}", "x".repeat(OSC52_MAX_COPY_BYTES + 32));
         let (sequence, truncated) = build_osc52_sequence(&large).unwrap();
         assert!(truncated);
         let encoded = sequence
-            .strip_prefix("\\x1b]52;c;")
+            .strip_prefix("\x1b]52;c;")
             .unwrap()
-            .strip_suffix('\\x07')
+            .strip_suffix('\x07')
             .unwrap();
         let payload = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         assert!(payload.len() <= OSC52_MAX_COPY_BYTES);

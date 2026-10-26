@@ -14,7 +14,9 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap,
+    },
     Frame, Terminal,
 };
 use serde_json::{json, Value};
@@ -727,34 +729,76 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(if area.height >= 28 && area.width >= 110 {
+                4
+            } else {
+                3
+            }),
             Constraint::Min(7),
             Constraint::Length(2),
         ])
         .split(area);
 
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            "  ◈ ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "GitRun",
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "  /  MANAGEMENT CONSOLE",
-            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("   "),
-        Span::styled(
-            format!("v{}", VERSION_FILE.trim()),
-            Style::default().fg(MUTED),
-        ),
-        Span::raw("   "),
-        Span::styled("LOCAL CONTROL PLANE", Style::default().fg(GOOD)),
-    ]))
-    .block(
+    let header_lines = if area.height >= 28 && area.width >= 110 {
+        vec![
+            Line::from(vec![
+                Span::styled(
+                    "  ◈ ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "GitRun",
+                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "  /  MANAGEMENT CONSOLE",
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("   "),
+                Span::styled(
+                    format!("v{}", VERSION_FILE.trim()),
+                    Style::default().fg(MUTED),
+                ),
+                Span::raw("   "),
+                Span::styled(
+                    "● LOCAL CONTROL PLANE",
+                    Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                    Style::default().fg(BORDER),
+                ),
+                Span::styled(
+                    "  SSH-FIRST  ·  LIVE OPERATIONS  ·  SAFE BY DEFAULT",
+                    Style::default().fg(MUTED),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(vec![
+            Span::styled(
+                "  ◈ GitRun",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  /  MANAGE",
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!("v{}", VERSION_FILE.trim()),
+                Style::default().fg(MUTED),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                "● LOCAL",
+                Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+            ),
+        ])]
+    };
+    let header = Paragraph::new(header_lines).block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
@@ -762,24 +806,39 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     );
     frame.render_widget(header, layout[0]);
 
-    let middle = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(29),
-            Constraint::Percentage(46),
-        ])
-        .split(layout[1]);
+    // Three columns on wide terminals; stack the navigation and operation
+    // lists on narrow SSH terminals so the selected labels remain readable.
+    let (page_area, action_area, detail_parent) = if area.width < 110 {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(layout[1]);
+        let left = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+            .split(columns[0]);
+        (left[0], left[1], columns[1])
+    } else {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(29),
+                Constraint::Percentage(46),
+            ])
+            .split(layout[1]);
+        (columns[0], columns[1], columns[2])
+    };
     let page_items: Vec<ListItem<'_>> = PAGES
         .iter()
         .enumerate()
         .map(|(index, page)| {
             let selected = index == state.page;
+            // Keep selection as a visible marker + accent text, not a solid
+            // background. Crossterm/Ratatui highlight overlays can otherwise
+            // repaint the foreground and make the selected label disappear.
             let style = if selected {
-                Style::default()
-                    .fg(Color::Rgb(15, 20, 28))
-                    .bg(ACCENT)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(TEXT)
             };
@@ -787,7 +846,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 Span::styled(
                     format!("{} ", page.icon),
                     if selected {
-                        Style::default().fg(Color::Rgb(15, 20, 28))
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(CYAN)
                     },
@@ -808,10 +867,12 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let page_list = List::new(page_items)
         .block(page_block)
         .highlight_symbol("› ")
-        .highlight_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD));
+        // Do not set foreground/background here: item-level accent colors
+        // must survive selection rendering and keep the text legible.
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     let mut page_state = ListState::default();
     page_state.select(Some(state.page));
-    frame.render_stateful_widget(page_list, middle[0], &mut page_state);
+    frame.render_stateful_widget(page_list, page_area, &mut page_state);
 
     let actions: Vec<ListItem<'_>> = state
         .actions()
@@ -820,21 +881,20 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .map(|(index, action)| {
             let selected = index == state.action;
             let style = if selected {
-                Style::default()
-                    .fg(Color::Rgb(15, 20, 28))
-                    .bg(CYAN)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(TEXT)
             };
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{:>2} ", index + 1),
-                    Style::default().fg(if selected {
-                        Color::Rgb(15, 20, 28)
-                    } else {
-                        MUTED
-                    }),
+                    Style::default()
+                        .fg(if selected { CYAN } else { MUTED })
+                        .add_modifier(if selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
                 ),
                 Span::styled(action.title, style),
             ]))
@@ -852,30 +912,53 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let action_list = List::new(actions)
         .block(action_block)
         .highlight_symbol("› ")
-        .highlight_style(Style::default().fg(CYAN).add_modifier(Modifier::BOLD));
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     let mut action_state = ListState::default();
     action_state.select(Some(state.action));
-    frame.render_stateful_widget(action_list, middle[1], &mut action_state);
+    frame.render_stateful_widget(action_list, action_area, &mut action_state);
 
+    let metrics = resource_metrics(state);
+    let has_metrics = !metrics.is_empty();
     let detail_area = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(1)])
-        .split(middle[2]);
+        .constraints(if has_metrics {
+            vec![
+                Constraint::Length(6),
+                Constraint::Length(5),
+                Constraint::Min(1),
+            ]
+        } else {
+            vec![Constraint::Length(6), Constraint::Min(1)]
+        })
+        .split(detail_parent);
     let page = PAGES[state.page];
+    let selected_action = state
+        .actions()
+        .get(state.action)
+        .map(|action| action.title)
+        .unwrap_or("Select an operation.");
+    let selected_hint = state
+        .actions()
+        .get(state.action)
+        .map(|action| action.hint)
+        .unwrap_or("Choose an operation to see its details.");
     let heading = Paragraph::new(vec![
         Line::from(Span::styled(
             state.body_title.as_str(),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )),
+        Line::from(vec![
+            Span::styled(
+                "SELECTED  ›  ",
+                Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                selected_action,
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            ),
+        ]),
         Line::from(Span::styled(page.subtitle, Style::default().fg(MUTED))),
-        Line::from(Span::styled(
-            state
-                .actions()
-                .get(state.action)
-                .map(|a| a.hint)
-                .unwrap_or("Select an operation."),
-            Style::default().fg(CYAN),
-        )),
+        Line::from(Span::styled(selected_hint, Style::default().fg(MUTED))),
     ])
     .block(
         Block::default()
@@ -889,6 +972,41 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     )
     .wrap(Wrap { trim: false });
     frame.render_widget(heading, detail_area[0]);
+
+    let body_area = if has_metrics {
+        let metric_area = detail_area[1];
+        let metric_columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(vec![
+                Constraint::Ratio(1, metrics.len() as u32);
+                metrics.len()
+            ])
+            .split(metric_area);
+        for (index, (label, value)) in metrics.iter().enumerate() {
+            let color = if *value >= 85.0 {
+                BAD
+            } else if *value >= 65.0 {
+                WARN
+            } else {
+                GOOD
+            };
+            let gauge = Gauge::default()
+                .block(
+                    Block::default()
+                        .title(format!(" {} ", label))
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(BORDER)),
+                )
+                .gauge_style(Style::default().fg(color))
+                .ratio((*value / 100.0).clamp(0.0, 1.0))
+                .label(format!("{value:.0}%"));
+            frame.render_widget(gauge, metric_columns[index]);
+        }
+        detail_area[2]
+    } else {
+        detail_area[1]
+    };
 
     let body_text = Text::from(
         state
@@ -927,7 +1045,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         )
         .wrap(Wrap { trim: false })
         .scroll((state.scroll, 0));
-    frame.render_widget(body, detail_area[1]);
+    frame.render_widget(body, body_area);
 
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -1003,6 +1121,36 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             popup,
         );
     }
+}
+
+/// Extract only explicitly named percentage metrics from the live backend JSON.
+/// Values remain unknown when the backend does not report them; we never invent
+/// a zero reading for missing telemetry.
+fn resource_metrics(state: &State) -> Vec<(&'static str, f64)> {
+    fn find(value: &Value, key: &str) -> Option<f64> {
+        match value {
+            Value::Object(map) => {
+                if let Some(number) = map.get(key).and_then(Value::as_f64) {
+                    return Some(number.clamp(0.0, 100.0));
+                }
+                map.values().find_map(|child| find(child, key))
+            }
+            Value::Array(items) => items.iter().find_map(|child| find(child, key)),
+            _ => None,
+        }
+    }
+
+    let Ok(value) = serde_json::from_str::<Value>(&state.body.join("\n")) else {
+        return Vec::new();
+    };
+    [
+        ("CPU", "cpu_percent"),
+        ("MEMORY", "memory_percent"),
+        ("DISK", "disk_percent"),
+    ]
+    .into_iter()
+    .filter_map(|(label, key)| find(&value, key).map(|percent| (label, percent)))
+    .collect()
 }
 
 fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
@@ -2010,6 +2158,35 @@ mod tests {
                 page.name
             );
         }
+    }
+
+    #[test]
+    fn resource_meters_use_only_reported_percentages() {
+        let state = State {
+            body: vec![
+                r#"{"host_resources":{"cpu_percent":12.5,"memory_percent":68,"disk_percent":91}}"#
+                    .into(),
+            ],
+            ..State::new()
+        };
+        assert_eq!(
+            resource_metrics(&state),
+            vec![("CPU", 12.5), ("MEMORY", 68.0), ("DISK", 91.0)]
+        );
+    }
+
+    #[test]
+    fn resource_meters_do_not_invent_missing_values() {
+        let state = State {
+            body: vec![r#"{"cpu_percent":24}"#.into()],
+            ..State::new()
+        };
+        assert_eq!(resource_metrics(&state), vec![("CPU", 24.0)]);
+        let unknown = State {
+            body: vec![r#"{"cpu":"unknown","memory":null}"#.into()],
+            ..State::new()
+        };
+        assert!(resource_metrics(&unknown).is_empty());
     }
 
     #[test]

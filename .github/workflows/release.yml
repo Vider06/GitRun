@@ -98,7 +98,7 @@ jobs:
               python3 "$sync_dir/scripts/sync-markdown-version.py" --check --version "$VERSION"
               mapfile -t changed_markdown < <(git -C "$sync_dir" diff --name-only -- '*.md')
 
-              if (("${#changed_markdown[@]}" > 0)); then
+              if ((${#changed_markdown[@]} > 0)); then
                 git -C "$sync_dir" config user.name "github-actions[bot]"
                 git -C "$sync_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
                 git -C "$sync_dir" add -- "${changed_markdown[@]}"
@@ -128,7 +128,7 @@ jobs:
                   --base main \
                   --head "$sync_branch" \
                   --title "docs: sync Markdown source version to $VERSION" \
-                  --body "Automated, docs-only synchronization of current-source Markdown markers to `$VERSION`. Created by the release workflow after verifying that main/version.txt still matches the selected release. No source or crate versions are changed."; then
+                  --body "Automated, docs-only synchronization of current-source Markdown markers to version ${VERSION}. Created by the release workflow after verifying that main/version.txt still matches the selected release. No source or crate versions are changed."; then
                   echo "::warning::Markdown markers are synchronized for release artifacts, but GitHub could not open the docs-only PR. Check the Actions token's pull-request permissions and repository policy allowing workflows to create pull requests."
                 fi
               else

@@ -896,6 +896,12 @@ pub struct InstalledBackupRecord {
     pub artifacts: Vec<InstalledArtifactBackup>,
     pub version_file: PathBuf,
     pub version_file_backup: Option<PathBuf>,
+    /// Trusted optional config modified by this update transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_file: Option<PathBuf>,
+    /// Backup of the original config, including its mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_file_backup: Option<PathBuf>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -922,10 +928,29 @@ pub fn apply_installed_update(
             paths_overlap(backup_root, &artifact.destination)
                 || paths_overlap(version_file, &artifact.destination)
         })
+        || config_file.is_some_and(|config| {
+            paths_overlap(backup_root, config)
+                || paths_overlap(version_file, config)
+                || artifacts.iter().any(|artifact| paths_overlap(&artifact.destination, config))
+        })
     {
         return Err(UpdateError::InvalidManifest(
-            "backup, version metadata and artifact paths must not overlap".into(),
+            "backup, version metadata, config and artifact paths must not overlap".into(),
         ));
+    }
+    if let Some(config) = config_file {
+        reject_symlink_components(config)?;
+        match fs::symlink_metadata(config) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "update config must be a regular file: {}",
+                    config.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     let archive_meta = fs::symlink_metadata(archive)?;
     if archive_meta.file_type().is_symlink() || !archive_meta.is_file() {
@@ -991,7 +1016,21 @@ pub fn apply_installed_update(
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        sync_parent_directory(&backup_dir.join("version.txt"))?;
+        if let Some(config) = config_file {
+            match fs::symlink_metadata(config) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    copy_file_durable(config, &backup_dir.join("config.env"))?;
+                }
+                Ok(_) => {
+                    return Err(UpdateError::Command(format!(
+                        "update config is not a regular file: {}",
+                        config.display()
+                    )));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         Ok(())
     })();
 
@@ -1005,12 +1044,17 @@ pub fn apply_installed_update(
     } else {
         None
     };
+    let config_file_backup = config_file
+        .filter(|_| backup_dir.join("config.env").is_file())
+        .map(|_| backup_dir.join("config.env"));
     let record = InstalledBackupRecord {
         created_at: timestamp as u64,
         version: version.to_owned(),
         artifacts: backups,
         version_file: version_file.to_path_buf(),
         version_file_backup,
+        config_file: config_file.map(Path::to_path_buf),
+        config_file_backup,
     };
 
     // The rollback journal must be durable before the first live-file replacement.
@@ -1074,19 +1118,25 @@ pub fn rollback_installed_update(
     expected_version_file: &Path,
     backup_root: &Path,
 ) -> Result<(), UpdateError> {
+    rollback_installed_update_with_config(
+        record, expected_artifacts, expected_version_file, None, backup_root,
+    )
+}
+
+pub fn rollback_installed_update_with_config(
+    record: &InstalledBackupRecord,
+    expected_artifacts: &[InstalledArtifact],
+    expected_version_file: &Path,
+    expected_config_file: Option<&Path>,
+    backup_root: &Path,
+) -> Result<(), UpdateError> {
     validate_installed_rollback_record(
-        record,
-        expected_artifacts,
-        expected_version_file,
-        backup_root,
+        record, expected_artifacts, expected_version_file, expected_config_file, backup_root,
     )?;
     let _lock = UpdateLock::acquire(backup_root)?;
-    // Check again after serialization, before removing or replacing any file.
+    // Revalidate after acquiring the lock, immediately before any destructive operation.
     validate_installed_rollback_record(
-        record,
-        expected_artifacts,
-        expected_version_file,
-        backup_root,
+        record, expected_artifacts, expected_version_file, expected_config_file, backup_root,
     )?;
     rollback_installed_update_unchecked(record)
 }
@@ -1095,6 +1145,7 @@ fn validate_installed_rollback_record(
     record: &InstalledBackupRecord,
     expected_artifacts: &[InstalledArtifact],
     expected_version_file: &Path,
+    expected_config_file: Option<&Path>,
     backup_root: &Path,
 ) -> Result<PathBuf, UpdateError> {
     if !is_version(&record.version) {
@@ -1110,6 +1161,17 @@ fn validate_installed_rollback_record(
     if record.version_file != expected_version_file {
         return Err(UpdateError::InvalidManifest(
             "installed rollback version-file path does not match the trusted installation".into(),
+        ));
+    }
+    if let Some(record_config) = record.config_file.as_deref() {
+        if expected_config_file != Some(record_config) {
+            return Err(UpdateError::InvalidManifest(
+                "installed rollback config path does not match the trusted installation".into(),
+            ));
+        }
+    } else if record.config_file_backup.is_some() {
+        return Err(UpdateError::InvalidManifest(
+            "installed rollback record has a config backup without a destination".into(),
         ));
     }
 
@@ -1199,12 +1261,45 @@ fn validate_installed_rollback_record(
         false,
         None,
     )?;
-    if let Ok(metadata) = fs::symlink_metadata(expected_version_file) {
-        if !metadata.is_file() {
+    match fs::symlink_metadata(expected_version_file) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(UpdateError::InvalidManifest(format!(
                 "installed version-file destination is not a regular file: {}",
                 expected_version_file.display()
             )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    if let (Some(config), Some(backup)) =
+        (record.config_file.as_deref(), record.config_file_backup.as_deref())
+    {
+        let expected_backup = transaction_dir.join("config.env");
+        if backup != expected_backup {
+            return Err(UpdateError::InvalidManifest(
+                "installed config backup is outside its trusted transaction directory".into(),
+            ));
+        }
+        require_backup_path(backup, "installed config backup", true, Some(false))?;
+        require_backup_path(config, "installed config destination", false, Some(false))?;
+    } else if record.config_file_backup.is_some() {
+        return Err(UpdateError::InvalidManifest(
+            "installed config backup has no destination".into(),
+        ));
+    }
+    if let Some(config) = expected_config_file {
+        reject_symlink_components(config)?;
+        match fs::symlink_metadata(config) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "trusted config destination is not a regular file: {}",
+                    config.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
     }
     Ok(transaction_dir)
@@ -1247,6 +1342,24 @@ fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result
     }
     if let Some(backup) = &record.version_file_backup {
         atomic_write_installed_file(&record.version_file, &fs::read(backup)?, 0o644)?;
+    }
+
+    if let Some(config) = &record.config_file {
+        reject_symlink_components(config)?;
+        match fs::symlink_metadata(config) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(UpdateError::Command(format!(
+                    "config restore destination is not a regular file: {}",
+                    config.display()
+                )));
+            }
+            Ok(_) => fs::remove_file(config)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if let Some(backup) = &record.config_file_backup {
+            copy_file_durable(backup, config)?;
+        }
     }
     Ok(())
 }

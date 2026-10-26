@@ -2558,8 +2558,8 @@ mod visual_design_tests {
     fn logs_clipboard_text_unwraps_journal_arrays_into_plain_lines() {
         let view = vec![
             "[".to_owned(),
-            "  \\"first journal line\\",".to_owned(),
-            "  \\"second journal line\\"".to_owned(),
+            r#"  "first journal line","#.to_owned(),
+            r#"  "second journal line""#.to_owned(),
             "]".to_owned(),
         ];
         assert_eq!(
@@ -2573,13 +2573,12 @@ mod visual_design_tests {
         let view = vec![
             "[".to_owned(),
             "  {".to_owned(),
-            "    \\"event\\": \\"warning\\"".to_owned(),
+            r#"    "event": "warning""#.to_owned(),
             "  }".to_owned(),
             "]".to_owned(),
         ];
         assert_eq!(logs_clipboard_text(&view), view.join("\n"));
     }
-
     #[test]
     fn osc52_clipboard_sequence_encodes_text_and_bounds_large_log_payloads() {
         use base64::Engine as _;

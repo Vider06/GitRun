@@ -526,7 +526,7 @@ fn update_command(
             .and_then(|value| value.parse::<u32>().ok())
             .filter(|uid| *uid != 0);
         println!("GitRun update: reconciling systemd units, control group and GitRun services");
-        if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
+        if let Err(error) = gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &gitrun_binary) {
             let rollback_error = rollback_installed_update_with_config(
                 &backup,
                 &artifacts,
@@ -3011,6 +3011,14 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         return status.code().unwrap_or(1);
     }
 
+    let (installed_binary, _) = match system_install_paths() {
+        Some(paths) => paths,
+        None => {
+            eprintln!("GitRun fix-update: trusted system binary disappeared during repair");
+            return 1;
+        }
+    };
+
     initialize_update_signing_environment(true);
     initialize_system_update_config_path(true);
     // Do not allow inherited environment variables to redirect a privileged
@@ -3024,7 +3032,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         .filter(|uid| *uid != 0);
 
     println!("GitRun fix-update: reconciling systemd units, control group and GitRun services");
-    if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
+    if let Err(error) = gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &installed_binary) {
         eprintln!("GitRun fix-update: control service repair failed: {error}");
         return 1;
     }
@@ -3070,13 +3078,6 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         }
     }
 
-    let (installed_binary, _) = match system_install_paths() {
-        Some(paths) => paths,
-        None => {
-            eprintln!("GitRun fix-update: trusted system binary disappeared during repair");
-            return 1;
-        }
-    };
     if let Err(error) = verify_post_update_doctor(&installed_binary) {
         eprintln!("GitRun fix-update: final doctor verification failed: {error}");
         return 1;

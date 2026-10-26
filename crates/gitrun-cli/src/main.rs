@@ -4,7 +4,7 @@ use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, B
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
-    fetch_manifest, latest_manifest, pin_runner_image, rollback,
+    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url, rollback,
     rollback_installed_update_with_config, update_incompatible_dependencies, update_runner_image,
     BackupRecord, InstalledArtifact, InstalledBackupRecord, UpdateError, UpdatePaths,
 };
@@ -3144,7 +3144,59 @@ fn run_update(
     }
 
     if system_install_paths().is_some() && !running_as_root() {
-        match elevate_system_update(manifest_url, presenter) {
+        // Resolve and verify the release before invoking sudo. This avoids an
+        // unnecessary password prompt when GitHub is unreachable or the
+        // release cannot be applied on this host.
+        println!("GitRun update: verifying the signed release before requesting administrator access");
+        let repository =
+            std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
+        let manifest = match manifest_url {
+            Some(url) => fetch_manifest(url),
+            None => latest_manifest(&repository),
+        };
+        let manifest = match manifest {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                eprintln!("GitRun update: FAIL — release preflight failed: {error}");
+                return 1;
+            }
+        };
+        let current = current_version();
+        let target = match target_triple() {
+            Ok(target) => target,
+            Err(error) => {
+                eprintln!("GitRun update: FAIL — unable to identify this platform: {error}");
+                return 1;
+            }
+        };
+        if let Err(error) = build_plan(&manifest, &current, &target, &dependency_snapshot()) {
+            match error {
+                UpdateError::NotNewer => {
+                    println!(
+                        "GitRun update: already up to date ({current}); no administrator access needed"
+                    );
+                    return 0;
+                }
+                error => {
+                    eprintln!("GitRun update: FAIL — release preflight failed: {error}");
+                    return 1;
+                }
+            }
+        }
+
+        // Pin the privileged retry to the already-verified release instead
+        // of resolving a moving "latest" pointer for a second time.
+        let resolved_manifest_url = match manifest_url {
+            Some(url) => url.to_owned(),
+            None => match release_manifest_download_url(&repository, &manifest.version) {
+                Ok(url) => url,
+                Err(error) => {
+                    eprintln!("GitRun update: FAIL — unable to resolve the signed release URL: {error}");
+                    return 1;
+                }
+            },
+        };
+        match elevate_system_update(Some(&resolved_manifest_url), presenter) {
             Ok(code) => return code,
             Err(error) => {
                 eprintln!("GitRun update: unable to elevate system update: {error}");

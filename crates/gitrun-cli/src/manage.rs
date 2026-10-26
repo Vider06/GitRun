@@ -1730,18 +1730,6 @@ fn maintenance_task_with_confirmation(
     }
 }
 
-fn external_with_confirmation(
-    terminal: &mut ManagementTerminal,
-    args: &[&str],
-    prompt_text: &str,
-    title: &str,
-) -> Result<(String, Value), String> {
-    if !confirm(terminal, prompt_text)? {
-        return Ok((format!("{title} cancelled"), json!({"cancelled":true})));
-    }
-    run_external(terminal, args).map(|v| (title.to_owned(), v))
-}
-
 fn run_external(terminal: &mut ManagementTerminal, args: &[&str]) -> Result<Value, String> {
     run_external_args(
         terminal,

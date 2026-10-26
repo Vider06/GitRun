@@ -526,7 +526,9 @@ fn update_command(
             .and_then(|value| value.parse::<u32>().ok())
             .filter(|uid| *uid != 0);
         println!("GitRun update: reconciling systemd units, control group and GitRun services");
-        if let Err(error) = gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &gitrun_binary) {
+        if let Err(error) =
+            gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &gitrun_binary)
+        {
             let rollback_error = rollback_installed_update_with_config(
                 &backup,
                 &artifacts,
@@ -3032,7 +3034,9 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         .filter(|uid| *uid != 0);
 
     println!("GitRun fix-update: reconciling systemd units, control group and GitRun services");
-    if let Err(error) = gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &installed_binary) {
+    if let Err(error) =
+        gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &installed_binary)
+    {
         eprintln!("GitRun fix-update: control service repair failed: {error}");
         return 1;
     }

@@ -256,8 +256,14 @@ jobs:
           ci_retry() {
             local n="$1" d="$2" i rc=1; shift 2
             for ((i = 1; i <= n; i++)); do
-              if "$@"; then return 0; fi
-              rc=$?
+              if "$@"; then
+                return 0
+              else
+                # Capture the failed command's status inside the else branch.
+                # Reading $? after the completed if compound can report 0 when
+                # no branch ran, falsely turning an exhausted retry into success.
+                rc=$?
+              fi
               ci_warn "attempt $i/$n failed (exit $rc): $*"
               if [ "$i" -lt "$n" ]; then sleep $((d * i)); fi
             done
@@ -266,19 +272,32 @@ jobs:
 
           # ci_download URL DEST [SHA256]
           ci_download() {
-            local url="$1" dest="$2" sha="${3:-}" t0 got
+            local url="$1" dest="$2" sha="${3:-}" optional="${4:-false}" t0 got
+            local candidate="${dest}.partial.$"
             t0=$(date +%s)
-            if ! ci_retry 4 3 curl --fail --silent --show-error --location --connect-timeout 15 --max-time 600 -o "$dest" "$url"; then
-              ci_err "download failed: $url"
+            rm -f "$candidate"
+            if ! ci_retry 4 3 curl --fail --silent --show-error --location --connect-timeout 15 --max-time 600 -o "$candidate" "$url"; then
+              rm -f "$candidate"
+              if [ "$optional" = true ]; then
+                ci_warn "optional prebuilt-tool download failed after retries: $url"
+              else
+                ci_err "download failed: $url"
+              fi
               return 1
             fi
             if [ -n "$sha" ]; then
-              got="$(sha256sum "$dest" | cut -d' ' -f1)"
+              got="$(sha256sum "$candidate" | cut -d' ' -f1)"
               if [ "$got" != "$sha" ]; then
-                ci_err "sha256 mismatch for $url (expected $sha, got $got)"
+                rm -f "$candidate"
+                if [ "$optional" = true ]; then
+                  ci_warn "optional prebuilt-tool SHA-256 mismatch for $url (expected $sha, got $got)"
+                else
+                  ci_err "sha256 mismatch for $url (expected $sha, got $got)"
+                fi
                 return 1
               fi
             fi
+            mv "$candidate" "$dest"
             printf '⬇️  %s (%s bytes, %ss%s)\n' "${url##*/}" "$(stat -c %s "$dest")" "$(($(date +%s) - t0))" "${sha:+, sha256 ok}"
           }
 
@@ -287,14 +306,14 @@ jobs:
           #   MODE: bin (single file) | archive (extract, pick MEMBER by file name) | dir (extract everything)
           # Installs into $RUNNER_TOOL_CACHE/gitrun-tools/NAME/VERSION-ARCH and adds it to PATH.
           ci_tool() {
-            local name="$1" ver="$2" url="$3" sha="$4" mode="$5" member="${6:-$1}"
+            local name="$1" ver="$2" url="$3" sha="$4" mode="$5" member="${6:-$1}" optional_download="${7:-false}"
             local dir tmp="$CI_DIR/dl-$name" found
             dir="${RUNNER_TOOL_CACHE:-$CI_DIR/tools}/gitrun-tools/$name/$ver-$(ci_arch)"
             if [ -f "$dir/.ok" ] && [ -x "$dir/$member" ]; then
               printf '✔ %s %s already installed (%s)\n' "$name" "$ver" "$dir"
             else
               rm -rf "$dir"; mkdir -p "$dir"
-              ci_download "$url" "$tmp" "$sha" || return 1
+              ci_download "$url" "$tmp" "$sha" "$optional_download" || return 1
               case "$mode" in
                 bin) install -m 0755 "$tmp" "$dir/$name" ;;
                 dir) tar -xf "$tmp" -C "$dir" ;;
@@ -381,17 +400,30 @@ jobs:
           }
           ci_ensure_cargo_audit() {
             command -v cargo-audit >/dev/null 2>&1 && cargo-audit --version 2>/dev/null | grep -q ' 0.22.2' && return 0
+            local source_root="${RUNNER_TOOL_CACHE:-$CI_DIR/tools}/gitrun-tools/cargo-audit/0.22.2-source-$(ci_arch)"
+            if [ -x "$source_root/bin/cargo-audit" ] && "$source_root/bin/cargo-audit" --version 2>/dev/null | grep -q ' 0.22.2'; then
+              export PATH="$source_root/bin:$PATH"
+              [ -z "${GITHUB_PATH:-}" ] || echo "$source_root/bin" >> "$GITHUB_PATH"
+              return 0
+            fi
+
             if [ "$(ci_arch)" = x64 ]; then
-              ci_tool cargo-audit 0.22.2 \
+              if ci_tool cargo-audit 0.22.2 \
                 "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv0.22.2/cargo-audit-x86_64-unknown-linux-musl-v0.22.2.tgz" \
-                7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428 archive
+                7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428 archive cargo-audit true; then
+                return 0
+              fi
+              ci_warn "cargo-audit prebuilt release download unavailable; falling back to a pinned cargo install"
             else
               ci_note "no prebuilt cargo-audit for $(ci_arch): building from source (slow, cached afterwards)"
-              local root
-              root="${RUNNER_TOOL_CACHE:-$CI_DIR/tools}/gitrun-tools/cargo-audit/0.22.2-$(ci_arch)"
-              if [ ! -x "$root/bin/cargo-audit" ]; then ci_run "cargo install cargo-audit" cargo install --locked --version 0.22.2 --root "$root" cargo-audit; fi
-              export PATH="$root/bin:$PATH"; [ -z "${GITHUB_PATH:-}" ] || echo "$root/bin" >> "$GITHUB_PATH"
             fi
+
+            mkdir -p "$source_root"
+            if [ ! -x "$source_root/bin/cargo-audit" ]; then
+              ci_run "cargo install cargo-audit (fallback)" cargo install --locked --version 0.22.2 --root "$source_root" cargo-audit || return 1
+            fi
+            export PATH="$source_root/bin:$PATH"
+            [ -z "${GITHUB_PATH:-}" ] || echo "$source_root/bin" >> "$GITHUB_PATH"
           }
 
           # ------------------------------------------------ system prerequisites ----

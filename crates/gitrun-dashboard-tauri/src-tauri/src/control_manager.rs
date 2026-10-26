@@ -217,6 +217,7 @@ pub fn serve() -> i32 {
         };
         if !socket_meta.file_type().is_socket()
             || socket_meta.uid() != 0
+            || socket_meta.gid() != directory_meta.gid()
             || socket_meta.permissions().mode() & 0o777 != 0o660
         {
             eprintln!("gitrun control-manager: socket ownership or mode verification failed");
@@ -261,6 +262,17 @@ fn is_root() -> bool {
 
 #[cfg(target_os = "linux")]
 fn serve_client(mut stream: std::os::unix::net::UnixStream) {
+    use std::time::Duration;
+
+    if let Err(error) = stream.set_read_timeout(Some(Duration::from_secs(10))) {
+        eprintln!("gitrun control-manager: cannot configure request timeout: {error}");
+        return;
+    }
+    if let Err(error) = stream.set_write_timeout(Some(Duration::from_secs(180))) {
+        eprintln!("gitrun control-manager: cannot configure response timeout: {error}");
+        return;
+    }
+
     let reply = (|| -> Result<Reply, String> {
         let mut line = String::new();
         let read = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?)

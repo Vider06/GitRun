@@ -1722,7 +1722,7 @@ fn maintenance_task_with_confirmation(
             .map(|value| (title.to_owned(), value));
     }
 
-    let output = run_external_args(terminal, fallback_args)?;
+    let output = run_external(terminal, fallback_args)?;
     if output.get("exit_code").and_then(Value::as_i64) == Some(0) {
         Ok((title.to_owned(), output))
     } else {

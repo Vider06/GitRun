@@ -1113,6 +1113,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             Style::default().fg(if state.error { BAD } else { GOOD }),
         ),
     ]))
+    .style(Style::default().bg(PANEL_BG))
     .block(
         Block::default()
             .borders(Borders::TOP)
@@ -2455,7 +2456,7 @@ mod tests {
 
 #[cfg(test)]
 mod visual_design_tests {
-    use super::{header_separator, PAGES, WIDE_HEADER_TAGLINE};
+    use super::{header_separator, mascot_state, PAGES, State, WIDE_HEADER_TAGLINE};
 
     #[test]
     fn wide_header_separator_fits_the_available_terminal_width() {
@@ -2491,6 +2492,7 @@ mod visual_design_tests {
 
         state.notice = "Ready".into();
         state.page = 8;
+        state.action = usize::MAX;
         assert_eq!(mascot_state(&state), "recovery");
     }
 }

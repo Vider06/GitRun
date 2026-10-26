@@ -727,13 +727,13 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(if area.height >= 28 { 4 } else { 3 }),
+            Constraint::Length(if area.height >= 28 && area.width >= 110 { 4 } else { 3 }),
             Constraint::Min(7),
             Constraint::Length(2),
         ])
         .split(area);
 
-    let header_lines = if area.height >= 28 {
+    let header_lines = if area.height >= 28 && area.width >= 110 {
         vec![
             Line::from(vec![
                 Span::styled("  ◈ ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
@@ -878,26 +878,33 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let detail_area = Layout::default()
         .direction(Direction::Vertical)
         .constraints(if has_metrics {
-            vec![Constraint::Length(4), Constraint::Length(5), Constraint::Min(1)]
+            vec![Constraint::Length(6), Constraint::Length(5), Constraint::Min(1)]
         } else {
-            vec![Constraint::Length(4), Constraint::Min(1)]
+            vec![Constraint::Length(6), Constraint::Min(1)]
         })
         .split(detail_parent);
     let page = PAGES[state.page];
+    let selected_action = state
+        .actions()
+        .get(state.action)
+        .map(|action| action.title)
+        .unwrap_or("Select an operation.");
+    let selected_hint = state
+        .actions()
+        .get(state.action)
+        .map(|action| action.hint)
+        .unwrap_or("Choose an operation to see its details.");
     let heading = Paragraph::new(vec![
         Line::from(Span::styled(
             state.body_title.as_str(),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )),
+        Line::from(vec![
+            Span::styled("SELECTED  ›  ", Style::default().fg(GOOD).add_modifier(Modifier::BOLD)),
+            Span::styled(selected_action, Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+        ]),
         Line::from(Span::styled(page.subtitle, Style::default().fg(MUTED))),
-        Line::from(Span::styled(
-            state
-                .actions()
-                .get(state.action)
-                .map(|a| a.hint)
-                .unwrap_or("Select an operation."),
-            Style::default().fg(CYAN),
-        )),
+        Line::from(Span::styled(selected_hint, Style::default().fg(MUTED))),
     ])
     .block(
         Block::default()
@@ -2089,6 +2096,34 @@ mod tests {
                 page.name
             );
         }
+    }
+
+    #[test]
+    fn resource_meters_use_only_reported_percentages() {
+        let state = State {
+            body: vec![
+                r#"{"host_resources":{"cpu_percent":12.5,"memory_percent":68,"disk_percent":91}}"#.into(),
+            ],
+            ..State::new()
+        };
+        assert_eq!(
+            resource_metrics(&state),
+            vec![("CPU", 12.5), ("MEMORY", 68.0), ("DISK", 91.0)]
+        );
+    }
+
+    #[test]
+    fn resource_meters_do_not_invent_missing_values() {
+        let state = State {
+            body: vec![r#"{"cpu_percent":24}"#.into()],
+            ..State::new()
+        };
+        assert_eq!(resource_metrics(&state), vec![("CPU", 24.0)]);
+        let unknown = State {
+            body: vec![r#"{"cpu":"unknown","memory":null}"#.into()],
+            ..State::new()
+        };
+        assert!(resource_metrics(&unknown).is_empty());
     }
 
     #[test]

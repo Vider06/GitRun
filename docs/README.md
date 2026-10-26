@@ -17,7 +17,8 @@ The current source/product version is **1.8.0** (`version.txt`). The 1.8.0 work 
 
 ## Version history
 
-- [Release history](RELEASE_HISTORY.md) — 1.8.0 source-line changes, earlier release milestones and historical verification boundaries.
+- [GitRun 1.8.0 source-line notes](v1.8.0-fixes.md) — CLI management console, child-process output handling and version alignment.
+- [Release history](RELEASE_HISTORY.md) — earlier release milestones and historical verification boundaries.
 - [GitRun 1.6.1 fixes](v1.6.1-fixes.md) — runtime/dashboard recovery, GitHub permission diagnostics and package lifecycle.
 - [GitRun 1.6.2 fixes](v1.6.2-fixes.md) — protected security-settings reads in the dashboard.
 

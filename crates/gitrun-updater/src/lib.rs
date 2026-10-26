@@ -1237,7 +1237,9 @@ fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result
             Err(error) => return Err(error.into()),
         }
         if let Some(backup) = &artifact.backup {
-            let parent = artifact.destination.parent()
+            let parent = artifact
+                .destination
+                .parent()
                 .ok_or_else(|| UpdateError::Command("installed artifact has no parent".into()))?;
             fs::create_dir_all(parent)?;
             atomic_replace_installed_file(backup, &artifact.destination, 0o755)?;
@@ -1321,13 +1323,17 @@ fn atomic_replace_installed_file(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    let parent = destination.parent()
+    let parent = destination
+        .parent()
         .ok_or_else(|| UpdateError::Command("installed artifact has no parent".into()))?;
     fs::create_dir_all(parent)?;
     let temp = temporary_sibling(destination, ".gitrun-update");
     let result = (|| -> Result<(), UpdateError> {
         let mut input = fs::File::open(source)?;
-        let mut output = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
         io::copy(&mut input, &mut output)?;
         output.sync_all()?;
         set_file_mode(&temp, mode)?;
@@ -1336,7 +1342,9 @@ fn atomic_replace_installed_file(
         sync_parent_directory(destination)?;
         Ok(())
     })();
-    if result.is_err() { let _ = fs::remove_file(&temp); }
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
     result
 }
 
@@ -1357,12 +1365,16 @@ fn atomic_write_installed_file(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    let parent = destination.parent()
+    let parent = destination
+        .parent()
         .ok_or_else(|| UpdateError::Command("installed file has no parent".into()))?;
     fs::create_dir_all(parent)?;
     let temp = temporary_sibling(destination, ".gitrun-update");
     let result = (|| -> Result<(), UpdateError> {
-        let mut output = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
         output.write_all(content)?;
         output.sync_all()?;
         set_file_mode(&temp, mode)?;
@@ -1371,7 +1383,9 @@ fn atomic_write_installed_file(
         sync_parent_directory(destination)?;
         Ok(())
     })();
-    if result.is_err() { let _ = fs::remove_file(&temp); }
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
     result
 }
 

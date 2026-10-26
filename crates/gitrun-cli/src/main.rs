@@ -2685,7 +2685,10 @@ fn run_doctor() -> i32 {
                 match std::env::var("GITRUN_VERSION") {
                     Ok(binary_version) if binary_version.trim() != version => doctor_check(
                         "Installed version metadata",
-                        Err(format!("GITRUN_VERSION reports {}, version.txt says {version}", binary_version.trim())),
+                        Err(format!(
+                            "GITRUN_VERSION reports {}, version.txt says {version}",
+                            binary_version.trim()
+                        )),
                         &mut failures,
                         &mut warnings,
                     ),

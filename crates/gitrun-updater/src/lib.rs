@@ -1056,7 +1056,7 @@ pub fn apply_installed_update(
             }
         }
         atomic_write_installed_file(version_file, version.as_bytes(), 0o644)?;
-        health_check_installed_binary(health_binary, config_file)?;
+        health_check_installed_binary_expected(health_binary, config_file, version)?;
         Ok(())
     })();
 
@@ -1267,6 +1267,22 @@ pub fn health_check_installed_binary(
     binary: &Path,
     config_file: Option<&Path>,
 ) -> Result<(), UpdateError> {
+    check_installed_binary(binary, config_file, None)
+}
+
+fn health_check_installed_binary_expected(
+    binary: &Path,
+    config_file: Option<&Path>,
+    expected_version: &str,
+) -> Result<(), UpdateError> {
+    check_installed_binary(binary, config_file, Some(expected_version))
+}
+
+fn check_installed_binary(
+    binary: &Path,
+    config_file: Option<&Path>,
+    expected_version: Option<&str>,
+) -> Result<(), UpdateError> {
     reject_symlink_components(binary)?;
     let metadata = fs::symlink_metadata(binary)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -1275,26 +1291,32 @@ pub fn health_check_installed_binary(
             binary.display()
         )));
     }
+
+    // Check the executable itself before asking the not-yet-repaired services
+    // to pass the full doctor suite. In particular, a missing Control Manager
+    // must not trigger rollback before systemd reconciliation can repair it.
     let mut command = Command::new(binary);
-    command.arg("doctor").arg("--no-cat");
-    if let Some(config) = config_file {
-        command.env("GITRUN_CONFIG_FILE", config);
-    }
+    command.arg("--version");
+    if let Some(config) = config_file { command.env("GITRUN_CONFIG_FILE", config); }
     let output = command.output()?;
-    if !output.status.success() {
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !output.status.success() || combined.trim().is_empty() {
         return Err(UpdateError::Command(format!(
-            "post-update doctor check failed (exit {}): {}{}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim(),
-            if output.stdout.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    "; stdout: {}",
-                    String::from_utf8_lossy(&output.stdout).trim()
-                )
-            }
+            "post-update executable check failed (exit {}): {}",
+            output.status, combined.trim()
         )));
+    }
+    if let Some(expected_version) = expected_version {
+        if !combined.contains(expected_version) {
+            return Err(UpdateError::Command(format!(
+                "post-update version check failed: expected {expected_version}, received {}",
+                combined.trim()
+            )));
+        }
     }
     Ok(())
 }

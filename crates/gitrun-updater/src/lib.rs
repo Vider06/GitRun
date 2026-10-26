@@ -1477,10 +1477,18 @@ fn check_installed_binary(
         )));
     }
     if let Some(expected_version) = expected_version {
-        if !combined.contains(expected_version) {
+        let installed_version = combined.lines().find_map(|line| {
+            let mut parts = line.split_whitespace();
+            (parts.next() == Some("GitRun")).then(|| parts.next()).flatten()
+        });
+        let matches_expected = installed_version.is_some_and(|installed| {
+            compare_versions(installed, expected_version)
+                .is_ok_and(|ordering| ordering == std::cmp::Ordering::Equal)
+        });
+        if !matches_expected {
             return Err(UpdateError::Command(format!(
                 "post-update version check failed: expected {expected_version}, received {}",
-                combined.trim()
+                installed_version.unwrap_or("no GitRun version line")
             )));
         }
     }
@@ -3631,6 +3639,32 @@ mod tests {
         .is_err());
         assert_eq!(fs::read(&outside).unwrap(), b"must remain untouched");
         assert_eq!(fs::read_to_string(&version_file).unwrap(), "0.9.0\n");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_lock_is_exclusive_and_survives_process_scope_without_stale_locking() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-lock-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let first = UpdateLock::acquire(&root).unwrap();
+        assert!(
+            UpdateLock::acquire(&root).is_err(),
+            "a second updater must not overlap the active transaction"
+        );
+        drop(first);
+
+        let second = UpdateLock::acquire(&root)
+            .expect("dropping the first lock must release the kernel lock");
+        assert!(root.join(".gitrun-update.lock").is_file());
+        drop(second);
         let _ = fs::remove_dir_all(&root);
     }
 

@@ -1379,7 +1379,7 @@ fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result
         Err(error) => return Err(error.into()),
     }
     if let Some(backup) = &record.version_file_backup {
-        atomic_write_installed_file(&record.version_file, &fs::read(backup)?, 0o644)?;
+        copy_file_durable(backup, &record.version_file)?;
     }
 
     if let Some(config) = &record.config_file {
@@ -1533,8 +1533,9 @@ fn atomic_replace_installed_file(
             .create_new(true)
             .open(&temp)?;
         io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
+        copy_file_owner(&output, &source_meta)?;
         set_file_mode(&temp, mode)?;
+        output.sync_all()?;
         drop(output);
         replace_temp_file(&temp, destination)?;
         sync_parent_directory(destination)?;
@@ -1552,17 +1553,17 @@ fn atomic_write_installed_file(
     mode: u32,
 ) -> Result<(), UpdateError> {
     reject_symlink_components(destination)?;
-    match fs::symlink_metadata(destination) {
+    let destination_metadata = match fs::symlink_metadata(destination) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(UpdateError::Command(format!(
                 "atomic write destination is not a regular file: {}",
                 destination.display()
             )));
         }
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
-    }
+    };
     let parent = destination
         .parent()
         .ok_or_else(|| UpdateError::Command("installed file has no parent".into()))?;
@@ -1574,8 +1575,11 @@ fn atomic_write_installed_file(
             .create_new(true)
             .open(&temp)?;
         output.write_all(content)?;
-        output.sync_all()?;
+        if let Some(metadata) = destination_metadata.as_ref() {
+            copy_file_owner(&output, metadata)?;
+        }
         set_file_mode(&temp, mode)?;
+        output.sync_all()?;
         drop(output);
         replace_temp_file(&temp, destination)?;
         sync_parent_directory(destination)?;
@@ -1637,8 +1641,9 @@ fn copy_file_durable(source: &Path, destination: &Path) -> Result<(), UpdateErro
         .create_new(true)
         .open(destination)?;
     io::copy(&mut input, &mut output)?;
-    output.sync_all()?;
+    copy_file_owner(&output, &metadata)?;
     copy_permissions(&metadata, destination)?;
+    output.sync_all()?;
     drop(output);
     sync_parent_directory(destination)?;
     Ok(())
@@ -1646,6 +1651,25 @@ fn copy_file_durable(source: &Path, destination: &Path) -> Result<(), UpdateErro
 
 fn write_json_durable(path: &Path, value: &impl Serialize) -> Result<(), UpdateError> {
     atomic_write_installed_file(path, &serde_json::to_vec_pretty(value)?, 0o600)
+}
+
+fn copy_file_owner(file: &fs::File, metadata: &fs::Metadata) -> Result<(), UpdateError> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: this is an open file descriptor owned by the caller and the
+        // target uid/gid values come from metadata read from the source file.
+        let result = unsafe { native_fchown(file.as_raw_fd(), metadata.uid(), metadata.gid()) };
+        if result != 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (file, metadata);
+    }
+    Ok(())
 }
 
 fn set_file_mode(path: &Path, mode: u32) -> Result<(), UpdateError> {
@@ -2455,6 +2479,9 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
             copy_dir(&src, &dst)?;
         } else if entry_meta.is_file() {
             fs::copy(&src, &dst)?;
+            let output = fs::File::open(&dst)?;
+            copy_file_owner(&output, &entry_meta)
+                .map_err(|error| io::Error::other(error.to_string()))?;
             copy_permissions(&entry_meta, &dst)?;
         } else {
             return Err(io::Error::new(
@@ -2856,6 +2883,8 @@ impl UpdateLock {
 unsafe extern "C" {
     #[link_name = "flock"]
     fn native_flock(fd: std::os::fd::RawFd, operation: i32) -> i32;
+    #[link_name = "fchown"]
+    fn native_fchown(fd: std::os::fd::RawFd, owner: u32, group: u32) -> i32;
 }
 
 impl Drop for UpdateLock {

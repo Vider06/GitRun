@@ -798,6 +798,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
     let config_dir = PathBuf::from("/etc/gitrun");
     let state_dir = PathBuf::from("/var/lib/gitrun");
     let log_dir = PathBuf::from("/var/log/gitrun");
+    let cache_dir = PathBuf::from("/var/cache/gitrun");
     let root = PathBuf::from("/opt/gitrun");
 
     setup_progress(2, "Preparing GitRun system directories");
@@ -808,6 +809,10 @@ pub fn bootstrap_linux_with_auth_and_profile(
     // and mount-lease directory entries even when the files are mode 0600.
     ensure_directory(&state_dir, 0o755)?;
     ensure_directory(&log_dir, 0o750)?;
+    // The updater and privileged control service both use this system cache.
+    // Create it during bootstrap instead of relying on a later command or unit
+    // permission declaration to make the path exist.
+    ensure_directory(&cache_dir, 0o750)?;
     ensure_directory(&root, 0o755)?;
     let vault_dir = state_dir.join("vault");
     ensure_directory(&vault_dir, 0o700)?;

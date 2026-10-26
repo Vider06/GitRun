@@ -1348,21 +1348,41 @@ pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), Se
     if config_path.is_file() {
         secure_system_config_file(config_path, None)?;
     }
+    // Reconcile the complete systemd integration from the trusted resources
+    // shipped with this release. A missing unit is not repaired by replacing the
+    // binary alone, and stale unit contents must not survive an ordinary update.
+    let service_dir = Path::new("/etc/systemd/system");
+    fs::create_dir_all(service_dir)?;
+    let scheduler_service = if Path::new("/usr/local/bin/gitrun-recovery").is_file() {
+        resources::SYSTEMD_SERVICE
+    } else {
+        resources::SYSTEMD_SERVICE_DIRECT
+    };
+    write_resource(&service_dir.join("gitrun.service"), scheduler_service, 0o644)?;
     write_resource(
-        Path::new("/etc/systemd/system/gitrun-control.service"),
+        &service_dir.join("gitrun-gsr.service"),
+        resources::SYSTEMD_GSR_SERVICE,
+        0o644,
+    )?;
+    write_resource(
+        &service_dir.join("gitrun-control.service"),
         resources::SYSTEMD_CONTROL_MANAGER_SERVICE,
         0o644,
     )?;
     run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-control.service"]))?;
-    // The system binary may have just been replaced by an upgrade. Restart
-    // an already-active manager so it loads the new executable on disk.
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-control.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun-control.service",
-    ]))?;
+
+    // Enable and restart each component explicitly, then verify its final state.
+    // Control Manager runs first so the dashboard's privileged API is available
+    // before the scheduler/GSR services resume.
+    for service in ["gitrun-control.service", "gitrun.service", "gitrun-gsr.service"] {
+        run_command(Command::new("/usr/bin/systemctl").args(["enable", service]))?;
+        run_command(Command::new("/usr/bin/systemctl").args(["restart", service]))?;
+        run_command(Command::new("/usr/bin/systemctl").args([
+            "is-active",
+            "--quiet",
+            service,
+        ]))?;
+    }
     Ok(())
 }
 

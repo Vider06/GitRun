@@ -1,4 +1,4 @@
-# Security model — GitRun 1.7.0
+# Security model — GitRun 1.8.0
 
 ## Optional Kitty Smart Scheduler
 

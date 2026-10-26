@@ -2312,7 +2312,7 @@ fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
 // GitVault
 // ---------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VaultSecretSummary {
     pub name: String,
     pub scope: ScopeDto,

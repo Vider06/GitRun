@@ -1,6 +1,6 @@
-# GitRun architecture — GitRun 1.8.0
+# GitRun architecture — GitRun 1.8.1
 
-> This is the high-level architecture overview for the 1.8.0 source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
+> This is the high-level architecture overview for the 1.8.1 source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 

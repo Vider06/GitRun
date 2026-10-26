@@ -408,13 +408,13 @@ jobs:
             # This runs before update in every job that installs APT dependencies.
             if [ ! -f "$CI_DIR/apt-mirror-forced" ]; then
               if [ -f /etc/apt/apt-mirrors.txt ]; then
-                $sudo sed -i -E 's#https?://azure\.archive\\.ubuntu\\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' /etc/apt/apt-mirrors.txt
+                $sudo sed -i -E 's#https?://azure\.archive\.ubuntu\\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' /etc/apt/apt-mirrors.txt
                 echo "APT mirror list after override:"
                 $sudo cat /etc/apt/apt-mirrors.txt
               fi
               for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
                 [ -f "$source" ] || continue
-                $sudo sed -i -E 's#https?://azure\.archive\\.ubuntu\\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' "$source"
+                $sudo sed -i -E 's#https?://azure\.archive\.ubuntu\\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' "$source"
               done
               : > "$CI_DIR/apt-mirror-forced"
             fi

@@ -1090,7 +1090,7 @@ pub fn apply_installed_update(
             }
         }
         atomic_write_installed_file(version_file, version.as_bytes(), 0o644)?;
-        health_check_installed_binary_expected(health_binary, config_file, version)?;
+        health_check_installed_executable_expected(health_binary, config_file, version)?;
         Ok(())
     })();
 
@@ -1406,10 +1406,32 @@ pub fn health_check_installed_binary(
     binary: &Path,
     config_file: Option<&Path>,
 ) -> Result<(), UpdateError> {
-    check_installed_binary(binary, config_file, None)
+    // Preserve the public helper's full-health semantics for callers that
+    // expect a doctor check; the transactional installer uses the narrower
+    // executable-only check until system services have been reconciled.
+    check_installed_binary(binary, config_file, None)?;
+    let mut command = Command::new(binary);
+    command.arg("doctor").arg("--no-cat");
+    if let Some(config) = config_file {
+        command.env("GITRUN_CONFIG_FILE", config);
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(UpdateError::Command(format!(
+            "post-update doctor check failed (exit {}): {}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim(),
+            if output.stdout.is_empty() {
+                String::new()
+            } else {
+                format!("; stdout: {}", String::from_utf8_lossy(&output.stdout).trim())
+            }
+        )));
+    }
+    Ok(())
 }
 
-fn health_check_installed_binary_expected(
+fn health_check_installed_executable_expected(
     binary: &Path,
     config_file: Option<&Path>,
     expected_version: &str,

@@ -53,3 +53,9 @@ Complex configuration documents can be opened in `$VISUAL` or `$EDITOR` and are 
 The App Settings section also exposes the dashboard's nine security-baseline checks. They report saved configuration and one process-name observation; a passing result is not end-to-end proof of runtime enforcement.
 
 The console requires an interactive terminal. For scripts, pipes and automation, continue to use the direct CLI commands and their explicit flags instead of driving the TUI.
+
+### Visual feedback and mascot
+
+The console uses a low-contrast dark surface, rounded panel borders, explicit foreground colors and a restrained background for the selected row. The Settings section uses a text-oriented `≡` symbol rather than a gear whose emoji/text presentation can vary by terminal and font.
+
+On terminals at least 110 columns wide and 24 rows tall, a small **GitRun** mascot panel appears below the section list. It reuses validated ASCII sprites from the shared `src/cat/cat_states.json` catalogue. Errors map to `failed`, active work to `working`, successful operations to `success`, and idle states follow the selected section or operation. The mascot is status feedback, not an independent health check or a source of operational data. On narrower or shorter terminals it is hidden so navigation remains readable.

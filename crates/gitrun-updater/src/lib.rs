@@ -2776,26 +2776,85 @@ fn copy_permissions(metadata: &fs::Metadata, destination: &Path) -> Result<(), i
 }
 
 struct UpdateLock {
+    #[cfg(unix)]
+    _file: fs::File,
+    #[cfg(not(unix))]
     path: PathBuf,
 }
 
 impl UpdateLock {
     fn acquire(root: &Path) -> Result<Self, UpdateError> {
+        reject_symlink_components(root)?;
         fs::create_dir_all(root)?;
+        set_file_mode(root, 0o700)?;
         let path = root.join(".gitrun-update.lock");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-        writeln!(file, "pid={}", std::process::id())?;
-        file.sync_all()?;
-        Ok(Self { path })
+        reject_symlink_components(&path)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::OpenOptionsExt;
+
+            // A kernel lock is released on process exit or reboot. Keep the
+            // lockfile inode instead of unlinking it, avoiding stale-lock
+            // deadlocks and lock-inode races between competing update processes.
+            let mut file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .mode(0o600)
+                .open(&path)?;
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(UpdateError::InvalidManifest(
+                    "update lock path must be a regular non-symlink file".into(),
+                ));
+            }
+            set_file_mode(&path, 0o600)?;
+            // SAFETY: the descriptor belongs to the open regular file above
+            // and remains owned by UpdateLock throughout the transaction.
+            let lock_result = unsafe { native_flock(file.as_raw_fd(), 2 | 4) };
+            if lock_result != 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::WouldBlock {
+                    return Err(UpdateError::Command(
+                        "another GitRun update or rollback is already in progress".into(),
+                    ));
+                }
+                return Err(error.into());
+            }
+            file.set_len(0)?;
+            writeln!(file, "pid={}", std::process::id())?;
+            file.sync_all()?;
+            Ok(Self { _file: file })
+        }
+
+        #[cfg(not(unix))]
+        {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            writeln!(file, "pid={}", std::process::id())?;
+            file.sync_all()?;
+            Ok(Self { path })
+        }
     }
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    #[link_name = "flock"]
+    fn native_flock(fd: std::os::fd::RawFd, operation: i32) -> i32;
 }
 
 impl Drop for UpdateLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        #[cfg(not(unix))]
+        {
+            let _ = fs::remove_file(&self.path);
+        }
+        // On Unix, dropping the open file releases flock in the kernel.
     }
 }
 

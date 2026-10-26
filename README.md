@@ -154,12 +154,13 @@ gitrun doctor
 gitrun manage
 gitrun dashboard
 gitrun update --check
+gitrun fix-update
 gitrun fast-stop OWNER/REPOSITORY WORKFLOW_RUN_ID --yes
 gitrun rollback BACKUP_PATH
 gitrun cat
 ```
 
-The `fast-stop` command requires confirmation and requests force-cancellation of the **whole workflow run**, not a single job. It does not directly kill containers.
+The `fix-update` command repairs the privileged Control Manager service and then applies the latest official signed release if it is newer. It uses the normal updater and rollback path; it never downgrades the installed binary just to force an update. The command requires sudo for system installations. Use `--no-cat` to suppress the mascot.\n\nThe `fast-stop` command requires confirmation and requests force-cancellation of the **whole workflow run**, not a single job. It does not directly kill containers.
 
 ## Configuration at a glance
 

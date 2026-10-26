@@ -931,7 +931,9 @@ pub fn apply_installed_update(
         || config_file.is_some_and(|config| {
             paths_overlap(backup_root, config)
                 || paths_overlap(version_file, config)
-                || artifacts.iter().any(|artifact| paths_overlap(&artifact.destination, config))
+                || artifacts
+                    .iter()
+                    .any(|artifact| paths_overlap(&artifact.destination, config))
         })
     {
         return Err(UpdateError::InvalidManifest(
@@ -1119,7 +1121,11 @@ pub fn rollback_installed_update(
     backup_root: &Path,
 ) -> Result<(), UpdateError> {
     rollback_installed_update_with_config(
-        record, expected_artifacts, expected_version_file, None, backup_root,
+        record,
+        expected_artifacts,
+        expected_version_file,
+        None,
+        backup_root,
     )
 }
 
@@ -1131,12 +1137,20 @@ pub fn rollback_installed_update_with_config(
     backup_root: &Path,
 ) -> Result<(), UpdateError> {
     validate_installed_rollback_record(
-        record, expected_artifacts, expected_version_file, expected_config_file, backup_root,
+        record,
+        expected_artifacts,
+        expected_version_file,
+        expected_config_file,
+        backup_root,
     )?;
     let _lock = UpdateLock::acquire(backup_root)?;
     // Revalidate after acquiring the lock, immediately before any destructive operation.
     validate_installed_rollback_record(
-        record, expected_artifacts, expected_version_file, expected_config_file, backup_root,
+        record,
+        expected_artifacts,
+        expected_version_file,
+        expected_config_file,
+        backup_root,
     )?;
     rollback_installed_update_unchecked(record)
 }
@@ -1272,9 +1286,10 @@ fn validate_installed_rollback_record(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    if let (Some(config), Some(backup)) =
-        (record.config_file.as_deref(), record.config_file_backup.as_deref())
-    {
+    if let (Some(config), Some(backup)) = (
+        record.config_file.as_deref(),
+        record.config_file_backup.as_deref(),
+    ) {
         let expected_backup = transaction_dir.join("config.env");
         if backup != expected_backup {
             return Err(UpdateError::InvalidManifest(

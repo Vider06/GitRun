@@ -879,8 +879,8 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let page_list = List::new(page_items)
         .block(page_block)
         .highlight_symbol("› ")
-        // Do not set foreground/background here: item-level accent colors
-        // must survive selection rendering and keep the text legible.
+        // Selection adds a low-contrast background and bold weight only;
+        // item-level foreground colors remain visible.
         .highlight_style(
             Style::default()
                 .bg(SELECTED_BG)

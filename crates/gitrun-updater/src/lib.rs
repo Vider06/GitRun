@@ -667,13 +667,6 @@ pub fn apply_update(
         service_config_backup: service_config_backup.clone(),
     };
 
-    // Write a durable journal before the current installation can be moved.
-    // A power loss after this point leaves enough trusted information for recovery.
-    if let Err(error) = write_json_durable(&backup_dir.join("backup.json"), &record) {
-        let _ = fs::remove_dir_all(&backup_dir);
-        return Err(error);
-    }
-
     let backup_result = (|| -> Result<(), UpdateError> {
         if paths.state_dir.exists() {
             copy_dir(&paths.state_dir, &state_backup)?;
@@ -717,6 +710,13 @@ pub fn apply_update(
     })();
 
     if let Err(error) = backup_result {
+        let _ = fs::remove_dir_all(&backup_dir);
+        return Err(error);
+    }
+
+    // All copies are complete and the live installation is still untouched.
+    // Persist recovery metadata before moving the old installation out of place.
+    if let Err(error) = write_json_durable(&backup_dir.join("backup.json"), &record) {
         let _ = fs::remove_dir_all(&backup_dir);
         return Err(error);
     }

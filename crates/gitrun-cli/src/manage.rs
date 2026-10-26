@@ -872,7 +872,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     let mut page_state = ListState::default();
     page_state.select(Some(state.page));
-    frame.render_stateful_widget(page_list, middle[0], &mut page_state);
+    frame.render_stateful_widget(page_list, page_area, &mut page_state);
 
     let actions: Vec<ListItem<'_>> = state
         .actions()
@@ -915,7 +915,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .highlight_style(Style::default().add_modifier(Modifier::BOLD));
     let mut action_state = ListState::default();
     action_state.select(Some(state.action));
-    frame.render_stateful_widget(action_list, middle[1], &mut action_state);
+    frame.render_stateful_widget(action_list, action_area, &mut action_state);
 
     let metrics = resource_metrics(state);
     let has_metrics = !metrics.is_empty();

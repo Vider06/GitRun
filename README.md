@@ -10,7 +10,7 @@ GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It
 
 It is designed for developers and teams who want to use their own runner infrastructure without turning every workflow into an unrestricted host administrator. **No Kubernetes cluster is required.**
 
-> **Source version:** this branch targets `1.7.0`. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+> **Source version:** this branch targets `1.8.0`. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## What can GitRun do?
 
@@ -109,7 +109,7 @@ The native **Tauri 2 dashboard** brings together:
 - Setup diagnostics, protected-state recovery and repair actions.
 - Configuration, update and lifecycle controls.
 
-The CLI supports setup, repository connection, diagnostics, update checks, dashboard launch, rollback and terminal utilities. `gitrun manage` opens a keyboard-driven terminal management console for headless servers; it reuses the dashboard's validated backend operations instead of maintaining a second settings implementation. The scheduler continues to run when the dashboard is closed. The dashboard does not treat inaccessible protected files as proof of corruption and does not relax file permissions as a workaround.
+The CLI supports setup, repository connection, diagnostics, update checks, dashboard launch, rollback and terminal utilities. `gitrun manage` opens a keyboard-driven terminal management console for headless servers; it reuses the dashboard's validated backend operations instead of maintaining a second settings implementation. The CLI mascot is shown by default for normal commands and can be suppressed explicitly with `--no-cat`; internal child-process launches suppress it to keep terminal output clean. The scheduler continues to run when the dashboard is closed. The dashboard does not treat inaccessible protected files as proof of corruption and does not relax file permissions as a workaround.
 
 </details>
 

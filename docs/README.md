@@ -11,9 +11,14 @@ Start with the [main README](../README.md) for a readable overview of GitRun's f
 - [Security model](SECURITY_MODEL.md) — enforcement details, deployment assumptions and residual risks.
 - [Kitty, Adaptive Resources and Fast Stop](SMART_SCHEDULER.md) — forecasts, bounded history, queue-aware evaluation, Future Mapping, Think, optional capacity automation and cancellation semantics.
 
+## Current source line
+
+The current source/product version is **1.8.0** (`version.txt`). The 1.8.0 work aligns patch versions for the crates changed by the CLI/TUI and child-process output fixes, updates the product version metadata, and documents the terminal management console and mascot behavior. This is source metadata, not a claim that a signed 1.8.0 release artifact has been published; verify [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+
 ## Version history
 
-- [Release history](RELEASE_HISTORY.md) — 1.5.0 refactor baseline, 1.5.1 recovery migration and historical verification boundaries.
+- [GitRun 1.8.0 source-line notes](v1.8.0-fixes.md) — CLI management console, child-process output handling and version alignment.
+- [Release history](RELEASE_HISTORY.md) — earlier release milestones and historical verification boundaries.
 - [GitRun 1.6.1 fixes](v1.6.1-fixes.md) — runtime/dashboard recovery, GitHub permission diagnostics and package lifecycle.
 - [GitRun 1.6.2 fixes](v1.6.2-fixes.md) — protected security-settings reads in the dashboard.
 

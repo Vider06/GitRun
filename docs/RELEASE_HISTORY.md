@@ -1,8 +1,17 @@
 # Release history and historical verification
 
+## GitRun 1.8.0 — CLI management console and version alignment
+
+- **Source/product version:** `1.8.0`, recorded in `version.txt` and the dashboard product metadata. This entry describes the source line; it does not assert that a signed release artifact has been published.
+- Added the keyboard-driven `gitrun manage` terminal management console for headless operation, using the dashboard's validated backend operations rather than a parallel settings implementation.
+- Standard CLI invocations show the mascot by default; `--no-cat` is the explicit opt-out. Internal dashboard/recovery child-process launches pass `--no-cat` so their output remains usable and does not interfere with parent terminal rendering.
+- Hardened CLI argument-error/help handling around the shared presenter and serialized Linux process-control regression tests to avoid unrelated-child `waitpid` races.
+- Bumped patch versions only for crates changed by this work: `gitrun-cli` 0.13.2 → 0.13.3, `gitrun-dashboard-tauri` 0.11.0 → 0.11.1, `gitrun-gsr` 0.6.2 → 0.6.3 and `gitrun-recovery` 0.6.6 → 0.6.7. Other crates retain their independent SemVer versions.
+
+
 ## GitRun 1.7.0 — Kitty queue-aware evaluation primitives
 
-- **Working branch:** `feat/kitty-queue-aware-control-v1.7.0` (pull request checks must verify the final commit).
+- **Implementation PR:** [#110](https://github.com/Vider06/GitRun/pull/110). The feature's introduction remains a 1.7.0 historical milestone.
 - Added dependency-free Erlang-C M/M/c queue-wait estimation, deterministic bounded FCFS replay metrics and a capped runner-floor evaluation helper in `gitrun-smart-scheduler::queueing`.
 - The new helpers are evaluation primitives, not a live MPC controller. Production scaling remains behind the existing deterministic reconciliation and resource/policy gates. Erlang-C assumptions and future-data leakage are explicitly documented.
 - This source history entry does not imply a published signed 1.7.0 artifact; use GitHub Releases for installable artifacts.

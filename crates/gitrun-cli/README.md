@@ -1,6 +1,6 @@
 # `gitrun-cli`
 
-The primary operator command-line interface for setup, repository connection, configuration, diagnostics, updates, dashboard launch, rollback and terminal utilities. `gitrun manage` adds a styled, keyboard-driven management console for interactive hosts and SSH sessions.
+The primary operator command-line interface for setup, repository connection, configuration, diagnostics, updates, dashboard launch, rollback and terminal utilities. `gitrun manage` adds a styled, keyboard-driven management console for interactive hosts and SSH sessions. The mascot is shown for ordinary CLI invocations by default; pass `--no-cat` to suppress it explicitly. Internal child-process launches use `--no-cat` so the mascot does not corrupt a parent's TUI or command output.
 
 ## Common commands
 

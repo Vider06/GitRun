@@ -61,7 +61,7 @@ The `queueing` module adds a dependency-free Erlang-C M/M/c estimate, a bounded 
 These APIs are evaluation primitives in this release, not a replacement for the production deterministic reconciler. No new runner may be created from a model result without the existing maximum-runner, host CPU/RAM budget, resource-pressure, shadow-mode and authorization checks. Compare candidate policies against the existing behavior with replay traces before enabling any future live queue-aware control.
 
 
-## Future Mapping and Think (1.7.0 source line)
+## Future Mapping and Think (introduced in 1.7.0)
 
 These capabilities are experimental and disabled by default. Future Mapping requires Kitty, aggregate telemetry, predictive analytics, Predictive Warm Pool and Adaptive Resource Management. It builds a private rolling map containing twelve five-minute buckets, predicted concurrency and per-runner CPU/RAM envelopes. It increments a revision on every reconciliation and records typed patches that expire after 60 seconds and can only apply to the immediately preceding revision.
 

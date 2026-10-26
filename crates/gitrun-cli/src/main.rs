@@ -474,12 +474,6 @@ fn update_command(
         );
     }
 
-    println!("GitRun update: checking required host dependencies");
-    let updated_dependencies = update_incompatible_dependencies(&plan)?;
-    if !updated_dependencies.is_empty() {
-        println!("dependencies updated: {}", updated_dependencies.join(", "));
-    }
-
     let work_root = match system_install {
         Some(_) => PathBuf::from("/var/lib/gitrun/update"),
         None => PathBuf::from(
@@ -494,6 +488,14 @@ fn update_command(
     download_and_verify(&plan.artifact_url, &artifact.sha256, &archive)?;
     presenter.transition(presenter::ValidationState::Working);
     println!("GitRun update: artifact integrity PASS");
+
+    // Do not modify host dependencies until the signed release artifact has
+    // been downloaded completely and its checksum has been verified.
+    println!("GitRun update: checking required host dependencies");
+    let updated_dependencies = update_incompatible_dependencies(&plan)?;
+    if !updated_dependencies.is_empty() {
+        println!("dependencies updated: {}", updated_dependencies.join(", "));
+    }
 
     if let Some((gitrun_binary, version_file)) = system_install {
         println!("GitRun update: applying the verified binary transaction");

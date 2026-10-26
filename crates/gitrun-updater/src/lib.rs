@@ -1135,7 +1135,7 @@ fn validate_installed_rollback_record(
         Some(true),
     )?;
 
-    for expected in expected_artifacts {
+    for (index, expected) in expected_artifacts.iter().enumerate() {
         let matches: Vec<_> = record
             .artifacts
             .iter()
@@ -1161,7 +1161,7 @@ fn validate_installed_rollback_record(
                     "trusted installed artifact has no safe file name".into(),
                 )
             })?;
-        let expected_backup = transaction_dir.join(format!("artifact-{file_name}"));
+        let expected_backup = transaction_dir.join(format!("artifact-{index}-{file_name}"));
         if let Some(backup) = item.backup.as_deref() {
             if backup != expected_backup {
                 return Err(UpdateError::InvalidManifest(
@@ -1224,39 +1224,38 @@ fn validate_installed_rollback_record(
 
 fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
     for artifact in &record.artifacts {
-        if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
-            if meta.file_type().is_symlink() || meta.is_dir() {
+        reject_symlink_components(&artifact.destination)?;
+        match fs::symlink_metadata(&artifact.destination) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 return Err(UpdateError::Command(format!(
                     "installed artifact destination is not a regular file: {}",
                     artifact.destination.display()
                 )));
             }
-        }
-        if artifact.destination.exists() {
-            fs::remove_file(&artifact.destination)?;
+            Ok(_) => fs::remove_file(&artifact.destination)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
         if let Some(backup) = &artifact.backup {
-            let parent = artifact
-                .destination
-                .parent()
+            let parent = artifact.destination.parent()
                 .ok_or_else(|| UpdateError::Command("installed artifact has no parent".into()))?;
             fs::create_dir_all(parent)?;
             atomic_replace_installed_file(backup, &artifact.destination, 0o755)?;
         }
     }
-    if let Ok(meta) = fs::symlink_metadata(&record.version_file) {
-        if meta.file_type().is_symlink() || meta.is_dir() {
+    reject_symlink_components(&record.version_file)?;
+    match fs::symlink_metadata(&record.version_file) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(UpdateError::Command(format!(
                 "version file path is not a regular file: {}",
                 record.version_file.display()
             )));
         }
-        fs::remove_file(&record.version_file)?;
+        Ok(_) => fs::remove_file(&record.version_file)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     if let Some(backup) = &record.version_file_backup {
-        if let Some(parent) = record.version_file.parent() {
-            fs::create_dir_all(parent)?;
-        }
         atomic_write_installed_file(&record.version_file, &fs::read(backup)?, 0o644)?;
     }
     Ok(())
@@ -1303,36 +1302,41 @@ fn atomic_replace_installed_file(
     destination: &Path,
     mode: u32,
 ) -> Result<(), UpdateError> {
-    if fs::symlink_metadata(source)
-        .map(|meta| meta.file_type().is_symlink())
-        .unwrap_or(false)
-    {
+    let source_meta = fs::symlink_metadata(source)?;
+    if source_meta.file_type().is_symlink() || !source_meta.is_file() {
         return Err(UpdateError::InvalidManifest(format!(
-            "staged artifact is a symlink: {}",
+            "staged artifact is not a regular file: {}",
             source.display()
         )));
     }
-    let parent = destination
-        .parent()
+    reject_symlink_components(destination)?;
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(UpdateError::Command(format!(
+                "installed artifact destination is not a regular file: {}",
+                destination.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let parent = destination.parent()
         .ok_or_else(|| UpdateError::Command("installed artifact has no parent".into()))?;
     fs::create_dir_all(parent)?;
     let temp = temporary_sibling(destination, ".gitrun-update");
     let result = (|| -> Result<(), UpdateError> {
         let mut input = fs::File::open(source)?;
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
+        let mut output = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
         io::copy(&mut input, &mut output)?;
         output.sync_all()?;
         set_file_mode(&temp, mode)?;
         drop(output);
         replace_temp_file(&temp, destination)?;
+        sync_parent_directory(destination)?;
         Ok(())
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
+    if result.is_err() { let _ = fs::remove_file(&temp); }
     result
 }
 
@@ -1341,26 +1345,33 @@ fn atomic_write_installed_file(
     content: &[u8],
     mode: u32,
 ) -> Result<(), UpdateError> {
+    reject_symlink_components(destination)?;
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(UpdateError::Command(format!(
+                "atomic write destination is not a regular file: {}",
+                destination.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let parent = destination.parent()
+        .ok_or_else(|| UpdateError::Command("installed file has no parent".into()))?;
+    fs::create_dir_all(parent)?;
     let temp = temporary_sibling(destination, ".gitrun-update");
     let result = (|| -> Result<(), UpdateError> {
-        let parent = destination
-            .parent()
-            .ok_or_else(|| UpdateError::Command("installed file has no parent".into()))?;
-        fs::create_dir_all(parent)?;
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
+        let mut output = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
         output.write_all(content)?;
         output.sync_all()?;
         set_file_mode(&temp, mode)?;
         drop(output);
         replace_temp_file(&temp, destination)?;
+        sync_parent_directory(destination)?;
         Ok(())
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
+    if result.is_err() { let _ = fs::remove_file(&temp); }
     result
 }
 

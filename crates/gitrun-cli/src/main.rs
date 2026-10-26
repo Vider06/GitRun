@@ -2566,10 +2566,9 @@ fn doctor_file_check(path: &str, require_root_owned: bool) -> Result<String, Str
     {
         use std::os::unix::fs::MetadataExt;
         if require_root_owned && metadata.uid() != 0 {
-            return Err(format!(
-                "{path} is owned by uid {}, expected root",
-                metadata.uid()
-            ));
+            // Report the failed ownership policy without exposing host account
+            // identifiers in CLI output or logs.
+            return Err(format!("{path} is not owned by root"));
         }
         if require_root_owned && metadata.mode() & 0o022 != 0 {
             return Err(format!("{path} is writable by group or others"));

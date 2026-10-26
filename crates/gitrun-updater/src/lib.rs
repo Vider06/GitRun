@@ -11,6 +11,11 @@ use std::{
 };
 use thiserror::Error;
 
+const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 100_000;
+const MAX_ARCHIVE_ENTRY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const MAX_ARCHIVE_EXPANDED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReleaseArtifact {
     pub target: String,
@@ -226,15 +231,23 @@ impl ReleaseManifest {
                 "name/version/git_commit/artifacts are required".into(),
             ));
         }
+        let mut seen_targets = std::collections::HashSet::new();
+        let mut seen_files = std::collections::HashSet::new();
         for artifact in &self.artifacts {
-            if artifact.target.is_empty()
+            if artifact.target.trim().is_empty()
+                || artifact.target.chars().any(char::is_control)
                 || !is_safe_filename(&artifact.file)
                 || !is_sha256(&artifact.sha256)
+                || !seen_targets.insert(artifact.target.as_str())
+                || !seen_files.insert(artifact.file.as_str())
             {
                 return Err(UpdateError::InvalidManifest(format!(
-                    "invalid artifact {}",
-                    artifact.file
+                    "invalid or duplicate artifact target/file: {} ({})",
+                    artifact.target, artifact.file
                 )));
+            }
+            if let Some(url) = artifact.download_url.as_deref() {
+                validate_https_url(url)?;
             }
         }
         for dependency in &self.dependencies {
@@ -484,7 +497,6 @@ pub fn build_plan(
             UpdateError::InvalidManifest("artifact download_url or repository is required".into())
         })?;
     validate_https_url(&artifact_url)?;
-
     let dependencies = manifest
         .dependencies
         .iter()
@@ -539,17 +551,39 @@ pub fn download_and_verify(
     }
 
     let destination = destination.as_ref();
+    reject_symlink_components(destination)?;
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(UpdateError::InvalidManifest(format!(
+                "download destination must be a regular file: {}",
+                destination.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let temp = temporary_sibling(destination, ".gitrun-download");
 
     let result = (|| -> Result<(), UpdateError> {
         let mut response = http_client()?.get(url).send()?.error_for_status()?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_RELEASE_ARTIFACT_BYTES)
+        {
+            return Err(UpdateError::InvalidManifest(format!(
+                "release artifact exceeds the {}-byte download limit",
+                MAX_RELEASE_ARTIFACT_BYTES
+            )));
+        }
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temp)?;
         let mut hasher = Sha256::new();
+        let mut total_bytes = 0u64;
         let mut buffer = [0u8; 64 * 1024];
 
         loop {
@@ -557,22 +591,30 @@ pub fn download_and_verify(
             if read == 0 {
                 break;
             }
+            total_bytes = total_bytes
+                .checked_add(read as u64)
+                .ok_or_else(|| UpdateError::InvalidManifest("artifact size overflow".into()))?;
+            if total_bytes > MAX_RELEASE_ARTIFACT_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "release artifact exceeds the {}-byte download limit",
+                    MAX_RELEASE_ARTIFACT_BYTES
+                )));
+            }
             hasher.update(&buffer[..read]);
             file.write_all(&buffer[..read])?;
         }
         file.sync_all()?;
         drop(file);
 
-        let digest = hasher.finalize();
-        let actual = hex_encode(digest.as_ref());
+        let actual = hex_encode(hasher.finalize().as_ref());
         if actual != expected_sha256.to_ascii_lowercase() {
             return Err(UpdateError::ChecksumMismatch {
                 expected: expected_sha256.to_ascii_lowercase(),
                 actual,
             });
         }
-
         replace_temp_file(&temp, destination)?;
+        sync_parent_directory(destination)?;
         Ok(())
     })();
 
@@ -611,6 +653,18 @@ pub fn apply_update(
         .service_config
         .as_ref()
         .map(|_| backup_dir.join("service-config"));
+    let record = BackupRecord {
+        created_at: timestamp as u64,
+        version: version.into(),
+        install_backup: install_backup.clone(),
+        state_backup: if paths.state_dir.is_dir() {
+            Some(state_backup.clone())
+        } else {
+            None
+        },
+        config_backup: config_backup.clone(),
+        service_config_backup: service_config_backup.clone(),
+    };
 
     let backup_result = (|| -> Result<(), UpdateError> {
         if paths.state_dir.exists() {
@@ -632,7 +686,7 @@ pub fn apply_update(
                 {
                     fs::create_dir_all(parent)?;
                 }
-                fs::copy(
+                copy_file_durable(
                     service_config,
                     service_config_backup
                         .as_ref()
@@ -655,6 +709,13 @@ pub fn apply_update(
     })();
 
     if let Err(error) = backup_result {
+        let _ = fs::remove_dir_all(&backup_dir);
+        return Err(error);
+    }
+
+    // All copies are complete and the live installation is still untouched.
+    // Persist recovery metadata before moving the old installation out of place.
+    if let Err(error) = write_json_durable(&backup_dir.join("backup.json"), &record) {
         let _ = fs::remove_dir_all(&backup_dir);
         return Err(error);
     }
@@ -691,40 +752,9 @@ pub fn apply_update(
         return Err(UpdateError::RolledBack(error.to_string()));
     }
 
-    let record = BackupRecord {
-        created_at: timestamp as u64,
-        version: version.into(),
-        install_backup,
-        state_backup: state_backup.exists().then_some(state_backup),
-        config_backup,
-        service_config_backup,
-    };
-    let backup_json = (|| -> Result<(), UpdateError> {
-        let bytes = serde_json::to_vec_pretty(&record)?;
-        fs::write(backup_dir.join("backup.json"), bytes)?;
-        Ok(())
-    })();
-
-    if let Err(error) = backup_json {
-        let rollback_result = rollback_install(
-            paths,
-            &record.install_backup,
-            record.state_backup.as_deref(),
-            record.config_backup.as_deref(),
-            paths.service_config.as_deref(),
-            record.service_config_backup.as_deref(),
-            true,
-        );
-        if let Err(rollback_error) = rollback_result {
-            return Err(UpdateError::RolledBack(format!(
-                "backup record write failed: {error}; rollback also failed: {rollback_error}"
-            )));
-        }
-        return Err(UpdateError::RolledBack(format!(
-            "backup record write failed; GitRun was rolled back: {error}"
-        )));
-    }
-
+    // The journal is already on disk, before any live state was changed.
+    // Keep it for both manual rollback and post-crash recovery.
+    sync_parent_directory(&backup_dir.join("backup.json"))?;
     Ok(record)
 }
 
@@ -865,6 +895,12 @@ pub struct InstalledBackupRecord {
     pub artifacts: Vec<InstalledArtifactBackup>,
     pub version_file: PathBuf,
     pub version_file_backup: Option<PathBuf>,
+    /// Trusted optional config modified by this update transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_file: Option<PathBuf>,
+    /// Backup of the original config, including its mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_file_backup: Option<PathBuf>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -884,29 +920,81 @@ pub fn apply_installed_update(
         )));
     }
     validate_installed_artifacts(artifacts, version_file)?;
+    reject_symlink_components(backup_root)?;
+    if paths_overlap(backup_root, version_file)
+        || artifacts.iter().any(|artifact| {
+            paths_overlap(backup_root, &artifact.destination)
+                || paths_overlap(version_file, &artifact.destination)
+        })
+        || config_file.is_some_and(|config| {
+            paths_overlap(backup_root, config)
+                || paths_overlap(version_file, config)
+                || artifacts
+                    .iter()
+                    .any(|artifact| paths_overlap(&artifact.destination, config))
+        })
+    {
+        return Err(UpdateError::InvalidManifest(
+            "backup, version metadata, config and artifact paths must not overlap".into(),
+        ));
+    }
+    if let Some(config) = config_file {
+        reject_symlink_components(config)?;
+        match fs::symlink_metadata(config) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "update config must be a regular file: {}",
+                    config.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let archive_meta = fs::symlink_metadata(archive)?;
+    if archive_meta.file_type().is_symlink() || !archive_meta.is_file() {
+        return Err(UpdateError::InvalidManifest(
+            "release archive must be a regular non-symlink file".into(),
+        ));
+    }
+    if archive_meta.len() > MAX_RELEASE_ARTIFACT_BYTES {
+        return Err(UpdateError::InvalidManifest(
+            "release archive exceeds the configured download size limit".into(),
+        ));
+    }
+
     let _lock = UpdateLock::acquire(backup_root)?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let backup_dir = backup_root.join(format!("system-{version}-{timestamp}"));
-    fs::create_dir_all(&backup_dir)?;
+    fs::create_dir(&backup_dir)?;
     let staging = backup_dir.join("staging");
     let mut backups = Vec::with_capacity(artifacts.len());
 
     let backup_result = (|| -> Result<(), UpdateError> {
-        for artifact in artifacts {
-            let backup = if artifact.destination.is_file() {
-                let name = artifact
-                    .destination
-                    .file_name()
-                    .and_then(|v| v.to_str())
-                    .unwrap_or("artifact");
-                let path = backup_dir.join(format!("artifact-{name}"));
-                fs::copy(&artifact.destination, &path)?;
-                Some(path)
-            } else {
-                None
+        for (index, artifact) in artifacts.iter().enumerate() {
+            let backup = match fs::symlink_metadata(&artifact.destination) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    let name = artifact
+                        .destination
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("artifact");
+                    let path = backup_dir.join(format!("artifact-{index}-{name}"));
+                    copy_file_durable(&artifact.destination, &path)?;
+                    Some(path)
+                }
+                Ok(_) => {
+                    return Err(UpdateError::Command(format!(
+                        "installed artifact is not a regular file: {}",
+                        artifact.destination.display()
+                    )));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
             };
             backups.push(InstalledArtifactBackup {
                 archive_name: artifact.archive_name.clone(),
@@ -915,18 +1003,33 @@ pub fn apply_installed_update(
             });
         }
 
-        if let Ok(meta) = fs::symlink_metadata(version_file) {
-            if meta.is_dir() {
+        match fs::symlink_metadata(version_file) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                copy_file_durable(version_file, &backup_dir.join("version.txt"))?;
+            }
+            Ok(_) => {
                 return Err(UpdateError::Command(format!(
-                    "version file path is a directory: {}",
+                    "version metadata is not a regular file: {}",
                     version_file.display()
                 )));
             }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
-
-        if version_file.is_file() {
-            let path = backup_dir.join("version.txt");
-            fs::copy(version_file, &path)?;
+        if let Some(config) = config_file {
+            match fs::symlink_metadata(config) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    copy_file_durable(config, &backup_dir.join("config.env"))?;
+                }
+                Ok(_) => {
+                    return Err(UpdateError::Command(format!(
+                        "update config is not a regular file: {}",
+                        config.display()
+                    )));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
         }
         Ok(())
     })();
@@ -936,68 +1039,76 @@ pub fn apply_installed_update(
         return Err(error);
     }
 
-    let version_file_backup = if version_file.is_file() {
+    let version_file_backup = if backup_dir.join("version.txt").is_file() {
         Some(backup_dir.join("version.txt"))
     } else {
         None
     };
-
+    let config_file_backup = config_file
+        .filter(|_| backup_dir.join("config.env").is_file())
+        .map(|_| backup_dir.join("config.env"));
     let record = InstalledBackupRecord {
         created_at: timestamp as u64,
         version: version.to_owned(),
         artifacts: backups,
         version_file: version_file.to_path_buf(),
         version_file_backup,
+        config_file: config_file.map(Path::to_path_buf),
+        config_file_backup,
     };
+
+    // The rollback journal must be durable before the first live-file replacement.
+    if let Err(error) = write_json_durable(&backup_dir.join("backup.json"), &record) {
+        let _ = fs::remove_dir_all(&backup_dir);
+        return Err(error);
+    }
 
     let result = (|| -> Result<(), UpdateError> {
         extract_archive(archive, target, &staging)?;
         for artifact in artifacts {
             let source = staging.join(&artifact.archive_name);
-            if !source.is_file() {
-                if artifact.required {
+            match fs::symlink_metadata(&source) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    atomic_replace_installed_file(&source, &artifact.destination, 0o755)?;
+                }
+                Ok(_) => {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "release artifact is not a regular file: {}",
+                        artifact.archive_name
+                    )));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound && !artifact.required => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     return Err(UpdateError::InvalidManifest(format!(
                         "release archive is missing required artifact {}",
                         artifact.archive_name
                     )));
                 }
-                continue;
+                Err(error) => return Err(error.into()),
             }
-            atomic_replace_installed_file(&source, &artifact.destination, 0o755)?;
         }
         atomic_write_installed_file(version_file, version.as_bytes(), 0o644)?;
-        health_check_installed_binary(health_binary, config_file)?;
+        health_check_installed_executable_expected(health_binary, config_file, version)?;
         Ok(())
     })();
 
     if let Err(error) = result {
-        if let Err(rollback_error) = rollback_installed_update_unchecked(&record) {
-            return Err(UpdateError::RolledBack(format!(
-                "{error}; rollback also failed: {rollback_error}"
-            )));
-        }
-        return Err(UpdateError::RolledBack(error.to_string()));
-    }
-
-    let _ = fs::remove_dir_all(&staging);
-    let backup_json = (|| -> Result<(), UpdateError> {
-        let bytes = serde_json::to_vec_pretty(&record)?;
-        fs::write(backup_dir.join("backup.json"), bytes)?;
-        Ok(())
-    })();
-
-    if let Err(error) = backup_json {
         let rollback_result = rollback_installed_update_unchecked(&record);
+        let _ = fs::remove_dir_all(&staging);
         if let Err(rollback_error) = rollback_result {
             return Err(UpdateError::RolledBack(format!(
-                "backup record write failed: {error}; rollback also failed: {rollback_error}"
+                "{error}; rollback also failed: {rollback_error}; recovery journal: {}",
+                backup_dir.join("backup.json").display()
             )));
         }
         return Err(UpdateError::RolledBack(format!(
-            "backup record write failed; installed update was rolled back: {error}"
+            "{error}; installed files were rolled back; recovery journal: {}",
+            backup_dir.join("backup.json").display()
         )));
     }
 
+    let _ = fs::remove_dir_all(&staging);
+    sync_parent_directory(&backup_dir.join("backup.json"))?;
     Ok(record)
 }
 
@@ -1007,18 +1118,36 @@ pub fn rollback_installed_update(
     expected_version_file: &Path,
     backup_root: &Path,
 ) -> Result<(), UpdateError> {
+    rollback_installed_update_with_config(
+        record,
+        expected_artifacts,
+        expected_version_file,
+        None,
+        backup_root,
+    )
+}
+
+pub fn rollback_installed_update_with_config(
+    record: &InstalledBackupRecord,
+    expected_artifacts: &[InstalledArtifact],
+    expected_version_file: &Path,
+    expected_config_file: Option<&Path>,
+    backup_root: &Path,
+) -> Result<(), UpdateError> {
     validate_installed_rollback_record(
         record,
         expected_artifacts,
         expected_version_file,
+        expected_config_file,
         backup_root,
     )?;
     let _lock = UpdateLock::acquire(backup_root)?;
-    // Check again after serialization, before removing or replacing any file.
+    // Revalidate after acquiring the lock, immediately before any destructive operation.
     validate_installed_rollback_record(
         record,
         expected_artifacts,
         expected_version_file,
+        expected_config_file,
         backup_root,
     )?;
     rollback_installed_update_unchecked(record)
@@ -1028,6 +1157,7 @@ fn validate_installed_rollback_record(
     record: &InstalledBackupRecord,
     expected_artifacts: &[InstalledArtifact],
     expected_version_file: &Path,
+    expected_config_file: Option<&Path>,
     backup_root: &Path,
 ) -> Result<PathBuf, UpdateError> {
     if !is_version(&record.version) {
@@ -1045,6 +1175,17 @@ fn validate_installed_rollback_record(
             "installed rollback version-file path does not match the trusted installation".into(),
         ));
     }
+    if let Some(record_config) = record.config_file.as_deref() {
+        if expected_config_file != Some(record_config) {
+            return Err(UpdateError::InvalidManifest(
+                "installed rollback config path does not match the trusted installation".into(),
+            ));
+        }
+    } else if record.config_file_backup.is_some() {
+        return Err(UpdateError::InvalidManifest(
+            "installed rollback record has a config backup without a destination".into(),
+        ));
+    }
 
     let transaction_dir =
         backup_root.join(format!("system-{}-{}", record.version, record.created_at));
@@ -1056,7 +1197,7 @@ fn validate_installed_rollback_record(
         Some(true),
     )?;
 
-    for expected in expected_artifacts {
+    for (index, expected) in expected_artifacts.iter().enumerate() {
         let matches: Vec<_> = record
             .artifacts
             .iter()
@@ -1082,7 +1223,7 @@ fn validate_installed_rollback_record(
                     "trusted installed artifact has no safe file name".into(),
                 )
             })?;
-        let expected_backup = transaction_dir.join(format!("artifact-{file_name}"));
+        let expected_backup = transaction_dir.join(format!("artifact-{index}-{file_name}"));
         if let Some(backup) = item.backup.as_deref() {
             if backup != expected_backup {
                 return Err(UpdateError::InvalidManifest(
@@ -1100,6 +1241,13 @@ fn validate_installed_rollback_record(
                     )));
                 }
             }
+        } else {
+            require_backup_path(
+                &expected_backup,
+                "unexpected installed artifact backup",
+                false,
+                Some(false),
+            )?;
         }
         require_backup_path(
             &expected.destination,
@@ -1107,13 +1255,16 @@ fn validate_installed_rollback_record(
             false,
             None,
         )?;
-        if let Ok(metadata) = fs::symlink_metadata(&expected.destination) {
-            if !metadata.is_file() {
+        match fs::symlink_metadata(&expected.destination) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 return Err(UpdateError::InvalidManifest(format!(
                     "installed artifact destination is not a regular file: {}",
                     expected.destination.display()
                 )));
             }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
     }
 
@@ -1125,6 +1276,13 @@ fn validate_installed_rollback_record(
             ));
         }
         require_backup_path(backup, "installed version backup", true, Some(false))?;
+    } else {
+        require_backup_path(
+            &expected_version_backup,
+            "unexpected installed version backup",
+            false,
+            Some(false),
+        )?;
     }
     require_backup_path(
         expected_version_file,
@@ -1132,12 +1290,52 @@ fn validate_installed_rollback_record(
         false,
         None,
     )?;
-    if let Ok(metadata) = fs::symlink_metadata(expected_version_file) {
-        if !metadata.is_file() {
+    match fs::symlink_metadata(expected_version_file) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(UpdateError::InvalidManifest(format!(
                 "installed version-file destination is not a regular file: {}",
                 expected_version_file.display()
             )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let expected_config_backup = transaction_dir.join("config.env");
+    if let Some(config) = record.config_file.as_deref() {
+        if let Some(backup) = record.config_file_backup.as_deref() {
+            if backup != expected_config_backup {
+                return Err(UpdateError::InvalidManifest(
+                    "installed config backup is outside its trusted transaction directory".into(),
+                ));
+            }
+            require_backup_path(backup, "installed config backup", true, Some(false))?;
+        } else {
+            require_backup_path(
+                &expected_config_backup,
+                "unexpected installed config backup",
+                false,
+                Some(false),
+            )?;
+        }
+        require_backup_path(config, "installed config destination", false, Some(false))?;
+    } else if record.config_file_backup.is_some() {
+        return Err(UpdateError::InvalidManifest(
+            "installed config backup has no destination".into(),
+        ));
+    }
+    if let Some(config) = expected_config_file {
+        reject_symlink_components(config)?;
+        match fs::symlink_metadata(config) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "trusted config destination is not a regular file: {}",
+                    config.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
     }
     Ok(transaction_dir)
@@ -1145,16 +1343,17 @@ fn validate_installed_rollback_record(
 
 fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
     for artifact in &record.artifacts {
-        if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
-            if meta.file_type().is_symlink() || meta.is_dir() {
+        reject_symlink_components(&artifact.destination)?;
+        match fs::symlink_metadata(&artifact.destination) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 return Err(UpdateError::Command(format!(
                     "installed artifact destination is not a regular file: {}",
                     artifact.destination.display()
                 )));
             }
-        }
-        if artifact.destination.exists() {
-            fs::remove_file(&artifact.destination)?;
+            Ok(_) => fs::remove_file(&artifact.destination)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
         if let Some(backup) = &artifact.backup {
             let parent = artifact
@@ -1165,20 +1364,38 @@ fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result
             atomic_replace_installed_file(backup, &artifact.destination, 0o755)?;
         }
     }
-    if let Ok(meta) = fs::symlink_metadata(&record.version_file) {
-        if meta.file_type().is_symlink() || meta.is_dir() {
+    reject_symlink_components(&record.version_file)?;
+    match fs::symlink_metadata(&record.version_file) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(UpdateError::Command(format!(
                 "version file path is not a regular file: {}",
                 record.version_file.display()
             )));
         }
-        fs::remove_file(&record.version_file)?;
+        Ok(_) => fs::remove_file(&record.version_file)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     if let Some(backup) = &record.version_file_backup {
-        if let Some(parent) = record.version_file.parent() {
-            fs::create_dir_all(parent)?;
+        copy_file_durable(backup, &record.version_file)?;
+    }
+
+    if let Some(config) = &record.config_file {
+        reject_symlink_components(config)?;
+        match fs::symlink_metadata(config) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(UpdateError::Command(format!(
+                    "config restore destination is not a regular file: {}",
+                    config.display()
+                )));
+            }
+            Ok(_) => fs::remove_file(config)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
-        atomic_write_installed_file(&record.version_file, &fs::read(backup)?, 0o644)?;
+        if let Some(backup) = &record.config_file_backup {
+            copy_file_durable(backup, config)?;
+        }
     }
     Ok(())
 }
@@ -1187,23 +1404,93 @@ pub fn health_check_installed_binary(
     binary: &Path,
     config_file: Option<&Path>,
 ) -> Result<(), UpdateError> {
-    if !binary.is_file() {
-        return Err(UpdateError::Command(format!(
-            "installed GitRun binary not found: {}",
-            binary.display()
-        )));
-    }
+    // Preserve the public helper's full-health semantics for callers that
+    // expect a doctor check; the transactional installer uses the narrower
+    // executable-only check until system services have been reconciled.
+    check_installed_binary(binary, config_file, None)?;
     let mut command = Command::new(binary);
-    command.arg("doctor");
+    command.arg("doctor").arg("--no-cat");
     if let Some(config) = config_file {
         command.env("GITRUN_CONFIG_FILE", config);
     }
     let output = command.output()?;
     if !output.status.success() {
         return Err(UpdateError::Command(format!(
-            "post-update health check failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "post-update doctor check failed (exit {}): {}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim(),
+            if output.stdout.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; stdout: {}",
+                    String::from_utf8_lossy(&output.stdout).trim()
+                )
+            }
         )));
+    }
+    Ok(())
+}
+
+fn health_check_installed_executable_expected(
+    binary: &Path,
+    config_file: Option<&Path>,
+    expected_version: &str,
+) -> Result<(), UpdateError> {
+    check_installed_binary(binary, config_file, Some(expected_version))
+}
+
+fn check_installed_binary(
+    binary: &Path,
+    config_file: Option<&Path>,
+    expected_version: Option<&str>,
+) -> Result<(), UpdateError> {
+    reject_symlink_components(binary)?;
+    let metadata = fs::symlink_metadata(binary)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(UpdateError::Command(format!(
+            "installed GitRun binary is not a regular file: {}",
+            binary.display()
+        )));
+    }
+
+    // The executable check must not require healthy services: that would roll
+    // back a new binary before it has the chance to repair missing service units.
+    let mut command = Command::new(binary);
+    command.arg("--version");
+    if let Some(config) = config_file {
+        command.env("GITRUN_CONFIG_FILE", config);
+    }
+    let output = command.output()?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !output.status.success() || combined.trim().is_empty() {
+        return Err(UpdateError::Command(format!(
+            "post-update executable check failed (exit {}): {}",
+            output.status,
+            combined.trim()
+        )));
+    }
+    if let Some(expected_version) = expected_version {
+        let installed_version = combined.lines().find_map(|line| {
+            let mut parts = line.split_whitespace();
+            (parts.next() == Some("GitRun"))
+                .then(|| parts.next())
+                .flatten()
+        });
+        let matches_expected = installed_version.is_some_and(|installed| {
+            compare_versions(installed, expected_version)
+                .is_ok_and(|ordering| ordering == std::cmp::Ordering::Equal)
+        });
+        if !matches_expected {
+            return Err(UpdateError::Command(format!(
+                "post-update version check failed: expected {expected_version}, received {}",
+                installed_version.unwrap_or("no GitRun version line")
+            )));
+        }
     }
     Ok(())
 }
@@ -1213,15 +1500,25 @@ fn atomic_replace_installed_file(
     destination: &Path,
     mode: u32,
 ) -> Result<(), UpdateError> {
-    if fs::symlink_metadata(source)
-        .map(|meta| meta.file_type().is_symlink())
-        .unwrap_or(false)
-    {
+    let source_meta = fs::symlink_metadata(source)?;
+    if source_meta.file_type().is_symlink() || !source_meta.is_file() {
         return Err(UpdateError::InvalidManifest(format!(
-            "staged artifact is a symlink: {}",
+            "staged artifact is not a regular file: {}",
             source.display()
         )));
     }
+    reject_symlink_components(destination)?;
+    let destination_metadata = match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(UpdateError::Command(format!(
+                "installed artifact destination is not a regular file: {}",
+                destination.display()
+            )));
+        }
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
     let parent = destination
         .parent()
         .ok_or_else(|| UpdateError::Command("installed artifact has no parent".into()))?;
@@ -1234,10 +1531,15 @@ fn atomic_replace_installed_file(
             .create_new(true)
             .open(&temp)?;
         io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
+        copy_file_owner(
+            &output,
+            destination_metadata.as_ref().unwrap_or(&source_meta),
+        )?;
         set_file_mode(&temp, mode)?;
+        output.sync_all()?;
         drop(output);
         replace_temp_file(&temp, destination)?;
+        sync_parent_directory(destination)?;
         Ok(())
     })();
     if result.is_err() {
@@ -1251,27 +1553,124 @@ fn atomic_write_installed_file(
     content: &[u8],
     mode: u32,
 ) -> Result<(), UpdateError> {
+    reject_symlink_components(destination)?;
+    let destination_metadata = match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(UpdateError::Command(format!(
+                "atomic write destination is not a regular file: {}",
+                destination.display()
+            )));
+        }
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let parent = destination
+        .parent()
+        .ok_or_else(|| UpdateError::Command("installed file has no parent".into()))?;
+    fs::create_dir_all(parent)?;
     let temp = temporary_sibling(destination, ".gitrun-update");
     let result = (|| -> Result<(), UpdateError> {
-        let parent = destination
-            .parent()
-            .ok_or_else(|| UpdateError::Command("installed file has no parent".into()))?;
-        fs::create_dir_all(parent)?;
         let mut output = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temp)?;
         output.write_all(content)?;
-        output.sync_all()?;
+        if let Some(metadata) = destination_metadata.as_ref() {
+            copy_file_owner(&output, metadata)?;
+        }
         set_file_mode(&temp, mode)?;
+        output.sync_all()?;
         drop(output);
         replace_temp_file(&temp, destination)?;
+        sync_parent_directory(destination)?;
         Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
     }
     result
+}
+
+fn reject_symlink_components(path: &Path) -> Result<(), UpdateError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut current = PathBuf::new();
+    for component in absolute.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "update path contains a symlink component: {}",
+                    current.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn sync_parent_directory(path: &Path) -> Result<(), UpdateError> {
+    #[cfg(unix)]
+    {
+        fs::File::open(path.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn copy_file_durable(source: &Path, destination: &Path) -> Result<(), UpdateError> {
+    let metadata = fs::symlink_metadata(source)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(UpdateError::InvalidManifest(format!(
+            "refusing to back up a non-regular file: {}",
+            source.display()
+        )));
+    }
+    let mut input = fs::File::open(source)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
+    io::copy(&mut input, &mut output)?;
+    copy_file_owner(&output, &metadata)?;
+    copy_permissions(&metadata, destination)?;
+    output.sync_all()?;
+    drop(output);
+    sync_parent_directory(destination)?;
+    Ok(())
+}
+
+fn write_json_durable(path: &Path, value: &impl Serialize) -> Result<(), UpdateError> {
+    atomic_write_installed_file(path, &serde_json::to_vec_pretty(value)?, 0o600)
+}
+
+fn copy_file_owner(file: &fs::File, metadata: &fs::Metadata) -> Result<(), UpdateError> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: this is an open file descriptor owned by the caller and the
+        // target uid/gid values come from metadata read from the source file.
+        let result = unsafe { native_fchown(file.as_raw_fd(), metadata.uid(), metadata.gid()) };
+        if result != 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (file, metadata);
+    }
+    Ok(())
 }
 
 fn set_file_mode(path: &Path, mode: u32) -> Result<(), UpdateError> {
@@ -1797,18 +2196,55 @@ fn is_sha256_digest(value: &str) -> bool {
         && value[7..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<(), UpdateError> {
+fn extract_archive(
+    archive_path: &Path,
+    _target: &str,
+    destination: &Path,
+) -> Result<(), UpdateError> {
+    let archive_meta = fs::symlink_metadata(archive_path)?;
+    if archive_meta.file_type().is_symlink() || !archive_meta.is_file() {
+        return Err(UpdateError::InvalidManifest(
+            "release archive must be a regular non-symlink file".into(),
+        ));
+    }
+    if archive_meta.len() > MAX_RELEASE_ARTIFACT_BYTES {
+        return Err(UpdateError::InvalidManifest(
+            "release archive exceeds the configured download size limit".into(),
+        ));
+    }
+    reject_symlink_components(destination)?;
+    match fs::symlink_metadata(destination) {
+        Ok(_) => {
+            return Err(UpdateError::InvalidManifest(format!(
+                "staging destination already exists: {}",
+                destination.display()
+            )));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     fs::create_dir_all(destination)?;
-    let name = archive
+    let name = archive_path
         .file_name()
-        .and_then(|v| v.to_str())
+        .and_then(|value| value.to_str())
         .unwrap_or_default();
+    let mut seen_paths = std::collections::HashSet::new();
+    let mut expanded_bytes = 0u64;
 
     if name.ends_with(".tar.gz") {
-        let decoder = flate2::read::GzDecoder::new(fs::File::open(archive)?);
+        let decoder = flate2::read::GzDecoder::new(fs::File::open(archive_path)?);
         let mut archive = tar::Archive::new(decoder);
+        let mut entry_count = 0usize;
         for entry in archive.entries()? {
             let mut entry = entry?;
+            entry_count = entry_count.checked_add(1).ok_or_else(|| {
+                UpdateError::InvalidManifest("archive entry count overflow".into())
+            })?;
+            if entry_count > MAX_ARCHIVE_ENTRIES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive contains more than {MAX_ARCHIVE_ENTRIES} entries"
+                )));
+            }
             let kind = entry.header().entry_type();
             if kind.is_symlink()
                 || kind.is_hard_link()
@@ -1820,29 +2256,100 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                     "archive contains links or special filesystem entries".into(),
                 ));
             }
-            let unpacked = entry.unpack_in(destination)?;
-            if !unpacked {
+            let entry_path = entry.path()?.into_owned();
+            if !seen_paths.insert(entry_path.clone()) {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive contains duplicate path: {}",
+                    entry_path.display()
+                )));
+            }
+            let size = entry.size();
+            if size > MAX_ARCHIVE_ENTRY_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive entry exceeds size limit: {}",
+                    entry_path.display()
+                )));
+            }
+            expanded_bytes = expanded_bytes.checked_add(size).ok_or_else(|| {
+                UpdateError::InvalidManifest("expanded archive size overflow".into())
+            })?;
+            if expanded_bytes > MAX_ARCHIVE_EXPANDED_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive expands beyond the {}-byte limit",
+                    MAX_ARCHIVE_EXPANDED_BYTES
+                )));
+            }
+            let mode = entry.header().mode().unwrap_or(0o644);
+            if !entry.unpack_in(destination)? {
                 return Err(UpdateError::InvalidManifest(
                     "archive entry escapes the update staging directory".into(),
                 ));
             }
+            let out = destination.join(&entry_path);
+            if let Ok(metadata) = fs::symlink_metadata(&out) {
+                if metadata.is_file() {
+                    let safe_mode = ((mode & 0o755) | 0o600) & !0o6000;
+                    set_file_mode(&out, safe_mode)?;
+                } else if metadata.is_dir() {
+                    let safe_mode = ((mode & 0o755) | 0o700) & !0o6000;
+                    set_file_mode(&out, safe_mode)?;
+                }
+            }
         }
     } else if name.ends_with(".zip") {
-        let file = fs::File::open(archive)?;
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| UpdateError::InvalidManifest(e.to_string()))?;
+        let file = fs::File::open(archive_path)?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+        if archive.len() > MAX_ARCHIVE_ENTRIES {
+            return Err(UpdateError::InvalidManifest(format!(
+                "archive contains more than {MAX_ARCHIVE_ENTRIES} entries"
+            )));
+        }
         for index in 0..archive.len() {
             let mut entry = archive
                 .by_index(index)
-                .map_err(|e| UpdateError::InvalidManifest(e.to_string()))?;
-            let Some(enclosed) = entry.enclosed_name() else {
+                .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+            let Some(relative) = entry.enclosed_name() else {
                 return Err(UpdateError::InvalidManifest(
                     "archive contains unsafe path".into(),
                 ));
             };
-            let out = destination.join(enclosed);
+            if !seen_paths.insert(relative.clone()) {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive contains duplicate path: {}",
+                    relative.display()
+                )));
+            }
+            let size = entry.size();
+            if size > MAX_ARCHIVE_ENTRY_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive entry exceeds size limit: {}",
+                    relative.display()
+                )));
+            }
+            expanded_bytes = expanded_bytes.checked_add(size).ok_or_else(|| {
+                UpdateError::InvalidManifest("expanded archive size overflow".into())
+            })?;
+            if expanded_bytes > MAX_ARCHIVE_EXPANDED_BYTES {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "archive expands beyond the {}-byte limit",
+                    MAX_ARCHIVE_EXPANDED_BYTES
+                )));
+            }
+            let original_mode =
+                entry
+                    .unix_mode()
+                    .unwrap_or(if entry.is_dir() { 0o755 } else { 0o644 });
+            let file_type = original_mode & 0o170000;
+            if file_type != 0 && file_type != 0o100000 && file_type != 0o040000 {
+                return Err(UpdateError::InvalidManifest(
+                    "archive contains a link or special filesystem entry".into(),
+                ));
+            }
+            let out = destination.join(&relative);
             if entry.is_dir() {
                 fs::create_dir_all(&out)?;
+                set_file_mode(&out, 0o755)?;
             } else {
                 if let Some(parent) = out.parent() {
                     fs::create_dir_all(parent)?;
@@ -1851,8 +2358,19 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
                     .write(true)
                     .create_new(true)
                     .open(&out)?;
-                io::copy(&mut entry, &mut output)?;
+                let copied = io::copy(
+                    &mut entry.by_ref().take(size.saturating_add(1)),
+                    &mut output,
+                )?;
+                if copied != size {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "archive entry size mismatch for {}: expected {size}, got {copied}",
+                        relative.display()
+                    )));
+                }
                 output.sync_all()?;
+                let safe_mode = ((original_mode & 0o755) | 0o600) & !0o6000;
+                set_file_mode(&out, safe_mode)?;
             }
         }
     } else {
@@ -1860,6 +2378,7 @@ fn extract_archive(archive: &Path, _target: &str, destination: &Path) -> Result<
             "unsupported archive type".into(),
         ));
     }
+    sync_parent_directory(destination)?;
     Ok(())
 }
 
@@ -1917,7 +2436,7 @@ fn rollback_install(
                 if let Some(parent) = service.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                fs::copy(backup, service)?;
+                copy_file_durable(backup, service)?;
             } else if backup.is_dir() {
                 copy_dir(backup, service)?;
             }
@@ -1961,6 +2480,9 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
             copy_dir(&src, &dst)?;
         } else if entry_meta.is_file() {
             fs::copy(&src, &dst)?;
+            let output = fs::File::open(&dst)?;
+            copy_file_owner(&output, &entry_meta)
+                .map_err(|error| io::Error::other(error.to_string()))?;
             copy_permissions(&entry_meta, &dst)?;
         } else {
             return Err(io::Error::new(
@@ -1974,21 +2496,22 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
 }
 
 fn http_client() -> Result<Client, UpdateError> {
-    Ok(Client::builder()
-        // A valid HTTPS starting URL is not enough: an HTTP downgrade during
-        // redirect would still send the updater's request over cleartext.
-        // Keep every redirect on HTTPS, including release-asset redirects.
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if is_https_url(attempt.url()) {
-                attempt.follow()
-            } else {
-                attempt.error("update redirects must remain on HTTPS")
-            }
-        }))
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(300))
-        .user_agent("GitRun-Updater/0.3")
-        .build()?)
+    Ok(
+        Client::builder() // A valid HTTPS starting URL is not enough: an HTTP downgrade during
+            // redirect would still send the updater's request over cleartext.
+            // Keep every redirect on HTTPS, including release-asset redirects.
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if is_https_url(attempt.url()) {
+                    attempt.follow()
+                } else {
+                    attempt.error("update redirects must remain on HTTPS")
+                }
+            }))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(300))
+            .user_agent("GitRun-Updater/0.3")
+            .build()?,
+    )
 }
 
 fn is_https_url(url: &reqwest::Url) -> bool {
@@ -2061,12 +2584,29 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
         ("backup", paths.backup_root.as_path()),
     ];
     for (name, path) in managed {
-        if let Ok(metadata) = fs::symlink_metadata(path) {
-            if metadata.file_type().is_symlink() {
+        reject_symlink_components(path)?;
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(UpdateError::InvalidManifest(format!(
                     "{name} update path must not be a symlink"
                 )));
             }
+            Ok(metadata) => {
+                if matches!(name, "state" | "backup") && !metadata.is_dir() {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "{name} update path must be a directory: {}",
+                        path.display()
+                    )));
+                }
+                if name == "install" && !metadata.is_dir() {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "install update path must be a directory: {}",
+                        path.display()
+                    )));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
     }
     for i in 0..managed.len() {
@@ -2085,6 +2625,7 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
     ];
     for (name, path) in optional {
         if let Some(path) = path {
+            reject_symlink_components(path)?;
             if paths_overlap(path, &paths.backup_root)
                 || paths_overlap(path, &paths.install_dir)
                 || paths_overlap(path, &paths.state_dir)
@@ -2093,12 +2634,21 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
                     "{name} update path overlaps a managed update path"
                 )));
             }
-            if let Ok(metadata) = fs::symlink_metadata(path) {
-                if metadata.file_type().is_symlink() {
+            match fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
                     return Err(UpdateError::InvalidManifest(format!(
                         "{name} update path must not be a symlink"
                     )));
                 }
+                Ok(metadata) if name == "config" && !metadata.is_dir() => {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "config update path must be a directory: {}",
+                        path.display()
+                    )));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
             }
         }
     }
@@ -2139,45 +2689,48 @@ fn validate_installed_artifacts(
             "installed update requires at least one artifact".into(),
         ));
     }
+    let mut archive_names = std::collections::HashSet::new();
+    let mut destinations = std::collections::HashSet::new();
     for artifact in artifacts {
-        if artifact.archive_name.is_empty()
-            || artifact.archive_name.contains(['/', '\\'])
-            || artifact.archive_name == "."
-            || artifact.archive_name == ".."
+        if !is_safe_filename(&artifact.archive_name)
+            || !archive_names.insert(artifact.archive_name.as_str())
+            || !destinations.insert(&artifact.destination)
         {
             return Err(UpdateError::InvalidManifest(format!(
-                "invalid installed artifact archive name: {}",
-                artifact.archive_name
+                "invalid or duplicate installed artifact mapping: {} -> {}",
+                artifact.archive_name,
+                artifact.destination.display()
             )));
         }
-        if let Ok(meta) = fs::symlink_metadata(&artifact.destination) {
-            if meta.file_type().is_symlink() {
+        reject_symlink_components(&artifact.destination)?;
+        match fs::symlink_metadata(&artifact.destination) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 return Err(UpdateError::Command(format!(
-                    "installed artifact destination is a symlink: {}",
+                    "installed artifact destination is not a regular file: {}",
                     artifact.destination.display()
                 )));
             }
-            if meta.is_dir() {
-                return Err(UpdateError::Command(format!(
-                    "installed artifact destination is a directory: {}",
-                    artifact.destination.display()
-                )));
-            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if paths_overlap(version_file, &artifact.destination) {
+            return Err(UpdateError::InvalidManifest(
+                "version metadata path must not overlap an installed artifact".into(),
+            ));
         }
     }
-    if let Ok(meta) = fs::symlink_metadata(version_file) {
-        if meta.file_type().is_symlink() {
+    reject_symlink_components(version_file)?;
+    match fs::symlink_metadata(version_file) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(UpdateError::Command(format!(
-                "version file is a symlink: {}",
+                "version metadata is not a regular file: {}",
                 version_file.display()
             )));
         }
-        if meta.is_dir() {
-            return Err(UpdateError::Command(format!(
-                "version file path is a directory: {}",
-                version_file.display()
-            )));
-        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     Ok(())
 }
@@ -2205,15 +2758,6 @@ fn replace_temp_file(temp: &Path, destination: &Path) -> Result<(), UpdateError>
     }
     fs::rename(temp, destination)?;
     sync_parent_directory(destination)?;
-    Ok(())
-}
-
-fn sync_parent_directory(path: &Path) -> Result<(), UpdateError> {
-    #[cfg(unix)]
-    {
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        fs::File::open(parent)?.sync_all()?;
-    }
     Ok(())
 }
 
@@ -2262,26 +2806,88 @@ fn copy_permissions(metadata: &fs::Metadata, destination: &Path) -> Result<(), i
 }
 
 struct UpdateLock {
+    #[cfg(unix)]
+    _file: fs::File,
+    #[cfg(not(unix))]
     path: PathBuf,
 }
 
 impl UpdateLock {
     fn acquire(root: &Path) -> Result<Self, UpdateError> {
+        reject_symlink_components(root)?;
         fs::create_dir_all(root)?;
+        set_file_mode(root, 0o700)?;
         let path = root.join(".gitrun-update.lock");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-        writeln!(file, "pid={}", std::process::id())?;
-        file.sync_all()?;
-        Ok(Self { path })
+        reject_symlink_components(&path)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::OpenOptionsExt;
+
+            // A kernel lock is released on process exit or reboot. Keep the
+            // lockfile inode instead of unlinking it, avoiding stale-lock
+            // deadlocks and lock-inode races between competing update processes.
+            let mut file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(&path)?;
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(UpdateError::InvalidManifest(
+                    "update lock path must be a regular non-symlink file".into(),
+                ));
+            }
+            set_file_mode(&path, 0o600)?;
+            // SAFETY: the descriptor belongs to the open regular file above
+            // and remains owned by UpdateLock throughout the transaction.
+            let lock_result = unsafe { native_flock(file.as_raw_fd(), 2 | 4) };
+            if lock_result != 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::WouldBlock {
+                    return Err(UpdateError::Command(
+                        "another GitRun update or rollback is already in progress".into(),
+                    ));
+                }
+                return Err(error.into());
+            }
+            file.set_len(0)?;
+            writeln!(file, "pid={}", std::process::id())?;
+            file.sync_all()?;
+            Ok(Self { _file: file })
+        }
+
+        #[cfg(not(unix))]
+        {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            writeln!(file, "pid={}", std::process::id())?;
+            file.sync_all()?;
+            Ok(Self { path })
+        }
     }
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    #[link_name = "flock"]
+    fn native_flock(fd: std::os::fd::RawFd, operation: i32) -> i32;
+    #[link_name = "fchown"]
+    fn native_fchown(fd: std::os::fd::RawFd, owner: u32, group: u32) -> i32;
 }
 
 impl Drop for UpdateLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        #[cfg(not(unix))]
+        {
+            let _ = fs::remove_file(&self.path);
+        }
+        // On Unix, dropping the open file releases flock in the kernel.
     }
 }
 
@@ -2904,6 +3510,8 @@ mod tests {
             }],
             version_file: version_file.clone(),
             version_file_backup: None,
+            config_file: None,
+            config_file_backup: None,
         };
 
         assert!(
@@ -2913,5 +3521,207 @@ mod tests {
         assert_eq!(fs::read(&attacker_target).unwrap(), b"do not touch");
         assert_eq!(fs::read(&version_file).unwrap(), b"1.2.3\n");
         let _ = fs::remove_dir_all(&root);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn installed_update_persists_recovery_journal_and_can_restore_previous_artifacts() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-journal-{}-{nonce}",
+            std::process::id()
+        ));
+        let binary = root.join("bin/gitrun");
+        let version_file = root.join("share/version.txt");
+        let backup_root = root.join("backups");
+        let config_file = root.join("gitrun.env");
+        fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        fs::create_dir_all(version_file.parent().unwrap()).unwrap();
+        fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&version_file, b"0.9.0\n").unwrap();
+        fs::write(&config_file, b"GITRUN_TEST=before\n").unwrap();
+        fs::set_permissions(&config_file, fs::Permissions::from_mode(0o640)).unwrap();
+        let original_config_metadata = fs::metadata(&config_file).unwrap();
+
+        let archive_path = root.join("release.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive_path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"GitRun 1.2.3\"; exit 0; fi\nexit 0\n";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "gitrun", &payload[..])
+            .unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let artifacts = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: binary.clone(),
+            required: true,
+        }];
+        let record = apply_installed_update(
+            &archive_path,
+            "x86_64-unknown-linux-gnu",
+            "1.2.3",
+            &artifacts,
+            &version_file,
+            &backup_root,
+            &binary,
+            Some(&config_file),
+        )
+        .unwrap();
+
+        let transaction =
+            backup_root.join(format!("system-{}-{}", record.version, record.created_at));
+        assert!(
+            transaction.join("backup.json").is_file(),
+            "journal must survive a completed install"
+        );
+        assert_eq!(fs::read_to_string(&version_file).unwrap(), "1.2.3");
+        assert_eq!(
+            fs::read(record.artifacts[0].backup.as_ref().unwrap()).unwrap(),
+            b"#!/bin/sh\nexit 0\n"
+        );
+
+        let runner_image = RunnerImage {
+            reference: "ghcr.io/vider06/gitrun-runner:latest".into(),
+            digest: format!("sha256:{}", "a".repeat(64)),
+            minimum_version: "1.0.0".into(),
+        };
+        pin_runner_image(&config_file, &runner_image)
+            .expect("runner pinning must update config atomically without losing metadata");
+        assert!(fs::read_to_string(&config_file)
+            .unwrap()
+            .contains(&runner_image.digest));
+        rollback_installed_update_with_config(
+            &record,
+            &artifacts,
+            &version_file,
+            Some(&config_file),
+            &backup_root,
+        )
+        .expect("the recovery journal must restore the binary, version and config");
+        assert_eq!(fs::read_to_string(&version_file).unwrap(), "0.9.0\n");
+        assert_eq!(fs::read(&binary).unwrap(), b"#!/bin/sh\nexit 0\n");
+        assert_eq!(fs::read(&config_file).unwrap(), b"GITRUN_TEST=before\n");
+        assert_eq!(fs::metadata(&config_file).unwrap().mode() & 0o777, 0o640);
+        assert_eq!(
+            fs::metadata(&config_file).unwrap().uid(),
+            original_config_metadata.uid()
+        );
+        assert_eq!(
+            fs::metadata(&config_file).unwrap().gid(),
+            original_config_metadata.gid()
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installed_update_rejects_symlink_destination_before_mutation() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-symlink-dest-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let outside = root.join("outside");
+        let destination = root.join("gitrun");
+        let version_file = root.join("version.txt");
+        fs::write(&outside, b"must remain untouched").unwrap();
+        symlink(&outside, &destination).unwrap();
+        fs::write(&version_file, b"0.9.0\n").unwrap();
+
+        let archive_path = root.join("release.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            fs::File::create(&archive_path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        let payload = b"#!/bin/sh\nexit 0\n";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "gitrun", &payload[..])
+            .unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let artifacts = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: destination.clone(),
+            required: true,
+        }];
+        assert!(apply_installed_update(
+            &archive_path,
+            "x86_64-unknown-linux-gnu",
+            "1.2.3",
+            &artifacts,
+            &version_file,
+            &root.join("backups"),
+            &destination,
+            None,
+        )
+        .is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"must remain untouched");
+        assert_eq!(fs::read_to_string(&version_file).unwrap(), "0.9.0\n");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_lock_is_exclusive_and_survives_process_scope_without_stale_locking() {
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-updater-lock-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let first = UpdateLock::acquire(&root).unwrap();
+        assert!(
+            UpdateLock::acquire(&root).is_err(),
+            "a second updater must not overlap the active transaction"
+        );
+        drop(first);
+
+        let second = UpdateLock::acquire(&root)
+            .expect("dropping the first lock must release the kernel lock");
+        assert!(root.join(".gitrun-update.lock").is_file());
+        drop(second);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn release_manifest_rejects_duplicate_artifact_targets_and_files() {
+        let mut duplicate_target = manifest();
+        duplicate_target
+            .artifacts
+            .push(duplicate_target.artifacts[0].clone());
+        assert!(duplicate_target.validate().is_err());
+
+        let mut duplicate_file = manifest();
+        let mut second = duplicate_file.artifacts[0].clone();
+        second.target = "aarch64-unknown-linux-gnu".into();
+        duplicate_file.artifacts.push(second);
+        assert!(duplicate_file.validate().is_err());
     }
 }

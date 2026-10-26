@@ -10,7 +10,7 @@ GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It
 
 It is designed for developers and teams who want to use their own runner infrastructure without turning every workflow into an unrestricted host administrator. **No Kubernetes cluster is required.**
 
-> **Source version:** this branch targets `1.8.0`. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+> **Source version:** this branch targets `1.8.1`. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## What can GitRun do?
 
@@ -69,7 +69,7 @@ Requests are checked against the current runner/container identity, authoritativ
 - **Container hardening:** read-only Linux root filesystem by default, constrained capabilities, no-new-privileges, resource limits and a dedicated runner network.
 - **Safer filesystem access:** approved path prefixes, symlink/hard-link checks and bounded file operations.
 - **Controlled host mounts:** GitDockRun mounts are a separately gated capability for local Linux Docker; policy, destination capability and runner identity must all permit the operation.
-- **Signed updates:** release-manifest verification, checksums and rollback support.
+- **Signed updates:** Ed25519 release-manifest verification, streamed SHA-256 artifact verification, bounded archive extraction, durable recovery journals written before live mutation, symlink/path validation, health verification and rollback on failed installation.
 
 **Important:** direct Docker-socket access for workflow runners is disabled by default. Enabling it gives workflow code host-level Docker authority; only enable it for repositories and contributors you fully trust. GitRun is intended for infrastructure you administer, not as an open runner service for arbitrary public repositories.
 
@@ -154,10 +154,13 @@ gitrun doctor
 gitrun manage
 gitrun dashboard
 gitrun update --check
+gitrun fix-update
 gitrun fast-stop OWNER/REPOSITORY WORKFLOW_RUN_ID --yes
 gitrun rollback BACKUP_PATH
 gitrun cat
 ```
+
+The `fix-update` command repairs the installed GitRun systemd integration (scheduler, GSR and Control Manager units), the `gitrun-control` group and service startup, then applies the latest official signed release only if it is newer. It never downgrades the installed binary to force an update. System updates verify the artifact against the signed manifest checksum, reject unsafe archive entries and symlinked destinations, and write a durable rollback journal before replacing installed files. The updater checks the executable independently before repairing services, then runs the full `doctor` check after systemd reconciliation. Failed health checks trigger rollback and an attempt to restart the previous scheduler. The generic updater also writes its recovery journal before moving the previous installation. `gitrun doctor` reports configuration, dependency, installation metadata, systemd-unit, service and Control Manager socket health, with actionable failures and warnings. System repair requires sudo. Use `--no-cat` to suppress the mascot.
 
 The `fast-stop` command requires confirmation and requests force-cancellation of the **whole workflow run**, not a single job. It does not directly kill containers.
 

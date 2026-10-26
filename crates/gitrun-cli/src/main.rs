@@ -4,9 +4,9 @@ use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, B
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
-    fetch_manifest, latest_manifest, pin_runner_image, rollback, rollback_installed_update,
-    update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
-    InstalledBackupRecord, UpdateError, UpdatePaths,
+    fetch_manifest, latest_manifest, pin_runner_image, rollback,
+    rollback_installed_update_with_config, update_incompatible_dependencies, update_runner_image,
+    BackupRecord, InstalledArtifact, InstalledBackupRecord, UpdateError, UpdatePaths,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -128,6 +128,17 @@ fn setup_config_dir() -> PathBuf {
 }
 
 fn current_version() -> String {
+    // In a system installation, the root-owned version file is authoritative.
+    // Never let an inherited GITRUN_VERSION value influence a privileged update
+    // decision; that could suppress an update or misreport the installed version.
+    if system_install_paths().is_some() {
+        return std::fs::read_to_string("/usr/share/gitrun/version.txt")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "0.0.0".into());
+    }
+
     std::env::var("GITRUN_VERSION")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -135,11 +146,13 @@ fn current_version() -> String {
             std::fs::read_to_string("/usr/share/gitrun/version.txt")
                 .ok()
                 .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
         })
         .or_else(|| {
             std::fs::read_to_string("version.txt")
                 .ok()
                 .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
         })
         .unwrap_or_else(|| "0.0.0".into())
 }
@@ -425,6 +438,7 @@ fn update_command(
         return update_check_command(args);
     }
 
+    println!("GitRun update: fetching and verifying the release manifest");
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = if let Some(url) = args.get(1) {
         fetch_manifest(url)?
@@ -460,25 +474,31 @@ fn update_command(
         );
     }
 
-    let updated_dependencies = update_incompatible_dependencies(&plan)?;
-    if !updated_dependencies.is_empty() {
-        println!("dependencies updated: {}", updated_dependencies.join(", "));
-    }
-
     let work_root = match system_install {
         Some(_) => PathBuf::from("/var/lib/gitrun/update"),
         None => PathBuf::from(
             std::env::var("GITRUN_UPDATE_DIR").unwrap_or_else(|_| ".gitrun-update".into()),
         ),
     };
+    println!("GitRun update: preparing transaction and backup locations");
     std::fs::create_dir_all(&work_root)?;
     let archive = work_root.join(&plan.artifact);
     let artifact = manifest.artifact_for(&target)?;
+    println!("GitRun update: downloading release artifact and verifying SHA-256");
     download_and_verify(&plan.artifact_url, &artifact.sha256, &archive)?;
     presenter.transition(presenter::ValidationState::Working);
-    println!("checksum: PASS");
+    println!("GitRun update: artifact integrity PASS");
+
+    // Do not modify host dependencies until the signed release artifact has
+    // been downloaded completely and its checksum has been verified.
+    println!("GitRun update: checking required host dependencies");
+    let updated_dependencies = update_incompatible_dependencies(&plan)?;
+    if !updated_dependencies.is_empty() {
+        println!("dependencies updated: {}", updated_dependencies.join(", "));
+    }
 
     if let Some((gitrun_binary, version_file)) = system_install {
+        println!("GitRun update: applying the verified binary transaction");
         // System-update backup destinations are fixed even when running as root.
         let backup_root = PathBuf::from("/var/lib/gitrun/backups");
         let artifacts = [InstalledArtifact {
@@ -505,9 +525,18 @@ fn update_command(
             .ok()
             .and_then(|value| value.parse::<u32>().ok())
             .filter(|uid| *uid != 0);
-        if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
-            let rollback_error =
-                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
+        println!("GitRun update: reconciling systemd units, control group and GitRun services");
+        if let Err(error) =
+            gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &gitrun_binary)
+        {
+            let rollback_error = rollback_installed_update_with_config(
+                &backup,
+                &artifacts,
+                &version_file,
+                config_path.as_deref(),
+                &backup_root,
+            )
+            .err();
             let restart_error = restart_scheduler_service().err();
             return Err(format!(
                 "Control Manager installation failed: {error}; rollback: {}; scheduler recovery: {}",
@@ -518,9 +547,14 @@ fn update_command(
 
         if let Some(image) = &plan.runner_image {
             if let Err(error) = update_runner_image(image) {
-                let rollback_error =
-                    rollback_installed_update(&backup, &artifacts, &version_file, &backup_root)
-                        .err();
+                let rollback_error = rollback_installed_update_with_config(
+                    &backup,
+                    &artifacts,
+                    &version_file,
+                    config_path.as_deref(),
+                    &backup_root,
+                )
+                .err();
                 return Err(match rollback_error {
                     Some(rollback_error) => format!(
                         "runner update failed: {error}; GitRun rollback also failed: {rollback_error}"
@@ -531,9 +565,14 @@ fn update_command(
             }
             if let Some(config_file) = config_path.as_deref() {
                 if let Err(error) = pin_runner_image(config_file, image) {
-                    let rollback_error =
-                        rollback_installed_update(&backup, &artifacts, &version_file, &backup_root)
-                            .err();
+                    let rollback_error = rollback_installed_update_with_config(
+                        &backup,
+                        &artifacts,
+                        &version_file,
+                        config_path.as_deref(),
+                        &backup_root,
+                    )
+                    .err();
                     return Err(match rollback_error {
                         Some(rollback_error) => format!(
                             "runner configuration update failed: {error}; GitRun rollback also failed: {rollback_error}"
@@ -548,9 +587,15 @@ fn update_command(
         }
 
         presenter.transition(presenter::ValidationState::Running);
+        println!("GitRun update: restarting and verifying the scheduler");
         if let Err(error) = restart_scheduler_service() {
-            let rollback_result =
-                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
+            let rollback_result = rollback_installed_update_with_config(
+                &backup,
+                &artifacts,
+                &version_file,
+                config_path.as_deref(),
+                &backup_root,
+            );
             let restore_result = restart_scheduler_service();
             return match (rollback_result, restore_result) {
                 (Ok(()), Ok(())) => Err(format!(
@@ -568,8 +613,33 @@ fn update_command(
             };
         }
 
+        if let Err(error) = verify_post_update_doctor(&gitrun_binary) {
+            let rollback_result = rollback_installed_update_with_config(
+                &backup,
+                &artifacts,
+                &version_file,
+                config_path.as_deref(),
+                &backup_root,
+            );
+            let restore_result = restart_scheduler_service();
+            return match (rollback_result, restore_result) {
+                (Ok(()), Ok(())) => Err(format!(
+                    "post-update doctor failed; GitRun was rolled back and the previous service restarted: {error}"
+                ).into()),
+                (Err(rollback_error), Ok(())) => Err(format!(
+                    "post-update doctor failed: {error}; rollback also failed: {rollback_error}"
+                ).into()),
+                (Ok(()), Err(restore_error)) => Err(format!(
+                    "post-update doctor failed and the rolled-back service could not restart: {error}; restore restart failed: {restore_error}"
+                ).into()),
+                (Err(rollback_error), Err(restore_error)) => Err(format!(
+                    "post-update doctor failed: {error}; rollback failed: {rollback_error}; previous service restart failed: {restore_error}"
+                ).into()),
+            };
+        }
+
         presenter.transition(presenter::ValidationState::Success);
-        println!("GitRun update: PASS");
+        println!("GitRun update: PASS (binary, systemd and doctor verified)");
         println!(
             "backup: {}",
             backup_root
@@ -658,6 +728,30 @@ fn update_command(
             .unwrap_or(Path::new("."))
             .display()
     );
+    Ok(())
+}
+
+fn verify_post_update_doctor(binary: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let output = std::process::Command::new(binary)
+        .args(["doctor", "--no-cat"])
+        .env("GITRUN_CONFIG_FILE", TRUSTED_SYSTEM_CONFIG_FILE)
+        .env_remove("GITRUN_CONFIG_DIR")
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        return Err(format!(
+            "gitrun doctor exited with {}: {}{}",
+            output.status,
+            stderr,
+            if stdout.is_empty() {
+                String::new()
+            } else {
+                format!("; {stdout}")
+            }
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -1264,7 +1358,13 @@ fn rollback_command(
             destination: gitrun_binary,
             required: true,
         }];
-        rollback_installed_update(&backup, &expected_artifacts, &version_file, &backup_root)?;
+        rollback_installed_update_with_config(
+            &backup,
+            &expected_artifacts,
+            &version_file,
+            Some(Path::new(TRUSTED_SYSTEM_CONFIG_FILE)),
+            &backup_root,
+        )?;
         presenter.transition(presenter::ValidationState::Success);
         println!("GitRun rollback: PASS");
         return Ok(());
@@ -1494,6 +1594,8 @@ fn main() {
             check,
             &mut presenter,
         ),
+        Command::FixUpdate => run_fix_update(&mut presenter),
+        Command::FixUpdateRoot => run_fix_update(&mut presenter),
         Command::Scheduler => run_scheduler(),
         Command::Dashboard => {
             // The Tauri runtime may write native GTK/EGL diagnostics directly to
@@ -1670,7 +1772,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         // Update validates the release plan before entering the updating state.
         // Keeping the initial state neutral avoids showing "updating" when the
         // requested release is already installed or otherwise rejected.
-        Command::Update { .. } => ValidationState::Ready,
+        Command::Update { .. } | Command::FixUpdate => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
         Command::Manage => ValidationState::Reading,
         Command::Uninstall
@@ -1692,7 +1794,8 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::SaveGitRunSettingsRoot { .. }
         | Command::SaveKittySettingsRoot { .. }
         | Command::ReadKittyDashboardRoot
-        | Command::ReadGitRunSettingsRoot => ValidationState::Recovering,
+        | Command::ReadGitRunSettingsRoot
+        | Command::FixUpdateRoot => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
         }
@@ -1792,6 +1895,11 @@ enum Command {
         /// Optional manifest URL to inspect instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
+    /// Repair the system update integration and then apply the latest official release if newer.
+    FixUpdate,
+    /// Internal privileged entry point for `fix-update`.
+    #[command(name = "--fix-update-root", hide = true)]
+    FixUpdateRoot,
     /// Remove GitRun services, runtime resources, package registration and app data.
     Uninstall,
     /// Download, verify and reinstall the latest official GitRun release.
@@ -2428,24 +2536,415 @@ fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
     }
 }
 
-fn run_doctor() -> i32 {
-    match load_config() {
-        Ok(config) => {
-            println!(
-                "GitRun doctor: PASS ({} repositories, pool {}..{})",
-                config.repositories.len(),
-                config.min_runners,
-                config.max_runners
-            );
-            0
+fn doctor_check(
+    label: &str,
+    result: Result<String, String>,
+    failures: &mut usize,
+    warnings: &mut usize,
+) {
+    match result {
+        Ok(detail) => println!("[PASS] {label}: {detail}"),
+        Err(detail) if detail.starts_with("WARN: ") => {
+            *warnings += 1;
+            println!("[WARN] {label}: {}", detail.trim_start_matches("WARN: "));
         }
-        Err(error) => {
-            eprintln!("GitRun doctor: FAIL — {error}");
-            1
+        Err(detail) => {
+            *failures += 1;
+            println!("[FAIL] {label}: {detail}");
         }
     }
 }
 
+fn doctor_file_check(path: &str, require_root_owned: bool) -> Result<String, String> {
+    let path_obj = Path::new(path);
+    let metadata =
+        std::fs::symlink_metadata(path_obj).map_err(|error| format!("{path}: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("{path} must not be a symbolic link"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if require_root_owned && metadata.uid() != 0 {
+            // Report the failed ownership policy without exposing host account
+            // identifiers in CLI output or logs.
+            return Err(format!("{path} is not owned by root"));
+        }
+        if require_root_owned && metadata.mode() & 0o022 != 0 {
+            return Err(format!("{path} is writable by group or others"));
+        }
+    }
+    Ok(format!(
+        "present ({})",
+        if metadata.is_dir() {
+            "directory"
+        } else if metadata.is_file() {
+            "file"
+        } else {
+            "other"
+        }
+    ))
+}
+
+fn doctor_command_status(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| format!("could not run {program}: {error}"))?;
+    if output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        Ok(if detail.is_empty() {
+            "OK".into()
+        } else {
+            detail
+        })
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(if detail.is_empty() {
+            format!("{program} exited with {}", output.status)
+        } else {
+            detail
+        })
+    }
+}
+
+fn doctor_service_check(service: &str) -> Result<String, String> {
+    match doctor_command_status("/usr/bin/systemctl", &["is-active", service]) {
+        Ok(state) if state == "active" => Ok("active".into()),
+        Ok(state) => Err(format!("reports {state}; expected active")),
+        Err(error) => Err(format!(
+            "not active ({error}); inspect systemctl status {service}"
+        )),
+    }
+}
+
+fn run_doctor() -> i32 {
+    #[cfg(unix)]
+    use std::os::unix::fs::FileTypeExt;
+
+    println!("GitRun doctor: checking installation, configuration and runtime health");
+    let mut failures = 0usize;
+    let mut warnings = 0usize;
+    let system_install = system_install_paths().is_some();
+    if cfg!(target_os = "linux") {
+        for (label, program, args) in [
+            ("Git executable", "git", vec!["--version"]),
+            ("Docker executable", "docker", vec!["--version"]),
+        ] {
+            let result =
+                doctor_command_status(program, &args).map_err(|error| format!("WARN: {error}"));
+            doctor_check(label, result, &mut failures, &mut warnings);
+        }
+        match doctor_command_status("docker", &["info", "--format", "{{.ServerVersion}}"]) {
+            Ok(version) => doctor_check(
+                "Docker daemon",
+                Ok(format!("available ({version})")),
+                &mut failures,
+                &mut warnings,
+            ),
+            Err(error) => doctor_check(
+                "Docker daemon",
+                Err(format!("WARN: {error}")),
+                &mut failures,
+                &mut warnings,
+            ),
+        }
+    }
+    match std::env::current_exe() {
+        Ok(path) if path.is_file() => doctor_check(
+            "CLI binary",
+            Ok(path.display().to_string()),
+            &mut failures,
+            &mut warnings,
+        ),
+        Ok(path) => doctor_check(
+            "CLI binary",
+            Err(format!("{} is not a regular file", path.display())),
+            &mut failures,
+            &mut warnings,
+        ),
+        Err(error) => doctor_check(
+            "CLI binary",
+            Err(format!("cannot resolve executable: {error}")),
+            &mut failures,
+            &mut warnings,
+        ),
+    }
+
+    let config_path = if system_install {
+        PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE)
+    } else {
+        persistent_config_path().unwrap_or_else(|| PathBuf::from("config/gitrun.env"))
+    };
+    let config_result = if system_install {
+        doctor_file_check(TRUSTED_SYSTEM_CONFIG_FILE, true).and_then(|detail| {
+            trusted_system_config_path()
+                .map(|_| detail)
+                .ok_or_else(|| "configuration is unsafe or not root-owned".to_owned())
+        })
+    } else {
+        doctor_file_check(config_path.to_string_lossy().as_ref(), false)
+            .map_err(|error| format!("WARN: {error}"))
+    };
+    doctor_check(
+        "Configuration file",
+        config_result,
+        &mut failures,
+        &mut warnings,
+    );
+
+    match load_config() {
+        Ok(config) => {
+            if config.repositories.is_empty() {
+                doctor_check(
+                    "Configuration",
+                    Err("no repositories configured".into()),
+                    &mut failures,
+                    &mut warnings,
+                );
+            } else {
+                doctor_check(
+                    "Configuration",
+                    Ok(format!(
+                        "{} repository/repositories; runner pool {}..{}",
+                        config.repositories.len(),
+                        config.min_runners,
+                        config.max_runners
+                    )),
+                    &mut failures,
+                    &mut warnings,
+                );
+            }
+            if config.min_runners > config.max_runners {
+                doctor_check(
+                    "Runner pool limits",
+                    Err(format!(
+                        "minimum {} exceeds maximum {}",
+                        config.min_runners, config.max_runners
+                    )),
+                    &mut failures,
+                    &mut warnings,
+                );
+            } else {
+                doctor_check(
+                    "Runner pool limits",
+                    Ok("minimum/maximum are consistent".into()),
+                    &mut failures,
+                    &mut warnings,
+                );
+            }
+            for (label, path) in [
+                ("State directory", config.state_dir.as_str()),
+                ("Log directory", config.log_dir.as_str()),
+            ] {
+                match std::fs::metadata(path) {
+                    Ok(metadata) if metadata.is_dir() => {
+                        doctor_check(label, Ok(path.to_owned()), &mut failures, &mut warnings)
+                    }
+                    Ok(_) => doctor_check(
+                        label,
+                        Err(format!("{path} exists but is not a directory")),
+                        &mut failures,
+                        &mut warnings,
+                    ),
+                    Err(error) => doctor_check(
+                        label,
+                        Err(format!("WARN: {path}: {error}")),
+                        &mut failures,
+                        &mut warnings,
+                    ),
+                }
+            }
+        }
+        Err(error) => doctor_check(
+            "Configuration parsing",
+            Err(error.to_string()),
+            &mut failures,
+            &mut warnings,
+        ),
+    }
+
+    if system_install && cfg!(target_os = "linux") {
+        match std::fs::read_to_string("/usr/share/gitrun/version.txt") {
+            Ok(version) if version.trim().is_empty() => doctor_check(
+                "Installed version metadata",
+                Err("version.txt is empty".into()),
+                &mut failures,
+                &mut warnings,
+            ),
+            Ok(version) => {
+                let version = version.trim().to_owned();
+                match std::env::var("GITRUN_VERSION") {
+                    Ok(binary_version) if binary_version.trim() != version => doctor_check(
+                        "Installed version metadata",
+                        Err(format!(
+                            "GITRUN_VERSION reports {}, version.txt says {version}",
+                            binary_version.trim()
+                        )),
+                        &mut failures,
+                        &mut warnings,
+                    ),
+                    _ => doctor_check(
+                        "Installed version metadata",
+                        Ok(format!("version.txt is present ({version})")),
+                        &mut failures,
+                        &mut warnings,
+                    ),
+                }
+            }
+            Err(error) => doctor_check(
+                "Installed version metadata",
+                Err(format!("/usr/share/gitrun/version.txt: {error}")),
+                &mut failures,
+                &mut warnings,
+            ),
+        }
+        doctor_check(
+            "Control Manager group",
+            doctor_command_status("/usr/bin/getent", &["group", "gitrun-control"])
+                .map(|_| "gitrun-control exists".into())
+                .map_err(|_| "missing gitrun-control group; run sudo gitrun fix-update".into()),
+            &mut failures,
+            &mut warnings,
+        );
+        let control_unit = [
+            "/etc/systemd/system/gitrun-control.service",
+            "/usr/lib/systemd/system/gitrun-control.service",
+            "/lib/systemd/system/gitrun-control.service",
+        ]
+        .iter()
+        .find(|path| Path::new(path).is_file());
+        let systemd_dir = doctor_file_check("/etc/systemd/system", true)
+            .map(|_| "/etc/systemd/system is present and root-owned".to_owned());
+        doctor_check(
+            "Systemd unit directory",
+            systemd_dir,
+            &mut failures,
+            &mut warnings,
+        );
+        doctor_check(
+            "Control Manager systemd unit",
+            control_unit
+                .map(|path| Ok((*path).to_owned()))
+                .unwrap_or_else(|| {
+                    Err("missing gitrun-control.service; run sudo gitrun fix-update".into())
+                }),
+            &mut failures,
+            &mut warnings,
+        );
+        doctor_check(
+            "Control Manager service",
+            doctor_service_check("gitrun-control.service"),
+            &mut failures,
+            &mut warnings,
+        );
+        doctor_check(
+            "GSR service",
+            doctor_service_check("gitrun-gsr.service"),
+            &mut failures,
+            &mut warnings,
+        );
+        let socket_path = Path::new("/run/gitrun-control/manager.sock");
+        match std::fs::symlink_metadata(socket_path) {
+            Ok(metadata) if metadata.file_type().is_socket() => doctor_check(
+                "Control Manager socket",
+                Ok(socket_path.display().to_string()),
+                &mut failures,
+                &mut warnings,
+            ),
+            Ok(_) => doctor_check(
+                "Control Manager socket",
+                Err(format!(
+                    "{} exists but is not a socket",
+                    socket_path.display()
+                )),
+                &mut failures,
+                &mut warnings,
+            ),
+            Err(error) => doctor_check(
+                "Control Manager socket",
+                Err(format!("{}: {error}", socket_path.display())),
+                &mut failures,
+                &mut warnings,
+            ),
+        }
+        let scheduler_unit = [
+            "/etc/systemd/system/gitrun.service",
+            "/usr/lib/systemd/system/gitrun.service",
+            "/lib/systemd/system/gitrun.service",
+        ]
+        .iter()
+        .find(|path| Path::new(path).is_file());
+        let gsr_unit = [
+            "/etc/systemd/system/gitrun-gsr.service",
+            "/usr/lib/systemd/system/gitrun-gsr.service",
+            "/lib/systemd/system/gitrun-gsr.service",
+        ]
+        .iter()
+        .find(|path| Path::new(path).is_file());
+        doctor_check(
+            "GSR systemd unit",
+            gsr_unit
+                .map(|path| Ok((*path).to_owned()))
+                .unwrap_or_else(|| {
+                    Err("gitrun-gsr.service unit is missing; run sudo gitrun fix-update".into())
+                }),
+            &mut failures,
+            &mut warnings,
+        );
+        doctor_check(
+            "Scheduler systemd unit",
+            scheduler_unit
+                .map(|path| Ok((*path).to_owned()))
+                .unwrap_or_else(|| Err("gitrun.service unit is missing".into())),
+            &mut failures,
+            &mut warnings,
+        );
+        if scheduler_unit.is_some() {
+            doctor_check(
+                "Scheduler service",
+                doctor_service_check("gitrun.service"),
+                &mut failures,
+                &mut warnings,
+            );
+        } else {
+            warnings += 1;
+            println!("[WARN] Scheduler service: no systemd unit found; this may be a CLI-only installation");
+        }
+        match gitrun_setup::installation_state() {
+            gitrun_setup::InstallationState::Complete => doctor_check(
+                "Setup state",
+                Ok("setup flag and system config are present".into()),
+                &mut failures,
+                &mut warnings,
+            ),
+            gitrun_setup::InstallationState::Incomplete => doctor_check(
+                "Setup state",
+                Err("installation is incomplete (config/setup flag mismatch)".into()),
+                &mut failures,
+                &mut warnings,
+            ),
+            gitrun_setup::InstallationState::FirstRun => doctor_check(
+                "Setup state",
+                Err("first-run setup has not completed".into()),
+                &mut failures,
+                &mut warnings,
+            ),
+        }
+    } else {
+        println!("[INFO] System service checks skipped: executable is not a recognized Linux system install");
+    }
+
+    if failures == 0 {
+        println!("GitRun doctor: PASS (0 failures, {warnings} warning(s))");
+        0
+    } else {
+        println!(
+            "GitRun doctor: FAIL ({failures} failure(s), {warnings} warning(s)); see checks above"
+        );
+        1
+    }
+}
 fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     let system_install = system_install_paths().is_some();
     initialize_update_signing_environment(system_install);
@@ -2478,6 +2977,116 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     // GTUU compares container image IDs and skips busy permanent runners. Those
     // runners remain intact and are reconciled on a later GTUU run.
     gitrun_scheduler::run_gtuu_once()
+}
+
+/// Repair the privileged control service even when the installed release is already current,
+/// then run the normal signed updater only when GitHub advertises a newer release.
+/// Never downgrade the installed executable to trick the version comparison.
+fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
+    if system_install_paths().is_none() {
+        eprintln!("GitRun fix-update: requires the trusted system installation at /usr/bin/gitrun or /usr/local/bin/gitrun.");
+        return 2;
+    }
+
+    if !running_as_root() {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("GitRun fix-update: unable to resolve installed executable: {error}");
+                return 1;
+            }
+        };
+        presenter.prepare_for_external_process();
+        let status = match std::process::Command::new("/usr/bin/sudo")
+            .arg(executable)
+            .arg("--no-cat")
+            .arg("--fix-update-root")
+            .status()
+        {
+            Ok(status) => status,
+            Err(error) => {
+                eprintln!("GitRun fix-update: unable to start privileged repair: {error}");
+                return 1;
+            }
+        };
+        return status.code().unwrap_or(1);
+    }
+
+    let (installed_binary, _) = match system_install_paths() {
+        Some(paths) => paths,
+        None => {
+            eprintln!("GitRun fix-update: trusted system binary disappeared during repair");
+            return 1;
+        }
+    };
+
+    initialize_update_signing_environment(true);
+    initialize_system_update_config_path(true);
+    // Do not allow inherited environment variables to redirect a privileged
+    // repair to a fork or a caller-selected repository.
+    std::env::set_var("GITRUN_REPOSITORY", "Vider06/GitRun");
+
+    let desktop_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|uid| *uid != 0);
+
+    println!("GitRun fix-update: reconciling systemd units, control group and GitRun services");
+    if let Err(error) =
+        gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &installed_binary)
+    {
+        eprintln!("GitRun fix-update: control service repair failed: {error}");
+        return 1;
+    }
+    println!("GitRun fix-update: control service PASS");
+
+    println!("GitRun fix-update: checking the latest official signed release");
+    let manifest = match latest_manifest("Vider06/GitRun") {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            eprintln!("GitRun fix-update: unable to read the latest signed release: {error}");
+            return 1;
+        }
+    };
+    let current = current_version();
+    let target = match target_triple() {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!("GitRun fix-update: unsupported update target: {error}");
+            return 1;
+        }
+    };
+
+    match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
+        Ok(plan) => {
+            println!(
+                "GitRun fix-update: applying latest release {} -> {}",
+                plan.current_version, plan.target_version
+            );
+            let code = run_update(None, false, false, presenter);
+            if code != 0 {
+                eprintln!("GitRun fix-update: latest-release update failed");
+                return code;
+            }
+        }
+        Err(UpdateError::NotNewer) => {
+            println!(
+                "GitRun fix-update: already on the latest release ({current}); no downgrade needed"
+            );
+        }
+        Err(error) => {
+            eprintln!("GitRun fix-update: release validation failed: {error}");
+            return 1;
+        }
+    }
+
+    if let Err(error) = verify_post_update_doctor(&installed_binary) {
+        eprintln!("GitRun fix-update: final doctor verification failed: {error}");
+        return 1;
+    }
+    println!("GitRun fix-update: PASS (systemd integration and doctor verified)");
+    0
 }
 
 fn run_update(
@@ -3807,6 +4416,18 @@ mod internal_lifecycle_command_tests {
         TRUSTED_SYSTEM_CONFIG_FILE,
     };
     use clap::Parser;
+
+    #[test]
+    fn fix_update_commands_are_registered() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "fix-update"]).map(|cli| cli.command),
+            Ok(Some(Command::FixUpdate))
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "--no-cat", "--fix-update-root"]).map(|cli| cli.command),
+            Ok(Some(Command::FixUpdateRoot))
+        ));
+    }
 
     #[test]
     fn system_update_signing_policy_overrides_every_preexisting_value() {

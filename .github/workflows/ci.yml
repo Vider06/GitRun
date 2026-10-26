@@ -1642,20 +1642,27 @@ jobs:
           source "$RUNNER_TEMP/ci-lib.sh"
           if [ "$GITHUB_JOB" != audit-rust ]; then
             ci_need cc build-essential
-            # gitrun-cli now embeds the Tauri dashboard library, so every compile/test
-            # job that builds the CLI needs the same Linux GUI system dependencies.
-            ci_need_pkg libglib2.0-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
-            ci_need convert imagemagick
-            shopt -s nullglob
-            icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
-            [ "${#icons[@]}" -gt 0 ] || { ci_err "No Tauri PNG icons found"; exit 1; }
-            for icon in "${icons[@]}"; do
-              tmp="$(mktemp --suffix=.png)"
-              convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
-              mv "$tmp" "$icon"
-            done
-            echo "${#icons[@]} Tauri PNG icons normalized in the CI checkout with ImageMagick"
           fi
+
+          # Only jobs that compile/test the Tauri dashboard need the large GUI
+          # development dependency set and icon normalization. Keep security,
+          # watchdog, and systemd contract jobs from downloading ~60 MB of GUI
+          # packages on fresh GitHub-hosted runners.
+          case "$GITHUB_JOB" in
+            rust-lint|rust-test|rust-build|runtime-contracts)
+              ci_need_pkg libglib2.0-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+              ci_need convert imagemagick
+              shopt -s nullglob
+              icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+              [ "${#icons[@]}" -gt 0 ] || { ci_err "No Tauri PNG icons found"; exit 1; }
+              for icon in "${icons[@]}"; do
+                tmp="$(mktemp --suffix=.png)"
+                convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+                mv "$tmp" "$icon"
+              done
+              echo "${#icons[@]} Tauri PNG icons normalized in the CI checkout with ImageMagick"
+              ;;
+          esac
           ci_need_report
           if [ "$GITHUB_JOB" != audit-rust ] && ! command -v pkg-config >/dev/null 2>&1; then
             ci_warn "pkg-config not found: crates linking system libraries (openssl-sys, glib, ...) will fail to build"

@@ -1408,8 +1408,11 @@ pub fn health_check_installed_binary(
     // expect a doctor check; the transactional installer uses the narrower
     // executable-only check until system services have been reconciled.
     check_installed_binary(binary, config_file, None)?;
+    // Clap accepts the global mascot override before the subcommand.
+    // Keep internal health checks non-interactive without passing the flag
+    // after `doctor`, where it is parsed as an unsupported subcommand option.
     let mut command = Command::new(binary);
-    command.arg("doctor").arg("--no-cat");
+    command.args(["--no-cat", "doctor"]);
     if let Some(config) = config_file {
         command.env("GITRUN_CONFIG_FILE", config);
     }

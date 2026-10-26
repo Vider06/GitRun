@@ -12,7 +12,7 @@ use std::path::Path;
 const SOCKET_PATH: &str = "/run/gitrun-control/manager.sock";
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
     operation: String,
@@ -286,7 +286,7 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
             }
             _ => unreachable!("operation was validated above"),
         };
-        result.map(Reply::success).map_err(Reply::failure)
+        Ok(Reply::success(result?))
     })()
     .unwrap_or_else(Reply::failure);
 

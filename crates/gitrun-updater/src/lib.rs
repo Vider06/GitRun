@@ -3606,7 +3606,9 @@ mod tests {
         };
         pin_runner_image(&config_file, &runner_image)
             .expect("runner pinning must update config atomically without losing metadata");
-        assert!(fs::read_to_string(&config_file).unwrap().contains(&runner_image.digest));
+        assert!(fs::read_to_string(&config_file)
+            .unwrap()
+            .contains(&runner_image.digest));
         rollback_installed_update_with_config(
             &record,
             &artifacts,
@@ -3620,8 +3622,14 @@ mod tests {
         assert_eq!(fs::read(&config_file).unwrap(), b"GITRUN_TEST=before\n");
         use std::os::unix::fs::MetadataExt;
         assert_eq!(fs::metadata(&config_file).unwrap().mode() & 0o777, 0o640);
-        assert_eq!(fs::metadata(&config_file).unwrap().uid(), original_config_metadata.uid());
-        assert_eq!(fs::metadata(&config_file).unwrap().gid(), original_config_metadata.gid());
+        assert_eq!(
+            fs::metadata(&config_file).unwrap().uid(),
+            original_config_metadata.uid()
+        );
+        assert_eq!(
+            fs::metadata(&config_file).unwrap().gid(),
+            original_config_metadata.gid()
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

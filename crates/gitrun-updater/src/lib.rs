@@ -687,7 +687,7 @@ pub fn apply_update(
                 {
                     fs::create_dir_all(parent)?;
                 }
-                fs::copy(
+                copy_file_durable(
                     service_config,
                     service_config_backup
                         .as_ref()
@@ -2225,7 +2225,7 @@ fn rollback_install(
                 if let Some(parent) = service.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                fs::copy(backup, service)?;
+                copy_file_durable(backup, service)?;
             } else if backup.is_dir() {
                 copy_dir(backup, service)?;
             }
@@ -2369,12 +2369,29 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
         ("backup", paths.backup_root.as_path()),
     ];
     for (name, path) in managed {
-        if let Ok(metadata) = fs::symlink_metadata(path) {
-            if metadata.file_type().is_symlink() {
+        reject_symlink_components(path)?;
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(UpdateError::InvalidManifest(format!(
                     "{name} update path must not be a symlink"
                 )));
             }
+            Ok(metadata) => {
+                if matches!(name, "state" | "backup") && !metadata.is_dir() {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "{name} update path must be a directory: {}",
+                        path.display()
+                    )));
+                }
+                if name == "install" && !metadata.is_dir() {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "install update path must be a directory: {}",
+                        path.display()
+                    )));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
     }
     for i in 0..managed.len() {
@@ -2393,6 +2410,7 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
     ];
     for (name, path) in optional {
         if let Some(path) = path {
+            reject_symlink_components(path)?;
             if paths_overlap(path, &paths.backup_root)
                 || paths_overlap(path, &paths.install_dir)
                 || paths_overlap(path, &paths.state_dir)
@@ -2401,12 +2419,21 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
                     "{name} update path overlaps a managed update path"
                 )));
             }
-            if let Ok(metadata) = fs::symlink_metadata(path) {
-                if metadata.file_type().is_symlink() {
+            match fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
                     return Err(UpdateError::InvalidManifest(format!(
                         "{name} update path must not be a symlink"
                     )));
                 }
+                Ok(metadata) if name == "config" && !metadata.is_dir() => {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "config update path must be a directory: {}",
+                        path.display()
+                    )));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
             }
         }
     }

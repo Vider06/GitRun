@@ -4,7 +4,7 @@ use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, B
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
-    fetch_manifest, latest_manifest, pin_runner_image, rollback,
+    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url, rollback,
     rollback_installed_update_with_config, update_incompatible_dependencies, update_runner_image,
     BackupRecord, InstalledArtifact, InstalledBackupRecord, UpdateError, UpdatePaths,
 };
@@ -243,6 +243,7 @@ fn initialize_update_signing_environment(force_trusted_values: bool) {
 
 fn elevate_system_update(
     manifest_url: Option<&str>,
+    force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     // sudo writes its password prompt directly to the inherited TTY. End the
@@ -256,6 +257,9 @@ fn elevate_system_update(
         command.arg("env").arg(format!("{key}={value}"));
     }
     command.arg(executable).arg("--no-cat").arg("update");
+    if force {
+        command.arg("--force");
+    }
     if let Some(url) = manifest_url {
         command.arg(url);
     }
@@ -433,6 +437,7 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
 fn update_command(
     args: &[String],
     presenter: &mut presenter::CatPresenter,
+    force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.get(1).is_some_and(|argument| argument == "--check") {
         return update_check_command(args);
@@ -613,7 +618,11 @@ fn update_command(
             };
         }
 
-        if let Err(error) = verify_post_update_doctor(&gitrun_binary) {
+        if force {
+            eprintln!(
+                "GitRun update: WARNING — --force requested; skipping only the post-update doctor gate. Manifest signature, artifact SHA-256, executable validation, systemd reconciliation and scheduler restart checks remain enabled."
+            );
+        } else if let Err(error) = verify_post_update_doctor(&gitrun_binary) {
             let rollback_result = rollback_installed_update_with_config(
                 &backup,
                 &artifacts,
@@ -639,7 +648,11 @@ fn update_command(
         }
 
         presenter.transition(presenter::ValidationState::Success);
-        println!("GitRun update: PASS (binary, systemd and doctor verified)");
+        if force {
+            println!("GitRun update: PASS (binary and systemd verified; post-update doctor skipped by --force)");
+        } else {
+            println!("GitRun update: PASS (binary, systemd and doctor verified)");
+        }
         println!(
             "backup: {}",
             backup_root
@@ -1598,10 +1611,12 @@ fn main() {
             manifest_url,
             only_containers,
             check,
+            force,
         } => run_update(
             manifest_url.as_deref(),
             only_containers,
             check,
+            force,
             &mut presenter,
         ),
         Command::FixUpdate => run_fix_update(&mut presenter),
@@ -1822,7 +1837,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
 struct Cli {
     /// Disable all cat rendering for this process. Internal use for
     /// delegated processes that must own the TTY without Ratatui output.
-    #[arg(long = "no-cat", hide = true)]
+    #[arg(long = "no-cat", hide = true, global = true)]
     no_cat: bool,
 
     /// Print the GitRun version and exit. Accepts both `-V` (Unix
@@ -1902,6 +1917,9 @@ enum Command {
         /// Update only the permanent runner pool without replacing GitRun itself.
         #[arg(long, conflicts_with = "check")]
         only_containers: bool,
+        /// Skip the post-update doctor gate. Signed-manifest, checksum, executable and service checks remain enabled.
+        #[arg(long, conflicts_with_all = ["check", "only_containers"])]
+        force: bool,
         /// Optional manifest URL to inspect instead of the latest GitHub release.
         manifest_url: Option<String>,
     },
@@ -3074,7 +3092,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
                 "GitRun fix-update: applying latest release {} -> {}",
                 plan.current_version, plan.target_version
             );
-            let code = run_update(None, false, false, presenter);
+            let code = run_update(None, false, false, false, presenter);
             if code != 0 {
                 eprintln!("GitRun fix-update: latest-release update failed");
                 return code;
@@ -3103,6 +3121,7 @@ fn run_update(
     manifest_url: Option<&str>,
     only_containers: bool,
     check_only: bool,
+    force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
     // Installed-system invocations must never inherit caller-selected update
@@ -3144,7 +3163,63 @@ fn run_update(
     }
 
     if system_install_paths().is_some() && !running_as_root() {
-        match elevate_system_update(manifest_url, presenter) {
+        // Resolve and verify the release before invoking sudo. This avoids an
+        // unnecessary password prompt when GitHub is unreachable or the
+        // release cannot be applied on this host.
+        println!(
+            "GitRun update: verifying the signed release before requesting administrator access"
+        );
+        let repository =
+            std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
+        let manifest = match manifest_url {
+            Some(url) => fetch_manifest(url),
+            None => latest_manifest(&repository),
+        };
+        let manifest = match manifest {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                eprintln!("GitRun update: FAIL — release preflight failed: {error}");
+                return 1;
+            }
+        };
+        let current = current_version();
+        let target = match target_triple() {
+            Ok(target) => target,
+            Err(error) => {
+                eprintln!("GitRun update: FAIL — unable to identify this platform: {error}");
+                return 1;
+            }
+        };
+        if let Err(error) = build_plan(&manifest, &current, &target, &dependency_snapshot()) {
+            match error {
+                UpdateError::NotNewer => {
+                    println!(
+                        "GitRun update: already up to date ({current}); no administrator access needed"
+                    );
+                    return 0;
+                }
+                error => {
+                    eprintln!("GitRun update: FAIL — release preflight failed: {error}");
+                    return 1;
+                }
+            }
+        }
+
+        // Pin the privileged retry to the already-verified release instead
+        // of resolving a moving "latest" pointer for a second time.
+        let resolved_manifest_url = match manifest_url {
+            Some(url) => url.to_owned(),
+            None => {
+                match release_manifest_download_url(&repository, &manifest.version) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        eprintln!("GitRun update: FAIL — unable to resolve the signed release URL: {error}");
+                        return 1;
+                    }
+                }
+            }
+        };
+        match elevate_system_update(Some(&resolved_manifest_url), force, presenter) {
             Ok(code) => return code,
             Err(error) => {
                 eprintln!("GitRun update: unable to elevate system update: {error}");
@@ -3161,7 +3236,7 @@ fn run_update(
         Some(url) => vec!["update".to_owned(), url.to_owned()],
         None => vec!["update".to_owned()],
     };
-    match update_command(&args, presenter) {
+    match update_command(&args, presenter, force) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("GitRun update: FAIL — {error}");
@@ -4521,6 +4596,35 @@ mod internal_lifecycle_command_tests {
             Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,
             Some(Command::Cat)
         ));
+    }
+
+    #[test]
+    fn update_force_skips_only_the_post_update_doctor_gate_option() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "update", "--force"]).map(|cli| cli.command),
+            Ok(Some(Command::Update {
+                force: true,
+                check: false,
+                only_containers: false,
+                ..
+            }))
+        ));
+        assert!(Cli::try_parse_from(["gitrun", "update", "--force", "--check"]).is_err());
+        assert!(Cli::try_parse_from(["gitrun", "update", "--force", "--only-containers"]).is_err());
+    }
+
+    #[test]
+    fn no_cat_is_accepted_before_and_after_the_doctor_subcommand() {
+        let before = Cli::try_parse_from(["gitrun", "--no-cat", "doctor"]).unwrap();
+        assert!(before.no_cat);
+        assert!(matches!(before.command, Some(Command::Doctor)));
+
+        // Backward compatibility: an older updater can remain running while
+        // it replaces the installed executable, then invoke the new binary
+        // using the historical `doctor --no-cat` argument order.
+        let after = Cli::try_parse_from(["gitrun", "doctor", "--no-cat"]).unwrap();
+        assert!(after.no_cat);
+        assert!(matches!(after.command, Some(Command::Doctor)));
     }
 
     #[test]

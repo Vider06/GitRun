@@ -393,46 +393,39 @@ pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
     Ok(manifest)
 }
 
-pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError> {
+/// Resolve the release asset through GitHub's web download route rather than
+/// the REST API. Public REST requests are limited per source IP and can be
+/// exhausted by unrelated users behind the same NAT or proxy.
+pub fn latest_manifest_download_url(repository: &str) -> Result<String, UpdateError> {
     validate_repository(repository)?;
-    let repo = repository.trim_end_matches('/');
-    let api = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let client = http_client()?;
-    let response = client.get(&api).send()?;
+    Ok(format!(
+        "https://github.com/{}/releases/latest/download/release-manifest.json",
+        repository.trim_end_matches('/')
+    ))
+}
 
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        let version = client
-            .get(format!(
-                "https://raw.githubusercontent.com/{repo}/main/version.txt"
-            ))
-            .send()?
-            .error_for_status()?
-            .text()?
-            .trim()
-            .to_owned();
-        if !is_version(&version) {
-            return Err(UpdateError::InvalidManifest(
-                "fallback version.txt contains an invalid version".into(),
-            ));
-        }
-        return fetch_manifest(&format!(
-            "https://github.com/{repo}/releases/download/{version}/release-manifest.json"
+/// Build the immutable, version-specific manifest URL used after an
+/// unprivileged preflight so sudo does not have to resolve "latest" again.
+pub fn release_manifest_download_url(
+    repository: &str,
+    version: &str,
+) -> Result<String, UpdateError> {
+    validate_repository(repository)?;
+    if !is_version(version) {
+        return Err(UpdateError::InvalidManifest(
+            "release manifest URL requires a valid version".into(),
         ));
     }
-
-    let response = response.error_for_status()?;
-    let release: serde_json::Value = response.json()?;
-    let tag = release
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .filter(|value| is_version(value))
-        .ok_or_else(|| {
-            UpdateError::InvalidManifest("GitHub release has no valid tag_name".into())
-        })?;
-
-    fetch_manifest(&format!(
-        "https://github.com/{repo}/releases/download/{tag}/release-manifest.json"
+    let version = version.strip_prefix('v').unwrap_or(version);
+    Ok(format!(
+        "https://github.com/{}/releases/download/v{version}/release-manifest.json",
+        repository.trim_end_matches('/')
     ))
+}
+
+pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError> {
+    let url = latest_manifest_download_url(repository)?;
+    fetch_manifest(&url)
 }
 
 pub fn stage_update(
@@ -2933,6 +2926,28 @@ mod tests {
             runner_image: None,
             repository: Some("Vider06/GitRun".into()),
         }
+    }
+
+    #[test]
+    fn latest_manifest_uses_github_release_download_route_not_rest_api() {
+        assert_eq!(
+            latest_manifest_download_url("Vider06/GitRun").unwrap(),
+            "https://github.com/Vider06/GitRun/releases/latest/download/release-manifest.json"
+        );
+        assert!(latest_manifest_download_url("Vider06/GitRun/extra").is_err());
+    }
+
+    #[test]
+    fn versioned_manifest_url_uses_validated_v_prefixed_release_tag() {
+        assert_eq!(
+            release_manifest_download_url("Vider06/GitRun", "1.8.3").unwrap(),
+            "https://github.com/Vider06/GitRun/releases/download/v1.8.3/release-manifest.json"
+        );
+        assert_eq!(
+            release_manifest_download_url("Vider06/GitRun", "v1.8.3").unwrap(),
+            "https://github.com/Vider06/GitRun/releases/download/v1.8.3/release-manifest.json"
+        );
+        assert!(release_manifest_download_url("Vider06/GitRun", "../1.8.3").is_err());
     }
 
     #[test]

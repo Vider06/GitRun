@@ -1,5 +1,15 @@
 # Release history and historical verification
 
+## GitRun 1.8.3 — updater resilience and explicit force mode
+
+- **Source/product target:** `1.8.3`, recorded in `version.txt` for this source line. This entry records source changes; it does not by itself assert that a signed release artifact has been published.
+- Replaced latest-release discovery through the unauthenticated GitHub REST API with the HTTPS release-manifest download route, while preserving manifest signature verification and artifact SHA-256 verification.
+- Added a privileged-update preflight that verifies the release and checks platform applicability before prompting for sudo; the privileged retry is pinned to the verified manifest version.
+- Added `gitrun update --force` to skip only the post-update doctor gate when an operator has a known false negative. Signed-manifest, SHA-256, executable, systemd-reconciliation and scheduler-restart checks remain active, and failures in those stages can still fail or roll back an update.
+- Made the global `--no-cat` flag compatible with both `gitrun --no-cat doctor` and the legacy `gitrun doctor --no-cat` invocation used by older updaters during replacement.
+- Hardened CI tool downloads and retry status handling; the pinned Cargo Audit version now has a source-install fallback when its prebuilt release asset cannot be downloaded.
+- **Implementation PR:** [#122](https://github.com/Vider06/GitRun/pull/122).
+
 ## GitRun 1.8.0 — CLI management console and version alignment
 
 - **Source/product version:** `1.8.0`, recorded in `version.txt` and the dashboard product metadata. This entry describes the source line; it does not assert that a signed release artifact has been published.

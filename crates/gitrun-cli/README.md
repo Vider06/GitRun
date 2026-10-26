@@ -11,11 +11,20 @@ gitrun connect OWNER/REPOSITORY
 gitrun config
 gitrun doctor
 gitrun update --check
+gitrun update --force
 gitrun manage
 gitrun dashboard
 gitrun rollback BACKUP_PATH
 gitrun cat
 ```
+
+## Update safeguards
+
+```text
+gitrun update --force [MANIFEST_URL]
+```
+
+The explicit `--force` option skips only the post-update `doctor` gate when that check is a known false negative. Signed-manifest verification, artifact SHA-256 verification, executable validation, systemd reconciliation and scheduler restart checks still run. If those other steps fail, the update can still fail or roll back. The option conflicts with `--check` and `--only-containers` and does not force a downgrade.
 
 ## Fast Stop
 

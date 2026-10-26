@@ -13,7 +13,7 @@ Start with the [main README](../README.md) for a readable overview of GitRun's f
 
 ## Current source line
 
-The current source/product version is **1.8.0** (`version.txt`). The 1.8.0 work aligns patch versions for the crates changed by the CLI/TUI and child-process output fixes, updates the product version metadata, and documents the terminal management console and mascot behavior. This is source metadata, not a claim that a signed 1.8.0 release artifact has been published; verify [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+The current source/product version on this branch is **1.8.3** (`version.txt`), prepared by PR [#122](https://github.com/Vider06/GitRun/pull/122). This source target adds updater release-discovery resilience, the explicit `gitrun update --force` doctor-gate bypass, backward-compatible handling of `--no-cat`, and CI resilience for Cargo Audit downloads. This does not assert that a signed 1.8.3 release artifact has been published; verify [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## Version history
 

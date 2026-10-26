@@ -10,7 +10,7 @@ GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It
 
 It is designed for developers and teams who want to use their own runner infrastructure without turning every workflow into an unrestricted host administrator. **No Kubernetes cluster is required.**
 
-> **Source version:** this branch targets `1.8.1`. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+> **Source version:** this branch targets `1.8.3`. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## What can GitRun do?
 
@@ -154,13 +154,14 @@ gitrun doctor
 gitrun manage
 gitrun dashboard
 gitrun update --check
+gitrun update --force
 gitrun fix-update
 gitrun fast-stop OWNER/REPOSITORY WORKFLOW_RUN_ID --yes
 gitrun rollback BACKUP_PATH
 gitrun cat
 ```
 
-The `fix-update` command repairs the installed GitRun systemd integration (scheduler, GSR and Control Manager units), the `gitrun-control` group and service startup, then applies the latest official signed release only if it is newer. It never downgrades the installed binary to force an update. System updates verify the artifact against the signed manifest checksum, reject unsafe archive entries and symlinked destinations, and write a durable rollback journal before replacing installed files. The updater checks the executable independently before repairing services, then runs the full `doctor` check after systemd reconciliation. Failed health checks trigger rollback and an attempt to restart the previous scheduler. The generic updater also writes its recovery journal before moving the previous installation. `gitrun doctor` reports configuration, dependency, installation metadata, systemd-unit, service and Control Manager socket health, with actionable failures and warnings. System repair requires sudo. Use `--no-cat` to suppress the mascot.
+The `fix-update` command repairs the installed GitRun systemd integration (scheduler, GSR and Control Manager units), the `gitrun-control` group and service startup, then applies the latest official signed release only if it is newer. It never downgrades the installed binary. System updates verify the artifact against the signed manifest checksum, reject unsafe archive entries and symlinked destinations, and write a durable rollback journal before replacing installed files. The updater checks the executable independently before repairing services, then runs the full `doctor` check after systemd reconciliation; a failed health check normally triggers rollback and an attempt to restart the previous scheduler. `gitrun update --force` is an explicit escape hatch that skips only this post-update doctor gate. Signed-manifest verification, artifact SHA-256 validation, executable validation, systemd reconciliation and scheduler restart checks remain enabled, and failures in those stages can still fail or roll back the update. Use it only when a known doctor false negative blocks an otherwise validated update. It does not force a downgrade. The generic updater also writes its recovery journal before moving the previous installation. `gitrun doctor` reports configuration, dependency, installation metadata, systemd-unit, service and Control Manager socket health, with actionable failures and warnings. System repair requires sudo. Use `--no-cat` to suppress the mascot.
 
 The `fast-stop` command requires confirmation and requests force-cancellation of the **whole workflow run**, not a single job. It does not directly kill containers.
 

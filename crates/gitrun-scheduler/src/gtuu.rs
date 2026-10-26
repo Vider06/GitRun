@@ -274,7 +274,23 @@ pub fn update_permanent_containers(client: &GitHubClient, config: &GtuuConfig) -
     Ok(updated)
 }
 
+fn is_registry_image_reference(image: &str) -> bool {
+    image.contains('/')
+}
+
 fn pull_image(image: &str) -> Result<String> {
+    // Bootstrap builds the default `gitrun-runner:latest` image locally.
+    // An unqualified reference has no registry/namespace, so blindly running
+    // `docker pull` rewrites it to Docker Hub's `library/<name>` and fails
+    // even when the locally built runner image is present.
+    if !is_registry_image_reference(image) {
+        return docker::image_id(image).map_err(|error| {
+            GtuuError::Docker(crate::docker::DockerError::Command(format!(
+                "local runner image {image:?} is unavailable; rebuild it with GitRun setup or configure a registry-qualified runner image: {error}"
+            )))
+        });
+    }
+
     docker::pull_image(image)?;
     docker::image_id(image).map_err(Into::into)
 }
@@ -511,6 +527,15 @@ mod tests {
         assert!(!process_is_alive(0));
         assert!(!process_is_alive(u32::MAX));
         assert!(!process_is_alive(i32::MAX as u32 + 1));
+    }
+
+    #[test]
+    fn local_default_runner_reference_is_not_treated_as_a_registry_image() {
+        assert!(!is_registry_image_reference("gitrun-runner:latest"));
+        assert!(is_registry_image_reference(
+            "ghcr.io/vider06/gitrun-runner:latest"
+        ));
+        assert!(is_registry_image_reference("vider06/gitrun-runner:latest"));
     }
 
     #[test]

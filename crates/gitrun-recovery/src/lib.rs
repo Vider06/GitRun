@@ -11,6 +11,7 @@ use std::{
 
 const SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun.service");
 const GSR_SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun-gsr.service");
+const CONTROL_SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun-control.service");
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Severity {
@@ -223,7 +224,7 @@ pub fn inspect() -> RecoveryReport {
             code: "service-invalid".into(),
             severity: Severity::Warning,
             title: "GitRun system service is missing or stale".into(),
-            detail: "The scheduler and GSR systemd units must both match the packaged runtime contract; use Repair service to restore them.".into(),
+            detail: "The scheduler, GSR, and Control Manager systemd units must all match the packaged runtime contract; use Repair service to restore them.".into(),
             repairable: true,
         });
     }
@@ -482,7 +483,10 @@ pub fn service_unit_is_valid() -> bool {
     let gsr_valid = fs::read_to_string("/etc/systemd/system/gitrun-gsr.service")
         .map(|content| unit_matches_contract(&content, GSR_SYSTEMD_UNIT))
         .unwrap_or(false);
-    scheduler_valid && gsr_valid
+    let control_valid = fs::read_to_string("/etc/systemd/system/gitrun-control.service")
+        .map(|content| unit_matches_contract(&content, CONTROL_SYSTEMD_UNIT))
+        .unwrap_or(false);
+    scheduler_valid && gsr_valid && control_valid
 }
 
 pub fn repair_service_unit() -> Result<(), String> {
@@ -505,6 +509,7 @@ pub fn repair_service_unit() -> Result<(), String> {
 
     let path = Path::new("/etc/systemd/system/gitrun.service");
     let gsr_path = Path::new("/etc/systemd/system/gitrun-gsr.service");
+    let control_path = Path::new("/etc/systemd/system/gitrun-control.service");
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_nanos())
@@ -527,7 +532,20 @@ pub fn repair_service_unit() -> Result<(), String> {
     set_file_mode(&gsr_temp, 0o644)?;
     fs::rename(&gsr_temp, gsr_path).map_err(|error| error.to_string())?;
 
-    run_systemctl("daemon-reload", "gitrun.service")?;
+    let control_temp = control_path.with_file_name(format!(
+        "gitrun-control.service.tmp.{}.{}",
+        std::process::id(),
+        nonce
+    ));
+    fs::write(&control_temp, CONTROL_SYSTEMD_UNIT).map_err(|error| error.to_string())?;
+    set_file_mode(&control_temp, 0o644)?;
+    fs::rename(&control_temp, control_path).map_err(|error| error.to_string())?;
+
+    run_systemctl("daemon-reload", "gitrun-control.service")?;
+    // The local IPC service must be active before the scheduler and UIs depend
+    // on its socket. Older installations may predate this unit entirely.
+    run_systemctl("enable", "gitrun-control.service")?;
+    run_systemctl("restart", "gitrun-control.service")?;
     run_systemctl("enable", "gitrun.service")?;
     run_systemctl("restart", "gitrun.service")?;
     run_systemctl("enable", "gitrun-gsr.service")?;
@@ -715,6 +733,10 @@ mod tests {
     fn service_unit_contract_rejects_legacy_units_missing_hardening() {
         assert!(unit_matches_contract(SYSTEMD_UNIT, SYSTEMD_UNIT));
         assert!(unit_matches_contract(GSR_SYSTEMD_UNIT, GSR_SYSTEMD_UNIT));
+        assert!(unit_matches_contract(
+            CONTROL_SYSTEMD_UNIT,
+            CONTROL_SYSTEMD_UNIT
+        ));
 
         let legacy_scheduler = r#"[Unit]
 Description=GitRun Rust scheduler

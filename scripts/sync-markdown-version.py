@@ -8,7 +8,8 @@ other historical version references are intentionally left unchanged.
 
 Usage:
   python3 scripts/sync-markdown-version.py           # write version.txt into markers
-  python3 scripts/sync-markdown-version.py --check   # fail if markers drift
+  python3 scripts/sync-markdown-version.py --check             # fail if markers drift
+  python3 scripts/sync-markdown-version.py --check-structure    # validate marker shape/coverage only
   python3 scripts/sync-markdown-version.py --version 1.8.4
 """
 
@@ -89,7 +90,13 @@ def check_coverage(root: Path, by_path: dict[str, list[str]]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", help="version to write (defaults to version.txt)")
-    parser.add_argument("--check", action="store_true", help="check markers without modifying files")
+    checks = parser.add_mutually_exclusive_group()
+    checks.add_argument("--check", action="store_true", help="check marker values against the requested/current version")
+    checks.add_argument(
+        "--check-structure",
+        action="store_true",
+        help="check marker pairing and required coverage without requiring values to match version.txt",
+    )
     args = parser.parse_args()
 
     root = repository_root()
@@ -103,6 +110,14 @@ def main() -> int:
             contents[path] = text
             by_path[path.relative_to(root).as_posix()] = markers_in(text, path.relative_to(root))
         check_coverage(root, by_path)
+
+        if args.check_structure:
+            marker_count = sum(len(values) for values in by_path.values())
+            print(
+                "Markdown source-version marker structure: PASS "
+                f"({marker_count} markers; value synchronization deferred)"
+            )
+            return 0
 
         drift = []
         changed = []

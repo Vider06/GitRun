@@ -2661,9 +2661,7 @@ fn run_update(
                     .ok()
                     .and_then(|value| value.parse::<u32>().ok())
                     .filter(|uid| *uid != 0);
-                if let Err(error) =
-                    gitrun_setup::ensure_control_manager_service(desktop_uid)
-                {
+                if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
                     eprintln!(
                         "GitRun update: binary updated, but Control Manager reconciliation failed: {error}"
                     );

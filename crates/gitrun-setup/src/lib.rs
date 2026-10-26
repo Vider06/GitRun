@@ -266,7 +266,11 @@ fn deb_package_registered() -> bool {
 
 fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
     println!("[GitRun uninstall] Stopping and disabling GitRun systemd units");
-    for unit in ["gitrun-gsr.service", "gitrun.service"] {
+    for unit in [
+        "gitrun-control.service",
+        "gitrun-gsr.service",
+        "gitrun.service",
+    ] {
         let _ = Command::new("/usr/bin/systemctl")
             .args(["disable", "--now", unit])
             .status();
@@ -290,18 +294,25 @@ fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
     for path in [
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
+        "/etc/systemd/system/gitrun-control.service",
         "/usr/lib/systemd/system/gitrun.service",
         "/usr/lib/systemd/system/gitrun-gsr.service",
+        "/usr/lib/systemd/system/gitrun-control.service",
         "/lib/systemd/system/gitrun.service",
         "/lib/systemd/system/gitrun-gsr.service",
+        "/lib/systemd/system/gitrun-control.service",
         "/run/systemd/system/gitrun.service",
         "/run/systemd/system/gitrun-gsr.service",
+        "/run/systemd/system/gitrun-control.service",
         "/etc/systemd/system/multi-user.target.wants/gitrun.service",
         "/etc/systemd/system/multi-user.target.wants/gitrun-gsr.service",
+        "/etc/systemd/system/multi-user.target.wants/gitrun-control.service",
         "/etc/systemd/system/graphical.target.wants/gitrun.service",
         "/etc/systemd/system/graphical.target.wants/gitrun-gsr.service",
+        "/etc/systemd/system/graphical.target.wants/gitrun-control.service",
         "/etc/systemd/system/default.target.wants/gitrun.service",
         "/etc/systemd/system/default.target.wants/gitrun-gsr.service",
+        "/etc/systemd/system/default.target.wants/gitrun-control.service",
         "/usr/local/bin/gitrun",
         "/usr/local/bin/gitrun-recovery",
         "/usr/bin/gitrun-recovery",
@@ -440,6 +451,7 @@ fn verify_uninstall_complete() -> Result<(), SetupError> {
         "/opt/gitrun",
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
+        "/etc/systemd/system/gitrun-control.service",
     ] {
         if Path::new(path).exists() {
             return Err(SetupError::Command(format!(
@@ -681,6 +693,9 @@ pub fn reinstall_linux_with_auth(
 
     println!("[GitRun reinstall] Stopping the existing GitRun services");
     let _ = Command::new("/usr/bin/systemctl")
+        .args(["disable", "--now", "gitrun-control.service"])
+        .status();
+    let _ = Command::new("/usr/bin/systemctl")
         .args(["disable", "--now", "gitrun-gsr.service"])
         .status();
     let _ = Command::new("/usr/bin/systemctl")
@@ -691,6 +706,7 @@ pub fn reinstall_linux_with_auth(
     for path in [
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
+        "/etc/systemd/system/gitrun-control.service",
         "/usr/local/bin/gitrun-recovery",
         "/opt/gitrun",
     ] {
@@ -706,9 +722,7 @@ pub fn reinstall_linux_with_auth(
     let report = bootstrap_linux_with_auth(auth, repositories, app_binary, owner_uid)?;
 
     write_resource(config_path, &existing_config, 0o600)?;
-    if let Some(uid) = owner_uid {
-        chown_path(config_path, uid)?;
-    }
+    secure_system_config_file(config_path, None)?;
     run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
     run_command(Command::new("/usr/bin/systemctl").args([
         "is-active",
@@ -771,6 +785,11 @@ pub fn bootstrap_linux_with_auth_and_profile(
         }
     }
     validate_bootstrap_auth(&auth)?;
+
+    ensure_control_manager_group()?;
+    if let Some(uid) = owner_uid {
+        add_user_to_control_group(uid)?;
+    }
 
     setup_progress(1, "Checking Docker and system prerequisites");
     ensure_docker()?;
@@ -836,6 +855,11 @@ pub fn bootstrap_linux_with_auth_and_profile(
         resources::SYSTEMD_GSR_SERVICE,
         0o644,
     )?;
+    write_resource(
+        Path::new("/etc/systemd/system/gitrun-control.service"),
+        resources::SYSTEMD_CONTROL_MANAGER_SERVICE,
+        0o644,
+    )?;
 
     setup_progress(4, "Writing GitRun configuration");
     let config_path = config_dir.join("gitrun.env");
@@ -889,8 +913,18 @@ pub fn bootstrap_linux_with_auth_and_profile(
         ));
     }
 
-    setup_progress(9, "Enabling and starting the GitRun service");
+    setup_progress(
+        9,
+        "Enabling and starting the GitRun Control Manager and services",
+    );
     run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-control.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-control.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun-control.service",
+    ]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun.service"]))?;
     run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
     run_command(Command::new("/usr/bin/systemctl").args([
@@ -1261,6 +1295,77 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
     result
 }
 
+fn ensure_control_manager_group() -> Result<(), SetupError> {
+    let exists = Command::new("/usr/bin/getent")
+        .args(["group", "gitrun-control"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if exists {
+        return Ok(());
+    }
+    run_command(Command::new("/usr/sbin/groupadd").args(["--system", "gitrun-control"]))?;
+    if !Command::new("/usr/bin/getent")
+        .args(["group", "gitrun-control"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return Err(SetupError::Command(
+            "gitrun-control group was not present after group creation".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn add_user_to_control_group(uid: u32) -> Result<(), SetupError> {
+    if uid == 0 {
+        return Ok(());
+    }
+    let user = Command::new("/usr/bin/getent")
+        .args(["passwd", &uid.to_string()])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|line| line.split(':').next().map(str::to_owned))
+        .ok_or_else(|| SetupError::Command(format!("unable to resolve username for uid {uid}")))?;
+    run_command(Command::new("/usr/sbin/usermod").args(["-aG", "gitrun-control", &user]))
+}
+
+/// Repair/install the system control service during an elevated installation
+/// or upgrade. The caller must choose the intended desktop operator explicitly.
+pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), SetupError> {
+    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+        return Err(SetupError::UnsupportedPlatform);
+    }
+    if !running_as_root() {
+        return Err(SetupError::NotRoot);
+    }
+    ensure_control_manager_group()?;
+    if let Some(uid) = desktop_uid {
+        add_user_to_control_group(uid)?;
+    }
+    let config_path = Path::new("/etc/gitrun/gitrun.env");
+    if config_path.is_file() {
+        secure_system_config_file(config_path, None)?;
+    }
+    write_resource(
+        Path::new("/etc/systemd/system/gitrun-control.service"),
+        resources::SYSTEMD_CONTROL_MANAGER_SERVICE,
+        0o644,
+    )?;
+    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-control.service"]))?;
+    // The system binary may have just been replaced by an upgrade. Restart
+    // an already-active manager so it loads the new executable on disk.
+    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-control.service"]))?;
+    run_command(Command::new("/usr/bin/systemctl").args([
+        "is-active",
+        "--quiet",
+        "gitrun-control.service",
+    ]))?;
+    Ok(())
+}
+
 fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
     let user = Command::new("/usr/bin/getent")
         .args(["passwd", &uid.to_string()])
@@ -1610,11 +1715,9 @@ pub fn secure_system_settings_file(
     Ok(())
 }
 
-/// Secure the installed system config for use by the privileged scheduler and
-/// read-only desktop UI. The file and its parent must be regular trusted paths;
-/// writes stay root-owned, while a known desktop user's primary group receives
-/// read-only access. With no desktop user, keep the file root-only.
-pub fn secure_system_config_file(path: &Path, desktop_uid: Option<u32>) -> Result<(), SetupError> {
+/// Keep the credential-bearing system configuration readable only by root.
+/// Desktop and terminal UIs access it through the persistent Control Manager.
+pub fn secure_system_config_file(path: &Path, _desktop_uid: Option<u32>) -> Result<(), SetupError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let parent = path
@@ -1629,26 +1732,15 @@ pub fn secure_system_config_file(path: &Path, desktop_uid: Option<u32>) -> Resul
         ));
     }
 
-    let (mode, expected_gid) = if let Some(uid) = desktop_uid {
-        let gid = primary_gid_for_uid(uid)?;
-        run_command(
-            Command::new("/usr/bin/chown")
-                .arg(format!("0:{gid}"))
-                .arg(path),
-        )?;
-        (0o640, gid)
-    } else {
-        run_command(Command::new("/usr/bin/chown").arg("0:0").arg(path))?;
-        (0o600, 0)
-    };
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    run_command(Command::new("/usr/bin/chown").arg("0:0").arg(path))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
 
     let final_metadata = fs::symlink_metadata(path)?;
     if final_metadata.file_type().is_symlink()
         || !final_metadata.is_file()
         || final_metadata.uid() != 0
-        || final_metadata.gid() != expected_gid
-        || final_metadata.permissions().mode() & 0o777 != mode
+        || final_metadata.gid() != 0
+        || final_metadata.permissions().mode() & 0o777 != 0o600
     {
         return Err(SetupError::Command(
             "system config ownership/permissions failed postcondition verification".into(),

@@ -128,6 +128,17 @@ fn setup_config_dir() -> PathBuf {
 }
 
 fn current_version() -> String {
+    // In a system installation, the root-owned version file is authoritative.
+    // Never let an inherited GITRUN_VERSION value influence a privileged update
+    // decision; that could suppress an update or misreport the installed version.
+    if system_install_paths().is_some() {
+        return std::fs::read_to_string("/usr/share/gitrun/version.txt")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "0.0.0".into());
+    }
+
     std::env::var("GITRUN_VERSION")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -135,11 +146,13 @@ fn current_version() -> String {
             std::fs::read_to_string("/usr/share/gitrun/version.txt")
                 .ok()
                 .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
         })
         .or_else(|| {
             std::fs::read_to_string("version.txt")
                 .ok()
                 .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
         })
         .unwrap_or_else(|| "0.0.0".into())
 }

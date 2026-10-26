@@ -72,6 +72,35 @@ jobs:
             echo "version_number=$expected_version"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Synchronize Markdown source-version markers
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version_number }}
+        run: |
+          set -euo pipefail
+          python3 scripts/sync-markdown-version.py --version "$VERSION"
+          python3 scripts/sync-markdown-version.py --check --version "$VERSION"
+
+          # Release builds normally originate at the exact main-branch commit
+          # that is tagged. If documentation markers need repair and main still
+          # points at that source commit with the same product version, persist
+          # the repair as a small follow-up docs commit. For an older tag or an
+          # advanced branch, update the release workspace only; never rewind main.
+          if ! git diff --quiet; then
+            git fetch origin main
+            main_sha="$(git rev-parse origin/main)"
+            main_version="$(git show origin/main:version.txt | tr -d '[:space:]')"
+            if [ "$main_sha" = "$GITHUB_SHA" ] && [ "$main_version" = "$VERSION" ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add -u -- .
+              git commit -m "docs: sync Markdown source version to $VERSION"
+              git push origin HEAD:main
+            else
+              echo "::warning::Markdown markers were refreshed for release artifacts, but main has advanced or its version differs; no source-branch commit was made."
+            fi
+          fi
+
       - name: Prepare release caches
         shell: bash
         run: |
@@ -155,7 +184,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sed -i -E "0,/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/s//\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+          python3 - "$VERSION" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          version = sys.argv[1]
+          config_path = Path("src-tauri/tauri.conf.json")
+          package_path = Path("package.json")
+          lock_path = Path("package-lock.json")
+
+          for path in (config_path, package_path, lock_path):
+              data = json.loads(path.read_text(encoding="utf-8"))
+              data["version"] = version
+              if path == lock_path:
+                  packages = data.get("packages")
+                  if not isinstance(packages, dict) or "" not in packages:
+                      raise SystemExit("package-lock.json is missing root package metadata")
+                  packages[""]["version"] = version
+              path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+          PY
 
       - name: Build unified GitRun executable
         env:

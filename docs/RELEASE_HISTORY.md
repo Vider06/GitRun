@@ -1,5 +1,16 @@
 # Release history and historical verification
 
+Current source target: GitRun <!-- gitrun-version:start -->1.8.4<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.8.4 — crate version reconciliation and Markdown automation
+
+- **Source/product target:** `1.8.4`, recorded in `version.txt`. This entry records source changes; it does not by itself assert that a signed release artifact has been published.
+- Reconciled independent patch versions for crates with source changes after their previous version bumps: `gitrun-cli` 0.13.4 → 0.13.5, `gitrun-updater` 0.8.3 → 0.8.4, `gitrun-recovery` 0.6.7 → 0.6.8, `gitrun-setup` 0.9.4 → 0.9.5, `gitrun-scheduler` 0.11.0 → 0.11.1, and `gitrun-smart-scheduler` 0.4.0 → 0.4.1. Crates whose code did not change retain their versions.
+- Added invisible Markdown version markers and a standard-library-only synchronizer. CI checks that the documented current version matches `version.txt`; release packaging refreshes markers and writes a documentation commit back to `main` when it is still building the current `main` head.
+- Synced the Tauri bundle, frontend package and npm lockfile product metadata to 1.8.4, with the release workflow deriving those values from the selected product version.
+- Polished the terminal management console: monochrome Settings glyph, width-aware header, restrained selected-row tint and semantic JSON output colors.
+- **Implementation PR:** [#123](https://github.com/Vider06/GitRun/pull/123).
+
 ## GitRun 1.8.3 — updater resilience and explicit force mode
 
 - **Source/product target:** `1.8.3`, recorded in `version.txt` for this source line. This entry records source changes; it does not by itself assert that a signed release artifact has been published.
@@ -10,10 +21,24 @@
 - Hardened CI tool downloads and retry status handling; the pinned Cargo Audit version now has a source-install fallback when its prebuilt release asset cannot be downloaded.
 - **Implementation PR:** [#122](https://github.com/Vider06/GitRun/pull/122).
 
+## GitRun 1.8.2 — system recovery and local runner-image fixes
+
+- **Implementation PRs:** [#120](https://github.com/Vider06/GitRun/pull/120) and [#121](https://github.com/Vider06/GitRun/pull/121).
+- Improved health and terminal-setup behavior, made recovery diagnostics account for the persistent Control Manager service, and reconciled missing or stale GitRun service units through the existing repair path.
+- Fixed permanent-runner updates for unqualified local image names such as `gitrun-runner:latest`: they are verified locally rather than accidentally treated as Docker Hub images. Registry-qualified references continue through the pull path.
+- Refreshed the management console layout and current-operation details, including resource gauges, focus/navigation behavior and selection styling. PR #123 further polishes the Settings glyph, header sizing and JSON output.
+
+## GitRun 1.8.1 — update repair and service recovery
+
+- **Implementation PR:** [#119](https://github.com/Vider06/GitRun/pull/119).
+- Added `gitrun fix-update` to repair the installed systemd integration and `gitrun-control` group, then apply the latest official signed release only when it is newer than the installed binary.
+- Kept update recovery bounded: the command does not force a downgrade, and service/update work remains subject to the updater's verification and rollback contracts.
+
 ## GitRun 1.8.0 — CLI management console and version alignment
 
 - **Source/product version:** `1.8.0`, recorded in `version.txt` and the dashboard product metadata. This entry describes the source line; it does not assert that a signed release artifact has been published.
 - Added the keyboard-driven `gitrun manage` terminal management console for headless operation, using the dashboard's validated backend operations rather than a parallel settings implementation.
+- Added the persistent privileged Control Manager service and typed, allowlisted local IPC for protected dashboard/terminal operations. The UI remains unprivileged; fixed-purpose reads/writes and explicit confirmation gates replace repeated broad sudo interactions. Setup and update flows install or reconcile the service unit.
 - Standard CLI invocations show the mascot by default; `--no-cat` is the explicit opt-out. Internal dashboard/recovery child-process launches pass `--no-cat` so their output remains usable and does not interfere with parent terminal rendering.
 - Hardened CLI argument-error/help handling around the shared presenter and serialized Linux process-control regression tests to avoid unrelated-child `waitpid` races.
 - Bumped patch versions only for crates changed by this work: `gitrun-cli` 0.13.2 → 0.13.3, `gitrun-dashboard-tauri` 0.11.0 → 0.11.1, `gitrun-gsr` 0.6.2 → 0.6.3 and `gitrun-recovery` 0.6.6 → 0.6.7. Other crates retain their independent SemVer versions.

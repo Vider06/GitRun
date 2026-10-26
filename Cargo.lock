@@ -1584,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-cli"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "clap",
  "crossterm",
@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-dashboard-tauri"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "gitrun-core",
  "gitrun-gsr",
@@ -1649,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-gsr"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "gitrun-core",
  "gitrun-exe",
@@ -1662,7 +1662,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-recovery"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "gitrun-core",
  "gitrun-scheduler",

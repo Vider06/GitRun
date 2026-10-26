@@ -3147,7 +3147,9 @@ fn run_update(
         // Resolve and verify the release before invoking sudo. This avoids an
         // unnecessary password prompt when GitHub is unreachable or the
         // release cannot be applied on this host.
-        println!("GitRun update: verifying the signed release before requesting administrator access");
+        println!(
+            "GitRun update: verifying the signed release before requesting administrator access"
+        );
         let repository =
             std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
         let manifest = match manifest_url {
@@ -3188,13 +3190,15 @@ fn run_update(
         // of resolving a moving "latest" pointer for a second time.
         let resolved_manifest_url = match manifest_url {
             Some(url) => url.to_owned(),
-            None => match release_manifest_download_url(&repository, &manifest.version) {
-                Ok(url) => url,
-                Err(error) => {
-                    eprintln!("GitRun update: FAIL — unable to resolve the signed release URL: {error}");
-                    return 1;
+            None => {
+                match release_manifest_download_url(&repository, &manifest.version) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        eprintln!("GitRun update: FAIL — unable to resolve the signed release URL: {error}");
+                        return 1;
+                    }
                 }
-            },
+            }
         };
         match elevate_system_update(Some(&resolved_manifest_url), presenter) {
             Ok(code) => return code,

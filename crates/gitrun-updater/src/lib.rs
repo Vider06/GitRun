@@ -3276,7 +3276,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn installed_update_rejects_symlink_destination_before_mutation() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::os::unix::fs::symlink;
 
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let root = std::env::temp_dir().join(format!(
@@ -3316,7 +3316,6 @@ mod tests {
         assert_eq!(fs::read(&outside).unwrap(), b"must remain untouched");
         assert_eq!(fs::read_to_string(&version_file).unwrap(), "0.9.0\n");
         let _ = fs::remove_dir_all(&root);
-        let _ = PermissionsExt::from_mode; // Keep the import lint-free across cfg toolchains.
     }
 
     #[test]

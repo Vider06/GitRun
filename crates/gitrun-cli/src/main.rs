@@ -2436,24 +2436,116 @@ fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
     }
 }
 
-fn run_doctor() -> i32 {
-    match load_config() {
-        Ok(config) => {
-            println!(
-                "GitRun doctor: PASS ({} repositories, pool {}..{})",
-                config.repositories.len(),
-                config.min_runners,
-                config.max_runners
-            );
-            0
+fn doctor_check(label: &str, result: Result<String, String>, failures: &mut usize, warnings: &mut usize) {
+    match result {
+        Ok(detail) => println!("[PASS] {label}: {detail}"),
+        Err(detail) if detail.starts_with("WARN: ") => {
+            *warnings += 1;
+            println!("[WARN] {label}: {}", detail.trim_start_matches("WARN: "));
         }
-        Err(error) => {
-            eprintln!("GitRun doctor: FAIL — {error}");
-            1
-        }
+        Err(detail) => { *failures += 1; println!("[FAIL] {label}: {detail}"); }
     }
 }
 
+fn doctor_file_check(path: &str, require_root_owned: bool) -> Result<String, String> {
+    let path_obj = Path::new(path);
+    let metadata = std::fs::symlink_metadata(path_obj).map_err(|error| format!("{path}: {error}"))?;
+    if metadata.file_type().is_symlink() { return Err(format!("{path} must not be a symbolic link")); }
+    #[cfg(unix)] {
+        use std::os::unix::fs::MetadataExt;
+        if require_root_owned && metadata.uid() != 0 { return Err(format!("{path} is owned by uid {}, expected root", metadata.uid())); }
+        if require_root_owned && metadata.mode() & 0o022 != 0 { return Err(format!("{path} is writable by group or others")); }
+    }
+    Ok(format!("present ({})", if metadata.is_dir() { "directory" } else if metadata.is_file() { "file" } else { "other" }))
+}
+
+fn doctor_command_status(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new(program).args(args).output().map_err(|error| format!("could not run {program}: {error}"))?;
+    if output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        Ok(if detail.is_empty() { "OK".into() } else { detail })
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(if detail.is_empty() { format!("{program} exited with {}", output.status) } else { detail })
+    }
+}
+
+fn doctor_service_check(service: &str) -> Result<String, String> {
+    match doctor_command_status("/usr/bin/systemctl", &["is-active", service]) {
+        Ok(state) if state == "active" => Ok("active".into()),
+        Ok(state) => Err(format!("reports {state}; expected active")),
+        Err(error) => Err(format!("not active ({error}); inspect systemctl status {service}")),
+    }
+}
+
+fn run_doctor() -> i32 {
+    println!("GitRun doctor: checking installation, configuration and runtime health");
+    let mut failures = 0usize;
+    let mut warnings = 0usize;
+    let system_install = system_install_paths().is_some();
+    match std::env::current_exe() {
+        Ok(path) if path.is_file() => doctor_check("CLI binary", Ok(path.display().to_string()), &mut failures, &mut warnings),
+        Ok(path) => doctor_check("CLI binary", Err(format!("{} is not a regular file", path.display())), &mut failures, &mut warnings),
+        Err(error) => doctor_check("CLI binary", Err(format!("cannot resolve executable: {error}")), &mut failures, &mut warnings),
+    }
+
+    let config_path = if system_install { PathBuf::from(TRUSTED_SYSTEM_CONFIG_FILE) } else { persistent_config_path().unwrap_or_else(|| PathBuf::from("config/gitrun.env")) };
+    let config_result = if system_install {
+        doctor_file_check(TRUSTED_SYSTEM_CONFIG_FILE, true).and_then(|detail| trusted_system_config_path().map(|_| detail).ok_or_else(|| "configuration is unsafe or not root-owned".to_owned()))
+    } else {
+        doctor_file_check(config_path.to_string_lossy().as_ref(), false).map_err(|error| format!("WARN: {error}"))
+    };
+    doctor_check("Configuration file", config_result, &mut failures, &mut warnings);
+
+    match load_config() {
+        Ok(config) => {
+            if config.repositories.is_empty() { doctor_check("Configuration", Err("no repositories configured".into()), &mut failures, &mut warnings); }
+            else { doctor_check("Configuration", Ok(format!("{} repository/repositories; runner pool {}..{}", config.repositories.len(), config.min_runners, config.max_runners)), &mut failures, &mut warnings); }
+            if config.min_runners > config.max_runners { doctor_check("Runner pool limits", Err(format!("minimum {} exceeds maximum {}", config.min_runners, config.max_runners)), &mut failures, &mut warnings); }
+            else { doctor_check("Runner pool limits", Ok("minimum/maximum are consistent".into()), &mut failures, &mut warnings); }
+            for (label, path) in [("State directory", config.state_dir.as_str()), ("Log directory", config.log_dir.as_str())] {
+                match std::fs::metadata(path) {
+                    Ok(metadata) if metadata.is_dir() => doctor_check(label, Ok(path.to_owned()), &mut failures, &mut warnings),
+                    Ok(_) => doctor_check(label, Err(format!("{path} exists but is not a directory")), &mut failures, &mut warnings),
+                    Err(error) => doctor_check(label, Err(format!("WARN: {path}: {error}")), &mut failures, &mut warnings),
+                }
+            }
+        }
+        Err(error) => doctor_check("Configuration parsing", Err(error.to_string()), &mut failures, &mut warnings),
+    }
+
+    if system_install && cfg!(target_os = "linux") {
+        match std::fs::read_to_string("/usr/share/gitrun/version.txt") {
+            Ok(version) if version.trim() == current_version() => doctor_check("Installed version metadata", Ok(version.trim().to_owned()), &mut failures, &mut warnings),
+            Ok(version) => doctor_check("Installed version metadata", Err(format!("binary reports {}, version.txt says {}", current_version(), version.trim())), &mut failures, &mut warnings),
+            Err(error) => doctor_check("Installed version metadata", Err(format!("/usr/share/gitrun/version.txt: {error}")), &mut failures, &mut warnings),
+        }
+        doctor_check("Control Manager group", doctor_command_status("/usr/bin/getent", &["group", "gitrun-control"]).map(|_| "gitrun-control exists".into()).map_err(|_| "missing gitrun-control group; run sudo gitrun fix-update".into()), &mut failures, &mut warnings);
+        let control_unit = ["/etc/systemd/system/gitrun-control.service", "/usr/lib/systemd/system/gitrun-control.service", "/lib/systemd/system/gitrun-control.service"].iter().find(|path| Path::new(path).is_file());
+        doctor_check("Control Manager systemd unit", control_unit.map(|path| Ok((*path).to_owned())).unwrap_or_else(|| Err("missing gitrun-control.service; run sudo gitrun fix-update".into())), &mut failures, &mut warnings);
+        doctor_check("Control Manager service", doctor_service_check("gitrun-control.service"), &mut failures, &mut warnings);
+        let socket_path = Path::new("/run/gitrun-control/manager.sock");
+        match std::fs::symlink_metadata(socket_path) {
+            Ok(metadata) if metadata.file_type().is_socket() => doctor_check("Control Manager socket", Ok(socket_path.display().to_string()), &mut failures, &mut warnings),
+            Ok(_) => doctor_check("Control Manager socket", Err(format!("{} exists but is not a socket", socket_path.display())), &mut failures, &mut warnings),
+            Err(error) => doctor_check("Control Manager socket", Err(format!("{}: {error}", socket_path.display())), &mut failures, &mut warnings),
+        }
+        let scheduler_unit = ["/etc/systemd/system/gitrun.service", "/usr/lib/systemd/system/gitrun.service", "/lib/systemd/system/gitrun.service"].iter().find(|path| Path::new(path).is_file());
+        doctor_check("Scheduler systemd unit", scheduler_unit.map(|path| Ok((*path).to_owned())).unwrap_or_else(|| Err("gitrun.service unit is missing".into())), &mut failures, &mut warnings);
+        if scheduler_unit.is_some() { doctor_check("Scheduler service", doctor_service_check("gitrun.service"), &mut failures, &mut warnings); }
+        else { warnings += 1; println!("[WARN] Scheduler service: no systemd unit found; this may be a CLI-only installation"); }
+        match gitrun_setup::installation_state() {
+            gitrun_setup::InstallationState::Complete => doctor_check("Setup state", Ok("setup flag and system config are present".into()), &mut failures, &mut warnings),
+            gitrun_setup::InstallationState::Incomplete => doctor_check("Setup state", Err("installation is incomplete (config/setup flag mismatch)".into()), &mut failures, &mut warnings),
+            gitrun_setup::InstallationState::FirstRun => doctor_check("Setup state", Err("first-run setup has not completed".into()), &mut failures, &mut warnings),
+        }
+    } else {
+        println!("[INFO] System service checks skipped: executable is not a recognized Linux system install");
+    }
+
+    if failures == 0 { println!("GitRun doctor: PASS (0 failures, {warnings} warning(s))"); 0 }
+    else { println!("GitRun doctor: FAIL ({failures} failure(s), {warnings} warning(s)); see checks above"); 1 }
+}
 fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     let system_install = system_install_paths().is_some();
     initialize_update_signing_environment(system_install);

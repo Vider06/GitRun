@@ -225,7 +225,7 @@ pub fn inspect() -> RecoveryReport {
             code: "service-invalid".into(),
             severity: Severity::Warning,
             title: "GitRun system service is missing or stale".into(),
-            detail: "The scheduler and GSR systemd units must both match the packaged runtime contract; use Repair service to restore them.".into(),
+            detail: "The scheduler, GSR, and Control Manager systemd units must all match the packaged runtime contract; use Repair service to restore them.".into(),
             repairable: true,
         });
     }

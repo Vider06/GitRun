@@ -3531,7 +3531,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn installed_update_persists_recovery_journal_and_can_restore_previous_artifacts() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3552,6 +3552,7 @@ mod tests {
         fs::write(&version_file, b"0.9.0\n").unwrap();
         fs::write(&config_file, b"GITRUN_TEST=before\n").unwrap();
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o640)).unwrap();
+        let original_config_metadata = fs::metadata(&config_file).unwrap();
 
         let archive_path = root.join("release.tar.gz");
         let encoder = flate2::write::GzEncoder::new(
@@ -3598,7 +3599,14 @@ mod tests {
             b"#!/bin/sh\nexit 0\n"
         );
 
-        fs::write(&config_file, b"GITRUN_TEST=after\n").unwrap();
+        let runner_image = RunnerImage {
+            reference: "ghcr.io/vider06/gitrun-runner:latest".into(),
+            digest: format!("sha256:{}", "a".repeat(64)),
+            minimum_version: "1.0.0".into(),
+        };
+        pin_runner_image(&config_file, &runner_image)
+            .expect("runner pinning must update config atomically without losing metadata");
+        assert!(fs::read_to_string(&config_file).unwrap().contains(&runner_image.digest));
         rollback_installed_update_with_config(
             &record,
             &artifacts,
@@ -3612,6 +3620,8 @@ mod tests {
         assert_eq!(fs::read(&config_file).unwrap(), b"GITRUN_TEST=before\n");
         use std::os::unix::fs::MetadataExt;
         assert_eq!(fs::metadata(&config_file).unwrap().mode() & 0o777, 0o640);
+        assert_eq!(fs::metadata(&config_file).unwrap().uid(), original_config_metadata.uid());
+        assert_eq!(fs::metadata(&config_file).unwrap().gid(), original_config_metadata.gid());
         let _ = fs::remove_dir_all(&root);
     }
 

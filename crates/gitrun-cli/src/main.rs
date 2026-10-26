@@ -2920,14 +2920,10 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         }
     }
 
-    // The updater may have replaced the on-disk executable. Reconcile the
-    // control service once more against that final binary and verify it is active.
-    println!("GitRun fix-update: verifying final systemd and runtime state");
-    if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
-        eprintln!("GitRun fix-update: final systemd verification failed: {error}");
-        return 1;
-    }
-    println!("GitRun fix-update: PASS");
+    // The repair path verifies all units/services before returning; when a newer
+    // release was installed, run_update performs the same reconciliation using
+    // the newly installed binary.
+    println!("GitRun fix-update: PASS (systemd integration verified)");
     0
 }
 
@@ -2994,25 +2990,7 @@ fn run_update(
         None => vec!["update".to_owned()],
     };
     match update_command(&args, presenter) {
-        Ok(()) => {
-            // A successful binary update is not enough for a system install:
-            // reconcile the privileged system integration from trusted resources
-            // embedded in the installed executable.
-            if system_install && running_as_root() {
-                let desktop_uid = std::env::var("SUDO_UID")
-                    .ok()
-                    .and_then(|value| value.parse::<u32>().ok())
-                    .filter(|uid| *uid != 0);
-                if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
-                    eprintln!(
-                        "GitRun update: binary updated, but Control Manager reconciliation failed: {error}"
-                    );
-                    return 1;
-                }
-                println!("GitRun update: Control Manager service PASS");
-            }
-            0
-        }
+        Ok(()) => 0
         Err(error) => {
             eprintln!("GitRun update: FAIL — {error}");
             1

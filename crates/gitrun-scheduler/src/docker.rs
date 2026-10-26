@@ -3776,6 +3776,14 @@ mod tests {
             "network not found",
             "gitrun-runner"
         ));
+        assert!(missing_network_inspect_error(
+            "Error response from daemon: no such network gitrun-runner",
+            "gitrun-runner"
+        ));
+        assert!(missing_network_inspect_error(
+            "Error response from daemon: no such network: gitrun-runner",
+            "gitrun-runner"
+        ));
         assert!(!missing_network_inspect_error(
             "network unrelated not found",
             "gitrun-runner"

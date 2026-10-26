@@ -3737,7 +3737,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_network_error_matches_only_the_configured_network() {
+    fn missing_network_error_matches_docker_inspect_and_create_wording_for_configured_network() {
         assert!(missing_network_error(
             "Error response from daemon: network gitrun-runner not found",
             "gitrun-runner"

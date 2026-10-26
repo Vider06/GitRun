@@ -18,20 +18,49 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
     match operation {
         "read" => matches!(
             action,
-            "first_run" | "overview" | "health" | "runners" | "host_resources"
-                | "repository_activity" | "repo_detail" | "repo_bootstrap" | "config"
-                | "gitrun_settings" | "security_summary" | "vault_secrets" | "gsr_status"
-                | "gsr_events" | "service_logs" | "zizmor" | "logic_rules" | "vm_configs"
-                | "hypervisor_decisions" | "kitty" | "repo_api_policies" | "dock_requirements"
+            "first_run"
+                | "overview"
+                | "health"
+                | "runners"
+                | "host_resources"
+                | "repository_activity"
+                | "repo_detail"
+                | "repo_bootstrap"
+                | "config"
+                | "gitrun_settings"
+                | "security_summary"
+                | "vault_secrets"
+                | "gsr_status"
+                | "gsr_events"
+                | "service_logs"
+                | "zizmor"
+                | "logic_rules"
+                | "vm_configs"
+                | "hypervisor_decisions"
+                | "kitty"
+                | "repo_api_policies"
+                | "dock_requirements"
                 | "updates"
         ),
         "write" => matches!(
             action,
-            "connect_repository" | "vm_configs_replace" | "fast_stop" | "vault_set"
-                | "vault_delete" | "zizmor_install" | "zizmor_disable" | "logic_rules_save"
-                | "vm_save" | "vm_delete" | "hypervisor_respond" | "kitty_save"
-                | "gitrun_settings_save" | "config_save" | "dashboard_settings_save"
-                | "service_control" | "maintenance_task"
+            "connect_repository"
+                | "vm_configs_replace"
+                | "fast_stop"
+                | "vault_set"
+                | "vault_delete"
+                | "zizmor_install"
+                | "zizmor_disable"
+                | "logic_rules_save"
+                | "vm_save"
+                | "vm_delete"
+                | "hypervisor_respond"
+                | "kitty_save"
+                | "gitrun_settings_save"
+                | "config_save"
+                | "dashboard_settings_save"
+                | "service_control"
+                | "maintenance_task"
         ),
         _ => false,
     }
@@ -288,7 +317,10 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
             return Err("unsupported control-manager operation".into());
         }
         if !action_is_allowed(&request.operation, &request.action) {
-            return Err(format!("unsupported control-manager action: {}", request.action));
+            return Err(format!(
+                "unsupported control-manager action: {}",
+                request.action
+            ));
         }
         if request.action.is_empty()
             || request.action.len() > 80

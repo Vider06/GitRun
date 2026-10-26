@@ -690,7 +690,7 @@ fn handle_key(
         },
         KeyCode::Char('r') if key.modifiers.is_empty() => execute_action(terminal, state)?,
         KeyCode::Char('c') if key.modifiers.is_empty() && state.page == 7 => {
-            let log_text = state.body.join("\n");
+            let log_text = logs_clipboard_text(&state.body);
             match request_osc52_clipboard(&log_text) {
                 Ok(truncated) => {
                     state.error = false;
@@ -1425,6 +1425,23 @@ fn resource_metrics(state: &State) -> Vec<(&'static str, f64)> {
     .into_iter()
     .filter_map(|(label, key)| find(&value, key).map(|percent| (label, percent)))
     .collect()
+}
+
+fn logs_clipboard_text(body: &[String]) -> String {
+    let displayed = body.join("\n");
+    let Ok(Value::Array(entries)) = serde_json::from_str::<Value>(&displayed) else {
+        return displayed;
+    };
+    if entries.iter().all(Value::is_string) {
+        return entries
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    // Structured events are not flattened or lossy-converted; retain their
+    // formatted JSON representation for copying.
+    displayed
 }
 
 fn build_osc52_sequence(text: &str) -> Result<(String, bool), &'static str> {
@@ -2523,8 +2540,8 @@ mod tests {
 #[cfg(test)]
 mod visual_design_tests {
     use super::{
-        build_osc52_sequence, header_separator, mascot_state, State, OSC52_MAX_COPY_BYTES, PAGES,
-        WIDE_HEADER_TAGLINE,
+        build_osc52_sequence, header_separator, logs_clipboard_text, mascot_state, State,
+        OSC52_MAX_COPY_BYTES, PAGES, WIDE_HEADER_TAGLINE,
     };
 
     #[test]
@@ -2535,6 +2552,32 @@ mod visual_design_tests {
                 2 + separator.chars().count() + WIDE_HEADER_TAGLINE.chars().count();
             assert_eq!(rendered_width, usize::from(width.saturating_sub(2)));
         }
+    }
+
+    #[test]
+    fn logs_clipboard_text_unwraps_journal_arrays_into_plain_lines() {
+        let view = vec![
+            "[".to_owned(),
+            "  \\"first journal line\\",".to_owned(),
+            "  \\"second journal line\\"".to_owned(),
+            "]".to_owned(),
+        ];
+        assert_eq!(
+            logs_clipboard_text(&view),
+            "first journal line\nsecond journal line"
+        );
+    }
+
+    #[test]
+    fn logs_clipboard_text_preserves_structured_event_json() {
+        let view = vec![
+            "[".to_owned(),
+            "  {".to_owned(),
+            "    \\"event\\": \\"warning\\"".to_owned(),
+            "  }".to_owned(),
+            "]".to_owned(),
+        ];
+        assert_eq!(logs_clipboard_text(&view), view.join("\n"));
     }
 
     #[test]

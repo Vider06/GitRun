@@ -40,6 +40,7 @@ const TEXT: Color = Color::Rgb(232, 238, 247);
 const BORDER: Color = Color::Rgb(53, 65, 83);
 const SELECTED_BG: Color = Color::Rgb(28, 39, 53);
 const PANEL_BG: Color = Color::Rgb(17, 24, 35);
+const OSC52_MAX_COPY_BYTES: usize = 64 * 1024;
 const GOOD: Color = Color::Rgb(112, 214, 160);
 const WARN: Color = Color::Rgb(255, 194, 102);
 const BAD: Color = Color::Rgb(255, 116, 128);
@@ -688,6 +689,23 @@ fn handle_key(
             }
         },
         KeyCode::Char('r') if key.modifiers.is_empty() => execute_action(terminal, state)?,
+        KeyCode::Char('c') if key.modifiers.is_empty() && state.page == 7 => {
+            let log_text = state.body.join("\n");
+            match request_osc52_clipboard(&log_text) {
+                Ok(truncated) => {
+                    state.error = false;
+                    state.notice = if truncated {
+                        "Copy request sent · latest 64 KiB only · OSC 52 terminal support required".into()
+                    } else {
+                        "Copy request sent · OSC 52 terminal support required".into()
+                    };
+                }
+                Err(error) => {
+                    state.error = true;
+                    state.notice = format!("Log copy request failed: {error}");
+                }
+            }
+        }
         KeyCode::Char(ch @ '1'..='9') if key.modifiers.is_empty() => {
             let index = ch.to_digit(10).unwrap_or(1) as usize - 1;
             match state.focus {
@@ -1084,7 +1102,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         .scroll((state.scroll, 0));
     frame.render_widget(body, body_area);
 
-    let footer = Paragraph::new(Line::from(vec![
+    let mut footer_spans = vec![
         Span::styled(
             " ↑↓ ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
@@ -1103,6 +1121,14 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         Span::styled(" Focus  ", Style::default().fg(MUTED)),
         Span::styled("r", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::styled(" Refresh  ", Style::default().fg(MUTED)),
+    ];
+    if state.page == 7 {
+        footer_spans.extend([
+            Span::styled("c", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+            Span::styled(" Copy logs  ", Style::default().fg(MUTED)),
+        ]);
+    }
+    footer_spans.extend([
         Span::styled("?", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::styled(" Help  ", Style::default().fg(MUTED)),
         Span::styled("q", Style::default().fg(BAD).add_modifier(Modifier::BOLD)),
@@ -1112,13 +1138,14 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             state.notice.as_str(),
             Style::default().fg(if state.error { BAD } else { GOOD }),
         ),
-    ]))
-    .style(Style::default().bg(PANEL_BG))
-    .block(
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(BORDER)),
-    );
+    ]);
+    let footer = Paragraph::new(Line::from(footer_spans))
+        .style(Style::default().bg(PANEL_BG))
+        .block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(BORDER)),
+        );
     frame.render_widget(footer, layout[2]);
 
     if state.show_help {
@@ -1141,6 +1168,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 ),
                 Line::from("0                Action 10, or App Settings when Sections has focus"),
                 Line::from("Esc               Back to operations / Overview"),
+                Line::from("c                 Copy current Logs output via OSC 52 (Logs section only)"),
                 Line::from("q / Ctrl+C        Exit the management console"),
                 Line::from(""),
                 Line::from(Span::styled(
@@ -1394,6 +1422,34 @@ fn resource_metrics(state: &State) -> Vec<(&'static str, f64)> {
     .into_iter()
     .filter_map(|(label, key)| find(&value, key).map(|percent| (label, percent)))
     .collect()
+}
+
+fn build_osc52_sequence(text: &str) -> Result<(String, bool), &'static str> {
+    use base64::Engine as _;
+
+    if text.is_empty() {
+        return Err("there is no log output to copy");
+    }
+
+    // OSC 52 payload limits vary by terminal. Keep the encoded request safely
+    // bounded, preserving the newest log output when it exceeds the limit.
+    let mut start = text.len().saturating_sub(OSC52_MAX_COPY_BYTES);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let clipped = start > 0;
+    let payload = &text[start..];
+    let encoded = base64::engine::general_purpose::STANDARD.encode(payload.as_bytes());
+    Ok((format!("\\x1b]52;c;{encoded}\\x07"), clipped))
+}
+
+fn request_osc52_clipboard(text: &str) -> io::Result<bool> {
+    let (sequence, clipped) = build_osc52_sequence(text)
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(sequence.as_bytes())?;
+    stdout.flush()?;
+    Ok(clipped)
 }
 
 fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
@@ -2463,7 +2519,10 @@ mod tests {
 
 #[cfg(test)]
 mod visual_design_tests {
-    use super::{header_separator, mascot_state, State, PAGES, WIDE_HEADER_TAGLINE};
+    use super::{
+        build_osc52_sequence, header_separator, mascot_state, State, OSC52_MAX_COPY_BYTES, PAGES,
+        WIDE_HEADER_TAGLINE,
+    };
 
     #[test]
     fn wide_header_separator_fits_the_available_terminal_width() {
@@ -2473,6 +2532,44 @@ mod visual_design_tests {
                 2 + separator.chars().count() + WIDE_HEADER_TAGLINE.chars().count();
             assert_eq!(rendered_width, usize::from(width.saturating_sub(2)));
         }
+    }
+
+    #[test]
+    fn osc52_clipboard_sequence_encodes_text_and_bounds_large_log_payloads() {
+        use base64::Engine as _;
+
+        let text = "docker network gitrun-runner not found\\nretry required";
+        let (sequence, truncated) = build_osc52_sequence(text).unwrap();
+        assert!(!truncated);
+        assert!(sequence.starts_with("\\x1b]52;c;"));
+        assert!(sequence.ends_with('\\x07'));
+        let encoded = sequence
+            .strip_prefix("\\x1b]52;c;")
+            .unwrap()
+            .strip_suffix('\\x07')
+            .unwrap();
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.decode(encoded).unwrap(),
+            text.as_bytes()
+        );
+
+        let large = format!("prefix\\n{}", "x".repeat(OSC52_MAX_COPY_BYTES + 32));
+        let (sequence, truncated) = build_osc52_sequence(&large).unwrap();
+        assert!(truncated);
+        let encoded = sequence
+            .strip_prefix("\\x1b]52;c;")
+            .unwrap()
+            .strip_suffix('\\x07')
+            .unwrap();
+        let payload = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        assert!(payload.len() <= OSC52_MAX_COPY_BYTES);
+        assert!(std::str::from_utf8(&payload).is_ok());
+        assert!(payload.ends_with(b"xxxxxxxx"));
+    }
+
+    #[test]
+    fn osc52_rejects_empty_copy_payloads() {
+        assert!(build_osc52_sequence("").is_err());
     }
 
     #[test]

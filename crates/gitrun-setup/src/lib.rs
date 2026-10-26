@@ -1387,7 +1387,11 @@ pub fn ensure_control_manager_service_with_binary(
     let gsr_service = systemd_unit_for_binary(resources::SYSTEMD_GSR_SERVICE, binary_path)?;
     let control_service =
         systemd_unit_for_binary(resources::SYSTEMD_CONTROL_MANAGER_SERVICE, binary_path)?;
-    write_resource(&service_dir.join("gitrun.service"), &scheduler_service, 0o644)?;
+    write_resource(
+        &service_dir.join("gitrun.service"),
+        &scheduler_service,
+        0o644,
+    )?;
     write_resource(&service_dir.join("gitrun-gsr.service"), &gsr_service, 0o644)?;
     write_resource(
         &service_dir.join("gitrun-control.service"),

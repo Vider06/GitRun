@@ -184,7 +184,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sed -i -E "0,/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/s//\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+          python3 - "$VERSION" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          version = sys.argv[1]
+          config_path = Path("src-tauri/tauri.conf.json")
+          package_path = Path("package.json")
+          lock_path = Path("package-lock.json")
+
+          for path in (config_path, package_path, lock_path):
+              data = json.loads(path.read_text(encoding="utf-8"))
+              data["version"] = version
+              if path == lock_path:
+                  packages = data.get("packages")
+                  if not isinstance(packages, dict) or "" not in packages:
+                      raise SystemExit("package-lock.json is missing root package metadata")
+                  packages[""]["version"] = version
+              path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+          PY
 
       - name: Build unified GitRun executable
         env:

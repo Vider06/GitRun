@@ -2832,6 +2832,7 @@ impl UpdateLock {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .mode(0o600)
                 .open(&path)?;
             let metadata = fs::symlink_metadata(&path)?;

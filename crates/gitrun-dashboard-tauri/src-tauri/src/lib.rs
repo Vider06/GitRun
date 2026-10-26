@@ -139,6 +139,21 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
         )?;
         return Ok(());
     }
+    // The Control Manager already runs as root. Persist through the same
+    // setup writer directly instead of spawning the legacy pkexec helper,
+    // which correctly requires a PKEXEC_UID/SUDO_UID for interactive callers.
+    if control_manager_enabled() && current_process_is_root() {
+        let path = config_path_for_write()?;
+        gitrun_setup::update_env_file(&path, config).map_err(|error| error.to_string())?;
+        gitrun_setup::secure_system_config_file(&path, None)
+            .map_err(|error| error.to_string())?;
+        if let Some(parent) = path.parent() {
+            std::fs::File::open(parent)
+                .and_then(|file| file.sync_all())
+                .map_err(|error| format!("sync system configuration directory: {error}"))?;
+        }
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 

@@ -21,7 +21,7 @@ The Tauri backend shares persistent VM and Logic Containers formats with the sch
 
 The dashboard uses cached runner, workflow, repository and host-resource snapshots so navigation does not needlessly repeat equivalent requests. Cached data can be stale or partial; unavailable values must not be presented as trustworthy zeroes. The dashboard is an operator view, not the scheduler itself, and the scheduler continues to reconcile runner state when the window is closed.
 
-Security settings remain protected by filesystem permissions. On a system installation, the dashboard uses the fixed-purpose privileged CLI read only after a real permission-denied result; it does not make protected state user-readable or accept an arbitrary path from the UI. See the [v1.6.2 fixes](../../docs/v1.6.2-fixes.md).
+Security settings remain protected by filesystem permissions. On a system installation, the dashboard uses the fixed-purpose privileged CLI read only after a real permission-denied result; it does not make protected state user-readable or accept an arbitrary path from the UI. Internal CLI child processes explicitly pass `--no-cat` unless the caller already supplied it, keeping command output clean and avoiding conflicts with dashboard rendering. See the [v1.6.2 fixes](../../docs/v1.6.2-fixes.md) and [1.8.0 source-line notes](../../docs/v1.8.0-fixes.md).
 
 ## Structure
 

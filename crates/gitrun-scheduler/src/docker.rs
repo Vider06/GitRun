@@ -1901,6 +1901,8 @@ fn missing_network_error(detail: &str, network: &str) -> bool {
     let network = network.to_ascii_lowercase();
     detail.contains(&format!("network {network} not found"))
         || detail.contains(&format!("network {network} does not exist"))
+        || detail.contains(&format!("no such network {network}"))
+        || detail.contains(&format!("no such network: {network}"))
 }
 
 fn ensure_runner_network(
@@ -1927,7 +1929,10 @@ fn ensure_runner_network(
     let stderr = String::from_utf8_lossy(&output.stderr)
         .trim()
         .to_ascii_lowercase();
-    if !(stderr.contains("no such network") || stderr.contains("network not found")) {
+    // Docker's standard inspect error is "network <name> not found". Use
+    // the same name-scoped matcher as the create retry path; the former broad
+    // substring check missed this wording and aborted before network creation.
+    if !missing_network_error(&stderr, network) {
         return Err(DockerError::Command(if stderr.is_empty() {
             format!("docker network inspect {network} failed")
         } else {
@@ -3739,6 +3744,14 @@ mod tests {
         ));
         assert!(missing_network_error(
             "network GitRun-Runner does not exist",
+            "gitrun-runner"
+        ));
+        assert!(missing_network_error(
+            "Error response from daemon: no such network gitrun-runner",
+            "gitrun-runner"
+        ));
+        assert!(missing_network_error(
+            "Error response from daemon: no such network: gitrun-runner",
             "gitrun-runner"
         ));
         assert!(!missing_network_error(

@@ -22,6 +22,12 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
+mod control_manager;
+pub use control_manager::{
+    enabled as control_manager_enabled, request as control_manager_request,
+    serve as run_control_manager,
+};
+
 /// Serializes dashboard-side writes to the shared config/settings files.
 /// The snapshot check alone is vulnerable to two Tauri commands checking the
 /// same old state before either one writes it.
@@ -56,6 +62,14 @@ fn resolve_config_path(explicit: Option<&std::ffi::OsStr>) -> Result<Option<Path
 }
 
 fn load_config() -> Result<Config, String> {
+    // System configuration contains credentials and stays root-owned 0600.
+    // Desktop processes read it only through the persistent, allowlisted IPC
+    // service. The manager itself runs as root and follows the local path below.
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request("read", "config", serde_json::json!({}))?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode authorized GitRun configuration: {error}"));
+    }
     let explicit = std::env::var_os("GITRUN_CONFIG_FILE");
     let path = resolve_config_path(explicit.as_deref())?;
     match path {
@@ -100,13 +114,48 @@ fn trusted_system_cli_path() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
+fn authorized_cli_command(cli: &Path) -> Result<std::process::Command, String> {
+    let mut command = if current_process_is_root() {
+        std::process::Command::new(cli)
+    } else {
+        let pkexec = pkexec_path().ok_or(
+            "trusted pkexec was not found; this protected operation cannot continue safely",
+        )?;
+        let mut command = std::process::Command::new(pkexec);
+        command.arg(cli);
+        command
+    };
+    command.arg("--no-cat");
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
 fn persist_config_as_root(config: &Config) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "config_save",
+            serde_json::json!({ "updated": config }),
+        )?;
+        return Ok(());
+    }
+    // The Control Manager already runs as root. Persist through the same
+    // setup writer directly instead of spawning the legacy pkexec helper,
+    // which correctly requires a PKEXEC_UID/SUDO_UID for interactive callers.
+    if control_manager_enabled() && current_process_is_root() {
+        let path = config_path_for_write()?;
+        gitrun_setup::update_env_file(&path, config).map_err(|error| error.to_string())?;
+        gitrun_setup::secure_system_config_file(&path, None).map_err(|error| error.to_string())?;
+        if let Some(parent) = path.parent() {
+            std::fs::File::open(parent)
+                .and_then(|file| file.sync_all())
+                .map_err(|error| format!("sync system configuration directory: {error}"))?;
+        }
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let pkexec = pkexec_path().ok_or(
-        "Saving system settings requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; system settings cannot be saved safely.",
     )?;
@@ -131,9 +180,7 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
 
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-config-root")
             .arg(&path)
             .status()
@@ -156,13 +203,38 @@ fn persist_config_as_root(_config: &Config) -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
-fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), String> {
+fn persist_gitrun_settings_as_root(
+    settings: &GitRunSettings,
+    confirm_socket_opt_out: bool,
+) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "gitrun_settings_save",
+            serde_json::json!({
+                "settings": settings,
+                "confirm_socket_opt_out": confirm_socket_opt_out,
+                "confirmed": confirm_socket_opt_out
+            }),
+        )?;
+        return Ok(());
+    }
+    if control_manager_enabled() && current_process_is_root() {
+        let config = load_config()?;
+        let path = gitrun_settings_path(&config);
+        settings.save(&path).map_err(|error| error.to_string())?;
+        gitrun_setup::secure_system_settings_file(&path, None)
+            .map_err(|error| error.to_string())?;
+        if let Some(parent) = path.parent() {
+            std::fs::File::open(parent)
+                .and_then(|file| file.sync_all())
+                .map_err(|error| format!("sync GitRun settings directory: {error}"))?;
+        }
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let pkexec = pkexec_path().ok_or(
-        "Saving system security settings requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; security settings cannot be saved safely.",
     )?;
@@ -190,9 +262,7 @@ fn persist_gitrun_settings_as_root(settings: &GitRunSettings) -> Result<(), Stri
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
 
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-gitrun-settings-root")
             .arg(&path)
             .status()
@@ -218,13 +288,25 @@ fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), Str
 fn persist_logic_rules_as_root(
     rules: &[gitrun_scheduler::logic_containers::LogicRule],
 ) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "logic_rules_save",
+            serde_json::json!({ "rules": rules }),
+        )?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
     gitrun_scheduler::logic_containers::validate_rules(rules).map_err(|error| error.to_string())?;
-    let pkexec = pkexec_path().ok_or(
-        "Saving Logic Containers rules requires administrator authorization, but trusted pkexec was not found.",
-    )?;
+    if control_manager_enabled() && current_process_is_root() {
+        let config = load_config()?;
+        let path = PathBuf::from(&config.state_dir).join("logic-containers.json");
+        gitrun_scheduler::logic_containers::save_rules(&path, rules)
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; Logic Containers rules cannot be saved safely.",
     )?;
@@ -254,9 +336,7 @@ fn persist_logic_rules_as_root(
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
 
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-logic-rules-root")
             .arg(&path)
             .status()
@@ -282,12 +362,23 @@ fn persist_logic_rules_as_root(
 
 #[cfg(target_os = "linux")]
 fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "vm_configs_replace",
+            serde_json::json!({ "configs": configs }),
+        )?;
+        return Ok(());
+    }
+    if control_manager_enabled() && current_process_is_root() {
+        let config = load_config()?;
+        gitrun_scheduler::vm::save_vm_configs(Path::new(&config.state_dir), configs)
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let pkexec = pkexec_path().ok_or(
-        "Saving VM configuration requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; VM configuration cannot be saved safely.",
     )?;
@@ -315,9 +406,7 @@ fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Res
             .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-vm-configs-root")
             .arg(&path)
             .status()
@@ -372,12 +461,26 @@ fn respond_hypervisor_decision_as_root(
 
 #[cfg(target_os = "linux")]
 fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "kitty_save",
+            serde_json::json!({ "settings": settings }),
+        )?;
+        return Ok(());
+    }
+    if control_manager_enabled() && current_process_is_root() {
+        let config = load_config()?;
+        gitrun_smart_scheduler::save_system_settings_for_state_dir(
+            Path::new(&config.state_dir),
+            settings,
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let pkexec = pkexec_path().ok_or(
-        "Saving Kitty settings requires administrator authorization, but trusted pkexec was not found.",
-    )?;
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; Kitty settings cannot be saved safely.",
     )?;
@@ -407,9 +510,7 @@ fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String
         file.sync_all().map_err(|error| error.to_string())?;
         drop(file);
 
-        let status = std::process::Command::new(&pkexec)
-            .arg(&cli)
-            .arg("--no-cat")
+        let status = authorized_cli_command(&cli)?
             .arg("--save-kitty-settings-root")
             .arg(&path)
             .status()
@@ -434,9 +535,13 @@ fn persist_kitty_settings_as_root(_settings: &KittySettings) -> Result<(), Strin
 /// Persist security policy through the privileged helper for system installs.
 /// The state directory is root-owned so user-level atomic rename is intentionally
 /// unavailable; developer installations retain their configurable local path.
-fn persist_gitrun_settings(settings: &GitRunSettings, path: &Path) -> Result<(), String> {
+fn persist_gitrun_settings(
+    settings: &GitRunSettings,
+    path: &Path,
+    confirm_socket_opt_out: bool,
+) -> Result<(), String> {
     if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
-        persist_gitrun_settings_as_root(settings)
+        persist_gitrun_settings_as_root(settings, confirm_socket_opt_out)
     } else {
         settings.save(path).map_err(|error| error.to_string())
     }
@@ -452,7 +557,13 @@ fn persist_dashboard_config_unlocked(config: &Config) -> Result<(), String> {
     match std::fs::OpenOptions::new().write(true).open(&path) {
         Ok(file) => {
             drop(file);
-            gitrun_setup::update_env_file(&path, config).map_err(|error| error.to_string())
+            gitrun_setup::update_env_file(&path, config).map_err(|error| error.to_string())?;
+            if path == Path::new("/etc/gitrun/gitrun.env") {
+                #[cfg(target_os = "linux")]
+                gitrun_setup::secure_system_config_file(&path, None)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
         }
         Err(error)
             if error.kind() == std::io::ErrorKind::PermissionDenied
@@ -990,6 +1101,19 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical uninstall currently targets Linux x86_64".into());
     }
+    if control_manager_enabled() {
+        let scheduled = control_manager_request(
+            "write",
+            "maintenance_task",
+            serde_json::json!({ "task": "uninstall", "confirmed": true }),
+        )?;
+        let message = scheduled
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("GitRun uninstall was scheduled by systemd.");
+        emit_first_setup_event(&app, 0, message.to_owned(), "system", true, true);
+        return Ok(());
+    }
 
     let pkexec = pkexec_path().ok_or(
         "trusted pkexec was not found at a root-owned, non-writable system path; graphical uninstall cannot safely continue",
@@ -1120,6 +1244,19 @@ fn stream_unprivileged_command(
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical reinstall currently targets Linux x86_64".into());
+    }
+    if control_manager_enabled() {
+        let scheduled = control_manager_request(
+            "write",
+            "maintenance_task",
+            serde_json::json!({ "task": "reinstall_latest", "confirmed": true }),
+        )?;
+        let message = scheduled
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("GitRun reinstall was scheduled by systemd.");
+        emit_first_setup_event(&app, 0, message.to_owned(), "system", true, true);
+        return Ok(());
     }
     let cli = dashboard_cli_path(&app)
         .ok_or("trusted GitRun CLI was not found; the reinstall cannot safely continue")?;
@@ -1346,19 +1483,61 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
 
 #[cfg(target_os = "linux")]
 fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result<String, String> {
-    let pkexec = pkexec_path().ok_or(
-        "This protected GitRun operation requires administrator authorization, but trusted pkexec was not found.",
-    )?;
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = match command_name {
+            "--read-gsr-events-root" if arguments.len() == 1 => {
+                let limit = arguments[0]
+                    .parse::<usize>()
+                    .map_err(|_| "invalid GSR event limit".to_owned())?;
+                if !(1..=500).contains(&limit) {
+                    return Err("GSR event limit must be between 1 and 500".into());
+                }
+                control_manager_request("read", "gsr_events", serde_json::json!({ "limit": limit }))?
+            }
+            "--read-logic-rules-root" if arguments.is_empty() => {
+                control_manager_request("read", "logic_rules", serde_json::json!({}))?
+            }
+            "--read-gitrun-settings-root" if arguments.is_empty() => {
+                control_manager_request("read", "gitrun_settings", serde_json::json!({}))?
+            }
+            "--read-vm-configs-root" if arguments.is_empty() => {
+                control_manager_request("read", "vm_configs", serde_json::json!({}))?
+            }
+            "--read-kitty-dashboard-root" if arguments.is_empty() => {
+                control_manager_request("read", "kitty", serde_json::json!({}))?
+            }
+            "--read-pending-hypervisor-decisions-root" if arguments.is_empty() => {
+                control_manager_request("read", "hypervisor_decisions", serde_json::json!({}))?
+            }
+            "--respond-hypervisor-decision-root"
+                if arguments.len() == 3 && arguments[0] == "--" =>
+            {
+                control_manager_request(
+                    "write",
+                    "hypervisor_respond",
+                    serde_json::json!({
+                        "vm_name": arguments[1],
+                        "choice": arguments[2],
+                        "confirmed": true
+                    }),
+                )?
+            }
+            _ => return Err(format!(
+                "protected helper operation is not available through the Control Manager: {command_name}"
+            )),
+        };
+        return serde_json::to_string(&value)
+            .map_err(|error| format!("encode Control Manager response: {error}"));
+    }
+
     let cli = trusted_system_cli_path().ok_or(
         "A trusted system-installed GitRun CLI was not found; protected GitRun state cannot be accessed safely.",
     )?;
-    let output = std::process::Command::new(pkexec)
-        .arg(cli)
-        .arg("--no-cat")
+    let output = authorized_cli_command(&cli)?
         .arg(command_name)
         .args(arguments)
         .output()
-        .map_err(|error| format!("unable to request authorized GitRun state access: {error}"))?;
+        .map_err(|error| format!("unable to launch protected GitRun state helper: {error}"))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
@@ -1458,7 +1637,7 @@ fn get_overview() -> Result<OverviewData, String> {
 // as a standalone top-level section)
 // ---------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardRunnerRecord {
     repository: String,
     id: u64,
@@ -1470,7 +1649,7 @@ struct DashboardRunnerRecord {
     container_status: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardWorkflowRunSummary {
     repository: String,
     total: u32,
@@ -1481,7 +1660,7 @@ struct DashboardWorkflowRunSummary {
     cancelled: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardActiveWorkflowRun {
     repository: String,
     id: u64,
@@ -1489,7 +1668,7 @@ struct DashboardActiveWorkflowRun {
     status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardRunnerSnapshot {
     checked_at: u64,
     stale: bool,
@@ -1588,6 +1767,22 @@ fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, Str
     if run_id == 0 {
         return Err("workflow run ID must be greater than zero".into());
     }
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "write",
+            "fast_stop",
+            serde_json::json!({
+                "repository": repository,
+                "run_id": run_id,
+                "confirmed": true
+            }),
+        )?;
+        return value
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "Control Manager returned an invalid Fast Stop result".into());
+    }
     let config = load_config()?;
     if !config
         .repositories
@@ -1615,6 +1810,15 @@ fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, Str
 
 #[tauri::command]
 fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "read",
+            "runners",
+            serde_json::json!({ "force_refresh": force_refresh.unwrap_or(false) }),
+        )?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode runner snapshot from Control Manager: {error}"));
+    }
     const CACHE_TTL: Duration = Duration::from_secs(60);
     let cache = DASHBOARD_RUNNER_CACHE.get_or_init(|| std::sync::Mutex::new(None));
     let config_key = dashboard_config_cache_key();
@@ -1921,7 +2125,7 @@ fn get_host_resource_snapshot(
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardRepositoryActivity {
     repository: String,
     stars: u64,
@@ -1931,7 +2135,7 @@ struct DashboardRepositoryActivity {
     pushed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DashboardRepositoryActivitySnapshot {
     checked_at: u64,
     stale: bool,
@@ -1957,6 +2161,15 @@ static DASHBOARD_REPOSITORY_ACTIVITY_CACHE: std::sync::OnceLock<
 fn get_repository_activity(
     force_refresh: Option<bool>,
 ) -> Result<DashboardRepositoryActivitySnapshot, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "read",
+            "repository_activity",
+            serde_json::json!({ "force_refresh": force_refresh.unwrap_or(false) }),
+        )?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode repository activity from Control Manager: {error}"));
+    }
     const CACHE_TTL: Duration = Duration::from_secs(300);
     let cache = DASHBOARD_REPOSITORY_ACTIVITY_CACHE.get_or_init(|| std::sync::Mutex::new(None));
     let config_key = dashboard_config_cache_key();
@@ -2113,7 +2326,7 @@ fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
 // GitVault
 // ---------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VaultSecretSummary {
     pub name: String,
     pub scope: ScopeDto,
@@ -2162,6 +2375,11 @@ fn open_vault(config: &Config) -> Result<Vault, String> {
 
 #[tauri::command]
 fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request("read", "vault_secrets", serde_json::json!({}))?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode GitVault metadata from Control Manager: {error}"));
+    }
     let config = load_config()?;
     let vault = open_vault(&config)?;
     Ok(vault
@@ -2188,6 +2406,14 @@ fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), 
     if value.len() > MAX_VAULT_SECRET_BYTES {
         return Err("GitVault secret exceeds the 1 MiB safety limit".into());
     }
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "vault_set",
+            serde_json::json!({ "name": name, "value": value, "scope": scope }),
+        )?;
+        return Ok(());
+    }
     let config = load_config()?;
     let mut vault = open_vault(&config)?;
     vault
@@ -2197,6 +2423,14 @@ fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), 
 
 #[tauri::command]
 fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request(
+            "write",
+            "vault_delete",
+            serde_json::json!({ "name": name, "scope": scope, "confirmed": true }),
+        )?;
+        return Ok(());
+    }
     let config = load_config()?;
     let mut vault = open_vault(&config)?;
     vault
@@ -2263,6 +2497,15 @@ fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
 
 #[tauri::command]
 fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "read",
+            "service_logs",
+            serde_json::json!({ "source": source, "limit": limit }),
+        )?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode service logs from Control Manager: {error}"));
+    }
     if !cfg!(target_os = "linux") {
         return Err("System journal logs are currently available only on Linux.".into());
     }
@@ -2355,6 +2598,19 @@ fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
 /// the operator immediately rather than silently at the next job.
 #[tauri::command]
 fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request("write", "zizmor_install", serde_json::json!({}))?;
+        return match value.get("status").and_then(serde_json::Value::as_str) {
+            Some("Installed") => Ok(gitrun_core::InstallOutcome::Installed),
+            Some("AlreadyInstalled") => Ok(gitrun_core::InstallOutcome::AlreadyInstalled),
+            Some("Failed") => Err(value
+                .get("detail")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("zizmor installation failed")
+                .to_owned()),
+            _ => Err("Control Manager returned an invalid zizmor installation result".into()),
+        };
+    }
     let mut config = load_config()?;
     config.gsr_zizmor_license_accepted = true;
 
@@ -2388,6 +2644,10 @@ fn persist_zizmor_config(config: &Config) -> Result<(), String> {
 /// later should not require a second download.
 #[tauri::command]
 fn disable_zizmor() -> Result<(), String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        control_manager_request("write", "zizmor_disable", serde_json::json!({}))?;
+        return Ok(());
+    }
     let mut config = load_config()?;
     config.gsr_zizmor_enabled = false;
     persist_dashboard_config(&config)
@@ -2680,7 +2940,11 @@ fn save_gitrun_settings(
                 .into(),
         );
     }
-    persist_gitrun_settings(&settings, &gitrun_settings_path(&config))
+    persist_gitrun_settings(
+        &settings,
+        &gitrun_settings_path(&config),
+        confirm_socket_opt_out,
+    )
 }
 
 #[tauri::command]
@@ -2957,6 +3221,22 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
         return Err("GitRun system service controls currently target Linux".into());
     }
+    if control_manager_enabled() && !current_process_is_root() {
+        let action_arg = match action {
+            ServiceAction::Start => "start",
+            ServiceAction::Stop => "stop",
+            ServiceAction::Restart => "restart",
+        };
+        let value = control_manager_request(
+            "write",
+            "service_control",
+            serde_json::json!({ "action": action_arg, "confirmed": true }),
+        )?;
+        return value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "Control Manager returned an invalid service-control result".into());
+    }
     let systemctl = trusted_systemctl_path()
         .ok_or("trusted systemctl binary was not found at a root-owned system path")?;
     let action_arg = match action {
@@ -2997,6 +3277,147 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
         }
     }
     Ok(format!("Requested system service action: {action_arg}"))
+}
+
+fn connect_repository_through_manager(repository: String) -> Result<serde_json::Value, String> {
+    let repository = repository.trim().to_owned();
+    if !valid_setup_repository(&repository) {
+        return Err(
+            "repository must be in owner/name form and contain only valid GitHub name characters"
+                .into(),
+        );
+    }
+
+    let mut config = load_config()?;
+    // Verify repository visibility and the API permission required to inspect
+    // runner registration before mutating the protected configuration.
+    let client = dashboard_github_client(&config)?;
+    let mut runners = client.list_runners(&repository).map_err(|error| {
+        format!("GitHub repository/runner access check failed for {repository}: {error}")
+    })?;
+
+    let already_configured = config
+        .repositories
+        .iter()
+        .any(|configured| configured.eq_ignore_ascii_case(&repository));
+    let scheduler_restarted = if already_configured {
+        false
+    } else {
+        // Restarting the scheduler can interrupt active workloads. Refuse to
+        // change its configuration mid-run rather than silently stopping jobs.
+        for configured in &config.repositories {
+            let active = client.list_active_workflow_runs(configured).map_err(|error| {
+                format!(
+                    "cannot safely add {repository}: active-workflow state for {configured} could not be verified ({error})"
+                )
+            })?;
+            if !active.is_empty() {
+                return Err(format!(
+                    "cannot apply {repository} yet: {} active workflow run(s) exist in {configured}. Wait for them to finish and retry; GitRun did not modify the configuration.",
+                    active.len()
+                ));
+            }
+        }
+
+        let previous_config = config.clone();
+        config.repositories.push(repository.clone());
+        config
+            .validate()
+            .map_err(|error| format!("updated repository configuration is invalid: {error}"))?;
+        persist_dashboard_config(&config).map_err(|error| {
+            format!("repository access was verified, but saving {repository} failed: {error}")
+        })?;
+
+        if let Err(restart_error) = control_gitrun_service(ServiceAction::Restart) {
+            let rollback = persist_dashboard_config(&previous_config);
+            return Err(format!(
+                "{repository} was saved but the scheduler could not be restarted: {restart_error}. Configuration rollback: {}",
+                rollback.map_or_else(|error| format!("FAILED ({error})"), |_| "restored".to_owned())
+            ));
+        }
+        let health = match get_dashboard_health(Some(true)) {
+            Ok(health) => health,
+            Err(error) => {
+                let rollback = persist_dashboard_config(&previous_config);
+                let restart = control_gitrun_service(ServiceAction::Restart);
+                return Err(format!(
+                    "{repository} was saved but scheduler health could not be verified: {error}. Configuration rollback: {}; scheduler recovery: {}",
+                    rollback.map_or_else(|failure| format!("FAILED ({failure})"), |_| "restored".to_owned()),
+                    restart.map_or_else(|failure| format!("FAILED ({failure})"), |_| "requested".to_owned())
+                ));
+            }
+        };
+        if !health.service_active {
+            let rollback = persist_dashboard_config(&previous_config);
+            let restart = control_gitrun_service(ServiceAction::Restart);
+            return Err(format!(
+                "{repository} was saved but gitrun.service is not active after restart. Configuration rollback: {}; scheduler recovery: {}",
+                rollback.map_or_else(|failure| format!("FAILED ({failure})"), |_| "restored".to_owned()),
+                restart.map_or_else(|failure| format!("FAILED ({failure})"), |_| "requested".to_owned())
+            ));
+        }
+        true
+    };
+
+    // Runner creation/registration is asynchronous scheduler work. Observe the
+    // GitHub inventory for a short bounded window, but report pending honestly
+    // rather than claiming a runner exists simply because configuration saved.
+    let runner_expected = config.min_runners > 0;
+    let mut attempts = 0usize;
+    loop {
+        attempts += 1;
+        let online = runners.iter().filter(|runner| runner.is_online()).count();
+        if online > 0 || !runner_expected || attempts >= 5 {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(4));
+        match client.list_runners(&repository) {
+            Ok(latest) => runners = latest,
+            Err(error) => {
+                return Err(format!(
+                    "{repository} is configured and the scheduler restarted, but runner verification failed: {error}"
+                ));
+            }
+        }
+    }
+
+    let online_count = runners.iter().filter(|runner| runner.is_online()).count();
+    let busy_count = runners.iter().filter(|runner| runner.busy).count();
+    let runner_names = runners
+        .iter()
+        .map(|runner| runner.name.clone())
+        .collect::<Vec<_>>();
+    let status = if !scheduler_restarted && already_configured {
+        "already_configured"
+    } else if !runner_expected {
+        "connected_runner_pool_disabled"
+    } else if online_count > 0 {
+        "connected_runner_online"
+    } else {
+        "connected_runner_pending"
+    };
+
+    Ok(serde_json::json!({
+        "repository": repository,
+        "repository_access": "verified",
+        "configuration_saved": true,
+        "already_configured": already_configured,
+        "scheduler_restarted": scheduler_restarted,
+        "scheduler_active": true,
+        "minimum_runners": config.min_runners,
+        "runner_inventory_count": runners.len(),
+        "online_runner_count": online_count,
+        "busy_runner_count": busy_count,
+        "runner_names": runner_names,
+        "status": status,
+        "message": if !runner_expected {
+            "Repository is configured; min_runners is zero, so no runner is expected to be started automatically."
+        } else if online_count > 0 {
+            "Repository access verified, configuration saved, scheduler active, and at least one online GitHub runner observed."
+        } else {
+            "Repository access verified and scheduler restarted. No online runner was observed during the verification window; inspect scheduler logs and runner provisioning policy."
+        }
+    }))
 }
 
 #[tauri::command]
@@ -3288,6 +3709,26 @@ async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("privileged runner-image update currently targets Linux x86_64".into());
     }
+    if control_manager_enabled() {
+        let scheduled = control_manager_request(
+            "write",
+            "maintenance_task",
+            serde_json::json!({ "task": "update_containers", "confirmed": true }),
+        )?;
+        let message = scheduled
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Permanent runner update was scheduled by systemd.");
+        emit_first_setup_event(
+            &app,
+            FIRST_SETUP_TOTAL,
+            message.to_owned(),
+            "system",
+            true,
+            true,
+        );
+        return Ok(());
+    }
     let pkexec = pkexec_path()
         .ok_or("trusted pkexec was not found; runner update cannot safely continue")?;
     let cli = dashboard_cli_path(&app).ok_or(
@@ -3402,12 +3843,14 @@ fn save_dashboard_settings(
         });
     }
 
-    if let Err(save_error) = persist_gitrun_settings(&settings, &settings_path) {
+    if let Err(save_error) =
+        persist_gitrun_settings(&settings, &settings_path, confirm_socket_opt_out)
+    {
         let config_rollback = persist_dashboard_config_unlocked(&current_config);
         // Writing the previously effective defaults as an explicit settings
         // file is semantically equivalent to restoring an absent file, and it
         // also works when the system state directory is root-owned.
-        let settings_rollback = persist_gitrun_settings(&current_settings, &settings_path);
+        let settings_rollback = persist_gitrun_settings(&current_settings, &settings_path, true);
         let rollback_detail = match (config_rollback, settings_rollback) {
             (Ok(()), Ok(())) => "Previous configuration and settings were restored.".to_owned(),
             (config_result, settings_result) => format!(
@@ -3431,6 +3874,203 @@ fn save_dashboard_settings(
 #[tauri::command]
 fn save_config(updated: Config) -> Result<(), String> {
     persist_dashboard_config(&updated)
+}
+
+/// Stable, Tauri-independent management entry points shared by the desktop UI and
+/// the terminal management console. The console deliberately calls the same
+/// validated handlers rather than reimplementing persistence or policy checks.
+fn management_tui_arg<T: serde::de::DeserializeOwned>(
+    args: &serde_json::Value,
+    field: &str,
+) -> Result<T, String> {
+    let value = args
+        .get(field)
+        .cloned()
+        .ok_or_else(|| format!("missing required management argument: {field}"))?;
+    serde_json::from_value(value)
+        .map_err(|error| format!("invalid management argument {field}: {error}"))
+}
+
+fn management_tui_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, String> {
+    serde_json::to_value(value)
+        .map_err(|error| format!("could not encode management response: {error}"))
+}
+
+/// Read live dashboard data from its existing command handlers. Args use
+/// snake_case field names and JSON so callers do not need private response DTOs.
+pub fn management_tui_read(
+    action: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match action {
+        "first_run" => Ok(serde_json::Value::Bool(is_first_run())),
+        "overview" => management_tui_value(get_overview()?),
+        "health" => management_tui_value(get_dashboard_health(Some(
+            args.get("force_refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        ))?),
+        "runners" => management_tui_value(get_runner_snapshot(Some(
+            args.get("force_refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        ))?),
+        "host_resources" => management_tui_value(get_host_resource_snapshot(Some(
+            args.get("force_refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        ))?),
+        "repository_activity" => management_tui_value(get_repository_activity(Some(
+            args.get("force_refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        ))?),
+        "repo_detail" => management_tui_value(get_repo_detail(management_tui_arg(&args, "repo")?)?),
+        "repo_bootstrap" => management_tui_value(get_repo_dashboard_bootstrap(
+            management_tui_arg(&args, "repo")?,
+        )?),
+        "config" => management_tui_value(get_config()?),
+        "gitrun_settings" => management_tui_value(get_gitrun_settings()?),
+        "security_summary" => management_tui_value(get_security_runtime_summary()?),
+        "vault_secrets" => management_tui_value(list_vault_secrets()?),
+        "gsr_status" => management_tui_value(get_gsr_status()?),
+        "gsr_events" => {
+            let limit = args
+                .get("limit")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(30) as usize;
+            management_tui_value(list_gsr_events(Some(limit))?)
+        }
+        "service_logs" => {
+            let source: String = management_tui_arg(&args, "source")?;
+            let limit = args
+                .get("limit")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as usize);
+            management_tui_value(list_service_logs(source, limit)?)
+        }
+        "zizmor" => management_tui_value(get_zizmor_info()?),
+        "logic_rules" => management_tui_value(list_logic_rules()?),
+        "vm_configs" => management_tui_value(list_vm_configs()?),
+        "hypervisor_decisions" => management_tui_value(list_pending_hypervisor_decisions()?),
+        "kitty" => management_tui_value(get_kitty_dashboard_data()?),
+        "repo_api_policies" => {
+            management_tui_value(get_repo_api_policies(management_tui_arg(&args, "repo")?)?)
+        }
+        "dock_requirements" => {
+            management_tui_value(get_dock_requirements(management_tui_arg(&args, "repo")?)?)
+        }
+        "updates" => management_tui_value(check_gitrun_updates()),
+        other => Err(format!("unsupported management read action: {other}")),
+    }
+}
+
+/// Perform a dashboard operation with the exact same validation, privileged
+/// helper routing and danger gates used by the graphical dashboard.
+pub fn management_tui_write(
+    action: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match action {
+        "connect_repository" => management_tui_value(connect_repository_through_manager(
+            management_tui_arg(&args, "repository")?,
+        )?),
+        "vm_configs_replace" => {
+            let configs: Vec<gitrun_scheduler::vm::VmConfig> =
+                management_tui_arg(&args, "configs")?;
+            // Reuse the scheduler's loader validation by temporarily using its
+            // public save API only in developer installs; system installs use
+            // the existing fixed-purpose privileged writer after structural
+            // validation of the complete configuration set.
+            if control_manager_enabled() {
+                persist_vm_configs_as_root(&configs)?;
+            } else {
+                let config = load_config()?;
+                gitrun_scheduler::vm::save_vm_configs(Path::new(&config.state_dir), &configs)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "fast_stop" => {
+            let message = fast_stop_workflow_run(
+                management_tui_arg(&args, "repository")?,
+                management_tui_arg(&args, "run_id")?,
+            )?;
+            management_tui_value(serde_json::json!({ "message": message }))
+        }
+        "vault_set" => {
+            set_vault_secret(
+                management_tui_arg(&args, "name")?,
+                management_tui_arg(&args, "value")?,
+                management_tui_arg(&args, "scope")?,
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "vault_delete" => {
+            delete_vault_secret(
+                management_tui_arg(&args, "name")?,
+                management_tui_arg(&args, "scope")?,
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "zizmor_install" => management_tui_value(accept_zizmor_license_and_install()?),
+        "zizmor_disable" => {
+            disable_zizmor()?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "logic_rules_save" => {
+            save_logic_rules(management_tui_arg(&args, "rules")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "vm_save" => {
+            save_vm_config(management_tui_arg(&args, "config_entry")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "vm_delete" => {
+            delete_vm_config(management_tui_arg(&args, "name")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "hypervisor_respond" => {
+            respond_hypervisor_decision(
+                management_tui_arg(&args, "vm_name")?,
+                management_tui_arg(&args, "choice")?,
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "kitty_save" => {
+            save_kitty_settings(management_tui_arg(&args, "settings")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "gitrun_settings_save" => {
+            save_gitrun_settings(
+                management_tui_arg(&args, "settings")?,
+                args.get("confirm_socket_opt_out")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "config_save" => {
+            save_config(management_tui_arg(&args, "updated")?)?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "dashboard_settings_save" => {
+            save_dashboard_settings(
+                management_tui_arg(&args, "updated")?,
+                management_tui_arg(&args, "settings")?,
+                args.get("confirm_socket_opt_out")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                management_tui_arg(&args, "expected_config")?,
+                management_tui_arg(&args, "expected_settings")?,
+            )?;
+            Ok(serde_json::json!({ "ok": true }))
+        }
+        "service_control" => management_tui_value(control_gitrun_service(management_tui_arg(
+            &args, "action",
+        )?)?),
+        other => Err(format!("unsupported management write action: {other}")),
+    }
 }
 
 /// Small bridge module: writing back to the same env-file format

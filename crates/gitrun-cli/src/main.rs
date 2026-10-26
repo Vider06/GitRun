@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cat;
+mod manage;
 mod presenter;
 
 include!(concat!(env!("OUT_DIR"), "/gitrun_crate_versions.rs"));
@@ -495,6 +496,25 @@ fn update_command(
             &gitrun_binary,
             config_path.as_deref(),
         )?;
+
+        // Install/repair the persistent privileged control plane as part of
+        // a system upgrade. The user UI stays unprivileged; no per-operation
+        // sudo prompt is needed after the service is active.
+        let desktop_uid = std::env::var("PKEXEC_UID")
+            .or_else(|_| std::env::var("SUDO_UID"))
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|uid| *uid != 0);
+        if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
+            let rollback_error =
+                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
+            let restart_error = restart_scheduler_service().err();
+            return Err(format!(
+                "Control Manager installation failed: {error}; rollback: {}; scheduler recovery: {}",
+                rollback_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string()),
+                restart_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string())
+            ).into());
+        }
 
         if let Some(image) = &plan.runner_image {
             if let Err(error) = update_runner_image(image) {
@@ -1188,6 +1208,20 @@ fn connect_command(
         return Err("usage: gitrun connect <owner/repository>".into());
     }
 
+    // On a protected system install, repository connection is routed through
+    // the persistent Control Manager. This keeps the credential-bearing config
+    // root-only and avoids a per-connect sudo/pkexec prompt.
+    if gitrun_dashboard_tauri_lib::control_manager_enabled() && !running_as_root() {
+        let result = gitrun_dashboard_tauri_lib::control_manager_request(
+            "write",
+            "connect_repository",
+            serde_json::json!({ "repository": repository }),
+        )?;
+        presenter.transition(presenter::ValidationState::Success);
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+
     let path = persistent_config_path()
         .ok_or("persistent GitRun configuration not found; run 'gitrun setup --terminal' first")?;
     let config = Config::from_env_file(&path)?;
@@ -1347,6 +1381,11 @@ fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("gsr-watchdog")) {
         std::process::exit(run_gsr_watchdog());
     }
+    // The persistent Control Manager is a systemd-only internal entry point. It
+    // bypasses the interactive presenter and refuses to run without root.
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("control-manager")) {
+        std::process::exit(gitrun_dashboard_tauri_lib::run_control_manager());
+    }
     // Initialize the shared presenter before Clap so help and argument errors
     // follow the same mascot policy as normal commands. Internal callers can
     // still explicitly suppress it with --no-cat.
@@ -1391,10 +1430,11 @@ fn main() {
     let command = cli.command.unwrap_or(Command::Dashboard);
     let is_cat_command = matches!(&command, Command::Cat);
     let is_status_command = matches!(&command, Command::Status { .. });
-    if !is_cat_command && !is_status_command {
+    let is_manage_command = matches!(&command, Command::Manage);
+    if !is_cat_command && !is_status_command && !is_manage_command {
         presenter.start_live();
     }
-    if !is_cat_command {
+    if !is_cat_command && !is_manage_command {
         presenter.transition(validation_state_for_command(&command));
     }
 
@@ -1461,6 +1501,16 @@ fn main() {
             // graphical dashboard owns the process and terminal.
             presenter.prepare_for_external_process();
             run_dashboard()
+        }
+        Command::Manage => {
+            presenter.prepare_for_external_process();
+            match manage::run() {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun management console: FAIL — {error}");
+                    1
+                }
+            }
         }
         Command::RecoveryGtuu => run_recovery_gtuu(&mut presenter),
         Command::RepairService => run_repair_service(),
@@ -1600,7 +1650,7 @@ fn main() {
         } => run_api_policy(&api, operation.as_deref(), enabled),
     };
 
-    if !is_cat_command && !is_status_command {
+    if !is_cat_command && !is_status_command && !is_manage_command {
         presenter.finish(exit_code);
     }
     std::process::exit(exit_code);
@@ -1622,6 +1672,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         // requested release is already installed or otherwise rejected.
         Command::Update { .. } => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
+        Command::Manage => ValidationState::Reading,
         Command::Uninstall
         | Command::Reinstall
         | Command::UninstallRoot
@@ -1833,6 +1884,8 @@ enum Command {
     Scheduler,
     /// Launch the GitRun dashboard (default when no command is given).
     Dashboard,
+    /// Launch the interactive terminal management console for headless hosts.
+    Manage,
     /// Internal recovery command used by the protected recovery UI.
     #[command(name = "recovery-gtuu", hide = true)]
     RecoveryGtuu,
@@ -3814,6 +3867,18 @@ mod internal_lifecycle_command_tests {
             "--no-cat must remain available before internal commands"
         );
         cli.command.expect("internal command must be selected")
+    }
+
+    #[test]
+    fn manage_is_public_and_cat_remains_a_separate_command() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "manage"]).unwrap().command,
+            Some(Command::Manage)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,
+            Some(Command::Cat)
+        ));
     }
 
     #[test]

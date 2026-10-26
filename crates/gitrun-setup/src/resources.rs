@@ -58,6 +58,8 @@ pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/
 
 pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
 pub(crate) const SYSTEMD_GSR_SERVICE: &str = include_str!("../../../systemd/gitrun-gsr.service");
+pub(crate) const SYSTEMD_CONTROL_MANAGER_SERVICE: &str =
+    include_str!("../../../systemd/gitrun-control.service");
 
 pub(crate) const SYSTEMD_SERVICE_DIRECT: &str = r#"[Unit]
 Description=GitRun Rust scheduler
@@ -330,6 +332,13 @@ mod tests {
         assert!(SYSTEMD_SERVICE.contains("ExecStart=/usr/local/bin/gitrun scheduler"));
         assert!(SYSTEMD_GSR_SERVICE.contains("ExecStart=/usr/local/bin/gitrun gsr-watchdog"));
         assert!(SYSTEMD_GSR_SERVICE.contains("After=gitrun.service"));
+        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE
+            .contains("ExecStart=/usr/local/bin/gitrun control-manager"));
+        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("WantedBy=multi-user.target"));
+        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("Restart=on-failure"));
+        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("Group=gitrun-control"));
+        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE
+            .contains("Environment=GITRUN_CONFIG_FILE=/etc/gitrun/gitrun.env"));
     }
 
     #[test]

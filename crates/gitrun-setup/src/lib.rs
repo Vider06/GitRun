@@ -1334,12 +1334,39 @@ fn add_user_to_control_group(uid: u32) -> Result<(), SetupError> {
 /// Repair/install the system control service during an elevated installation
 /// or upgrade. The caller must choose the intended desktop operator explicitly.
 pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), SetupError> {
+    let binary = std::env::current_exe()
+        .map_err(|error| SetupError::InvalidInstallBinary(error.to_string()))?;
+    ensure_control_manager_service_with_binary(desktop_uid, &binary)
+}
+
+/// Repair systemd integration using the exact, trusted binary path that the
+/// privileged CLI is updating. Supports both /usr/local and Debian /usr/bin.
+pub fn ensure_control_manager_service_with_binary(
+    desktop_uid: Option<u32>,
+    binary_path: &Path,
+) -> Result<(), SetupError> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
         return Err(SetupError::NotRoot);
     }
+    if binary_path != Path::new("/usr/local/bin/gitrun")
+        && binary_path != Path::new("/usr/bin/gitrun")
+    {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "unsupported system binary path: {}",
+            binary_path.display()
+        )));
+    }
+    let canonical_binary = validate_install_binary(binary_path, Some(0))?;
+    if canonical_binary != binary_path {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "system binary path is not canonical: {}",
+            binary_path.display()
+        )));
+    }
+
     ensure_control_manager_group()?;
     if let Some(uid) = desktop_uid {
         add_user_to_control_group(uid)?;
@@ -1348,36 +1375,27 @@ pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), Se
     if config_path.is_file() {
         secure_system_config_file(config_path, None)?;
     }
-    // Reconcile the complete systemd integration from the trusted resources
-    // shipped with this release. A missing unit is not repaired by replacing the
-    // binary alone, and stale unit contents must not survive an ordinary update.
+
     let service_dir = Path::new("/etc/systemd/system");
     fs::create_dir_all(service_dir)?;
-    let scheduler_service = if Path::new("/usr/local/bin/gitrun-recovery").is_file() {
+    let scheduler_template = if Path::new("/usr/local/bin/gitrun-recovery").is_file() {
         resources::SYSTEMD_SERVICE
     } else {
         resources::SYSTEMD_SERVICE_DIRECT
     };
-    write_resource(
-        &service_dir.join("gitrun.service"),
-        scheduler_service,
-        0o644,
-    )?;
-    write_resource(
-        &service_dir.join("gitrun-gsr.service"),
-        resources::SYSTEMD_GSR_SERVICE,
-        0o644,
-    )?;
+    let scheduler_service = systemd_unit_for_binary(scheduler_template, binary_path)?;
+    let gsr_service = systemd_unit_for_binary(resources::SYSTEMD_GSR_SERVICE, binary_path)?;
+    let control_service =
+        systemd_unit_for_binary(resources::SYSTEMD_CONTROL_MANAGER_SERVICE, binary_path)?;
+    write_resource(&service_dir.join("gitrun.service"), &scheduler_service, 0o644)?;
+    write_resource(&service_dir.join("gitrun-gsr.service"), &gsr_service, 0o644)?;
     write_resource(
         &service_dir.join("gitrun-control.service"),
-        resources::SYSTEMD_CONTROL_MANAGER_SERVICE,
+        &control_service,
         0o644,
     )?;
     run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
 
-    // Enable and restart each component explicitly, then verify its final state.
-    // Control Manager runs first so the dashboard's privileged API is available
-    // before the scheduler/GSR services resume.
     for service in [
         "gitrun-control.service",
         "gitrun.service",
@@ -1388,6 +1406,18 @@ pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), Se
         run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", service]))?;
     }
     Ok(())
+}
+
+fn systemd_unit_for_binary(template: &str, binary_path: &Path) -> Result<String, SetupError> {
+    let binary = binary_path.to_str().ok_or_else(|| {
+        SetupError::InvalidInstallBinary("system binary path is not valid UTF-8".into())
+    })?;
+    if binary != "/usr/local/bin/gitrun" && binary != "/usr/bin/gitrun" {
+        return Err(SetupError::InvalidInstallBinary(format!(
+            "unsupported system binary path: {binary}"
+        )));
+    }
+    Ok(template.replace("/usr/local/bin/gitrun ", &format!("{binary} ")))
 }
 
 fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
@@ -2196,6 +2226,16 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn systemd_unit_generation_uses_the_selected_trusted_install_path() {
+        let template = "[Service]\nExecStart=/usr/local/bin/gitrun scheduler\n";
+        assert_eq!(
+            systemd_unit_for_binary(template, Path::new("/usr/bin/gitrun")).unwrap(),
+            "[Service]\nExecStart=/usr/bin/gitrun scheduler\n"
+        );
+        assert!(systemd_unit_for_binary(template, Path::new("/tmp/gitrun")).is_err());
+    }
 
     #[test]
     fn privileged_host_commands_use_fixed_paths_and_reject_unknown_names() {

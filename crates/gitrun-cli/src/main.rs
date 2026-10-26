@@ -2652,7 +2652,27 @@ fn run_update(
         None => vec!["update".to_owned()],
     };
     match update_command(&args, presenter) {
-        Ok(()) => 0,
+        Ok(()) => {
+            // A successful binary update is not enough for a system install:
+            // reconcile the privileged system integration from trusted resources
+            // embedded in the installed executable.
+            if system_install && running_as_root() {
+                let desktop_uid = std::env::var("SUDO_UID")
+                    .ok()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .filter(|uid| *uid != 0);
+                if let Err(error) =
+                    gitrun_setup::ensure_control_manager_service(desktop_uid)
+                {
+                    eprintln!(
+                        "GitRun update: binary updated, but Control Manager reconciliation failed: {error}"
+                    );
+                    return 1;
+                }
+                println!("GitRun update: Control Manager service PASS");
+            }
+            0
+        }
         Err(error) => {
             eprintln!("GitRun update: FAIL — {error}");
             1

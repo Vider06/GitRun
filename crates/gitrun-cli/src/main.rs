@@ -4428,8 +4428,12 @@ mod internal_lifecycle_command_tests {
 
     #[test]
     fn terminal_setup_disables_live_mascot_during_prompts() {
-        assert!(super::is_interactive_terminal_setup(&Command::Setup { terminal: true }));
-        assert!(!super::is_interactive_terminal_setup(&Command::Setup { terminal: false }));
+        assert!(super::is_interactive_terminal_setup(&Command::Setup {
+            terminal: true
+        }));
+        assert!(!super::is_interactive_terminal_setup(&Command::Setup {
+            terminal: false
+        }));
         assert!(!super::is_interactive_terminal_setup(&Command::Doctor));
     }
 

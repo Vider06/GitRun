@@ -3018,7 +3018,7 @@ fn run_update(
         None => vec!["update".to_owned()],
     };
     match update_command(&args, presenter) {
-        Ok(()) => 0
+        Ok(()) => 0,
         Err(error) => {
             eprintln!("GitRun update: FAIL — {error}");
             1

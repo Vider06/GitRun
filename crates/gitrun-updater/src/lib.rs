@@ -996,7 +996,8 @@ pub fn apply_installed_update(
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error.into()),
             };
-            backups.push(InstalledArtifactBackup {                archive_name: artifact.archive_name.clone(),
+            backups.push(InstalledArtifactBackup {
+                archive_name: artifact.archive_name.clone(),
                 destination: artifact.destination.clone(),
                 backup,
             });
@@ -1495,7 +1496,8 @@ fn check_installed_binary(
 }
 
 fn atomic_replace_installed_file(
-    source: &Path,    destination: &Path,
+    source: &Path,
+    destination: &Path,
     mode: u32,
 ) -> Result<(), UpdateError> {
     let source_meta = fs::symlink_metadata(source)?;
@@ -1994,7 +1996,8 @@ fn command_version(name: &str) -> Option<String> {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();    extract_version(if stdout.is_empty() { &stderr } else { &stdout })
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    extract_version(if stdout.is_empty() { &stderr } else { &stdout })
 }
 
 fn extract_version(text: &str) -> Option<String> {
@@ -2493,20 +2496,22 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
 }
 
 fn http_client() -> Result<Client, UpdateError> {
-    Ok(Client::builder()        // A valid HTTPS starting URL is not enough: an HTTP downgrade during
-        // redirect would still send the updater's request over cleartext.
-        // Keep every redirect on HTTPS, including release-asset redirects.
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if is_https_url(attempt.url()) {
-                attempt.follow()
-            } else {
-                attempt.error("update redirects must remain on HTTPS")
-            }
-        }))
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(300))
-        .user_agent("GitRun-Updater/0.3")
-        .build()?)
+    Ok(
+        Client::builder() // A valid HTTPS starting URL is not enough: an HTTP downgrade during
+            // redirect would still send the updater's request over cleartext.
+            // Keep every redirect on HTTPS, including release-asset redirects.
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if is_https_url(attempt.url()) {
+                    attempt.follow()
+                } else {
+                    attempt.error("update redirects must remain on HTTPS")
+                }
+            }))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(300))
+            .user_agent("GitRun-Updater/0.3")
+            .build()?,
+    )
 }
 
 fn is_https_url(url: &reqwest::Url) -> bool {
@@ -2992,7 +2997,8 @@ mod tests {
 
         assert!(signed
             .verify_signature(true, Some(&public_key), Some("release-key-1"))
-            .is_ok());        assert!(signed
+            .is_ok());
+        assert!(signed
             .verify_signature(true, Some(&public_key), Some("wrong-key"))
             .is_err());
 
@@ -3491,7 +3497,8 @@ mod tests {
 
         let expected = [InstalledArtifact {
             archive_name: "gitrun".into(),
-            destination: binary.clone(),            required: true,
+            destination: binary.clone(),
+            required: true,
         }];
         let record = InstalledBackupRecord {
             created_at: timestamp,

@@ -14,7 +14,9 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap,
+    },
     Frame, Terminal,
 };
 use serde_json::{json, Value};
@@ -727,7 +729,11 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(if area.height >= 28 && area.width >= 110 { 4 } else { 3 }),
+            Constraint::Length(if area.height >= 28 && area.width >= 110 {
+                4
+            } else {
+                3
+            }),
             Constraint::Min(7),
             Constraint::Length(2),
         ])
@@ -736,36 +742,68 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let header_lines = if area.height >= 28 && area.width >= 110 {
         vec![
             Line::from(vec![
-                Span::styled("  ◈ ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-                Span::styled("GitRun", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
-                Span::styled("  /  MANAGEMENT CONSOLE", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "  ◈ ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "GitRun",
+                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "  /  MANAGEMENT CONSOLE",
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("   "),
-                Span::styled(format!("v{}", VERSION_FILE.trim()), Style::default().fg(MUTED)),
+                Span::styled(
+                    format!("v{}", VERSION_FILE.trim()),
+                    Style::default().fg(MUTED),
+                ),
                 Span::raw("   "),
-                Span::styled("● LOCAL CONTROL PLANE", Style::default().fg(GOOD).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "● LOCAL CONTROL PLANE",
+                    Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
-                Span::styled("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", Style::default().fg(BORDER)),
-                Span::styled("  SSH-FIRST  ·  LIVE OPERATIONS  ·  SAFE BY DEFAULT", Style::default().fg(MUTED)),
+                Span::styled(
+                    "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                    Style::default().fg(BORDER),
+                ),
+                Span::styled(
+                    "  SSH-FIRST  ·  LIVE OPERATIONS  ·  SAFE BY DEFAULT",
+                    Style::default().fg(MUTED),
+                ),
             ]),
         ]
     } else {
         vec![Line::from(vec![
-            Span::styled("  ◈ GitRun", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-            Span::styled("  /  MANAGE", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  ◈ GitRun",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  /  MANAGE",
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            ),
             Span::raw("   "),
-            Span::styled(format!("v{}", VERSION_FILE.trim()), Style::default().fg(MUTED)),
+            Span::styled(
+                format!("v{}", VERSION_FILE.trim()),
+                Style::default().fg(MUTED),
+            ),
             Span::raw("   "),
-            Span::styled("● LOCAL", Style::default().fg(GOOD).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "● LOCAL",
+                Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+            ),
         ])]
     };
-    let header = Paragraph::new(header_lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(ACCENT)),
-        );
+    let header = Paragraph::new(header_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(ACCENT)),
+    );
     frame.render_widget(header, layout[0]);
 
     // Three columns on wide terminals; stack the navigation and operation
@@ -850,7 +888,13 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{:>2} ", index + 1),
-                    Style::default().fg(if selected { CYAN } else { MUTED }).add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() }),
+                    Style::default()
+                        .fg(if selected { CYAN } else { MUTED })
+                        .add_modifier(if selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
                 ),
                 Span::styled(action.title, style),
             ]))
@@ -878,7 +922,11 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let detail_area = Layout::default()
         .direction(Direction::Vertical)
         .constraints(if has_metrics {
-            vec![Constraint::Length(6), Constraint::Length(5), Constraint::Min(1)]
+            vec![
+                Constraint::Length(6),
+                Constraint::Length(5),
+                Constraint::Min(1),
+            ]
         } else {
             vec![Constraint::Length(6), Constraint::Min(1)]
         })
@@ -900,8 +948,14 @@ fn render(frame: &mut Frame<'_>, state: &State) {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )),
         Line::from(vec![
-            Span::styled("SELECTED  ›  ", Style::default().fg(GOOD).add_modifier(Modifier::BOLD)),
-            Span::styled(selected_action, Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "SELECTED  ›  ",
+                Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                selected_action,
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(Span::styled(page.subtitle, Style::default().fg(MUTED))),
         Line::from(Span::styled(selected_hint, Style::default().fg(MUTED))),
@@ -923,10 +977,19 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         let metric_area = detail_area[1];
         let metric_columns = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(vec![Constraint::Ratio(1, metrics.len() as u32); metrics.len()])
+            .constraints(vec![
+                Constraint::Ratio(1, metrics.len() as u32);
+                metrics.len()
+            ])
             .split(metric_area);
         for (index, (label, value)) in metrics.iter().enumerate() {
-            let color = if *value >= 85.0 { BAD } else if *value >= 65.0 { WARN } else { GOOD };
+            let color = if *value >= 85.0 {
+                BAD
+            } else if *value >= 65.0 {
+                WARN
+            } else {
+                GOOD
+            };
             let gauge = Gauge::default()
                 .block(
                     Block::default()
@@ -1059,7 +1122,6 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         );
     }
 }
-
 
 /// Extract only explicitly named percentage metrics from the live backend JSON.
 /// Values remain unknown when the backend does not report them; we never invent
@@ -2102,7 +2164,8 @@ mod tests {
     fn resource_meters_use_only_reported_percentages() {
         let state = State {
             body: vec![
-                r#"{"host_resources":{"cpu_percent":12.5,"memory_percent":68,"disk_percent":91}}"#.into(),
+                r#"{"host_resources":{"cpu_percent":12.5,"memory_percent":68,"disk_percent":91}}"#
+                    .into(),
             ],
             ..State::new()
         };

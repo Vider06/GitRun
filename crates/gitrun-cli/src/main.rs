@@ -1822,7 +1822,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
 struct Cli {
     /// Disable all cat rendering for this process. Internal use for
     /// delegated processes that must own the TTY without Ratatui output.
-    #[arg(long = "no-cat", hide = true)]
+    #[arg(long = "no-cat", hide = true, global = true)]
     no_cat: bool,
 
     /// Print the GitRun version and exit. Accepts both `-V` (Unix
@@ -4577,6 +4577,20 @@ mod internal_lifecycle_command_tests {
             Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,
             Some(Command::Cat)
         ));
+    }
+
+    #[test]
+    fn no_cat_is_accepted_before_and_after_the_doctor_subcommand() {
+        let before = Cli::try_parse_from(["gitrun", "--no-cat", "doctor"]).unwrap();
+        assert!(before.no_cat);
+        assert!(matches!(before.command, Some(Command::Doctor)));
+
+        // Backward compatibility: an older updater can remain running while
+        // it replaces the installed executable, then invoke the new binary
+        // using the historical `doctor --no-cat` argument order.
+        let after = Cli::try_parse_from(["gitrun", "doctor", "--no-cat"]).unwrap();
+        assert!(after.no_cat);
+        assert!(matches!(after.command, Some(Command::Doctor)));
     }
 
     #[test]

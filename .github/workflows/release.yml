@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: gitrun-release-${{ github.ref }}-${{ github.event.inputs.version || github.ref_name }}
@@ -76,28 +77,65 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version_number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python3 scripts/sync-markdown-version.py --version "$VERSION"
           python3 scripts/sync-markdown-version.py --check --version "$VERSION"
 
-          # Release builds normally originate at the exact main-branch commit
-          # that is tagged. If documentation markers need repair and main still
-          # points at that source commit with the same product version, persist
-          # the repair as a small follow-up docs commit. For an older tag or an
-          # advanced branch, update the release workspace only; never rewind main.
-          if ! git diff --quiet; then
+          # Keep the release checkout synchronized for packaging, but never push
+          # directly to main. When main still targets this product version, open
+          # or update a docs-only PR from a temporary worktree based on origin/main.
+          if ! git diff --quiet -- '*.md'; then
             git fetch origin main
-            main_sha="$(git rev-parse origin/main)"
             main_version="$(git show origin/main:version.txt | tr -d '[:space:]')"
-            if [ "$main_sha" = "$GITHUB_SHA" ] && [ "$main_version" = "$VERSION" ]; then
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git add -u -- .
-              git commit -m "docs: sync Markdown source version to $VERSION"
-              git push origin HEAD:main
+            if [ "$main_version" = "$VERSION" ]; then
+              sync_branch="automation/sync-markdown-version-v${VERSION//./-}"
+              sync_dir="${RUNNER_TEMP}/gitrun-markdown-sync-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+              trap 'git worktree remove --force "$sync_dir" >/dev/null 2>&1 || true' EXIT
+              git worktree add --detach "$sync_dir" origin/main
+              python3 "$sync_dir/scripts/sync-markdown-version.py" --version "$VERSION"
+              python3 "$sync_dir/scripts/sync-markdown-version.py" --check --version "$VERSION"
+              mapfile -t changed_markdown < <(git -C "$sync_dir" diff --name-only -- '*.md')
+
+              if (("${#changed_markdown[@]}" > 0)); then
+                git -C "$sync_dir" config user.name "github-actions[bot]"
+                git -C "$sync_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                git -C "$sync_dir" add -- "${changed_markdown[@]}"
+                git -C "$sync_dir" commit -m "docs: sync Markdown source version to $VERSION"
+
+                # This branch name is reserved for the version-sync automation.
+                # If a previous run left its PR open, refresh that branch with a
+                # fresh docs-only commit based on current main using a lease.
+                remote_sha="$(git ls-remote origin "refs/heads/$sync_branch" | awk 'NR == 1 {print $1}')"
+                if [ -n "$remote_sha" ]; then
+                  if ! git -C "$sync_dir" push --force-with-lease="refs/heads/$sync_branch:$remote_sha" origin "HEAD:refs/heads/$sync_branch"; then
+                    echo "::warning::Markdown markers are synchronized for the release workspace, but the docs PR branch could not be updated."
+                    exit 0
+                  fi
+                else
+                  if ! git -C "$sync_dir" push origin "HEAD:refs/heads/$sync_branch"; then
+                    echo "::warning::Markdown markers are synchronized for the release workspace, but the docs PR branch could not be pushed."
+                    exit 0
+                  fi
+                fi
+
+                existing_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$sync_branch" --state open --json url --jq '.[0].url // ""' 2>/dev/null || true)"
+                if [ -n "$existing_pr" ]; then
+                  echo "Updated existing Markdown synchronization PR: $existing_pr"
+                elif ! gh pr create \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --base main \
+                  --head "$sync_branch" \
+                  --title "docs: sync Markdown source version to $VERSION" \
+                  --body "Automated, docs-only synchronization of current-source Markdown markers to `$VERSION`. Created by the release workflow after verifying that main/version.txt still matches the selected release. No source or crate versions are changed."; then
+                  echo "::warning::Markdown markers are synchronized for release artifacts, but GitHub could not open the docs-only PR. Check the Actions token's pull-request permissions and repository policy allowing workflows to create pull requests."
+                fi
+              else
+                echo "main already has synchronized Markdown markers; no documentation PR is needed."
+              fi
             else
-              echo "::warning::Markdown markers were refreshed for release artifacts, but main has advanced or its version differs; no source-branch commit was made."
+              echo "::warning::Markdown markers were refreshed for release artifacts, but main/version.txt targets $main_version rather than $VERSION; no source documentation PR was created."
             fi
           fi
 

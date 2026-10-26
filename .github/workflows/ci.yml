@@ -402,7 +402,23 @@ jobs:
               if sudo -n true 2>/dev/null; then sudo="sudo -n"; else return 1; fi
             fi
 
-            # GitHub-hosted images occasionally hit slow or unreachable apt mirrors.
+            # Prefer the canonical Ubuntu archive instead of the Azure mirror that
+            # has intermittently stalled on GitHub-hosted runners. Preserve Ubuntu's
+            # suite/component configuration and leave security.ubuntu.com untouched.
+            # This runs before update in every job that installs APT dependencies.
+            if [ ! -f "$CI_DIR/apt-mirror-forced" ]; then
+              if [ -f /etc/apt/apt-mirrors.txt ]; then
+                $sudo sed -i -E 's#https?://azure\\.archive\\.ubuntu\\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' /etc/apt/apt-mirrors.txt
+                echo "APT mirror list after override:"
+                $sudo cat /etc/apt/apt-mirrors.txt
+              fi
+              for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+                [ -f "$source" ] || continue
+                $sudo sed -i -E 's#https?://azure\\.archive\\.ubuntu\\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' "$source"
+              done
+              : > "$CI_DIR/apt-mirror-forced"
+            fi
+
             # Bound network waits without changing the workflow/job timeout, and keep
             # the package-manager output visible in every job that uses this helper.
             if [ ! -f "$CI_DIR/apt-updated" ]; then

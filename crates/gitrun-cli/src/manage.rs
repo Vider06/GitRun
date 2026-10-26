@@ -695,7 +695,8 @@ fn handle_key(
                 Ok(truncated) => {
                     state.error = false;
                     state.notice = if truncated {
-                        "Copy request sent · latest 64 KiB only · OSC 52 terminal support required".into()
+                        "Copy request sent · latest 64 KiB only · OSC 52 terminal support required"
+                            .into()
                     } else {
                         "Copy request sent · OSC 52 terminal support required".into()
                     };
@@ -1168,7 +1169,9 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 ),
                 Line::from("0                Action 10, or App Settings when Sections has focus"),
                 Line::from("Esc               Back to operations / Overview"),
-                Line::from("c                 Copy current Logs output via OSC 52 (Logs section only)"),
+                Line::from(
+                    "c                 Copy current Logs output via OSC 52 (Logs section only)",
+                ),
                 Line::from("q / Ctrl+C        Exit the management console"),
                 Line::from(""),
                 Line::from(Span::styled(
@@ -2549,7 +2552,9 @@ mod visual_design_tests {
             .strip_suffix('\x07')
             .unwrap();
         assert_eq!(
-            base64::engine::general_purpose::STANDARD.decode(encoded).unwrap(),
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .unwrap(),
             text.as_bytes()
         );
 
@@ -2561,7 +2566,9 @@ mod visual_design_tests {
             .unwrap()
             .strip_suffix('\x07')
             .unwrap();
-        let payload = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        let payload = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
         assert!(payload.len() <= OSC52_MAX_COPY_BYTES);
         assert!(std::str::from_utf8(&payload).is_ok());
         assert!(payload.ends_with(b"xxxxxxxx"));

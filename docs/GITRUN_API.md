@@ -1,4 +1,4 @@
-# Git*Run API reference — 1.7.0
+# Git*Run API reference — 1.8.0
 
 GitRun exposes a closed set of workflow-facing APIs. These are named executables, not a generic shell wrapper.
 

@@ -1,4 +1,4 @@
-# GitRun IPC and socket architecture — 1.7.0
+# GitRun IPC and socket architecture — 1.8.0
 
 GitRun has two distinct communication concepts: the workflow-facing API socket and the internal GSR/executor authentication protocol.
 

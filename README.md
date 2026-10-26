@@ -160,7 +160,7 @@ gitrun rollback BACKUP_PATH
 gitrun cat
 ```
 
-The `fix-update` command repairs the privileged Control Manager service and then applies the latest official signed release if it is newer. It uses the normal updater and rollback path; it never downgrades the installed binary just to force an update. The command requires sudo for system installations. Use `--no-cat` to suppress the mascot.\n\nThe `fast-stop` command requires confirmation and requests force-cancellation of the **whole workflow run**, not a single job. It does not directly kill containers.
+The `fix-update` command repairs the installed GitRun systemd integration (scheduler, GSR and Control Manager units), the `gitrun-control` group and service startup, then applies the latest official signed release only if it is newer. It uses the normal updater and rollback path; it never downgrades the installed binary just to force an update. `gitrun doctor` reports configuration, dependency, installation metadata, systemd-unit, service and Control Manager socket health, with actionable failures and warnings. The command requires sudo for system installations. Use `--no-cat` to suppress the mascot.\n\nThe `fast-stop` command requires confirmation and requests force-cancellation of the **whole workflow run**, not a single job. It does not directly kill containers.
 
 ## Configuration at a glance
 

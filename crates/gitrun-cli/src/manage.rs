@@ -2463,7 +2463,7 @@ mod tests {
 
 #[cfg(test)]
 mod visual_design_tests {
-    use super::{header_separator, mascot_state, PAGES, State, WIDE_HEADER_TAGLINE};
+    use super::{header_separator, mascot_state, State, PAGES, WIDE_HEADER_TAGLINE};
 
     #[test]
     fn wide_header_separator_fits_the_available_terminal_width() {
@@ -2486,7 +2486,12 @@ mod visual_design_tests {
         let mut state = State::new();
         assert_eq!(mascot_state(&state), "curious");
 
-        state.set_text("Read failed", vec!["permission denied".into()], "Read failed", true);
+        state.set_text(
+            "Read failed",
+            vec!["permission denied".into()],
+            "Read failed",
+            true,
+        );
         assert_eq!(mascot_state(&state), "failed");
 
         state.set_text(

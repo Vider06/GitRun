@@ -692,7 +692,9 @@ mod tests {
 
     #[test]
     fn management_tui_can_read_validated_cat_sprites() {
-        for name in ["seated", "curious", "working", "reading", "success", "failed", "recovery"] {
+        for name in [
+            "seated", "curious", "working", "reading", "success", "failed", "recovery",
+        ] {
             let lines = cat_state_lines(name).expect("known cat state should exist");
             assert_eq!(lines.len(), 3, "{name}");
             assert!(lines.iter().all(|line| line.is_ascii()));

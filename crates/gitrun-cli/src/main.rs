@@ -588,8 +588,28 @@ fn update_command(
             };
         }
 
+        if let Err(error) = verify_post_update_doctor(&gitrun_binary) {
+            let rollback_result =
+                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
+            let restore_result = restart_scheduler_service();
+            return match (rollback_result, restore_result) {
+                (Ok(()), Ok(())) => Err(format!(
+                    "post-update doctor failed; GitRun was rolled back and the previous service restarted: {error}"
+                ).into()),
+                (Err(rollback_error), Ok(())) => Err(format!(
+                    "post-update doctor failed: {error}; rollback also failed: {rollback_error}"
+                ).into()),
+                (Ok(()), Err(restore_error)) => Err(format!(
+                    "post-update doctor failed and the rolled-back service could not restart: {error}; restore restart failed: {restore_error}"
+                ).into()),
+                (Err(rollback_error), Err(restore_error)) => Err(format!(
+                    "post-update doctor failed: {error}; rollback failed: {rollback_error}; previous service restart failed: {restore_error}"
+                ).into()),
+            };
+        }
+
         presenter.transition(presenter::ValidationState::Success);
-        println!("GitRun update: PASS");
+        println!("GitRun update: PASS (binary, systemd and doctor verified)");
         println!(
             "backup: {}",
             backup_root
@@ -678,6 +698,25 @@ fn update_command(
             .unwrap_or(Path::new("."))
             .display()
     );
+    Ok(())
+}
+
+fn verify_post_update_doctor(binary: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let output = std::process::Command::new(binary)
+        .args(["doctor", "--no-cat"])
+        .env("GITRUN_CONFIG_FILE", TRUSTED_SYSTEM_CONFIG_FILE)
+        .env_remove("GITRUN_CONFIG_DIR")
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        return Err(format!(
+            "gitrun doctor exited with {}: {}{}",
+            output.status,
+            stderr,
+            if stdout.is_empty() { String::new() } else { format!("; {stdout}") }
+        ).into());
+    }
     Ok(())
 }
 
@@ -2992,10 +3031,18 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         }
     }
 
-    // The repair path verifies all units/services before returning; when a newer
-    // release was installed, run_update performs the same reconciliation using
-    // the newly installed binary.
-    println!("GitRun fix-update: PASS (systemd integration verified)");
+    let (installed_binary, _) = match system_install_paths() {
+        Some(paths) => paths,
+        None => {
+            eprintln!("GitRun fix-update: trusted system binary disappeared during repair");
+            return 1;
+        }
+    };
+    if let Err(error) = verify_post_update_doctor(&installed_binary) {
+        eprintln!("GitRun fix-update: final doctor verification failed: {error}");
+        return 1;
+    }
+    println!("GitRun fix-update: PASS (systemd integration and doctor verified)");
     0
 }
 

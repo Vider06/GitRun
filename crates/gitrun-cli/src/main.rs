@@ -4430,6 +4430,7 @@ mod internal_lifecycle_command_tests {
         ));
     }
 
+    #[test]
     fn system_update_signing_policy_overrides_every_preexisting_value() {
         let changes = update_signing_environment_changes(true, |_| true);
         assert_eq!(changes, update_signing_environment());

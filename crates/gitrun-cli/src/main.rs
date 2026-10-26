@@ -4,7 +4,7 @@ use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, B
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
-    fetch_manifest, latest_manifest, pin_runner_image, rollback, rollback_installed_update,
+    fetch_manifest, latest_manifest, pin_runner_image, rollback, rollback_installed_update_with_config,
     update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
     InstalledBackupRecord, UpdateError, UpdatePaths,
 };
@@ -528,7 +528,13 @@ fn update_command(
         println!("GitRun update: reconciling systemd units, control group and GitRun services");
         if let Err(error) = gitrun_setup::ensure_control_manager_service(desktop_uid) {
             let rollback_error =
-                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root).err();
+                rollback_installed_update_with_config(
+                    &backup,
+                    &artifacts,
+                    &version_file,
+                    config_path.as_deref(),
+                    &backup_root,
+                ).err();
             let restart_error = restart_scheduler_service().err();
             return Err(format!(
                 "Control Manager installation failed: {error}; rollback: {}; scheduler recovery: {}",
@@ -540,7 +546,13 @@ fn update_command(
         if let Some(image) = &plan.runner_image {
             if let Err(error) = update_runner_image(image) {
                 let rollback_error =
-                    rollback_installed_update(&backup, &artifacts, &version_file, &backup_root)
+                    rollback_installed_update_with_config(
+                    &backup,
+                    &artifacts,
+                    &version_file,
+                    config_path.as_deref(),
+                    &backup_root,
+                )
                         .err();
                 return Err(match rollback_error {
                     Some(rollback_error) => format!(
@@ -553,7 +565,13 @@ fn update_command(
             if let Some(config_file) = config_path.as_deref() {
                 if let Err(error) = pin_runner_image(config_file, image) {
                     let rollback_error =
-                        rollback_installed_update(&backup, &artifacts, &version_file, &backup_root)
+                        rollback_installed_update_with_config(
+                    &backup,
+                    &artifacts,
+                    &version_file,
+                    config_path.as_deref(),
+                    &backup_root,
+                )
                             .err();
                     return Err(match rollback_error {
                         Some(rollback_error) => format!(
@@ -572,7 +590,13 @@ fn update_command(
         println!("GitRun update: restarting and verifying the scheduler");
         if let Err(error) = restart_scheduler_service() {
             let rollback_result =
-                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
+                rollback_installed_update_with_config(
+                    &backup,
+                    &artifacts,
+                    &version_file,
+                    config_path.as_deref(),
+                    &backup_root,
+                );
             let restore_result = restart_scheduler_service();
             return match (rollback_result, restore_result) {
                 (Ok(()), Ok(())) => Err(format!(
@@ -592,7 +616,13 @@ fn update_command(
 
         if let Err(error) = verify_post_update_doctor(&gitrun_binary) {
             let rollback_result =
-                rollback_installed_update(&backup, &artifacts, &version_file, &backup_root);
+                rollback_installed_update_with_config(
+                    &backup,
+                    &artifacts,
+                    &version_file,
+                    config_path.as_deref(),
+                    &backup_root,
+                );
             let restore_result = restart_scheduler_service();
             return match (rollback_result, restore_result) {
                 (Ok(()), Ok(())) => Err(format!(
@@ -1330,7 +1360,13 @@ fn rollback_command(
             destination: gitrun_binary,
             required: true,
         }];
-        rollback_installed_update(&backup, &expected_artifacts, &version_file, &backup_root)?;
+        rollback_installed_update_with_config(
+            &backup,
+            &expected_artifacts,
+            &version_file,
+            Some(Path::new(TRUSTED_SYSTEM_CONFIG_FILE)),
+            &backup_root,
+        )?;
         presenter.transition(presenter::ValidationState::Success);
         println!("GitRun rollback: PASS");
         return Ok(());

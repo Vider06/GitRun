@@ -57,8 +57,8 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
     let mut command = if super::is_root() {
         Command::new(executable)
     } else {
-        let pkexec =
-            super::find_trusted_pkexec().ok_or("trusted /usr/bin/pkexec executable was not found")?;
+        let pkexec = super::find_trusted_pkexec()
+            .ok_or("trusted /usr/bin/pkexec executable was not found")?;
         let mut command = Command::new(pkexec);
         command.arg(executable);
         command

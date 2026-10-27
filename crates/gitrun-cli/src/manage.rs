@@ -758,7 +758,11 @@ fn handle_key(
 }
 
 fn logs_footer_height(page: usize) -> u16 {
-    if page == 7 { 3 } else { 2 }
+    if page == 7 {
+        3
+    } else {
+        2
+    }
 }
 
 const WIDE_HEADER_TAGLINE: &str = "  SSH-FIRST  ·  LIVE OPERATIONS  ·  SAFE BY DEFAULT";
@@ -3379,8 +3383,9 @@ mod tests {
 mod visual_design_tests {
     use super::{
         build_osc52_sequence, header_separator, json_editor_fields, json_editor_value_at_path_mut,
-        logs_clipboard_text, logs_footer_height, mascot_state, parse_json_editor_input, JsonEditorInputKind,
-        JsonEditorPathSegment, State, OSC52_MAX_COPY_BYTES, PAGES, WIDE_HEADER_TAGLINE,
+        logs_clipboard_text, logs_footer_height, mascot_state, parse_json_editor_input,
+        JsonEditorInputKind, JsonEditorPathSegment, State, OSC52_MAX_COPY_BYTES, PAGES,
+        WIDE_HEADER_TAGLINE,
     };
     use serde_json::json;
 

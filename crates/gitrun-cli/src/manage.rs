@@ -1632,9 +1632,7 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
                     fallback_command,
                 });
             }
-            Some(Err(error)) => {
-                Some(format!("local clipboard/export helper failed: {error}"))
-            }
+            Some(Err(error)) => Some(format!("local clipboard/export helper failed: {error}")),
             None => Some(
                 "local clipboard helper was not reachable; falling back to SSH clipboard handling"
                     .into(),

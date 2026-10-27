@@ -1584,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-cli"
-version = "0.13.12"
+version = "0.13.13"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -1607,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-core"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "jsonwebtoken",
  "libc",
@@ -1619,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-dashboard-tauri"
-version = "0.11.4"
+version = "0.11.5"
 dependencies = [
  "gitrun-core",
  "gitrun-gsr",
@@ -1637,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-exe"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "getrandom 0.4.3",
  "gitrun-core",
@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-gsr"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "gitrun-core",
  "gitrun-exe",
@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-recovery"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "gitrun-core",
  "gitrun-scheduler",
@@ -1678,7 +1678,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.11.7"
+version = "0.11.8"
 dependencies = [
  "base64 0.23.1",
  "filetime",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-setup"
-version = "0.9.8"
+version = "0.9.9"
 dependencies = [
  "gitrun-core",
  "gitrun-updater",
@@ -1708,7 +1708,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-smart-scheduler"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "libc",
  "serde",
@@ -1718,7 +1718,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-updater"
-version = "0.8.7"
+version = "0.8.8"
 dependencies = [
  "flate2",
  "gitrun-core",
@@ -1734,7 +1734,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-vault"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",

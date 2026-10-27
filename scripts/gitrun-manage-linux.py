@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local Linux clipboard and save-dialog helper for gitrun manage."""
 from __future__ import annotations
-import argparse, hmac, os, re, secrets, shutil, socket, subprocess, sys, tempfile, time
+import argparse, hmac, os, re, secrets, select, shutil, socket, subprocess, sys, tempfile, time
 from pathlib import Path
 
 MAX_LOG_BYTES = 32 * 1024 * 1024
@@ -40,6 +40,76 @@ def read_exact(sock: socket.socket, length: int) -> bytes:
 def has_desktop() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
+def try_clipboard_process(name: str, command: list[str], payload: bytes) -> tuple[bool, str]:
+    executable = shutil.which(command[0])
+    if not executable:
+        return False, f"{name} unavailable"
+
+    process = None
+    started = time.monotonic()
+    try:
+        # xclip/xsel can remain alive to own the X11 selection. A generic
+        # subprocess.run(timeout=...) kills those clipboard owners and makes
+        # a successful copy disappear, so stream to a nonblocking pipe and
+        # treat a healthy resident owner as success after it accepts all data.
+        process = subprocess.Popen(
+            [executable, *command[1:]],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        assert process.stdin is not None
+        pipe_fd = process.stdin.fileno()
+        os.set_blocking(pipe_fd, False)
+        offset = 0
+        deadline = started + 2.0
+        while offset < len(payload):
+            return_code = process.poll()
+            if return_code is not None:
+                return False, f"{name} exited {return_code} before accepting all log data"
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"{name} did not accept logs within two seconds")
+            _, writable, _ = select.select([], [pipe_fd], [], min(remaining, 0.05))
+            if not writable:
+                continue
+            try:
+                written = os.write(pipe_fd, payload[offset:offset + 65536])
+            except BlockingIOError:
+                continue
+            if written <= 0:
+                raise BrokenPipeError(f"{name} stopped accepting log data")
+            offset += written
+
+        process.stdin.close()
+        # Fast-failing helpers report their result immediately; clipboard
+        # owners that stay alive after reading the payload are expected.
+        graceful_deadline = time.monotonic() + 0.2
+        while time.monotonic() < graceful_deadline:
+            return_code = process.poll()
+            if return_code is not None:
+                return (True, name) if return_code == 0 else (False, f"{name} exited {return_code}")
+            time.sleep(0.01)
+        return True, name
+    except (OSError, TimeoutError) as error:
+        if process is not None and process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+        return False, str(error)
+    finally:
+        if process is not None and process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+
 def copy_to_clipboard(payload: bytes) -> tuple[bool, str]:
     candidates = []
     if os.environ.get("WAYLAND_DISPLAY"):
@@ -51,22 +121,10 @@ def copy_to_clipboard(payload: bytes) -> tuple[bool, str]:
         ])
     reasons = []
     for name, command in candidates:
-        executable = shutil.which(name)
-        if not executable:
-            reasons.append(f"{name} unavailable")
-            continue
-        try:
-            result = subprocess.run([executable, *command[1:]], input=payload,
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                    timeout=2, check=False)
-            if result.returncode == 0:
-                return True, name
-            details = result.stderr.decode("utf-8", "replace").strip()
-            reasons.append(f"{name} exited {result.returncode}" + (f": {details[:100]}" if details else ""))
-        except subprocess.TimeoutExpired:
-            reasons.append(f"{name} timed out after 2 seconds")
-        except OSError as error:
-            reasons.append(f"{name}: {error}")
+        copied, result = try_clipboard_process(name, command, payload)
+        if copied:
+            return True, result
+        reasons.append(result)
     return False, "; ".join(reasons) if reasons else "no local desktop clipboard helper"
 
 def save_dialog(default_name: str) -> tuple[Path | None, bool]:

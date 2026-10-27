@@ -1793,8 +1793,10 @@ fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io:
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let write_result = writer.join().map_err(|_| io::Error::other("clipboard helper stdin writer panicked"))?;
-                write_result?;
+                // Some clipboard tools fork a background owner which inherits
+                // stdin. Never join the writer after the foreground helper exits:
+                // a descendant retaining the pipe must not block the TUI.
+                drop(writer);
                 if status.success() { return Ok(()); }
                 return Err(io::Error::other(format!("{program} exited with {status}")));
             }
@@ -1802,13 +1804,15 @@ fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io:
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = writer.join();
+                // Detach the writer as well: a helper descendant may still hold
+                // the read end open even after the foreground process is killed.
+                drop(writer);
                 return Err(io::Error::new(io::ErrorKind::TimedOut, format!("{program} did not finish within {} seconds", NATIVE_CLIPBOARD_TIMEOUT.as_secs())));
             }
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = writer.join();
+                drop(writer);
                 return Err(error);
             }
         }

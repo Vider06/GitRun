@@ -721,10 +721,12 @@ fn handle_key(
                     if let Some(path) = outcome.fallback_file.as_ref() {
                         state.body_title = "Logs export fallback".into();
                         let mut fallback_lines = vec![
-                            "Clipboard delivery was not confirmed or the local save was cancelled.".into(),
+                            "Clipboard delivery was not confirmed or the local save was cancelled."
+                                .into(),
                             "A private .txt fallback has been saved on the Ubuntu host.".into(),
                             format!("Remote file: {}", path.display()),
-                            "Use the matching command from your local Windows or Linux shell:".into(),
+                            "Use the matching command from your local Windows or Linux shell:"
+                                .into(),
                         ];
                         if let Some(commands) = outcome.fallback_command.as_deref() {
                             fallback_lines.extend(commands.lines().map(str::to_owned));
@@ -1599,7 +1601,10 @@ struct ClipboardCopyOutcome {
 
 fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
     if text.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "there is no log output to copy"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "there is no log output to copy",
+        ));
     }
 
     let local_helper_configured = env::var_os("GITRUN_LOG_EXPORT_PORT").is_some()
@@ -1657,7 +1662,11 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
     let (sequence, truncated) = build_osc52_sequence(text)
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     let in_tmux = env::var_os("TMUX").is_some();
-    let output = if in_tmux { wrap_osc52_for_tmux(&sequence) } else { sequence };
+    let output = if in_tmux {
+        wrap_osc52_for_tmux(&sequence)
+    } else {
+        sequence
+    };
     {
         let mut stdout = io::stdout().lock();
         stdout.write_all(output.as_bytes())?;
@@ -1669,9 +1678,15 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
     } else {
         None
     };
-    let fallback_command = fallback_file.as_ref().and_then(|path| fallback_receive_command(path));
+    let fallback_command = fallback_file
+        .as_ref()
+        .and_then(|path| fallback_receive_command(path));
     Ok(ClipboardCopyOutcome {
-        method: if in_tmux { ClipboardCopyMethod::TmuxPassthrough } else { ClipboardCopyMethod::Osc52 },
+        method: if in_tmux {
+            ClipboardCopyMethod::TmuxPassthrough
+        } else {
+            ClipboardCopyMethod::Osc52
+        },
         truncated,
         native_failure,
         fallback_file,
@@ -1728,10 +1743,17 @@ fn load_client_log_export_token_file() -> Option<String> {
 }
 
 fn request_client_log_export(text: &str) -> Option<Result<ClipboardCopyMethod, String>> {
-    let port = env::var("GITRUN_LOG_EXPORT_PORT").ok()?.parse::<u16>().ok().filter(|port| *port != 0)?;
+    let port = env::var("GITRUN_LOG_EXPORT_PORT")
+        .ok()?
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)?;
     let token = client_log_export_token()?;
     if text.len() > WINDOWS_LOG_EXPORT_MAX_BYTES {
-        return Some(Err(format!("logs exceed the {} MiB client-transfer limit", WINDOWS_LOG_EXPORT_MAX_BYTES / (1024 * 1024))));
+        return Some(Err(format!(
+            "logs exceed the {} MiB client-transfer limit",
+            WINDOWS_LOG_EXPORT_MAX_BYTES / (1024 * 1024)
+        )));
     }
 
     let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
@@ -1756,7 +1778,9 @@ fn request_client_log_export(text: &str) -> Option<Result<ClipboardCopyMethod, S
         .and_then(|()| stream.write_all(text.as_bytes()))
         .and_then(|()| stream.flush())
     {
-        return Some(Err(format!("could not send logs to the local helper: {error}")));
+        return Some(Err(format!(
+            "could not send logs to the local helper: {error}"
+        )));
     }
 
     match read_protocol_line(&mut stream) {
@@ -1775,7 +1799,9 @@ fn request_client_log_export(text: &str) -> Option<Result<ClipboardCopyMethod, S
             }
             match read_protocol_line(&mut stream) {
                 Ok(line) if line == "SAVED" => Some(Ok(ClipboardCopyMethod::ClientFallbackSaved)),
-                Ok(line) if line == "CANCELLED" => Some(Ok(ClipboardCopyMethod::ClientFallbackCancelled)),
+                Ok(line) if line == "CANCELLED" => {
+                    Some(Ok(ClipboardCopyMethod::ClientFallbackCancelled))
+                }
                 Ok(line) => Some(Err(format!("local helper returned {line}"))),
                 Err(error) => Some(Err(format!("local Save As result timed out: {error}"))),
             }
@@ -1795,7 +1821,12 @@ fn read_protocol_line(stream: &mut TcpStream) -> io::Result<String> {
             b'\n' => break,
             b'\r' => {}
             value if bytes.len() < 512 => bytes.push(value),
-            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "protocol line is too long")),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "protocol line is too long",
+                ))
+            }
         }
     }
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
@@ -1803,20 +1834,37 @@ fn read_protocol_line(stream: &mut TcpStream) -> io::Result<String> {
 
 fn clipboard_copy_notice(outcome: &ClipboardCopyOutcome) -> String {
     let mut notice = match outcome.method {
-        ClipboardCopyMethod::Native(backend) => format!("Copied logs to system clipboard via {backend}"),
+        ClipboardCopyMethod::Native(backend) => {
+            format!("Copied logs to system clipboard via {backend}")
+        }
         ClipboardCopyMethod::Osc52 => {
-            if outcome.fallback_file.is_some() { "Clipboard request sent; SSH cannot confirm delivery, so a .txt fallback is ready".to_owned() }
-            else { "OSC 52 request sent; terminal must allow application clipboard writes".to_owned() }
+            if outcome.fallback_file.is_some() {
+                "Clipboard request sent; SSH cannot confirm delivery, so a .txt fallback is ready"
+                    .to_owned()
+            } else {
+                "OSC 52 request sent; terminal must allow application clipboard writes".to_owned()
+            }
         }
         ClipboardCopyMethod::TmuxPassthrough => {
-            if outcome.fallback_file.is_some() { "Clipboard request sent through tmux; a .txt fallback is ready".to_owned() }
-            else { "OSC 52 sent through tmux; requires allow-passthrough on and terminal clipboard support".to_owned() }
+            if outcome.fallback_file.is_some() {
+                "Clipboard request sent through tmux; a .txt fallback is ready".to_owned()
+            } else {
+                "OSC 52 sent through tmux; requires allow-passthrough on and terminal clipboard support".to_owned()
+            }
         }
-        ClipboardCopyMethod::ClientClipboard => "Copied logs to the local system clipboard".to_owned(),
-        ClipboardCopyMethod::ClientFallbackSaved => "Clipboard unavailable; logs saved locally".to_owned(),
-        ClipboardCopyMethod::ClientFallbackCancelled => "Local save was cancelled; a remote .txt fallback is available".to_owned(),
+        ClipboardCopyMethod::ClientClipboard => {
+            "Copied logs to the local system clipboard".to_owned()
+        }
+        ClipboardCopyMethod::ClientFallbackSaved => {
+            "Clipboard unavailable; logs saved locally".to_owned()
+        }
+        ClipboardCopyMethod::ClientFallbackCancelled => {
+            "Local save was cancelled; a remote .txt fallback is available".to_owned()
+        }
     };
-    if outcome.truncated { notice.push_str(" · newest 64 KiB copied to clipboard"); }
+    if outcome.truncated {
+        notice.push_str(" · newest 64 KiB copied to clipboard");
+    }
     if let Some(error) = outcome.native_failure.as_deref() {
         notice.push_str(" · clipboard fallback: ");
         notice.push_str(&error.chars().take(120).collect::<String>());
@@ -1826,9 +1874,15 @@ fn clipboard_copy_notice(outcome: &ClipboardCopyOutcome) -> String {
 
 fn write_logs_fallback_file(text: &str) -> io::Result<PathBuf> {
     let directory = env::temp_dir();
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     for attempt in 0_u8..8 {
-        let path = directory.join(format!("GitRun-logs-{:032x}.txt", timestamp.saturating_add(u128::from(attempt))));
+        let path = directory.join(format!(
+            "GitRun-logs-{:032x}.txt",
+            timestamp.saturating_add(u128::from(attempt))
+        ));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -1838,7 +1892,9 @@ fn write_logs_fallback_file(text: &str) -> io::Result<PathBuf> {
         }
         match options.open(&path) {
             Ok(mut file) => {
-                let result = file.write_all(text.as_bytes()).and_then(|()| file.sync_all());
+                let result = file
+                    .write_all(text.as_bytes())
+                    .and_then(|()| file.sync_all());
                 if let Err(error) = result {
                     drop(file);
                     let _ = std::fs::remove_file(&path);
@@ -1850,20 +1906,26 @@ fn write_logs_fallback_file(text: &str) -> io::Result<PathBuf> {
             Err(error) => return Err(error),
         }
     }
-    Err(io::Error::other("could not allocate a unique Logs fallback file"))
+    Err(io::Error::other(
+        "could not allocate a unique Logs fallback file",
+    ))
 }
 
 fn fallback_receive_command(path: &Path) -> Option<String> {
     let username = env::var("USER").ok()?;
     if username.is_empty()
-        || !username.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        || !username
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
     {
         return None;
     }
     let connection = env::var("SSH_CONNECTION").ok()?;
     let server_address = connection.split_whitespace().nth(2)?;
     if server_address.is_empty()
-        || !server_address.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        || !server_address
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
     {
         return None;
     }
@@ -1888,7 +1950,12 @@ fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io:
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
-    let mut input = child.stdin.take().ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "clipboard helper stdin unavailable"))?;
+    let mut input = child.stdin.take().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "clipboard helper stdin unavailable",
+        )
+    })?;
     let payload = text.as_bytes().to_vec();
     let writer = std::thread::spawn(move || {
         let result = input.write_all(&payload);
@@ -1903,7 +1970,9 @@ fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io:
                 // stdin. Never join the writer after the foreground helper exits:
                 // a descendant retaining the pipe must not block the TUI.
                 drop(writer);
-                if status.success() { return Ok(()); }
+                if status.success() {
+                    return Ok(());
+                }
                 return Err(io::Error::other(format!("{program} exited with {status}")));
             }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
@@ -1913,7 +1982,13 @@ fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io:
                 // Detach the writer as well: a helper descendant may still hold
                 // the read end open even after the foreground process is killed.
                 drop(writer);
-                return Err(io::Error::new(io::ErrorKind::TimedOut, format!("{program} did not finish within {} seconds", NATIVE_CLIPBOARD_TIMEOUT.as_secs())));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "{program} did not finish within {} seconds",
+                        NATIVE_CLIPBOARD_TIMEOUT.as_secs()
+                    ),
+                ));
             }
             Err(error) => {
                 let _ = child.kill();
@@ -2151,7 +2226,7 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
             if state.page == 7 {
                 state.logs_copy_source = Some(logs_clipboard_text(&state.body));
             }
-        },
+        }
         Err(error) => state.set_text(
             "Operation failed",
             vec![

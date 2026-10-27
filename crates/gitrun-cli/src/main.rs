@@ -5191,12 +5191,12 @@ mod doctor_json_validation_tests {
     fn doctor_validates_each_json_file_not_just_the_directory() {
         let valid = path("valid");
         std::fs::write(&valid, r#"{"schema_version":1,"enabled":false}"#).unwrap();
-        assert!(doctor_json_file_check(&valid).is_ok());
+        assert!(doctor_json_file_check(&valid, false).is_ok());
         std::fs::remove_file(valid).unwrap();
 
         let invalid = path("invalid");
         std::fs::write(&invalid, r#"{"schema_version":1,}"#).unwrap();
-        assert!(doctor_json_file_check(&invalid)
+        assert!(doctor_json_file_check(&invalid, false)
             .unwrap_err()
             .contains("invalid JSON"));
         std::fs::remove_file(invalid).unwrap();
@@ -5206,7 +5206,7 @@ mod doctor_json_validation_tests {
     fn doctor_rejects_scalar_json_roots() {
         let scalar = path("scalar");
         std::fs::write(&scalar, "true").unwrap();
-        assert!(doctor_json_file_check(&scalar)
+        assert!(doctor_json_file_check(&scalar, false)
             .unwrap_err()
             .contains("scalar JSON root"));
         std::fs::remove_file(scalar).unwrap();
@@ -5216,7 +5216,7 @@ mod doctor_json_validation_tests {
     fn doctor_rejects_json_files_that_are_too_large() {
         let large = path("large");
         std::fs::write(&large, vec![b' '; 16 * 1024 * 1024 + 1]).unwrap();
-        assert!(doctor_json_file_check(&large)
+        assert!(doctor_json_file_check(&large, false)
             .unwrap_err()
             .contains("16 MiB JSON safety limit"));
         std::fs::remove_file(large).unwrap();

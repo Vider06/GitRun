@@ -96,10 +96,7 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
         .args(["--system", "--wait", "--pipe", "--collect", "--unit"])
         .arg(&unit_name)
         .args(main_library_restore_unit_properties())
-        .args([
-            "--description=GitRun signed Main Library restore",
-            "--",
-        ])
+        .args(["--description=GitRun signed Main Library restore", "--"])
         .arg(executable)
         .args(["--no-cat", "--json-recovery-root", "restore-main-library"])
         .output()

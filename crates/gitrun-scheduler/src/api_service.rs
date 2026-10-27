@@ -395,7 +395,10 @@ fn prepare_api_socket_path(path: &Path) -> Result<(), String> {
             ));
         }
         fs::remove_dir(path).map_err(|error| {
-            format!("remove empty directory at API socket path {}: {error}", path.display())
+            format!(
+                "remove empty directory at API socket path {}: {error}",
+                path.display()
+            )
         })?;
         return Ok(());
     }
@@ -414,8 +417,12 @@ fn prepare_api_socket_path(path: &Path) -> Result<(), String> {
                 path.display()
             ))
         }
-        Err(error) if matches!(error.kind(),
-            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound) => {
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+            ) =>
+        {
             fs::remove_file(path).map_err(|remove_error| {
                 format!("remove stale API socket {}: {remove_error}", path.display())
             })
@@ -7461,10 +7468,13 @@ mod api_socket_path_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_root(label: &str) -> PathBuf {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)
-            .expect("system clock after Unix epoch").as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "gitrun-api-socket-{label}-{}-{nonce}", std::process::id()
+            "gitrun-api-socket-{label}-{}-{nonce}",
+            std::process::id()
         ));
         fs::create_dir(&path).expect("create isolated test directory");
         path

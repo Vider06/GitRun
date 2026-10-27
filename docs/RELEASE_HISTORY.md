@@ -8,6 +8,7 @@ Current source target: GitRun <!-- gitrun-version:start -->1.8.9<!-- gitrun-vers
 - Run the signed official Main Library restore in a separate transient systemd unit rather than inheriting the Control Manager's read-only mount namespace. The transient unit keeps `ProtectSystem=full` and makes only `/usr/share/gitrun/library` writable.
 - Keep the restore on fixed, root-owned GitRun and systemd-run executables; the UI cannot supply arbitrary paths or commands.
 - Make `gitrun doctor` explicitly report protected JSON paths skipped because of expected non-root permissions, while malformed JSON and unexpected permission failures remain warnings or failures. Run `sudo gitrun doctor` when full validation of root-owned files is required.
+- Route `gitrun update --check` through a dedicated read-only dispatcher, separate from the transaction that downloads and installs an update; add parser regression coverage for the flag.
 - Bump all workspace crate patch versions and synchronize `Cargo.lock`, `runner-bootstrap.lock` and the current-source Markdown markers.
 - **Implementation PR:** [#135](https://github.com/Vider06/GitRun/pull/135).
 

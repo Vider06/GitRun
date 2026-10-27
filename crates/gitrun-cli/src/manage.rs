@@ -703,15 +703,10 @@ fn handle_key(
         KeyCode::Char('r') if key.modifiers.is_empty() => execute_action(terminal, state)?,
         KeyCode::Char('c') if key.modifiers.is_empty() && state.page == 7 => {
             let log_text = logs_clipboard_text(&state.body);
-            match request_osc52_clipboard(&log_text) {
-                Ok(truncated) => {
+            match request_logs_clipboard(&log_text) {
+                Ok(outcome) => {
                     state.error = false;
-                    state.notice = if truncated {
-                        "OSC 52 request sent (latest 64 KiB); clipboard depends on terminal/SSH/tmux support"
-                            .into()
-                    } else {
-                        "OSC 52 request sent; clipboard depends on terminal/SSH/tmux support".into()
-                    };
+                    state.notice = clipboard_copy_notice(&outcome);
                 }
                 Err(error) => {
                     state.error = true;
@@ -1553,13 +1548,205 @@ fn build_osc52_sequence(text: &str) -> Result<(String, bool), &'static str> {
     Ok((format!("\x1b]52;c;{encoded}\x07"), clipped))
 }
 
-fn request_osc52_clipboard(text: &str) -> io::Result<bool> {
-    let (sequence, clipped) = build_osc52_sequence(text)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardCopyMethod {
+    Native(&'static str),
+    Osc52,
+    TmuxPassthrough,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ClipboardCopyOutcome {
+    method: ClipboardCopyMethod,
+    truncated: bool,
+    native_failure: Option<String>,
+}
+
+fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
+    if text.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "there is no log output to copy",
+        ));
+    }
+
+    let (native_method, native_failure) = try_native_clipboard_copy(text);
+    if let Some(method) = native_method {
+        return Ok(ClipboardCopyOutcome {
+            method: ClipboardCopyMethod::Native(method),
+            truncated: false,
+            native_failure: None,
+        });
+    }
+
+    let (sequence, truncated) = build_osc52_sequence(text)
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+    let in_tmux = env::var_os("TMUX").is_some();
+    let output = if in_tmux {
+        wrap_osc52_for_tmux(&sequence)
+    } else {
+        sequence
+    };
     let mut stdout = io::stdout().lock();
-    stdout.write_all(sequence.as_bytes())?;
+    stdout.write_all(output.as_bytes()).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            match native_failure.as_deref() {
+                Some(native) => format!("{error}; native clipboard fallback also failed: {native}"),
+                None => error.to_string(),
+            },
+        )
+    })?;
     stdout.flush()?;
-    Ok(clipped)
+
+    Ok(ClipboardCopyOutcome {
+        method: if in_tmux {
+            ClipboardCopyMethod::TmuxPassthrough
+        } else {
+            ClipboardCopyMethod::Osc52
+        },
+        truncated,
+        native_failure,
+    })
+}
+
+fn clipboard_copy_notice(outcome: &ClipboardCopyOutcome) -> String {
+    let mut notice = match outcome.method {
+        ClipboardCopyMethod::Native(backend) => {
+            format!("Copied logs to system clipboard via {backend}")
+        }
+        ClipboardCopyMethod::Osc52 => {
+            "OSC 52 request sent; terminal must allow application clipboard writes".to_owned()
+        }
+        ClipboardCopyMethod::TmuxPassthrough => {
+            "OSC 52 sent through tmux; requires allow-passthrough on and terminal clipboard support"
+                .to_owned()
+        }
+    };
+    if outcome.truncated {
+        notice.push_str(" · newest 64 KiB only");
+    }
+    if let Some(error) = outcome.native_failure.as_deref() {
+        notice.push_str(" · native clipboard unavailable: ");
+        notice.push_str(&error.chars().take(160).collect::<String>());
+    }
+    notice
+}
+
+fn wrap_osc52_for_tmux(sequence: &str) -> String {
+    // tmux's DCS passthrough format requires each ESC within the payload to
+    // be doubled. The tmux server must opt in with allow-passthrough on.
+    format!("\x1bPtmux;{}\x1b\\", sequence.replace('\x1b', "\x1b\x1b"))
+}
+
+fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io::Result<()> {
+    // Clipboard helpers may fork a resident process that keeps inherited
+    // output pipes open. Send diagnostics to /dev/null so waiting only tracks
+    // the short-lived foreground helper, not a clipboard-owner descendant.
+    let mut child = ProcessCommand::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let mut input = child.stdin.take().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "clipboard helper stdin unavailable",
+        )
+    })?;
+    if let Err(error) = input.write_all(text.as_bytes()) {
+        drop(input);
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    drop(input);
+
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!("{program} exited with {status}")))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn try_native_clipboard_copy(text: &str) -> (Option<&'static str>, Option<String>) {
+    let mut failures = Vec::new();
+
+    if env::var_os("WAYLAND_DISPLAY").is_some() {
+        let program = "/usr/bin/wl-copy";
+        if std::path::Path::new(program).is_file() {
+            match run_native_clipboard_command(program, &[], text) {
+                Ok(()) => return (Some("wl-copy"), None),
+                Err(error) => failures.push(format!("wl-copy: {error}")),
+            }
+        } else {
+            failures.push("Wayland session detected but /usr/bin/wl-copy is unavailable".into());
+        }
+    }
+
+    if env::var_os("DISPLAY").is_some() {
+        let xclip = "/usr/bin/xclip";
+        if std::path::Path::new(xclip).is_file() {
+            match run_native_clipboard_command(xclip, &["-selection", "clipboard", "-in"], text) {
+                Ok(()) => return (Some("xclip"), None),
+                Err(error) => failures.push(format!("xclip: {error}")),
+            }
+        } else {
+            failures.push("/usr/bin/xclip is unavailable".into());
+        }
+
+        let xsel = "/usr/bin/xsel";
+        if std::path::Path::new(xsel).is_file() {
+            match run_native_clipboard_command(xsel, &["--clipboard", "--input"], text) {
+                Ok(()) => return (Some("xsel"), None),
+                Err(error) => failures.push(format!("xsel: {error}")),
+            }
+        } else {
+            failures.push("/usr/bin/xsel is unavailable".into());
+        }
+    }
+
+    (
+        None,
+        if failures.is_empty() {
+            None
+        } else {
+            Some(failures.join("; "))
+        },
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn try_native_clipboard_copy(text: &str) -> (Option<&'static str>, Option<String>) {
+    // On an SSH login, prefer OSC 52 so the local terminal—not the remote
+    // macOS host—decides where the user's clipboard lives.
+    if env::var_os("SSH_CONNECTION").is_some() {
+        return (None, None);
+    }
+    let program = "/usr/bin/pbcopy";
+    if !std::path::Path::new(program).is_file() {
+        return (None, Some("/usr/bin/pbcopy is unavailable".into()));
+    }
+    match run_native_clipboard_command(program, &[], text) {
+        Ok(()) => (Some("pbcopy"), None),
+        Err(error) => (None, Some(format!("pbcopy: {error}"))),
+    }
+}
+
+#[cfg(windows)]
+fn try_native_clipboard_copy(text: &str) -> (Option<&'static str>, Option<String>) {
+    match run_native_clipboard_command("clip.exe", &[], text) {
+        Ok(()) => (Some("clip.exe"), None),
+        Err(error) => (None, Some(format!("clip.exe: {error}"))),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn try_native_clipboard_copy(_text: &str) -> (Option<&'static str>, Option<String>) {
+    (None, None)
 }
 
 fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
@@ -3382,8 +3569,9 @@ mod tests {
 #[cfg(test)]
 mod visual_design_tests {
     use super::{
-        build_osc52_sequence, header_separator, json_editor_fields, json_editor_value_at_path_mut,
-        logs_clipboard_text, logs_footer_height, mascot_state, parse_json_editor_input,
+        build_osc52_sequence, clipboard_copy_notice, header_separator, json_editor_fields,
+        json_editor_value_at_path_mut, logs_clipboard_text, logs_footer_height, mascot_state,
+        parse_json_editor_input, wrap_osc52_for_tmux, ClipboardCopyMethod, ClipboardCopyOutcome,
         JsonEditorInputKind, JsonEditorPathSegment, State, OSC52_MAX_COPY_BYTES, PAGES,
         WIDE_HEADER_TAGLINE,
     };
@@ -3464,6 +3652,35 @@ mod visual_design_tests {
     #[test]
     fn osc52_rejects_empty_copy_payloads() {
         assert!(build_osc52_sequence("").is_err());
+    }
+
+    #[test]
+    fn tmux_osc52_passthrough_wraps_and_escapes_the_terminal_sequence() {
+        let sequence = "\x1b]52;c;YWJj\x07";
+        assert_eq!(
+            wrap_osc52_for_tmux(sequence),
+            "\x1bPtmux;\x1b\x1b]52;c;YWJj\x07\x1b\\"
+        );
+    }
+
+    #[test]
+    fn native_clipboard_notice_only_claims_copy_after_native_command_success() {
+        let native = ClipboardCopyOutcome {
+            method: ClipboardCopyMethod::Native("wl-copy"),
+            truncated: false,
+            native_failure: None,
+        };
+        assert!(clipboard_copy_notice(&native).contains("Copied logs to system clipboard"));
+
+        let osc52 = ClipboardCopyOutcome {
+            method: ClipboardCopyMethod::Osc52,
+            truncated: false,
+            native_failure: Some("wl-copy unavailable".into()),
+        };
+        let notice = clipboard_copy_notice(&osc52);
+        assert!(notice.contains("request sent"));
+        assert!(notice.contains("native clipboard unavailable"));
+        assert!(!notice.starts_with("Copied logs"));
     }
 
     #[test]

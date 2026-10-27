@@ -1,6 +1,14 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.11<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.8.12<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.8.12 — reliable Logs clipboard delivery
+
+- **Source/product target:** `1.8.12`, recorded in `version.txt`. This entry describes the source line; it does not claim that a signed release artifact has been published.
+- Use available native clipboard helpers on local desktop sessions: `wl-copy` for Wayland, `xclip` or `xsel` for X11, `pbcopy` on local macOS, and `clip.exe` on Windows.
+- Keep OSC 52 as the remote-terminal fallback. When `TMUX` is set, wrap the request in tmux DCS passthrough and explain that `allow-passthrough on` plus terminal clipboard support are required.
+- Show “copied” only after a native clipboard helper exits successfully; OSC 52 feedback explicitly means the request was sent, not that the remote terminal accepted it.
+- Add tests for tmux sequence escaping and truthful clipboard status; bump only `gitrun-cli` from 0.13.11 to 0.13.12 and synchronize `Cargo.lock`, `version.txt` and current-source Markdown markers.
 
 ## GitRun 1.8.11 — restore timeout and API socket recovery
 

@@ -1993,6 +1993,20 @@ fn remote_linux_runner_api_unsupported(host: &DockerHost, is_windows: bool) -> b
     !is_windows && !matches!(host, DockerHost::Local)
 }
 
+/// Append a custom seccomp profile only when one is explicitly selected.
+/// Docker's built-in default profile is already applied when the option is
+/// omitted; `seccomp=default` is interpreted as a path named `default`.
+fn append_seccomp_profile_args(args: &mut Vec<String>, profile: &str) {
+    let profile = profile.trim();
+    if profile.eq_ignore_ascii_case("default") {
+        return;
+    }
+    args.extend([
+        "--security-opt".to_owned(),
+        format!("seccomp={profile}"),
+    ]);
+}
+
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     // A Docker bind mount is resolved by the daemon, not by this scheduler.
     // Linux runner containers require the host GitRun API socket; until the
@@ -2224,10 +2238,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     }
 
     if !spec.is_windows {
-        args.extend([
-            "--security-opt".into(),
-            format!("seccomp={}", spec.seccomp_profile),
-        ]);
+        append_seccomp_profile_args(&mut args, spec.seccomp_profile);
         if !spec.apparmor_profile.trim().is_empty() {
             args.extend([
                 "--security-opt".into(),
@@ -3666,6 +3677,27 @@ mod tests {
         assert_eq!(
             ensure_label("self-hosted,Linux", "gitrun-ci"),
             "self-hosted,Linux,gitrun-ci"
+        );
+    }
+
+    #[test]
+    fn default_seccomp_profile_uses_docker_builtin_without_named_path() {
+        let mut args = vec!["run".to_owned()];
+        append_seccomp_profile_args(&mut args, "default");
+        append_seccomp_profile_args(&mut args, "Default");
+        assert_eq!(args, vec!["run"]);
+    }
+
+    #[test]
+    fn explicit_seccomp_profile_path_is_forwarded_to_docker() {
+        let mut args = Vec::new();
+        append_seccomp_profile_args(&mut args, "/etc/gitrun/seccomp/runner.json");
+        assert_eq!(
+            args,
+            vec![
+                "--security-opt".to_owned(),
+                "seccomp=/etc/gitrun/seccomp/runner.json".to_owned()
+            ]
         );
     }
 

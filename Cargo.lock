@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-recovery"
-version = "0.6.11"
+version = "0.6.12"
 dependencies = [
  "gitrun-core",
  "gitrun-scheduler",
@@ -1678,7 +1678,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "base64 0.23.1",
  "filetime",

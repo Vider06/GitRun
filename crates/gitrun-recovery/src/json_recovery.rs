@@ -54,8 +54,8 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
 
     let executable = super::find_trusted_installed_gitrun_binary()
         .ok_or("trusted installed GitRun executable was not found for JSON recovery")?;
-    let pkexec = super::find_trusted_pkexec()
-        .ok_or("trusted /usr/bin/pkexec executable was not found")?;
+    let pkexec =
+        super::find_trusted_pkexec().ok_or("trusted /usr/bin/pkexec executable was not found")?;
     let mut command = Command::new(pkexec);
     command.arg(executable);
     let output = command

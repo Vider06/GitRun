@@ -1636,10 +1636,7 @@ fn clipboard_copy_notice(outcome: &ClipboardCopyOutcome) -> String {
 fn wrap_osc52_for_tmux(sequence: &str) -> String {
     // tmux's DCS passthrough format requires each ESC within the payload to
     // be doubled. The tmux server must opt in with allow-passthrough on.
-    format!(
-        "\x1bPtmux;{}\x1b\\",
-        sequence.replace('\x1b', "\x1b\x1b")
-    )
+    format!("\x1bPtmux;{}\x1b\\", sequence.replace('\x1b', "\x1b\x1b"))
 }
 
 fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io::Result<()> {
@@ -1653,7 +1650,10 @@ fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io:
         .stderr(std::process::Stdio::null())
         .spawn()?;
     let mut input = child.stdin.take().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::BrokenPipe, "clipboard helper stdin unavailable")
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "clipboard helper stdin unavailable",
+        )
     })?;
     if let Err(error) = input.write_all(text.as_bytes()) {
         drop(input);
@@ -1667,9 +1667,7 @@ fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io:
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(format!(
-            "{program} exited with {status}"
-        )))
+        Err(io::Error::other(format!("{program} exited with {status}")))
     }
 }
 
@@ -3572,10 +3570,10 @@ mod tests {
 mod visual_design_tests {
     use super::{
         build_osc52_sequence, clipboard_copy_notice, header_separator, json_editor_fields,
-        json_editor_value_at_path_mut, logs_clipboard_text, logs_footer_height,
-        mascot_state, parse_json_editor_input, wrap_osc52_for_tmux, ClipboardCopyMethod,
-        ClipboardCopyOutcome, JsonEditorInputKind, JsonEditorPathSegment, State,
-        OSC52_MAX_COPY_BYTES, PAGES, WIDE_HEADER_TAGLINE,
+        json_editor_value_at_path_mut, logs_clipboard_text, logs_footer_height, mascot_state,
+        parse_json_editor_input, wrap_osc52_for_tmux, ClipboardCopyMethod, ClipboardCopyOutcome,
+        JsonEditorInputKind, JsonEditorPathSegment, State, OSC52_MAX_COPY_BYTES, PAGES,
+        WIDE_HEADER_TAGLINE,
     };
     use serde_json::json;
 

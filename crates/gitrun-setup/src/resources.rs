@@ -38,7 +38,8 @@ fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
 
     if !adapted.contains(SAFE_ENTRYPOINT) || adapted.contains(LEGACY_ENTRYPOINT) {
         return Err(SetupError::Command(
-            "Premade runner Dockerfile must launch the bootstrap through the original Bash binary".into(),
+            "Premade runner Dockerfile must launch the bootstrap through the original Bash binary"
+                .into(),
         ));
     }
 
@@ -329,7 +330,9 @@ mod tests {
             assert!(dockerfile.contains("gitrun-gsr-agent"));
             assert!(dockerfile.contains("GITRUN_GSR_COMMAND_POLICY_ENABLED=true"));
             assert!(dockerfile.contains("cp /usr/local/bin/gitrun-gsr-agent /bin/sh"));
-            assert!(dockerfile.contains(r#"ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]"#));
+            assert!(
+                dockerfile.contains(r#"ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]"#)
+            );
             assert!(!dockerfile.contains(r#"ENTRYPOINT ["/entrypoint.sh"]"#));
         }
     }

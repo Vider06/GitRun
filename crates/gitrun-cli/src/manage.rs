@@ -4028,7 +4028,7 @@ mod visual_design_tests {
         };
         let notice = clipboard_copy_notice(&osc52);
         assert!(notice.contains("request sent"));
-        assert!(notice.contains("native clipboard unavailable"));
+        assert!(notice.contains("clipboard fallback: wl-copy unavailable"));
         assert!(!notice.starts_with("Copied logs"));
     }
 

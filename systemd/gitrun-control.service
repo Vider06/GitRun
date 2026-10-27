@@ -18,7 +18,7 @@ UMask=0007
 # operations. The UIs remain unprivileged and can only use its typed local IPC.
 NoNewPrivileges=yes
 ProtectSystem=full
-ReadWritePaths=/etc/gitrun /var/lib/gitrun /var/log/gitrun /var/cache/gitrun /opt/gitrun /run/gitrun-control
+ReadWritePaths=/etc/gitrun /var/lib/gitrun /var/log/gitrun /var/cache/gitrun /opt/gitrun /usr/share/gitrun /run/gitrun-control
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

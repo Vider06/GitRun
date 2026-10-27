@@ -20,14 +20,12 @@ use ratatui::{
     },
     Frame, Terminal,
 };
-use serde_json::{json, Value};
+use serde_json::{json, Number, Value};
 use std::{
     env,
     error::Error,
-    fs::{self, OpenOptions},
-    io::{self, IsTerminal, Read, Write},
+    io::{self, IsTerminal, Write},
     process::Command as ProcessCommand,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 type ManagementTerminal = Terminal<CrosstermBackend<io::Stdout>>;
@@ -199,7 +197,7 @@ const KITTY_ACTIONS: &[Action] = &[
     },
     Action {
         title: "Edit Kitty settings",
-        hint: "Edit settings JSON in $VISUAL / $EDITOR; backend validation remains authoritative.",
+        hint: "Edit typed values in a structured screen; JSON structure stays locked.",
     },
     Action {
         title: "Inspect host resource budget",
@@ -218,11 +216,11 @@ const SECURITY_ACTIONS: &[Action] = &[
     },
     Action {
         title: "Edit runtime security config",
-        hint: "Edit a redacted Config document and save through backend validation.",
+        hint: "Edit typed values in the redacted configuration form; backend validation remains authoritative.",
     },
     Action {
         title: "Edit API/security policy",
-        hint: "Edit Config + GitRunSettings with the same write conflict checks as the GUI.",
+        hint: "Edit typed values in the redacted policy form with dashboard-equivalent write conflict checks.",
     },
     Action {
         title: "List API capabilities",
@@ -336,7 +334,7 @@ const SETTINGS_ACTIONS: &[Action] = &[
     },
     Action {
         title: "Edit global configuration (JSON)",
-        hint: "Open all supported configuration fields in $VISUAL / $EDITOR.",
+        hint: "Edit typed scalar values without opening the raw JSON document.",
     },
     Action {
         title: "List VM definitions",
@@ -348,7 +346,7 @@ const SETTINGS_ACTIONS: &[Action] = &[
     },
     Action {
         title: "Edit VM definition",
-        hint: "Select a VM and edit its structured JSON definition.",
+        hint: "Select a VM and edit its typed scalar values; backend validation remains authoritative.",
     },
     Action {
         title: "Delete VM definition",
@@ -368,7 +366,7 @@ const SETTINGS_ACTIONS: &[Action] = &[
     },
     Action {
         title: "Edit Logic Containers rules (JSON)",
-        hint: "Edit the full rule list; validated by the scheduler's shared loader.",
+        hint: "Edit existing typed rule values; the list structure stays locked and the shared loader validates it.",
     },
 ];
 const APP_ACTIONS: &[Action] = &[
@@ -382,7 +380,7 @@ const APP_ACTIONS: &[Action] = &[
     },
     Action {
         title: "Edit Kitty settings (JSON)",
-        hint: "Edit Kitty options; all dependency and safety checks remain enforced.",
+        hint: "Edit typed Kitty values in a structured screen; dependency and safety checks remain enforced.",
     },
     Action {
         title: "Start GitRun service",
@@ -1903,7 +1901,9 @@ fn edit_repository_policy(
         "settings": settings.clone()
     });
     redact_sensitive(&mut document);
-    let edited = edit_json_document(terminal, &document)?;
+    let Some(edited) = edit_json_document(terminal, &document)? else {
+        return Ok(json!({"cancelled":true,"selected_repository":repo}));
+    };
     let mut edited = edited;
     if let Some(object) = edited.as_object_mut() {
         object.remove("_instructions");
@@ -1936,7 +1936,9 @@ fn edit_repository_policy(
 fn edit_config(terminal: &mut ManagementTerminal) -> Result<Value, String> {
     let config = app_read("config", json!({}))?;
     let mut edited = redact_copy(config.clone());
-    let value = edit_json_document(terminal, &edited)?;
+    let Some(value) = edit_json_document(terminal, &edited)? else {
+        return Ok(json!({"cancelled":true,"settings_unchanged":true}));
+    };
     edited = value;
     restore_redacted(&mut edited, &config);
     app_write("config_save", json!({"updated":edited}))?;
@@ -1947,7 +1949,9 @@ fn edit_security_policy(terminal: &mut ManagementTerminal) -> Result<Value, Stri
     let config = app_read("config", json!({}))?;
     let settings = app_read("gitrun_settings", json!({}))?;
     let mut document = redact_copy(json!({"config":config.clone(),"settings":settings.clone()}));
-    let edited = edit_json_document(terminal, &document)?;
+    let Some(edited) = edit_json_document(terminal, &document)? else {
+        return Ok(json!({"cancelled":true,"settings_unchanged":true}));
+    };
     document = edited;
     restore_redacted(
         &mut document,
@@ -1984,7 +1988,9 @@ fn edit_kitty(terminal: &mut ManagementTerminal) -> Result<Value, String> {
         .get("settings")
         .cloned()
         .ok_or("Kitty response did not contain settings")?;
-    let mut edited = edit_json_document(terminal, &redact_copy(settings.clone()))?;
+    let Some(mut edited) = edit_json_document(terminal, &redact_copy(settings.clone()))? else {
+        return Ok(json!({"cancelled":true,"settings_unchanged":true}));
+    };
     restore_redacted(&mut edited, &settings);
     app_write("kitty_save", json!({"settings":edited}))?;
     app_read("kitty", json!({}))
@@ -1992,7 +1998,9 @@ fn edit_kitty(terminal: &mut ManagementTerminal) -> Result<Value, String> {
 
 fn edit_logic_rules(terminal: &mut ManagementTerminal) -> Result<Value, String> {
     let rules = app_read("logic_rules", json!({}))?;
-    let edited = edit_json_document(terminal, &rules)?;
+    let Some(edited) = edit_json_document(terminal, &rules)? else {
+        return Ok(json!({"cancelled":true,"rules_unchanged":true}));
+    };
     if !edited.is_array() {
         return Err("Logic Containers rule document must remain a JSON array.".into());
     }
@@ -2204,7 +2212,9 @@ fn edit_vm(terminal: &mut ManagementTerminal) -> Result<Value, String> {
         })
         .collect::<Vec<_>>();
     let index = prompt_number(terminal, "Select VM to edit", &labels, items.len())?;
-    let edited = edit_json_document(terminal, &redact_copy(items[index].clone()))?;
+    let Some(edited) = edit_json_document(terminal, &redact_copy(items[index].clone()))? else {
+        return Ok(json!({"cancelled":true,"vm_unchanged":true}));
+    };
     if edited.get("name") != items[index].get("name") {
         return Err("VM names are identity keys; editing cannot rename a VM. Delete and recreate it instead.".into());
     }
@@ -2406,51 +2416,769 @@ fn confirm(terminal: &mut ManagementTerminal, label: &str) -> Result<bool, Strin
     })
 }
 
-fn edit_json_document(terminal: &mut ManagementTerminal, value: &Value) -> Result<Value, String> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_nanos();
-    let mut path = env::temp_dir();
-    path.push(format!("gitrun-manage-{}-{now}.json", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let content = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
-    {
-        let mut file = options
-            .open(&path)
-            .map_err(|e| format!("unable to create private editor file: {e}"))?;
-        file.write_all(&content).map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-    }
-    let result = suspend_terminal(terminal, || {
-        let editor = env::var("VISUAL")
-            .or_else(|_| env::var("EDITOR"))
-            .unwrap_or_else(|_| "vi".into());
-        let mut parts = editor.split_whitespace();
-        let program = parts.next().ok_or("VISUAL/EDITOR is empty")?;
-        let status = ProcessCommand::new(program)
-            .args(parts)
-            .arg(&path)
-            .status()
-            .map_err(|e| format!("could not launch {program}; set VISUAL or EDITOR: {e}"))?;
-        if !status.success() {
-            return Err(format!("editor exited with {status}"));
+#[derive(Clone, Debug)]
+enum JsonEditorPathSegment {
+    Key(String),
+    Index(usize),
+}
+
+#[derive(Clone, Debug)]
+struct JsonEditorField {
+    path: Vec<JsonEditorPathSegment>,
+    label: String,
+    kind: String,
+    display: String,
+    editable: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JsonEditorInputKind {
+    String,
+    Integer,
+    Float,
+}
+
+impl JsonEditorInputKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Integer => "integer",
+            Self::Float => "float",
         }
-        let mut bytes = Vec::new();
-        fs::File::open(&path)
-            .map_err(|e| e.to_string())?
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        serde_json::from_slice(&bytes).map_err(|e| format!("edited JSON is invalid: {e}"))
-    });
-    let _ = fs::remove_file(&path);
-    result
+    }
+}
+
+enum JsonEditorMode {
+    Browse,
+    Text {
+        path: Vec<JsonEditorPathSegment>,
+        label: String,
+        kind: JsonEditorInputKind,
+        input: String,
+        replace_on_type: bool,
+        redacted: bool,
+    },
+    Boolean {
+        path: Vec<JsonEditorPathSegment>,
+        label: String,
+        selected: bool,
+    },
+    NullType {
+        path: Vec<JsonEditorPathSegment>,
+        label: String,
+        selected: usize,
+    },
+}
+
+fn json_editor_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        Value::Number(_) => "float",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn json_editor_display_value(value: &Value) -> String {
+    match value {
+        Value::String(value) if value == REDACTED => "[redacted; Enter to replace]".into(),
+        Value::String(value) if value.is_empty() => "\"\" (empty string)".into(),
+        Value::String(value) => format!("{value:?}"),
+        Value::Null => "null".into(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(_) => "[array]".into(),
+        Value::Object(_) => "{object}".into(),
+    }
+}
+
+fn json_editor_path_label(path: &[JsonEditorPathSegment]) -> String {
+    let mut label = "$".to_owned();
+    for part in path {
+        match part {
+            JsonEditorPathSegment::Key(key) => {
+                label.push('.');
+                label.push_str(key);
+            }
+            JsonEditorPathSegment::Index(index) => label.push_str(&format!("[{index}]")),
+        }
+    }
+    label
+}
+
+fn collect_json_editor_fields(
+    value: &Value,
+    path: &mut Vec<JsonEditorPathSegment>,
+    fields: &mut Vec<JsonEditorField>,
+) {
+    match value {
+        Value::Object(object) if object.is_empty() => fields.push(JsonEditorField {
+            path: path.clone(),
+            label: json_editor_path_label(path),
+            kind: "object".into(),
+            display: "empty object; structure is read-only".into(),
+            editable: false,
+        }),
+        Value::Object(object) => {
+            for (key, child) in object {
+                path.push(JsonEditorPathSegment::Key(key.clone()));
+                collect_json_editor_fields(child, path, fields);
+                path.pop();
+            }
+        }
+        Value::Array(items) if items.is_empty() => fields.push(JsonEditorField {
+            path: path.clone(),
+            label: json_editor_path_label(path),
+            kind: "array".into(),
+            display: "empty array; structure is read-only".into(),
+            editable: false,
+        }),
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                path.push(JsonEditorPathSegment::Index(index));
+                collect_json_editor_fields(child, path, fields);
+                path.pop();
+            }
+        }
+        _ => {
+            let read_only = path.iter().any(
+                |part| matches!(part, JsonEditorPathSegment::Key(key) if key == "_instructions"),
+            );
+            fields.push(JsonEditorField {
+                path: path.clone(),
+                label: json_editor_path_label(path),
+                kind: json_editor_type(value).into(),
+                display: json_editor_display_value(value),
+                editable: !read_only,
+            });
+        }
+    }
+}
+
+fn json_editor_fields(value: &Value) -> Vec<JsonEditorField> {
+    let mut fields = Vec::new();
+    collect_json_editor_fields(value, &mut Vec::new(), &mut fields);
+    fields
+}
+
+fn json_editor_value_at_path<'a>(
+    value: &'a Value,
+    path: &[JsonEditorPathSegment],
+) -> Option<&'a Value> {
+    let Some((first, rest)) = path.split_first() else {
+        return Some(value);
+    };
+    match (value, first) {
+        (Value::Object(object), JsonEditorPathSegment::Key(key)) => {
+            json_editor_value_at_path(object.get(key)?, rest)
+        }
+        (Value::Array(items), JsonEditorPathSegment::Index(index)) => {
+            json_editor_value_at_path(items.get(*index)?, rest)
+        }
+        _ => None,
+    }
+}
+
+fn json_editor_value_at_path_mut<'a>(
+    value: &'a mut Value,
+    path: &[JsonEditorPathSegment],
+) -> Option<&'a mut Value> {
+    let Some((first, rest)) = path.split_first() else {
+        return Some(value);
+    };
+    match (value, first) {
+        (Value::Object(object), JsonEditorPathSegment::Key(key)) => {
+            json_editor_value_at_path_mut(object.get_mut(key)?, rest)
+        }
+        (Value::Array(items), JsonEditorPathSegment::Index(index)) => {
+            json_editor_value_at_path_mut(items.get_mut(*index)?, rest)
+        }
+        _ => None,
+    }
+}
+
+fn parse_json_editor_input(kind: JsonEditorInputKind, input: &str) -> Result<Value, String> {
+    match kind {
+        JsonEditorInputKind::String => Ok(Value::String(input.to_owned())),
+        JsonEditorInputKind::Integer => {
+            let trimmed = input.trim();
+            if trimmed.starts_with('-') {
+                trimmed
+                    .parse::<i64>()
+                    .map(Number::from)
+                    .map(Value::Number)
+                    .map_err(|_| "Enter a valid 64-bit integer.".into())
+            } else {
+                trimmed
+                    .parse::<u64>()
+                    .map(Number::from)
+                    .map(Value::Number)
+                    .map_err(|_| "Enter a valid non-negative 64-bit integer.".into())
+            }
+        }
+        JsonEditorInputKind::Float => {
+            let parsed = input
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| "Enter a valid floating-point number.".to_owned())?;
+            Number::from_f64(parsed)
+                .map(Value::Number)
+                .ok_or_else(|| "Enter a finite floating-point number.".into())
+        }
+    }
+}
+
+fn json_editor_mode_for_value(
+    path: Vec<JsonEditorPathSegment>,
+    label: String,
+    value: Value,
+) -> JsonEditorMode {
+    match value {
+        Value::String(value) => {
+            let redacted = value == REDACTED;
+            JsonEditorMode::Text {
+                path,
+                label,
+                kind: JsonEditorInputKind::String,
+                input: if redacted { String::new() } else { value },
+                replace_on_type: !redacted,
+                redacted,
+            }
+        }
+        Value::Bool(selected) => JsonEditorMode::Boolean {
+            path,
+            label,
+            selected,
+        },
+        Value::Number(value) => JsonEditorMode::Text {
+            path,
+            label,
+            kind: if value.is_i64() || value.is_u64() {
+                JsonEditorInputKind::Integer
+            } else {
+                JsonEditorInputKind::Float
+            },
+            input: value.to_string(),
+            replace_on_type: true,
+            redacted: false,
+        },
+        Value::Null => JsonEditorMode::NullType {
+            path,
+            label,
+            selected: 0,
+        },
+        Value::Array(_) | Value::Object(_) => JsonEditorMode::Browse,
+    }
+}
+
+fn render_json_editor(
+    frame: &mut Frame<'_>,
+    fields: &[JsonEditorField],
+    selected: usize,
+    mode: &JsonEditorMode,
+    notice: &str,
+    error: bool,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(3),
+        ])
+        .split(frame.area());
+
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "◈ GitRun ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "/ STRUCTURED JSON EDITOR",
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        ),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(BORDER)),
+    );
+    frame.render_widget(header, chunks[0]);
+
+    match mode {
+        JsonEditorMode::Browse => {
+            let items = fields
+                .iter()
+                .map(|field| {
+                    let suffix = if field.editable { "" } else { "  [read-only]" };
+                    ListItem::new(Line::from(format!(
+                        "{}  [{}]  {}{}",
+                        field.label, field.kind, field.display, suffix
+                    )))
+                })
+                .collect::<Vec<_>>();
+            let mut list_state = ListState::default();
+            if !fields.is_empty() {
+                list_state.select(Some(selected.min(fields.len() - 1)));
+            }
+            let list = List::new(items)
+                .block(
+                    Block::default()
+                        .title("Values · scalar fields only; objects and arrays cannot be reshaped")
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(BORDER)),
+                )
+                .highlight_symbol("› ")
+                .highlight_style(
+                    Style::default()
+                        .fg(TEXT)
+                        .bg(SELECTED_BG)
+                        .add_modifier(Modifier::BOLD),
+                );
+            frame.render_stateful_widget(list, chunks[1], &mut list_state);
+        }
+        JsonEditorMode::Text {
+            label,
+            kind,
+            input,
+            redacted,
+            ..
+        } => {
+            let hint = if *redacted {
+                "Existing value is redacted. Leave the input blank to keep it unchanged."
+            } else {
+                "Only this scalar value can change; the JSON structure remains locked."
+            };
+            let lines = vec![
+                Line::from(format!("Field: {label}")),
+                Line::from(format!("Type: {}", kind.label())),
+                Line::from(hint),
+                Line::from(""),
+                Line::from(format!("Value: {input}_")),
+            ];
+            frame.render_widget(
+                Paragraph::new(Text::from(lines))
+                    .block(
+                        Block::default()
+                            .title("Edit value")
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(CYAN)),
+                    )
+                    .wrap(Wrap { trim: false }),
+                chunks[1],
+            );
+        }
+        JsonEditorMode::Boolean {
+            label, selected, ..
+        } => {
+            let false_style = if !*selected {
+                Style::default()
+                    .fg(TEXT)
+                    .bg(SELECTED_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            };
+            let true_style = if *selected {
+                Style::default()
+                    .fg(TEXT)
+                    .bg(SELECTED_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            };
+            let lines = vec![
+                Line::from(format!("Field: {label}")),
+                Line::from("Type: boolean"),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  false  ", false_style),
+                    Span::raw("     "),
+                    Span::styled("  true  ", true_style),
+                ]),
+                Line::from(""),
+                Line::from("Use ←/→ or ↑/↓ to choose a value, then press Enter."),
+            ];
+            frame.render_widget(
+                Paragraph::new(Text::from(lines))
+                    .block(
+                        Block::default()
+                            .title("Edit boolean")
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(CYAN)),
+                    )
+                    .wrap(Wrap { trim: false }),
+                chunks[1],
+            );
+        }
+        JsonEditorMode::NullType {
+            label, selected, ..
+        } => {
+            let types = [
+                "null (leave unset)",
+                "string",
+                "boolean",
+                "integer",
+                "float",
+            ];
+            let items = types
+                .iter()
+                .map(|kind| ListItem::new(*kind))
+                .collect::<Vec<_>>();
+            let mut list_state = ListState::default();
+            list_state.select(Some(*selected));
+            let list = List::new(items)
+                .block(
+                    Block::default()
+                        .title(format!("Field: {label} · choose a value type"))
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(CYAN)),
+                )
+                .highlight_symbol("› ")
+                .highlight_style(
+                    Style::default()
+                        .fg(TEXT)
+                        .bg(SELECTED_BG)
+                        .add_modifier(Modifier::BOLD),
+                );
+            frame.render_stateful_widget(list, chunks[1], &mut list_state);
+        }
+    }
+
+    let help = match mode {
+        JsonEditorMode::Browse => "↑/↓ Navigate  Enter Edit  s Save  Esc Cancel",
+        JsonEditorMode::Text { .. } => {
+            "Type value  Backspace Edit  Enter Apply  Esc Keep current value"
+        }
+        JsonEditorMode::Boolean { .. } => "←/→ or ↑/↓ Choose  Enter Apply  Esc Keep current value",
+        JsonEditorMode::NullType { .. } => "↑/↓ Choose type  Enter Continue  Esc Keep null",
+    };
+    frame.render_widget(
+        Paragraph::new(Text::from(vec![
+            Line::from(help),
+            Line::from(Span::styled(
+                notice,
+                if error {
+                    Style::default().fg(BAD)
+                } else {
+                    Style::default().fg(MUTED)
+                },
+            )),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(BORDER)),
+        ),
+        chunks[2],
+    );
+}
+
+fn edit_json_document(
+    terminal: &mut ManagementTerminal,
+    value: &Value,
+) -> Result<Option<Value>, String> {
+    let mut document = value.clone();
+    let mut selected = 0usize;
+    let mut mode = JsonEditorMode::Browse;
+    let mut notice =
+        "Edit individual values. Press s to save the draft; backend validation still applies.";
+    let mut error = false;
+
+    loop {
+        let fields = json_editor_fields(&document);
+        if fields.is_empty() {
+            return Err("JSON editor found no values to display.".into());
+        }
+        selected = selected.min(fields.len() - 1);
+        terminal
+            .draw(|frame| render_json_editor(frame, &fields, selected, &mode, notice, error))
+            .map_err(|draw_error| {
+                format!("unable to render structured JSON editor: {draw_error}")
+            })?;
+
+        let key = match event::read().map_err(|read_error| read_error.to_string())? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => key,
+            _ => continue,
+        };
+        let current_mode = std::mem::replace(&mut mode, JsonEditorMode::Browse);
+        mode = match current_mode {
+            JsonEditorMode::Browse => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    selected = selected.saturating_sub(1);
+                    notice = "Select a scalar field or save the draft.";
+                    error = false;
+                    JsonEditorMode::Browse
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    selected = (selected + 1).min(fields.len() - 1);
+                    notice = "Select a scalar field or save the draft.";
+                    error = false;
+                    JsonEditorMode::Browse
+                }
+                KeyCode::Enter => {
+                    if let Some(field) = fields.get(selected).cloned() {
+                        if !field.editable {
+                            notice = "This row is read-only. Edit its scalar children instead.";
+                            error = false;
+                            JsonEditorMode::Browse
+                        } else if let Some(current) =
+                            json_editor_value_at_path(&document, &field.path).cloned()
+                        {
+                            notice = "Edit the value, then press Enter to apply it to the draft.";
+                            error = false;
+                            json_editor_mode_for_value(field.path, field.label, current)
+                        } else {
+                            notice = "The selected field no longer exists; no change was made.";
+                            error = true;
+                            JsonEditorMode::Browse
+                        }
+                    } else {
+                        JsonEditorMode::Browse
+                    }
+                }
+                KeyCode::Char('s') => return Ok(Some(document)),
+                KeyCode::Esc | KeyCode::Char('q') => return Ok(None),
+                _ => JsonEditorMode::Browse,
+            },
+            JsonEditorMode::Text {
+                path,
+                label,
+                kind,
+                mut input,
+                mut replace_on_type,
+                redacted,
+            } => match key.code {
+                KeyCode::Esc => {
+                    notice = "Edit cancelled; the field value is unchanged.";
+                    error = false;
+                    JsonEditorMode::Browse
+                }
+                KeyCode::Enter => {
+                    let parsed =
+                        if kind == JsonEditorInputKind::String && redacted && input.is_empty() {
+                            Ok(Value::String(REDACTED.into()))
+                        } else {
+                            parse_json_editor_input(kind, &input)
+                        };
+                    match parsed {
+                        Ok(value) => {
+                            if let Some(target) =
+                                json_editor_value_at_path_mut(&mut document, &path)
+                            {
+                                *target = value;
+                                notice =
+                                    "Value applied to draft; press s on the field list to save.";
+                                error = false;
+                            } else {
+                                notice = "The selected field no longer exists; no change was made.";
+                                error = true;
+                            }
+                            JsonEditorMode::Browse
+                        }
+                        Err(_) => {
+                            notice =
+                                "Invalid input for this type; correct the value and try again.";
+                            error = true;
+                            JsonEditorMode::Text {
+                                path,
+                                label,
+                                kind,
+                                input,
+                                replace_on_type,
+                                redacted,
+                            }
+                        }
+                    }
+                }
+                KeyCode::Backspace => {
+                    if replace_on_type {
+                        input.clear();
+                        replace_on_type = false;
+                    } else {
+                        input.pop();
+                    }
+                    notice = "Continue editing the value.";
+                    error = false;
+                    JsonEditorMode::Text {
+                        path,
+                        label,
+                        kind,
+                        input,
+                        replace_on_type,
+                        redacted,
+                    }
+                }
+                KeyCode::Delete => {
+                    input.clear();
+                    replace_on_type = false;
+                    notice = "Value input cleared.";
+                    error = false;
+                    JsonEditorMode::Text {
+                        path,
+                        label,
+                        kind,
+                        input,
+                        replace_on_type,
+                        redacted,
+                    }
+                }
+                KeyCode::Char(character)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    if replace_on_type {
+                        input.clear();
+                        replace_on_type = false;
+                    }
+                    input.push(character);
+                    notice = "Continue editing the value.";
+                    error = false;
+                    JsonEditorMode::Text {
+                        path,
+                        label,
+                        kind,
+                        input,
+                        replace_on_type,
+                        redacted,
+                    }
+                }
+                _ => JsonEditorMode::Text {
+                    path,
+                    label,
+                    kind,
+                    input,
+                    replace_on_type,
+                    redacted,
+                },
+            },
+            JsonEditorMode::Boolean {
+                path,
+                label,
+                selected: mut bool_selected,
+            } => match key.code {
+                KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
+                    bool_selected = false;
+                    JsonEditorMode::Boolean {
+                        path,
+                        label,
+                        selected: bool_selected,
+                    }
+                }
+                KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
+                    bool_selected = true;
+                    JsonEditorMode::Boolean {
+                        path,
+                        label,
+                        selected: bool_selected,
+                    }
+                }
+                KeyCode::Char(' ') => JsonEditorMode::Boolean {
+                    path,
+                    label,
+                    selected: !bool_selected,
+                },
+                KeyCode::Enter => {
+                    if let Some(target) = json_editor_value_at_path_mut(&mut document, &path) {
+                        *target = Value::Bool(bool_selected);
+                        notice = "Boolean applied to draft; press s on the field list to save.";
+                        error = false;
+                    } else {
+                        notice = "The selected field no longer exists; no change was made.";
+                        error = true;
+                    }
+                    JsonEditorMode::Browse
+                }
+                KeyCode::Esc => {
+                    notice = "Edit cancelled; the field value is unchanged.";
+                    error = false;
+                    JsonEditorMode::Browse
+                }
+                _ => JsonEditorMode::Boolean {
+                    path,
+                    label,
+                    selected: bool_selected,
+                },
+            },
+            JsonEditorMode::NullType {
+                path,
+                label,
+                selected: type_selected,
+            } => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => JsonEditorMode::NullType {
+                    path,
+                    label,
+                    selected: type_selected.saturating_sub(1),
+                },
+                KeyCode::Down | KeyCode::Char('j') => JsonEditorMode::NullType {
+                    path,
+                    label,
+                    selected: (type_selected + 1).min(4),
+                },
+                KeyCode::Enter => match type_selected {
+                    0 => {
+                        if let Some(target) = json_editor_value_at_path_mut(&mut document, &path) {
+                            *target = Value::Null;
+                            notice = "Null applied to draft; press s on the field list to save.";
+                            error = false;
+                        } else {
+                            notice = "The selected field no longer exists; no change was made.";
+                            error = true;
+                        }
+                        JsonEditorMode::Browse
+                    }
+                    1 => JsonEditorMode::Text {
+                        path,
+                        label,
+                        kind: JsonEditorInputKind::String,
+                        input: String::new(),
+                        replace_on_type: false,
+                        redacted: false,
+                    },
+                    2 => JsonEditorMode::Boolean {
+                        path,
+                        label,
+                        selected: false,
+                    },
+                    3 => JsonEditorMode::Text {
+                        path,
+                        label,
+                        kind: JsonEditorInputKind::Integer,
+                        input: String::new(),
+                        replace_on_type: false,
+                        redacted: false,
+                    },
+                    _ => JsonEditorMode::Text {
+                        path,
+                        label,
+                        kind: JsonEditorInputKind::Float,
+                        input: String::new(),
+                        replace_on_type: false,
+                        redacted: false,
+                    },
+                },
+                KeyCode::Esc => {
+                    notice = "Type selection cancelled; value remains null.";
+                    error = false;
+                    JsonEditorMode::Browse
+                }
+                _ => JsonEditorMode::NullType {
+                    path,
+                    label,
+                    selected: type_selected,
+                },
+            },
+        };
+    }
 }
 
 fn suspend_terminal<T>(
@@ -2630,9 +3358,11 @@ mod tests {
 #[cfg(test)]
 mod visual_design_tests {
     use super::{
-        build_osc52_sequence, header_separator, logs_clipboard_text, mascot_state, State,
-        OSC52_MAX_COPY_BYTES, PAGES, WIDE_HEADER_TAGLINE,
+        build_osc52_sequence, header_separator, json_editor_fields, json_editor_value_at_path_mut,
+        logs_clipboard_text, mascot_state, parse_json_editor_input, JsonEditorInputKind,
+        JsonEditorPathSegment, State, OSC52_MAX_COPY_BYTES, PAGES, WIDE_HEADER_TAGLINE,
     };
+    use serde_json::json;
 
     #[test]
     fn wide_header_separator_fits_the_available_terminal_width() {
@@ -2754,5 +3484,52 @@ mod visual_design_tests {
         state.notice = "Ready".into();
         state.page = 8;
         assert_eq!(mascot_state(&state), "recovery");
+    }
+
+    #[test]
+    fn structured_json_editor_flattens_typed_scalar_values_without_reshaping_containers() {
+        let document = json!({
+            "scheduler": {"enabled": true, "workers": 4},
+            "labels": ["alpha", "beta"],
+            "empty": {}
+        });
+        let fields = json_editor_fields(&document);
+        assert!(fields.iter().any(|field| {
+            field.label == "$.scheduler.enabled" && field.kind == "boolean" && field.editable
+        }));
+        assert!(fields.iter().any(|field| {
+            field.label == "$.labels[1]" && field.kind == "string" && field.editable
+        }));
+        assert!(fields.iter().any(|field| {
+            field.label == "$.empty" && field.kind == "object" && !field.editable
+        }));
+
+        let mut updated = document.clone();
+        let path = vec![
+            JsonEditorPathSegment::Key("scheduler".into()),
+            JsonEditorPathSegment::Key("workers".into()),
+        ];
+        *json_editor_value_at_path_mut(&mut updated, &path).unwrap() =
+            parse_json_editor_input(JsonEditorInputKind::Integer, "8").unwrap();
+        assert_eq!(updated["scheduler"]["workers"], json!(8));
+        assert_eq!(updated["labels"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn structured_json_editor_parses_scalars_as_the_selected_type() {
+        assert_eq!(
+            parse_json_editor_input(JsonEditorInputKind::String, "true").unwrap(),
+            json!("true")
+        );
+        assert_eq!(
+            parse_json_editor_input(JsonEditorInputKind::Integer, "-17").unwrap(),
+            json!(-17)
+        );
+        assert_eq!(
+            parse_json_editor_input(JsonEditorInputKind::Float, "1.25").unwrap(),
+            json!(1.25)
+        );
+        assert!(parse_json_editor_input(JsonEditorInputKind::Integer, "1.2").is_err());
+        assert!(parse_json_editor_input(JsonEditorInputKind::Float, "NaN").is_err());
     }
 }

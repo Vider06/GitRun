@@ -1,6 +1,14 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.10<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.8.11<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.8.11 — restore timeout and API socket recovery
+
+- **Source/product target:** `1.8.11`, recorded in `version.txt`. This entry describes the source line; it does not claim that a signed release artifact has been published.
+- Remove the explicit `TimeoutStartSec=0` from the transient `Type=oneshot` Main Library restore unit. The default oneshot behavior already disables the start timeout; zero can cause an immediate timeout and SIGTERM before the restore runs.
+- Handle an existing API socket path by inspecting its file type: remove only a stale Unix socket, remove only an empty directory at that exact path, and refuse to replace active sockets, symlinks, regular files or non-empty directories.
+- Add regression tests for the transient-unit timeout properties and socket path cleanup boundaries.
+- Bump only the changed `gitrun-scheduler` and `gitrun-recovery` crates, and synchronize `Cargo.lock`, `version.txt` and current-source Markdown markers.
 
 ## GitRun 1.8.10 — Docker seccomp default and recovery diagnostics
 

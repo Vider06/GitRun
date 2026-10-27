@@ -363,6 +363,70 @@ impl MountRegistry {
     }
 }
 
+#[cfg(unix)]
+fn prepare_api_socket_path(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::FileTypeExt;
+
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "inspect existing API socket {}: {error}",
+                path.display()
+            ))
+        }
+    };
+    let file_type = metadata.file_type();
+
+    if file_type.is_symlink() {
+        return Err(format!(
+            "API socket path {} is a symbolic link; refusing to replace it",
+            path.display()
+        ));
+    }
+    if metadata.is_dir() {
+        let mut entries = fs::read_dir(path)
+            .map_err(|error| format!("inspect API socket directory {}: {error}", path.display()))?;
+        if entries.next().is_some() {
+            return Err(format!(
+                "API socket path {} is a non-empty directory, not a socket; refusing to delete it",
+                path.display()
+            ));
+        }
+        fs::remove_dir(path).map_err(|error| {
+            format!("remove empty directory at API socket path {}: {error}", path.display())
+        })?;
+        return Ok(());
+    }
+    if !file_type.is_socket() {
+        return Err(format!(
+            "API socket path {} exists but is not a Unix socket; refusing to remove it",
+            path.display()
+        ));
+    }
+
+    match UnixStream::connect(path) {
+        Ok(stream) => {
+            drop(stream);
+            Err(format!(
+                "API socket {} is already accepting connections; refusing to replace an active socket",
+                path.display()
+            ))
+        }
+        Err(error) if matches!(error.kind(),
+            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound) => {
+            fs::remove_file(path).map_err(|remove_error| {
+                format!("remove stale API socket {}: {remove_error}", path.display())
+            })
+        }
+        Err(error) => Err(format!(
+            "cannot verify whether existing API socket {} is stale: {error}",
+            path.display()
+        )),
+    }
+}
+
 pub fn spawn(
     config: Config,
     github: Arc<GitHubClient>,
@@ -377,10 +441,7 @@ pub fn spawn(
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("create API socket directory: {e}"))?;
         }
-        if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|e| format!("remove stale API socket {}: {e}", path.display()))?;
-        }
+        prepare_api_socket_path(&path)?;
 
         let listener = UnixListener::bind(&path)
             .map_err(|e| format!("bind GitRun API socket {}: {e}", path.display()))?;
@@ -7387,5 +7448,97 @@ mod kitty_dispatch_contract_tests {
             first, second,
             "two concurrent dispatches must use different route labels"
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod api_socket_path_tests {
+    use super::prepare_api_socket_path;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use std::os::unix::net::UnixListener;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch").as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-api-socket-{label}-{}-{nonce}", std::process::id()
+        ));
+        fs::create_dir(&path).expect("create isolated test directory");
+        path
+    }
+
+    #[test]
+    fn removes_only_an_empty_directory_at_the_socket_path() {
+        let root = test_root("empty-dir");
+        let path = root.join("api.sock");
+        fs::create_dir(&path).unwrap();
+        prepare_api_socket_path(&path).unwrap();
+        assert!(!path.exists());
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_a_non_empty_directory_at_the_socket_path() {
+        let root = test_root("nonempty-dir");
+        let path = root.join("api.sock");
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("keep.txt"), "keep").unwrap();
+        let error = prepare_api_socket_path(&path).unwrap_err();
+        assert!(error.contains("non-empty directory"));
+        assert!(path.join("keep.txt").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_a_regular_file_at_the_socket_path() {
+        let root = test_root("regular-file");
+        let path = root.join("api.sock");
+        fs::write(&path, "keep").unwrap();
+        let error = prepare_api_socket_path(&path).unwrap_err();
+        assert!(error.contains("not a Unix socket"));
+        assert_eq!(fs::read(&path).unwrap(), b"keep");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_replace_an_active_socket() {
+        let root = test_root("active-socket");
+        let path = root.join("api.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let error = prepare_api_socket_path(&path).unwrap_err();
+        assert!(error.contains("active socket"));
+        assert!(path.exists());
+        drop(listener);
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn removes_a_stale_socket_after_connection_is_refused() {
+        let root = test_root("stale-socket");
+        let path = root.join("api.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        drop(listener);
+        prepare_api_socket_path(&path).unwrap();
+        assert!(!path.exists());
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_follow_or_remove_a_symlink_at_the_socket_path() {
+        let root = test_root("symlink");
+        let target = root.join("target.txt");
+        let path = root.join("api.sock");
+        fs::write(&target, "keep").unwrap();
+        symlink(&target, &path).unwrap();
+        let error = prepare_api_socket_path(&path).unwrap_err();
+        assert!(error.contains("symbolic link"));
+        assert!(path.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(&target).unwrap(), b"keep");
+        fs::remove_file(path).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 }

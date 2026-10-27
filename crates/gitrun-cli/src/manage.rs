@@ -3157,7 +3157,6 @@ fn edit_json_document(
 }
 
 fn suspend_terminal<T>(
-fn suspend_terminal<T>(
     terminal: &mut ManagementTerminal,
     operation: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {

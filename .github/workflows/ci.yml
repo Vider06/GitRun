@@ -1128,6 +1128,7 @@ jobs:
     timeout-minutes: 60
     outputs: *job_outputs
     steps:
+      - *checkout
       - *boot
       - name: Test tracked-file cache fingerprints
         shell: bash
@@ -1135,7 +1136,7 @@ jobs:
           set -euo pipefail
           first="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
           second="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
-          empty="$(bash scripts/ci/hash-tracked-files.sh .gitrun-ci-nonexistent-fixture/**)"
+          empty="$(bash scripts/ci/hash-tracked-files.sh '.gitrun-ci-nonexistent-fixture/**')"
           [[ "$first" =~ ^[0-9a-f]{64}$ ]]
           [[ "$first" == "$second" ]]
           [[ -z "$empty" ]]

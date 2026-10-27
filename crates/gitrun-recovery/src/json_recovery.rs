@@ -463,12 +463,25 @@ fn repair_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
 fn restore_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
     for path in targets {
         let backup = append_backup_suffix(path);
-        let backup_bytes = match read_valid_json(&backup) {
-            Ok((bytes, _)) => bytes,
-            Err(error) if error.contains("No such file or directory") || error.contains("not found") => {
+        match fs::symlink_metadata(&backup) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 report.skipped += 1;
                 continue;
             }
+            Err(error) => {
+                report.skipped += 1;
+                push_recovery_error(report, format!("{}: {error}", backup.display()));
+                continue;
+            }
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                report.skipped += 1;
+                push_recovery_error(report, format!("{} is not a regular, non-symlink backup", backup.display()));
+                continue;
+            }
+            Ok(_) => {}
+        }
+        let backup_bytes = match read_valid_json(&backup) {
+            Ok((bytes, _)) => bytes,
             Err(error) => {
                 report.skipped += 1;
                 push_recovery_error(report, format!("backup rejected: {error}"));
@@ -538,7 +551,7 @@ mod tests {
     #[test]
     fn restore_can_map_a_backup_to_a_missing_active_json_file() {
         assert_eq!(
-            active_path_for_backup(Path::new("/var/lib/gitrun/kitty/settings.json.Back")).unwrap(),
+            active_path_for_backup(Path::new("/var/lib/gitrun/kitty/settings.json.Back")).unwrap().as_path(),
             Path::new("/var/lib/gitrun/kitty/settings.json")
         );
         assert!(active_path_for_backup(Path::new("/var/lib/gitrun/model-123.json")).is_none());

@@ -1602,22 +1602,14 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "there is no log output to copy"));
     }
 
-    let (native_method, mut native_failure) = try_native_clipboard_copy(text);
-    if let Some(method) = native_method {
-        return Ok(ClipboardCopyOutcome {
-            method: ClipboardCopyMethod::Native(method),
-            truncated: false,
-            native_failure: None,
-            fallback_file: None,
-            fallback_command: None,
-        });
-    }
+    let local_helper_configured = env::var_os("GITRUN_LOG_EXPORT_PORT").is_some()
+        && env::var_os("GITRUN_LOG_EXPORT_TOKEN_FILE").is_some();
+    let mut native_failure = None;
 
-    // Local Windows/Linux helpers provide a real native clipboard operation
-    // and a platform-native file-save fallback, with a bounded response.
-    if env::var_os("GITRUN_LOG_EXPORT_PORT").is_some()
-        && env::var_os("GITRUN_LOG_EXPORT_TOKEN_FILE").is_some()
-    {
+    // The user's own desktop clipboard is the first choice when launched via
+    // the Windows/Linux wrapper. Do not report success for an Ubuntu desktop
+    // clipboard before trying the clipboard attached to the SSH client.
+    if local_helper_configured {
         match request_client_log_export(text) {
             Some(Ok(method)) => {
                 let cancelled = method == ClipboardCopyMethod::ClientFallbackCancelled;
@@ -1640,8 +1632,24 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
             Some(Err(error)) => {
                 native_failure = Some(format!("local clipboard/export helper failed: {error}"));
             }
-            None => {}
+            None => {
+                native_failure = Some(
+                    "local clipboard helper was not reachable; falling back to SSH clipboard handling".into(),
+                );
+            }
         }
+    } else {
+        let (native_method, helper_failure) = try_native_clipboard_copy(text);
+        if let Some(method) = native_method {
+            return Ok(ClipboardCopyOutcome {
+                method: ClipboardCopyMethod::Native(method),
+                truncated: false,
+                native_failure: None,
+                fallback_file: None,
+                fallback_command: None,
+            });
+        }
+        native_failure = helper_failure;
     }
 
     // Plain SSH cannot report whether OSC 52 reached the clipboard. Send it

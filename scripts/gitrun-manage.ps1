@@ -89,17 +89,6 @@ function Receive-RemoteLogFile {
     }
     finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
 }
-function Read-ProtocolBytes {
-    param([System.Net.Sockets.NetworkStream]$Stream,[int]$Length)
-    $buffer = New-Object byte[] $Length
-    $offset = 0
-    while ($offset -lt $Length) {
-        $read = $Stream.Read($buffer,$offset,$Length-$offset)
-        if ($read -le 0) { throw 'Connection closed while receiving GitRun logs.' }
-        $offset += $read
-    }
-    return ,$buffer
-}
 function Invoke-NativeClipboardCopy {
     param([byte[]]$Bytes)
     $process = New-Object System.Diagnostics.Process
@@ -109,7 +98,12 @@ function Invoke-NativeClipboardCopy {
     $process.StartInfo.CreateNoWindow = $true
     [void]$process.Start()
     try {
-        $process.StandardInput.BaseStream.Write($Bytes,0,$Bytes.Length)
+        $writeTask = $process.StandardInput.BaseStream.WriteAsync($Bytes,0,$Bytes.Length)
+        if (-not $writeTask.Wait(2000)) {
+            try { $process.Kill() } catch {}
+            return $false
+        }
+        $writeTask.GetAwaiter().GetResult()
         $process.StandardInput.Close()
         if (-not $process.WaitForExit(2000)) {
             try { $process.Kill() } catch {}
@@ -167,7 +161,8 @@ $listener.Start()
 $localPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
 $remotePort = Get-Random -Minimum 41000 -Maximum 58000
 $token = [Guid]::NewGuid().ToString('N')
-$tokenFilePath = '/tmp/GitRun-logs-token-{0}.txt' -f $token
+$tokenFileId = [Guid]::NewGuid().ToString('N')
+$tokenFilePath = '/tmp/GitRun-logs-token-{0}.txt' -f $tokenFileId
 $forward = '127.0.0.1:{0}:127.0.0.1:{1}' -f $remotePort,$localPort
 
 # Send the random token through SSH stdin into a user-owned 0600 file.

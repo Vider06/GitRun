@@ -161,7 +161,7 @@ def handle_client(client: socket.socket, token: str, saved_paths: list[Path]) ->
                 write_line(client, "ERROR invalid log header")
                 return
             data = read_exact(client, int(match.group(1)))
-            copied, reason = copy_to_clipboard(data)
+            copied, _reason = copy_to_clipboard(data)
             if copied:
                 write_line(client, "COPIED")
                 return
@@ -184,7 +184,7 @@ def handle_client(client: socket.socket, token: str, saved_paths: list[Path]) ->
                 pass
 
 def remote_token(ssh: str, target: str, token: str) -> str:
-    path = f"{TOKEN_PREFIX}{token}.txt"
+    path = f"{TOKEN_PREFIX}{secrets.token_hex(16)}.txt"
     command = f"umask 077; cat > {path} && chmod 600 {path}"
     result = subprocess.run([ssh, "-T", target, command], input=(token + "\n").encode("ascii"),
                             timeout=30, check=False)

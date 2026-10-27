@@ -48,7 +48,7 @@ The console is intended for Debian/Ubuntu Server and other hosts administered th
 
 Keyboard controls: use the arrow keys or `j`/`k` to move, `Tab` to change focus, `Enter` to run the selected operation, `r` to refresh, `Esc` to go back, `?` for help and `q` or `Ctrl+C` to exit. Number shortcuts jump to sections.
 
-Complex configuration documents can be opened in `$VISUAL` or `$EDITOR` and are saved only through the same validated backend handlers used by the dashboard. Sensitive fields are redacted in the editor and restored from the original in-memory configuration when left redacted. GitVault values are never read back; newly entered values are accepted only when terminal echo can be disabled. Operations that can interrupt workloads or remove configuration require confirmation.
+Configuration editing uses a dedicated structured TUI instead of opening a raw JSON file in Vim. It lists scalar fields by JSON path and inferred type; strings use a text input, integers and floats are parsed as numbers, booleans use a true/false selector, and `null` values can be assigned a scalar type. Existing object and array structure cannot be reshaped in the editor, so braces, commas, keys, and list lengths cannot be broken by hand. Saves still go through the dashboard's validated backend handlers. Sensitive fields remain redacted; leaving a redacted value blank keeps the original value unchanged. GitVault values are never read back; newly entered secrets are accepted only when terminal echo can be disabled. Operations that can interrupt workloads or remove configuration require confirmation.
 
 The App Settings section also exposes the dashboard's nine security-baseline checks. They report saved configuration and one process-name observation; a passing result is not end-to-end proof of runtime enforcement.
 
@@ -71,7 +71,7 @@ The recovery tools in `gitrun manage` and the Recovery UI expose three separate 
 
 1. **Try to repair JSON files** — removes a byte-order mark or trailing commas and normalizes indentation when the file can be parsed safely. If parsing remains ambiguous or the top-level shape disagrees with the sibling `.json.Back` reference, the file is left unchanged.
 2. **Restore JSON from .Back** — explicitly overwrites active JSON files from available sibling backup copies. Deleted files can be recreated when a valid backup is present; this action requires confirmation because newer settings may be lost.
-3. **Restore Main Library** — downloads the library archive described by the signed release manifest, verifies the artifact checksum and restores the reference files inside the dedicated library directory. It does not replace active configuration files.
+3. **Restore Main Library** — downloads the library archive described by the signed release manifest, verifies the artifact checksum and restores the reference files inside `/usr/share/gitrun/library`. It does not replace active configuration files. The privileged Control Manager keeps `/usr` protected but explicitly permits writes within `/usr/share/gitrun` for this fixed-purpose recovery action.
 
 Setup and updater create missing local `.json.Back` snapshots without replacing existing copies. Release builds publish the official `library.zip` with reference files only; normal setup/update extraction fills missing Main Library entries without overwriting existing ones.
 

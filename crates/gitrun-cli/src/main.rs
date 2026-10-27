@@ -2913,6 +2913,33 @@ fn doctor_json_file_check(path: &Path) -> Result<String, String> {
     Ok("valid JSON syntax and top-level structure".into())
 }
 
+fn doctor_load_config() -> Result<Config, String> {
+    let system_install = system_install_paths().is_some();
+    if system_install
+        && !running_as_root()
+        && gitrun_dashboard_tauri_lib::control_manager_enabled()
+    {
+        // The system env file may be root-owned and intentionally unreadable
+        // to the desktop account. Reuse the same allowlisted Control Manager
+        // read used by the dashboard instead of mistaking that ACL for broken
+        // configuration. A direct read remains the explicit fallback.
+        match gitrun_dashboard_tauri_lib::management_tui_read(
+            "config",
+            serde_json::json!({}),
+        ) {
+            Ok(value) => serde_json::from_value(value)
+                .map_err(|error| format!("Control Manager returned invalid configuration: {error}")),
+            Err(ipc_error) => load_config().map_err(|error| {
+                format!(
+                    "configuration could not be read directly ({error}); Control Manager read failed ({ipc_error})"
+                )
+            }),
+        }
+    } else {
+        load_config().map_err(|error| error.to_string())
+    }
+}
+
 fn run_doctor() -> i32 {
     #[cfg(unix)]
     use std::os::unix::fs::FileTypeExt;
@@ -2994,9 +3021,12 @@ fn run_doctor() -> i32 {
             .unwrap_or_else(|| Path::new("config"))
             .to_path_buf(),
         PathBuf::from("config"),
+        // Keep checking the standard state tree even if the env file is
+        // unreadable or malformed and cannot provide a custom state_dir.
+        PathBuf::from("/var/lib/gitrun"),
         PathBuf::from("/usr/share/gitrun/library"),
     ];
-    match load_config() {
+    match doctor_load_config() {
         Ok(config) => {
             json_roots.push(PathBuf::from(&config.state_dir));
             if config.repositories.is_empty() {

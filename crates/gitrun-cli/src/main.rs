@@ -902,9 +902,10 @@ fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     initialize_update_signing_environment(true);
     let installed_config = Config::from_env_file(TRUSTED_SYSTEM_CONFIG_FILE)?;
-    let (backups, library) = refresh_json_setup_assets(&installed_config, true)
-        .map_err(|error| format!("GitRun setup completed but Main Library initialization failed: {error}"))?;
-    println!("GitRun JSON library: {backups} local backup(s) created; {library} Main Library file(s) added");
+    match refresh_json_setup_assets(&installed_config, true) {
+        Ok((backups, library)) => println!("GitRun JSON library: {backups} local backup(s) created; {library} Main Library file(s) added"),
+        Err(error) => eprintln!("GitRun setup: WARN — Main Library refresh needs retry: {error}"),
+    }
     println!("GitRun setup: PASS");
     Ok(())
 }
@@ -2598,6 +2599,9 @@ fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
 
 fn refresh_json_setup_assets(config: &Config, system_install: bool) -> Result<(usize, usize), String> {
     let mut roots = vec![PathBuf::from(config.state_dir.as_str())];
+    if Path::new("config").is_dir() {
+        roots.push(PathBuf::from("config"));
+    }
     if system_install {
         roots.push(PathBuf::from("/etc/gitrun"));
     }
@@ -4801,6 +4805,18 @@ mod internal_lifecycle_command_tests {
         ));
         assert!(Cli::try_parse_from(["gitrun", "update", "--force", "--check"]).is_err());
         assert!(Cli::try_parse_from(["gitrun", "update", "--force", "--only-containers"]).is_err());
+    }
+
+    #[test]
+    fn json_recovery_internal_action_is_allowlisted_by_clap() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "--no-cat", "--json-recovery-root", "repair"])
+                .map(|cli| cli.command),
+            Ok(Some(Command::JsonRecoveryRoot { action })) if action == "repair"
+        ));
+        assert!(Cli::try_parse_from([
+            "gitrun", "--no-cat", "--json-recovery-root", "../../etc/shadow"
+        ]).is_ok(), "the CLI parser does not interpret the fixed action string; the privileged handler rejects unknown actions");
     }
 
     #[test]

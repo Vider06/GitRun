@@ -61,6 +61,7 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                 | "dashboard_settings_save"
                 | "service_control"
                 | "maintenance_task"
+                | "json_recovery"
         ),
         _ => false,
     }
@@ -464,7 +465,7 @@ fn needs_confirmation(action: &str, args: &Value) -> bool {
         "gitrun_settings_save" | "dashboard_settings_save" => {
             args.get("confirm_socket_opt_out").and_then(Value::as_bool) == Some(true)
         }
-        "maintenance_task" => true,
+        "maintenance_task" | "json_recovery" => true,
         "service_control" => matches!(
             args.get("action").and_then(Value::as_str),
             Some("stop" | "restart")

@@ -1622,6 +1622,7 @@ name = "gitrun-dashboard-tauri"
 version = "0.11.1"
 dependencies = [
  "gitrun-core",
+ "gitrun-recovery",
  "gitrun-gsr",
  "gitrun-scheduler",
  "gitrun-setup",

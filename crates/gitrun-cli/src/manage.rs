@@ -315,6 +315,18 @@ const RECOVERY_ACTIONS: &[Action] = &[
         title: "Uninstall GitRun",
         hint: "Destructive: remove GitRun; asks for a second explicit confirmation.",
     },
+    Action {
+        title: "Try to repair JSON files",
+        hint: "Conservative formatting/syntax normalization; ambiguous files remain untouched.",
+    },
+    Action {
+        title: "Restore JSON from .Back",
+        hint: "Destructive: overwrite current JSON files from available local backups.",
+    },
+    Action {
+        title: "Restore Main Library",
+        hint: "Restore only the official reference library from the signed release.",
+    },
 ];
 const SETTINGS_ACTIONS: &[Action] = &[
     Action {
@@ -501,6 +513,7 @@ fn app_write(action: &str, mut args: Value) -> Result<Value, String> {
                 Some("stop" | "restart")
             ))
             || action == "maintenance_task"
+            || action == "json_recovery"
             || (matches!(action, "gitrun_settings_save" | "dashboard_settings_save")
                 && args.get("confirm_socket_opt_out").and_then(Value::as_bool) == Some(true))
         {
@@ -1578,6 +1591,27 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (8, 5) => maintenance_task_with_confirmation(terminal, "reinstall_latest", &["--no-cat", "reinstall"], "Reinstall GitRun from the official release? [y/N]", "GitRun reinstall"),
         (8, 6) => service_action(terminal, "restart").map(|v| ("GitRun service".into(), v)),
         (8, 7) => maintenance_task_with_confirmation(terminal, "uninstall", &["--no-cat", "uninstall"], "UNINSTALL GitRun and its managed components? [y/N]", "GitRun uninstall"),
+        (8, 8) => {
+            if confirm(terminal, "Attempt safe JSON formatting repair? Unrepairable files will remain untouched. [y/N]")? {
+                app_write("json_recovery", json!({"action":"repair"})).map(|v| ("JSON repair report".into(), v))
+            } else {
+                Ok(("JSON repair cancelled".into(), json!({"cancelled":true})))
+            }
+        }
+        (8, 9) => {
+            if confirm(terminal, "RESTORE JSON from .json.Back? Current values may be overwritten and lost. [y/N]")? {
+                app_write("json_recovery", json!({"action":"restore-backups"})).map(|v| ("JSON backup restore report".into(), v))
+            } else {
+                Ok(("JSON restore cancelled".into(), json!({"cancelled":true})))
+            }
+        }
+        (8, 10) => {
+            if confirm(terminal, "RESTORE the official Main Library from the signed release? Active config files are not overwritten. [y/N]")? {
+                app_write("json_recovery", json!({"action":"restore-main-library"})).map(|v| ("Main Library restore report".into(), v))
+            } else {
+                Ok(("Main Library restore cancelled".into(), json!({"cancelled":true})))
+            }
+        }
         (9, 0) => app_read("config", json!({})).map(|v| ("Global configuration".into(),v)),
         (9, 1) => edit_config(terminal).map(|v| ("Global configuration".into(),v)),
         (9, 2) => app_read("vm_configs", json!({})).map(|v| ("VM definitions".into(),v)),

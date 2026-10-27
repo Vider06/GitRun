@@ -4102,6 +4102,12 @@ pub fn management_tui_write(
         "service_control" => management_tui_value(control_gitrun_service(management_tui_arg(
             &args, "action",
         )?)?),
+        "json_recovery" => {
+            let action = gitrun_recovery::JsonRecoveryAction::parse(
+                &management_tui_arg::<String>(&args, "action")?,
+            )?;
+            management_tui_value(gitrun_recovery::run_json_recovery_action(action)?)
+        }
         other => Err(format!("unsupported management write action: {other}")),
     }
 }

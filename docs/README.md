@@ -17,7 +17,7 @@ Start with the [main README](../README.md) for a readable overview of GitRun's f
 
 ## Current source line
 
-The current source/product version on this branch is **<!-- gitrun-version:start -->1.8.13<!-- gitrun-version:end -->** (`version.txt`). Current-version markers are maintained by `scripts/sync-markdown-version.py`. PR CI validates marker pairing and required coverage; the release workflow refreshes marker values and strictly checks them before packaging, then opens a docs-only pull request when `main/version.txt` matches the selected release version. It does not push directly to `main`. This page describes the source tree and does not by itself assert that a signed release artifact has been published; verify [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+The current source/product version on this branch is **<!-- gitrun-version:start -->1.8.14<!-- gitrun-version:end -->** (`version.txt`). Current-version markers are maintained by `scripts/sync-markdown-version.py`. PR CI validates marker pairing and required coverage; the release workflow refreshes marker values and strictly checks them before packaging, then opens a docs-only pull request when `main/version.txt` matches the selected release version. It does not push directly to `main`. This page describes the source tree and does not by itself assert that a signed release artifact has been published; verify [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## Version history
 

@@ -1,6 +1,6 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.13<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.8.14<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
 
 ## GitRun 1.8.12 — reliable Logs clipboard delivery
 

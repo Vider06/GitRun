@@ -588,9 +588,24 @@ fn push_recovery_detail(report: &mut JsonRecoveryReport, detail: String) {
 mod tests {
     use super::{
         active_path_for_backup, append_backup_suffix, remove_trailing_json_commas,
-        repaired_json_value, same_json_root_shape,
+        repaired_json_value, same_json_root_shape, JsonRecoveryAction,
     };
     use std::path::Path;
+
+    #[test]
+    fn recovery_action_parser_accepts_only_the_three_supported_operations() {
+        assert_eq!(JsonRecoveryAction::parse("repair").unwrap(), JsonRecoveryAction::Repair);
+        assert_eq!(
+            JsonRecoveryAction::parse("restore-backups").unwrap(),
+            JsonRecoveryAction::RestoreBackups
+        );
+        assert_eq!(
+            JsonRecoveryAction::parse("restore-main-library").unwrap(),
+            JsonRecoveryAction::RestoreMainLibrary
+        );
+        assert!(JsonRecoveryAction::parse("../../etc/shadow").is_err());
+        assert!(JsonRecoveryAction::parse("restore-anything").is_err());
+    }
 
     #[test]
     fn repair_normalizes_bom_trailing_commas_and_formatting_without_changing_values() {

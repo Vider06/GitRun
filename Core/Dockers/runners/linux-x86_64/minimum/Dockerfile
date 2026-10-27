@@ -98,4 +98,4 @@ LABEL org.opencontainers.image.title="GitRun Minimum Actions runner" \
       org.opencontainers.image.description="Minimal GitHub Actions runner with mandatory GitSecureRun enforcement" \
       org.opencontainers.image.source="https://github.com/Vider06/GitRun"
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]

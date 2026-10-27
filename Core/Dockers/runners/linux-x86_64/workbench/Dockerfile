@@ -157,4 +157,4 @@ LABEL org.opencontainers.image.title="GitRun Actions runner" \
       org.opencontainers.image.description="GitHub Actions runner with GitSecureRun enforcement" \
       org.opencontainers.image.source="https://github.com/Vider06/GitRun"
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]

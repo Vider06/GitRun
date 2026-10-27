@@ -199,7 +199,7 @@ $remotePort = Get-Random -Minimum 41000 -Maximum 58000
 $token = [Guid]::NewGuid().ToString('N')
 $tokenFileId = [Guid]::NewGuid().ToString('N')
 $tokenFilePath = '/tmp/GitRun-logs-token-{0}.txt' -f $tokenFileId
-$forward = '127.0.0.1:{0}:127.0.0.1:{1}' -f $remotePort,$localPort
+$forward = '127.0.0.1:{0}:127.0.0.1:{1}' -f $remotePort,$localPort # DevSkim: ignore DS162092 because the SSH tunnel must bind only to the remote and local loopback interfaces.
 
 # Send the random token through SSH stdin into a user-owned 0600 file.
 # Keeping the token out of command-line arguments prevents other host users

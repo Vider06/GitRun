@@ -261,11 +261,11 @@ def run_target(target: str) -> int:
     remote_port = secrets.randbelow(16000) + 41000
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(("127.0.0.1", 0))
+    listener.bind(("127.0.0.1", 0))  # DevSkim: ignore DS162092 because the receiver must accept connections only through the local loopback interface.
     listener.listen(4)
     listener.settimeout(0.1)
     local_port = listener.getsockname()[1]
-    forward = f"127.0.0.1:{remote_port}:127.0.0.1:{local_port}"
+    forward = f"127.0.0.1:{remote_port}:127.0.0.1:{local_port}"  # DevSkim: ignore DS162092 because the SSH tunnel intentionally stays loopback-only on both hosts.
     command_remote = (f"trap 'rm -f {token_path}' EXIT; GITRUN_LOG_EXPORT_PORT={remote_port} "
                       f"GITRUN_LOG_EXPORT_TOKEN_FILE={token_path} gitrun manage")
     command = [ssh, "-o", "ExitOnForwardFailure=no", "-R", forward, "-tt", target, command_remote]

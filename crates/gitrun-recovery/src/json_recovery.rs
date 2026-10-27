@@ -75,7 +75,10 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
         return Err(if detail.is_empty() {
             format!("privileged JSON recovery exited with {}", output.status)
         } else {
-            format!("privileged JSON recovery exited with {}: {detail}", output.status)
+            format!(
+                "privileged JSON recovery exited with {}: {detail}",
+                output.status
+            )
         });
     }
     serde_json::from_slice(&output.stdout)
@@ -162,16 +165,17 @@ fn recovery_json_candidate(path: &Path, root: &Path) -> bool {
         return false;
     };
     let name = name.to_ascii_lowercase();
-    if !name.ends_with(".json")
-        || name.ends_with("-status.json")
-        || name.starts_with("model-")
-    {
+    if !name.ends_with(".json") || name.ends_with("-status.json") || name.starts_with("model-") {
         return false;
     }
     if root == Path::new("/etc/gitrun") || root == Path::new("config") {
         return true;
     }
-    let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
     matches!(
         relative.as_str(),
         "gitrun-settings.json"
@@ -199,7 +203,10 @@ fn collect_recovery_json_targets(
             }
         };
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            push_recovery_error(report, format!("{} is not a real directory; skipped", root.display()));
+            push_recovery_error(
+                report,
+                format!("{} is not a real directory; skipped", root.display()),
+            );
             continue;
         }
         let mut pending = vec![root.clone()];
@@ -229,7 +236,10 @@ fn collect_recovery_json_targets(
                 };
                 if metadata.file_type().is_symlink() {
                     if recovery_json_candidate(&path, root) {
-                        push_recovery_error(report, format!("{} is a symbolic link; not followed", path.display()));
+                        push_recovery_error(
+                            report,
+                            format!("{} is a symbolic link; not followed", path.display()),
+                        );
                     }
                     continue;
                 }
@@ -252,7 +262,10 @@ fn collect_recovery_json_targets(
                     }
                 }
                 if targets.len() >= 10_000 {
-                    push_recovery_error(report, "JSON recovery scan reached the 10,000-file safety limit".into());
+                    push_recovery_error(
+                        report,
+                        "JSON recovery scan reached the 10,000-file safety limit".into(),
+                    );
                     return targets;
                 }
             }
@@ -281,12 +294,19 @@ fn append_backup_suffix(path: &Path) -> PathBuf {
 }
 
 fn read_valid_json(path: &Path) -> Result<(Vec<u8>, serde_json::Value), String> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(format!("{} is not a regular, non-symlink file", path.display()));
+        return Err(format!(
+            "{} is not a regular, non-symlink file",
+            path.display()
+        ));
     }
     if metadata.len() > 16 * 1024 * 1024 {
-        return Err(format!("{} exceeds the 16 MiB JSON safety limit", path.display()));
+        return Err(format!(
+            "{} exceeds the 16 MiB JSON safety limit",
+            path.display()
+        ));
     }
     let bytes = fs::read(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::PermissionDenied {
@@ -296,10 +316,18 @@ fn read_valid_json(path: &Path) -> Result<(Vec<u8>, serde_json::Value), String> 
         }
     })?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-        format!("{} is invalid JSON at line {}, column {}: {error}", path.display(), error.line(), error.column())
+        format!(
+            "{} is invalid JSON at line {}, column {}: {error}",
+            path.display(),
+            error.line(),
+            error.column()
+        )
     })?;
     if !(value.is_object() || value.is_array()) {
-        return Err(format!("{} has a scalar JSON root; expected an object or array", path.display()));
+        return Err(format!(
+            "{} has a scalar JSON root; expected an object or array",
+            path.display()
+        ));
     }
     Ok((bytes, value))
 }
@@ -308,10 +336,18 @@ fn repaired_json_value(content: &str, path: &Path) -> Result<serde_json::Value, 
     let without_bom = content.strip_prefix('\u{feff}').unwrap_or(content);
     let normalized = remove_trailing_json_commas(without_bom);
     let value: serde_json::Value = serde_json::from_str(&normalized).map_err(|error| {
-        format!("{} remains invalid after safe normalization at line {}, column {}: {error}", path.display(), error.line(), error.column())
+        format!(
+            "{} remains invalid after safe normalization at line {}, column {}: {error}",
+            path.display(),
+            error.line(),
+            error.column()
+        )
     })?;
     if !(value.is_object() || value.is_array()) {
-        return Err(format!("{} has a scalar JSON root; expected an object or array", path.display()));
+        return Err(format!(
+            "{} has a scalar JSON root; expected an object or array",
+            path.display()
+        ));
     }
     Ok(value)
 }
@@ -366,7 +402,9 @@ fn mode_for_existing_json(path: &Path) -> u32 {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::symlink_metadata(path).map(|metadata| metadata.permissions().mode() & 0o777).unwrap_or(0o600)
+        fs::symlink_metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o777)
+            .unwrap_or(0o600)
     }
     #[cfg(not(unix))]
     {
@@ -387,20 +425,29 @@ fn repair_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
             Ok(raw) => raw,
             Err(error) => {
                 report.skipped += 1;
-                push_recovery_error(report, format!("{} cannot be read: {error}", path.display()));
+                push_recovery_error(
+                    report,
+                    format!("{} cannot be read: {error}", path.display()),
+                );
                 continue;
             }
         };
         if raw.len() > 16 * 1024 * 1024 {
             report.skipped += 1;
-            push_recovery_error(report, format!("{} exceeds the 16 MiB repair limit", path.display()));
+            push_recovery_error(
+                report,
+                format!("{} exceeds the 16 MiB repair limit", path.display()),
+            );
             continue;
         }
         let reference_path = append_backup_suffix(path);
         let reference_value = match fs::symlink_metadata(&reference_path) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 report.skipped += 1;
-                push_recovery_error(report, format!("{} is not a regular backup file", reference_path.display()));
+                push_recovery_error(
+                    report,
+                    format!("{} is not a regular backup file", reference_path.display()),
+                );
                 continue;
             }
             Ok(_) => match read_valid_json(&reference_path) {
@@ -426,16 +473,28 @@ fn repair_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
                 continue;
             }
         };
-        if reference_value.as_ref().is_some_and(|reference| !same_json_root_shape(reference, &value)) {
+        if reference_value
+            .as_ref()
+            .is_some_and(|reference| !same_json_root_shape(reference, &value))
+        {
             report.skipped += 1;
-            push_recovery_error(report, format!("{} differs from the object/array shape in its .Back reference; left untouched", path.display()));
+            push_recovery_error(
+                report,
+                format!(
+                    "{} differs from the object/array shape in its .Back reference; left untouched",
+                    path.display()
+                ),
+            );
             continue;
         }
         let mut formatted = match serde_json::to_vec_pretty(&value) {
             Ok(bytes) => bytes,
             Err(error) => {
                 report.skipped += 1;
-                push_recovery_error(report, format!("{} cannot be serialized safely: {error}", path.display()));
+                push_recovery_error(
+                    report,
+                    format!("{} cannot be serialized safely: {error}", path.display()),
+                );
                 continue;
             }
         };
@@ -456,7 +515,9 @@ fn repair_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
         }
     }
     if report.details.is_empty() {
-        report.details.push("No JSON files needed a safe formatting repair.".into());
+        report
+            .details
+            .push("No JSON files needed a safe formatting repair.".into());
     }
 }
 
@@ -475,7 +536,10 @@ fn restore_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
             }
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
                 report.skipped += 1;
-                push_recovery_error(report, format!("{} is not a regular, non-symlink backup", backup.display()));
+                push_recovery_error(
+                    report,
+                    format!("{} is not a regular, non-symlink backup", backup.display()),
+                );
                 continue;
             }
             Ok(_) => {}
@@ -500,7 +564,9 @@ fn restore_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
         }
     }
     if report.details.is_empty() {
-        report.details.push("No usable sibling .json.Back backups were found.".into());
+        report
+            .details
+            .push("No usable sibling .json.Back backups were found.".into());
     }
 }
 
@@ -508,7 +574,9 @@ fn push_recovery_error(report: &mut JsonRecoveryReport, detail: String) {
     if report.errors.len() < 100 {
         report.errors.push(detail);
     } else if report.errors.len() == 100 {
-        report.errors.push("Additional errors omitted after the 100-entry report limit.".into());
+        report
+            .errors
+            .push("Additional errors omitted after the 100-entry report limit.".into());
     }
 }
 
@@ -516,13 +584,18 @@ fn push_recovery_detail(report: &mut JsonRecoveryReport, detail: String) {
     if report.details.len() < 100 {
         report.details.push(detail);
     } else if report.details.len() == 100 {
-        report.details.push("Additional changed paths omitted after the 100-entry report limit.".into());
+        report
+            .details
+            .push("Additional changed paths omitted after the 100-entry report limit.".into());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{active_path_for_backup, append_backup_suffix, remove_trailing_json_commas, repaired_json_value, same_json_root_shape};
+    use super::{
+        active_path_for_backup, append_backup_suffix, remove_trailing_json_commas,
+        repaired_json_value, same_json_root_shape,
+    };
     use std::path::Path;
 
     #[test]
@@ -531,7 +604,9 @@ mod tests {
         let value = repaired_json_value(raw, Path::new("example.json")).unwrap();
         assert_eq!(value["enabled"], true);
         assert_eq!(value["items"][1], 2);
-        assert!(serde_json::to_string_pretty(&value).unwrap().contains("\"enabled\": true"));
+        assert!(serde_json::to_string_pretty(&value)
+            .unwrap()
+            .contains("\"enabled\": true"));
     }
 
     #[test]
@@ -551,7 +626,9 @@ mod tests {
     #[test]
     fn restore_can_map_a_backup_to_a_missing_active_json_file() {
         assert_eq!(
-            active_path_for_backup(Path::new("/var/lib/gitrun/kitty/settings.json.Back")).unwrap().as_path(),
+            active_path_for_backup(Path::new("/var/lib/gitrun/kitty/settings.json.Back"))
+                .unwrap()
+                .as_path(),
             Path::new("/var/lib/gitrun/kitty/settings.json")
         );
         assert!(active_path_for_backup(Path::new("/var/lib/gitrun/model-123.json")).is_none());
@@ -559,10 +636,16 @@ mod tests {
 
     #[test]
     fn backup_suffix_and_root_shape_are_explicit() {
-        assert_eq!(append_backup_suffix(Path::new("/etc/gitrun/kitty.json")).to_string_lossy(), "/etc/gitrun/kitty.json.Back");
+        assert_eq!(
+            append_backup_suffix(Path::new("/etc/gitrun/kitty.json")).to_string_lossy(),
+            "/etc/gitrun/kitty.json.Back"
+        );
         let object = serde_json::json!({"ok":true});
-        let array = serde_json::json!([1,2]);
-        assert!(same_json_root_shape(&object, &serde_json::json!({"ok":false})));
+        let array = serde_json::json!([1, 2]);
+        assert!(same_json_root_shape(
+            &object,
+            &serde_json::json!({"ok":false})
+        ));
         assert!(!same_json_root_shape(&object, &array));
     }
 }

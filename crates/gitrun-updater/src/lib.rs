@@ -458,18 +458,18 @@ pub fn install_main_library_from_manifest(
     });
     validate_https_url(&url)?;
 
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_err(|error| UpdateError::Command(format!("system clock unavailable: {error}")))?
         .as_nanos();
-    let archive_path = std::env::temp_dir().join(format!(
-        "gitrun-library-{}-{nonce}.zip",
-        std::process::id()
-    ));
+    let archive_path =
+        std::env::temp_dir().join(format!("gitrun-library-{}-{nonce}.zip", std::process::id()));
     let result = (|| -> Result<usize, UpdateError> {
         download_and_verify(&url, &artifact.sha256, &archive_path)?;
         let file = fs::File::open(&archive_path)?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|error| UpdateError::InvalidManifest(format!("invalid library ZIP: {error}")))?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|error| {
+            UpdateError::InvalidManifest(format!("invalid library ZIP: {error}"))
+        })?;
         if archive.len() == 0 || archive.len() > 256 {
             return Err(UpdateError::InvalidManifest(
                 "library ZIP has an empty or excessive entry count".into(),
@@ -482,46 +482,69 @@ pub fn install_main_library_from_manifest(
         let mut installed = 0usize;
         let mut total_uncompressed = 0u64;
         for index in 0..archive.len() {
-            let mut entry = archive.by_index(index)
-                .map_err(|error| UpdateError::InvalidManifest(format!("invalid library ZIP entry: {error}")))?;
+            let mut entry = archive.by_index(index).map_err(|error| {
+                UpdateError::InvalidManifest(format!("invalid library ZIP entry: {error}"))
+            })?;
             let name = entry.name().to_owned();
             if name.is_empty() || name.contains('\\') || name.starts_with('/') {
-                return Err(UpdateError::InvalidManifest(format!("unsafe library member path: {name}")));
+                return Err(UpdateError::InvalidManifest(format!(
+                    "unsafe library member path: {name}"
+                )));
             }
             let relative = Path::new(&name);
-            if relative.components().any(|component| !matches!(component, std::path::Component::Normal(_))) {
-                return Err(UpdateError::InvalidManifest(format!("unsafe library member path: {name}")));
+            if relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "unsafe library member path: {name}"
+                )));
             }
             if entry.is_dir() {
                 continue;
             }
             if !name.to_ascii_lowercase().ends_with(".json.back") {
-                return Err(UpdateError::InvalidManifest(format!("library ZIP contains a non-JSON.Back file: {name}")));
+                return Err(UpdateError::InvalidManifest(format!(
+                    "library ZIP contains a non-JSON.Back file: {name}"
+                )));
             }
             if !seen.insert(name.clone()) {
-                return Err(UpdateError::InvalidManifest(format!("library ZIP contains a duplicate file: {name}")));
+                return Err(UpdateError::InvalidManifest(format!(
+                    "library ZIP contains a duplicate file: {name}"
+                )));
             }
             if entry.size() > 16 * 1024 * 1024 {
-                return Err(UpdateError::InvalidManifest(format!("library JSON.Back exceeds 16 MiB: {name}")));
+                return Err(UpdateError::InvalidManifest(format!(
+                    "library JSON.Back exceeds 16 MiB: {name}"
+                )));
             }
             total_uncompressed = total_uncompressed
                 .checked_add(entry.size())
-                .ok_or_else(|| UpdateError::InvalidManifest("library expanded size overflow".into()))?;
+                .ok_or_else(|| {
+                    UpdateError::InvalidManifest("library expanded size overflow".into())
+                })?;
             if total_uncompressed > 128 * 1024 * 1024 {
-                return Err(UpdateError::InvalidManifest("library ZIP expands beyond the 128 MiB safety limit".into()));
+                return Err(UpdateError::InvalidManifest(
+                    "library ZIP expands beyond the 128 MiB safety limit".into(),
+                ));
             }
             if let Some(mode) = entry.unix_mode() {
                 let file_type = mode & 0o170000;
                 if file_type != 0 && file_type != 0o100000 {
-                    return Err(UpdateError::InvalidManifest(format!("library member is not a regular file: {name}")));
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "library member is not a regular file: {name}"
+                    )));
                 }
             }
             let mut bytes = Vec::with_capacity(entry.size() as usize);
             entry.read_to_end(&mut bytes)?;
-            let value: serde_json::Value = serde_json::from_slice(&bytes)
-                .map_err(|error| UpdateError::InvalidManifest(format!("{name} is not valid JSON: {error}")))?;
+            let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+                UpdateError::InvalidManifest(format!("{name} is not valid JSON: {error}"))
+            })?;
             if !(value.is_object() || value.is_array()) {
-                return Err(UpdateError::InvalidManifest(format!("{name} must contain a JSON object or array")));
+                return Err(UpdateError::InvalidManifest(format!(
+                    "{name} must contain a JSON object or array"
+                )));
             }
 
             let destination = root.join(relative);
@@ -541,17 +564,22 @@ pub fn install_main_library_from_manifest(
                 continue;
             }
             #[cfg(unix)]
-            let mode = existing.as_ref().map(|metadata| {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o777
-            }).unwrap_or(0o644);
+            let mode = existing
+                .as_ref()
+                .map(|metadata| {
+                    use std::os::unix::fs::PermissionsExt;
+                    metadata.permissions().mode() & 0o777
+                })
+                .unwrap_or(0o644);
             #[cfg(not(unix))]
             let mode = 0o644;
             atomic_write_installed_file(&destination, &bytes, mode)?;
             installed += 1;
         }
         if seen.is_empty() {
-            return Err(UpdateError::InvalidManifest("library ZIP contained no JSON.Back files".into()));
+            return Err(UpdateError::InvalidManifest(
+                "library ZIP contained no JSON.Back files".into(),
+            ));
         }
         Ok(installed)
     })();
@@ -596,7 +624,9 @@ pub fn refresh_json_backups(roots: &[PathBuf]) -> Result<usize, UpdateError> {
                 }
                 checked += 1;
                 if checked > 10_000 {
-                    return Err(UpdateError::InvalidManifest("JSON backup scan reached its 10,000-file safety limit".into()));
+                    return Err(UpdateError::InvalidManifest(
+                        "JSON backup scan reached its 10,000-file safety limit".into(),
+                    ));
                 }
                 if metadata.len() > 16 * 1024 * 1024 {
                     continue;
@@ -630,12 +660,17 @@ pub fn refresh_json_backups(roots: &[PathBuf]) -> Result<usize, UpdateError> {
 }
 
 fn json_backup_candidate(path: &Path, root: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return false; };
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
     let name = name.to_ascii_lowercase();
     if !name.ends_with(".json")
         || name.ends_with("-status.json")
         || name.starts_with("model-")
-        || matches!(name.as_str(), "health.json" | "crash.json" | "last-crash.json" | "state.json")
+        || matches!(
+            name.as_str(),
+            "health.json" | "crash.json" | "last-crash.json" | "state.json"
+        )
     {
         return false;
     }
@@ -3971,7 +4006,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod main_json_library_tests {
     use super::{json_backup_candidate, refresh_json_backups};
@@ -3979,24 +4013,46 @@ mod main_json_library_tests {
 
     #[test]
     fn local_json_backup_candidates_exclude_generated_state() {
-        assert!(json_backup_candidate(Path::new("/etc/gitrun/kitty.json"), Path::new("/etc/gitrun")));
-        assert!(!json_backup_candidate(Path::new("/etc/gitrun/kitty-status.json"), Path::new("/etc/gitrun")));
-        assert!(!json_backup_candidate(Path::new("/var/lib/gitrun/kitty/model-abc.json"), Path::new("/var/lib/gitrun")));
-        assert!(json_backup_candidate(Path::new("/var/lib/gitrun/kitty/settings.json"), Path::new("/var/lib/gitrun")));
+        assert!(json_backup_candidate(
+            Path::new("/etc/gitrun/kitty.json"),
+            Path::new("/etc/gitrun")
+        ));
+        assert!(!json_backup_candidate(
+            Path::new("/etc/gitrun/kitty-status.json"),
+            Path::new("/etc/gitrun")
+        ));
+        assert!(!json_backup_candidate(
+            Path::new("/var/lib/gitrun/kitty/model-abc.json"),
+            Path::new("/var/lib/gitrun")
+        ));
+        assert!(json_backup_candidate(
+            Path::new("/var/lib/gitrun/kitty/settings.json"),
+            Path::new("/var/lib/gitrun")
+        ));
     }
 
     #[test]
     fn json_backups_are_created_once_and_never_overwrite_existing_copies() {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("gitrun-json-backup-{}-{nonce}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("gitrun-json-backup-{}-{nonce}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let original = root.join("gitrun-settings.json");
         let backup = root.join("gitrun-settings.json.Back");
         std::fs::write(&original, br#"{"schema_version":1}"#).unwrap();
-        assert_eq!(refresh_json_backups(std::slice::from_ref(&root)).unwrap(), 1);
+        assert_eq!(
+            refresh_json_backups(std::slice::from_ref(&root)).unwrap(),
+            1
+        );
         assert_eq!(std::fs::read(&backup).unwrap(), br#"{"schema_version":1}"#);
         std::fs::write(&original, br#"{"schema_version":2}"#).unwrap();
-        assert_eq!(refresh_json_backups(std::slice::from_ref(&root)).unwrap(), 0);
+        assert_eq!(
+            refresh_json_backups(std::slice::from_ref(&root)).unwrap(),
+            0
+        );
         assert_eq!(std::fs::read(&backup).unwrap(), br#"{"schema_version":1}"#);
         std::fs::remove_dir_all(root).unwrap();
     }

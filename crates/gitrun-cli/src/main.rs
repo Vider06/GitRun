@@ -1563,7 +1563,12 @@ fn main() {
     // the prompt where the user is typing.
     // Doctor emits a multi-check report. Keep its output in normal terminal
     // scrollback instead of allowing the animated inline viewport to redraw it.
-    if !is_cat_command && !is_status_command && !is_manage_command && !is_interactive_setup && !is_doctor_command {
+    if !is_cat_command
+        && !is_status_command
+        && !is_manage_command
+        && !is_interactive_setup
+        && !is_doctor_command
+    {
         presenter.start_live();
     }
     if !is_cat_command && !is_manage_command && !is_interactive_setup && !is_doctor_command {
@@ -1754,7 +1759,10 @@ fn main() {
             initialize_update_signing_environment(system_install_paths().is_some());
             match gitrun_recovery::run_json_recovery_root_action(&action) {
                 Ok(report) => {
-                    println!("{}", serde_json::to_string(&report).unwrap_or_else(|_| "{}".into()));
+                    println!(
+                        "{}",
+                        serde_json::to_string(&report).unwrap_or_else(|_| "{}".into())
+                    );
                     0
                 }
                 Err(error) => {
@@ -1762,7 +1770,7 @@ fn main() {
                     1
                 }
             }
-        },
+        }
         Command::ReadGitRunSettingsRoot => match read_gitrun_settings_root_command() {
             Ok(()) => 0,
             Err(error) => {
@@ -2597,7 +2605,10 @@ fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
     }
 }
 
-fn refresh_json_setup_assets(config: &Config, system_install: bool) -> Result<(usize, usize), String> {
+fn refresh_json_setup_assets(
+    config: &Config,
+    system_install: bool,
+) -> Result<(usize, usize), String> {
     let mut roots = vec![PathBuf::from(config.state_dir.as_str())];
     if Path::new("config").is_dir() {
         roots.push(PathBuf::from("config"));
@@ -2620,7 +2631,8 @@ fn refresh_json_setup_assets(config: &Config, system_install: bool) -> Result<(u
             "Vider06/GitRun",
             &library_root,
             false,
-        ).map_err(|error| format!("install signed Main Library: {error}"))?
+        )
+        .map_err(|error| format!("install signed Main Library: {error}"))?
     } else {
         0
     };
@@ -2711,25 +2723,49 @@ fn doctor_service_check(service: &str) -> Result<String, String> {
 
 fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usize) {
     if !root.exists() {
-        println!("[INFO] JSON scan skipped: {} does not exist", root.display());
+        println!(
+            "[INFO] JSON scan skipped: {} does not exist",
+            root.display()
+        );
         return;
     }
     match std::fs::symlink_metadata(root) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
-            doctor_check(&format!("JSON directory {}", root.display()), Err("refusing to follow a symbolic link".into()), failures, warnings);
+            doctor_check(
+                &format!("JSON directory {}", root.display()),
+                Err("refusing to follow a symbolic link".into()),
+                failures,
+                warnings,
+            );
             return;
         }
         Ok(metadata) if !metadata.is_dir() => {
-            println!("[INFO] JSON scan skipped: {} is not a directory", root.display());
+            println!(
+                "[INFO] JSON scan skipped: {} is not a directory",
+                root.display()
+            );
             return;
         }
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            doctor_check(&format!("JSON directory {}", root.display()), Err(format!("WARN: permission denied while inspecting {}: {error}", root.display())), failures, warnings);
+            doctor_check(
+                &format!("JSON directory {}", root.display()),
+                Err(format!(
+                    "WARN: permission denied while inspecting {}: {error}",
+                    root.display()
+                )),
+                failures,
+                warnings,
+            );
             return;
         }
         Err(error) => {
-            doctor_check(&format!("JSON directory {}", root.display()), Err(format!("{}: {error}", root.display())), failures, warnings);
+            doctor_check(
+                &format!("JSON directory {}", root.display()),
+                Err(format!("{}: {error}", root.display())),
+                failures,
+                warnings,
+            );
             return;
         }
     }
@@ -2741,11 +2777,19 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
             Ok(entries) => entries,
             Err(error) => {
                 let detail = if error.kind() == std::io::ErrorKind::PermissionDenied {
-                    format!("WARN: permission denied while reading {}: {error}", directory.display())
+                    format!(
+                        "WARN: permission denied while reading {}: {error}",
+                        directory.display()
+                    )
                 } else {
                     format!("{}: {error}", directory.display())
                 };
-                doctor_check(&format!("JSON directory {}", directory.display()), Err(detail), failures, warnings);
+                doctor_check(
+                    &format!("JSON directory {}", directory.display()),
+                    Err(detail),
+                    failures,
+                    warnings,
+                );
                 continue;
             }
         };
@@ -2753,23 +2797,42 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
-                    doctor_check(&format!("JSON directory {}", directory.display()), Err(format!("unable to read a directory entry: {error}")), failures, warnings);
+                    doctor_check(
+                        &format!("JSON directory {}", directory.display()),
+                        Err(format!("unable to read a directory entry: {error}")),
+                        failures,
+                        warnings,
+                    );
                     continue;
                 }
             };
             let path = entry.path();
-            let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("").to_ascii_lowercase();
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
             let is_json = name.ends_with(".json") || name.ends_with(".json.back");
             let metadata = match std::fs::symlink_metadata(&path) {
                 Ok(metadata) => metadata,
                 Err(error) => {
-                    doctor_check(&format!("JSON entry {}", path.display()), Err(format!("could not inspect path: {error}")), failures, warnings);
+                    doctor_check(
+                        &format!("JSON entry {}", path.display()),
+                        Err(format!("could not inspect path: {error}")),
+                        failures,
+                        warnings,
+                    );
                     continue;
                 }
             };
             if metadata.file_type().is_symlink() {
                 if is_json {
-                    doctor_check(&format!("JSON file {}", path.display()), Err("symbolic links are not followed for JSON validation".into()), failures, warnings);
+                    doctor_check(
+                        &format!("JSON file {}", path.display()),
+                        Err("symbolic links are not followed for JSON validation".into()),
+                        failures,
+                        warnings,
+                    );
                 }
                 continue;
             }
@@ -2781,36 +2844,67 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
                 continue;
             }
             checked += 1;
-            doctor_check(&format!("JSON {}", path.display()), doctor_json_file_check(&path), failures, warnings);
+            doctor_check(
+                &format!("JSON {}", path.display()),
+                doctor_json_file_check(&path),
+                failures,
+                warnings,
+            );
             if checked >= 10_000 {
-                doctor_check(&format!("JSON scan {}", root.display()), Err("scan reached the 10,000-file safety limit".into()), failures, warnings);
+                doctor_check(
+                    &format!("JSON scan {}", root.display()),
+                    Err("scan reached the 10,000-file safety limit".into()),
+                    failures,
+                    warnings,
+                );
                 return;
             }
         }
     }
-    println!("[INFO] JSON scan complete: inspected {checked} JSON / JSON.Back file(s) under {}", root.display());
+    println!(
+        "[INFO] JSON scan complete: inspected {checked} JSON / JSON.Back file(s) under {}",
+        root.display()
+    );
 }
 
 fn doctor_json_file_check(path: &Path) -> Result<String, String> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(format!("{} is not a regular, non-symlink file", path.display()));
+        return Err(format!(
+            "{} is not a regular, non-symlink file",
+            path.display()
+        ));
     }
     if metadata.len() > 16 * 1024 * 1024 {
-        return Err(format!("{} exceeds the 16 MiB JSON safety limit", path.display()));
+        return Err(format!(
+            "{} exceeds the 16 MiB JSON safety limit",
+            path.display()
+        ));
     }
     let content = std::fs::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::PermissionDenied {
-            format!("WARN: permission denied reading {}: {error}", path.display())
+            format!(
+                "WARN: permission denied reading {}: {error}",
+                path.display()
+            )
         } else {
             format!("{} cannot be read as UTF-8: {error}", path.display())
         }
     })?;
     let value: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
-        format!("{} is invalid JSON at line {}, column {}: {error}", path.display(), error.line(), error.column())
+        format!(
+            "{} is invalid JSON at line {}, column {}: {error}",
+            path.display(),
+            error.line(),
+            error.column()
+        )
     })?;
     if !(value.is_object() || value.is_array()) {
-        return Err(format!("{} has a scalar JSON root; configuration JSON must be an object or array", path.display()));
+        return Err(format!(
+            "{} has a scalar JSON root; configuration JSON must be an object or array",
+            path.display()
+        ));
     }
     Ok("valid JSON syntax and top-level structure".into())
 }
@@ -2891,7 +2985,10 @@ fn run_doctor() -> i32 {
     );
 
     let mut json_roots = vec![
-        config_path.parent().unwrap_or_else(|| Path::new("config")).to_path_buf(),
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("config"))
+            .to_path_buf(),
         PathBuf::from("config"),
         PathBuf::from("/usr/share/gitrun/library"),
     ];
@@ -5001,15 +5098,20 @@ mod internal_lifecycle_command_tests {
     }
 }
 
-
 #[cfg(test)]
 mod doctor_json_validation_tests {
     use super::doctor_json_file_check;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn path(label: &str) -> std::path::PathBuf {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        std::env::temp_dir().join(format!("gitrun-doctor-json-{label}-{}-{nonce}.json", std::process::id()))
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "gitrun-doctor-json-{label}-{}-{nonce}.json",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -5021,7 +5123,9 @@ mod doctor_json_validation_tests {
 
         let invalid = path("invalid");
         std::fs::write(&invalid, r#"{"schema_version":1,}"#).unwrap();
-        assert!(doctor_json_file_check(&invalid).unwrap_err().contains("invalid JSON"));
+        assert!(doctor_json_file_check(&invalid)
+            .unwrap_err()
+            .contains("invalid JSON"));
         std::fs::remove_file(invalid).unwrap();
     }
 
@@ -5029,7 +5133,9 @@ mod doctor_json_validation_tests {
     fn doctor_rejects_scalar_json_roots() {
         let scalar = path("scalar");
         std::fs::write(&scalar, "true").unwrap();
-        assert!(doctor_json_file_check(&scalar).unwrap_err().contains("scalar JSON root"));
+        assert!(doctor_json_file_check(&scalar)
+            .unwrap_err()
+            .contains("scalar JSON root"));
         std::fs::remove_file(scalar).unwrap();
     }
 
@@ -5037,7 +5143,9 @@ mod doctor_json_validation_tests {
     fn doctor_rejects_json_files_that_are_too_large() {
         let large = path("large");
         std::fs::write(&large, vec![b' '; 16 * 1024 * 1024 + 1]).unwrap();
-        assert!(doctor_json_file_check(&large).unwrap_err().contains("16 MiB safety limit"));
+        assert!(doctor_json_file_check(&large)
+            .unwrap_err()
+            .contains("16 MiB safety limit"));
         std::fs::remove_file(large).unwrap();
     }
 }

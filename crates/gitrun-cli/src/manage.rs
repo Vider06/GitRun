@@ -15,7 +15,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Sparkline, Wrap,
+        Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Sparkline,
+        Wrap,
     },
     Frame, Terminal,
 };
@@ -1002,9 +1003,22 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     let cpu_history = resource_history(state);
     let has_history = cpu_history.len() >= 2;
     let detail_constraints = match (has_metrics, has_history) {
-        (true, true) => vec![Constraint::Length(6), Constraint::Length(5), Constraint::Length(4), Constraint::Min(1)],
-        (true, false) => vec![Constraint::Length(6), Constraint::Length(5), Constraint::Min(1)],
-        (false, true) => vec![Constraint::Length(6), Constraint::Length(4), Constraint::Min(1)],
+        (true, true) => vec![
+            Constraint::Length(6),
+            Constraint::Length(5),
+            Constraint::Length(4),
+            Constraint::Min(1),
+        ],
+        (true, false) => vec![
+            Constraint::Length(6),
+            Constraint::Length(5),
+            Constraint::Min(1),
+        ],
+        (false, true) => vec![
+            Constraint::Length(6),
+            Constraint::Length(4),
+            Constraint::Min(1),
+        ],
         (false, false) => vec![Constraint::Length(6), Constraint::Min(1)],
     };
     let detail_area = Layout::default()
@@ -1060,13 +1074,28 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         body_index += 1;
         let metric_columns = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(vec![Constraint::Ratio(1, metrics.len() as u32); metrics.len()])
+            .constraints(vec![
+                Constraint::Ratio(1, metrics.len() as u32);
+                metrics.len()
+            ])
             .split(metric_area);
         for (index, (label, value)) in metrics.iter().enumerate() {
-            let color = if *value >= 85.0 { BAD } else if *value >= 65.0 { WARN } else { GOOD };
+            let color = if *value >= 85.0 {
+                BAD
+            } else if *value >= 65.0 {
+                WARN
+            } else {
+                GOOD
+            };
             let gauge = Gauge::default()
                 .style(Style::default().bg(PANEL_BG))
-                .block(Block::default().title(format!(" {} ", label)).borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(BORDER)))
+                .block(
+                    Block::default()
+                        .title(format!(" {} ", label))
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(BORDER)),
+                )
                 .gauge_style(Style::default().fg(color))
                 .ratio((*value / 100.0).clamp(0.0, 1.0))
                 .label(format!("{value:.0}%"));
@@ -1075,7 +1104,13 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     }
     if has_history {
         let sparkline = Sparkline::default()
-            .block(Block::default().title(" CPU HISTORY · recent samples ").borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(BORDER)))
+            .block(
+                Block::default()
+                    .title(" CPU HISTORY · recent samples ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(BORDER)),
+            )
             .data(&cpu_history)
             .max(100)
             .style(Style::default().fg(CYAN).bg(PANEL_BG));
@@ -1439,11 +1474,14 @@ fn resource_history(state: &State) -> Vec<u64> {
         match value {
             Value::Object(map) => {
                 if let Some(Value::Array(points)) = map.get("cpu_history") {
-                    return Some(points.iter()
-                        .filter_map(|point| point.get("cpu_percent").and_then(Value::as_f64))
-                        .filter(|percent| percent.is_finite())
-                        .map(|percent| percent.clamp(0.0, 100.0).round() as u64)
-                        .collect());
+                    return Some(
+                        points
+                            .iter()
+                            .filter_map(|point| point.get("cpu_percent").and_then(Value::as_f64))
+                            .filter(|percent| percent.is_finite())
+                            .map(|percent| percent.clamp(0.0, 100.0).round() as u64)
+                            .collect(),
+                    );
                 }
                 map.values().find_map(find)
             }
@@ -1451,7 +1489,10 @@ fn resource_history(state: &State) -> Vec<u64> {
             _ => None,
         }
     }
-    serde_json::from_str::<Value>(&state.body.join("\n")).ok().and_then(|value| find(&value)).unwrap_or_default()
+    serde_json::from_str::<Value>(&state.body.join("\n"))
+        .ok()
+        .and_then(|value| find(&value))
+        .unwrap_or_default()
 }
 
 fn logs_clipboard_text(body: &[String]) -> String {
@@ -2678,13 +2719,16 @@ mod visual_design_tests {
     #[test]
     fn cpu_history_sparkline_uses_reported_samples_and_clamps_values() {
         let mut state = State::new();
-        state.set_result("CPU sample", json!({
-            "cpu_history": [
-                {"sampled_at": 10, "cpu_percent": 4.4},
-                {"sampled_at": 20, "cpu_percent": 71.8},
-                {"sampled_at": 30, "cpu_percent": 130.0}
-            ]
-        }));
+        state.set_result(
+            "CPU sample",
+            json!({
+                "cpu_history": [
+                    {"sampled_at": 10, "cpu_percent": 4.4},
+                    {"sampled_at": 20, "cpu_percent": 71.8},
+                    {"sampled_at": 30, "cpu_percent": 130.0}
+                ]
+            }),
+        );
         assert_eq!(resource_history(&state), vec![4, 72, 100]);
     }
 

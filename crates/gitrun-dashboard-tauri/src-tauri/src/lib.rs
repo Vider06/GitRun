@@ -2067,19 +2067,29 @@ static DASHBOARD_HOST_RESOURCE_CACHE: std::sync::OnceLock<
     std::sync::Mutex<Option<CachedDashboardHostResources>>,
 > = std::sync::OnceLock::new();
 
-static DASHBOARD_CPU_HISTORY: std::sync::OnceLock<
-    std::sync::Mutex<Vec<DashboardCpuHistoryPoint>>,
-> = std::sync::OnceLock::new();
+static DASHBOARD_CPU_HISTORY: std::sync::OnceLock<std::sync::Mutex<Vec<DashboardCpuHistoryPoint>>> =
+    std::sync::OnceLock::new();
 
-fn append_dashboard_cpu_sample(history: &mut Vec<DashboardCpuHistoryPoint>, sampled_at: u64, cpu_percent: f32) {
-    let cpu_percent = if cpu_percent.is_finite() { cpu_percent.clamp(0.0, 100.0) } else { 0.0 };
+fn append_dashboard_cpu_sample(
+    history: &mut Vec<DashboardCpuHistoryPoint>,
+    sampled_at: u64,
+    cpu_percent: f32,
+) {
+    let cpu_percent = if cpu_percent.is_finite() {
+        cpu_percent.clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
     if let Some(last) = history.last_mut() {
         if last.sampled_at == sampled_at {
             last.cpu_percent = cpu_percent;
             return;
         }
     }
-    history.push(DashboardCpuHistoryPoint { sampled_at, cpu_percent });
+    history.push(DashboardCpuHistoryPoint {
+        sampled_at,
+        cpu_percent,
+    });
     if history.len() > 60 {
         let excess = history.len() - 60;
         history.drain(0..excess);
@@ -2113,9 +2123,12 @@ fn get_host_resource_snapshot(
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_secs())
                 .unwrap_or(0);
-            let history_store = DASHBOARD_CPU_HISTORY.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+            let history_store =
+                DASHBOARD_CPU_HISTORY.get_or_init(|| std::sync::Mutex::new(Vec::new()));
             let cpu_history = {
-                let mut history = history_store.lock().map_err(|_| "CPU history lock poisoned".to_owned())?;
+                let mut history = history_store
+                    .lock()
+                    .map_err(|_| "CPU history lock poisoned".to_owned())?;
                 append_dashboard_cpu_sample(&mut history, sampled_at, sample.cpu_percent);
                 history.clone()
             };
@@ -4347,7 +4360,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod dashboard_cpu_history_tests {
     use super::{append_dashboard_cpu_sample, DashboardCpuHistoryPoint};
@@ -4362,7 +4374,9 @@ mod dashboard_cpu_history_tests {
         assert_eq!(history[0].sampled_at, 1);
         assert_eq!(history[0].cpu_percent, 20.0);
         assert_eq!(history[1].cpu_percent, 100.0);
-        for timestamp in 3..=70 { append_dashboard_cpu_sample(&mut history, timestamp, 50.0); }
+        for timestamp in 3..=70 {
+            append_dashboard_cpu_sample(&mut history, timestamp, 50.0);
+        }
         assert_eq!(history.len(), 60);
         assert_eq!(history.first().unwrap().sampled_at, 11);
         assert_eq!(history.last().unwrap().sampled_at, 70);

@@ -1623,13 +1623,17 @@ fn main() {
         ),
         Command::Update {
             manifest_url,
+            check: true,
+            ..
+        } => run_update_check(manifest_url.as_deref()),
+        Command::Update {
+            manifest_url,
             only_containers,
-            check,
+            check: false,
             force,
         } => run_update(
             manifest_url.as_deref(),
             only_containers,
-            check,
             force,
             &mut presenter,
         ),
@@ -3443,7 +3447,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
                 "GitRun fix-update: applying latest release {} -> {}",
                 plan.current_version, plan.target_version
             );
-            let code = run_update(None, false, false, false, presenter);
+            let code = run_update(None, false, false, presenter);
             if code != 0 {
                 eprintln!("GitRun fix-update: latest-release update failed");
                 return code;
@@ -3468,10 +3472,29 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
     0
 }
 
+fn run_update_check(manifest_url: Option<&str>) -> i32 {
+    // Keep the read-only path separate from the update transaction dispatcher:
+    // this function never reaches dependency changes, file installation or
+    // service restarts.
+    let system_install = system_install_paths().is_some();
+    initialize_update_signing_environment(system_install);
+    initialize_system_update_config_path(system_install);
+    let args: Vec<String> = match manifest_url {
+        Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
+        None => vec!["update".to_owned(), "--check".to_owned()],
+    };
+    match update_check_command(&args) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("GitRun update check: FAIL — {error}");
+            1
+        }
+    }
+}
+
 fn run_update(
     manifest_url: Option<&str>,
     only_containers: bool,
-    check_only: bool,
     force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
@@ -3480,24 +3503,10 @@ fn run_update(
     // paths bypass sudo's normal signing-key hand-off, so initialize the fixed
     // trust anchors and service config before branching.
     let system_install = system_install_paths().is_some();
-    if system_install || check_only || only_containers {
+    if system_install || only_containers {
         initialize_update_signing_environment(system_install);
     }
     initialize_system_update_config_path(system_install);
-
-    if check_only {
-        let args: Vec<String> = match manifest_url {
-            Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
-            None => vec!["update".to_owned(), "--check".to_owned()],
-        };
-        return match update_check_command(&args) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("GitRun update check: FAIL — {error}");
-                1
-            }
-        };
-    }
 
     if only_containers {
         presenter.transition(presenter::ValidationState::Running);

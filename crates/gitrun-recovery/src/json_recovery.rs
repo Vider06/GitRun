@@ -95,17 +95,8 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
     let output = Command::new(systemd_run)
         .args(["--system", "--wait", "--pipe", "--collect", "--unit"])
         .arg(&unit_name)
-        .args([
-            "--property=Type=oneshot",
-            "--property=TimeoutStartSec=0",
-            "--property=PrivateTmp=yes",
-            "--property=ProtectSystem=full",
-            "--property=ProtectHome=yes",
-            "--property=NoNewPrivileges=yes",
-            "--property=ReadWritePaths=/usr/share/gitrun/library",
-            "--description=GitRun signed Main Library restore",
-            "--",
-        ])
+        .args(main_library_restore_unit_properties())
+        .args(["--description=GitRun signed Main Library restore", "--"])
         .arg(executable)
         .args(["--no-cat", "--json-recovery-root", "restore-main-library"])
         .output()
@@ -130,6 +121,18 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
 
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("decode isolated Main Library restore report: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn main_library_restore_unit_properties() -> [&'static str; 6] {
+    [
+        "--property=Type=oneshot",
+        "--property=PrivateTmp=yes",
+        "--property=ProtectSystem=full",
+        "--property=ProtectHome=yes",
+        "--property=NoNewPrivileges=yes",
+        "--property=ReadWritePaths=/usr/share/gitrun/library",
+    ]
 }
 
 #[cfg(target_os = "linux")]
@@ -738,6 +741,16 @@ mod tests {
         repaired_json_value, same_json_root_shape, JsonRecoveryAction,
     };
     use std::path::Path;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn main_library_restore_oneshot_does_not_force_an_immediate_start_timeout() {
+        use super::main_library_restore_unit_properties;
+        let properties = main_library_restore_unit_properties();
+        assert!(properties.contains(&"--property=Type=oneshot"));
+        assert!(!properties.contains(&"--property=TimeoutStartSec=0"));
+        assert!(properties.contains(&"--property=ReadWritePaths=/usr/share/gitrun/library"));
+    }
 
     #[test]
     fn recovery_action_parser_accepts_only_the_three_supported_operations() {

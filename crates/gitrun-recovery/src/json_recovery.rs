@@ -594,7 +594,10 @@ mod tests {
 
     #[test]
     fn recovery_action_parser_accepts_only_the_three_supported_operations() {
-        assert_eq!(JsonRecoveryAction::parse("repair").unwrap(), JsonRecoveryAction::Repair);
+        assert_eq!(
+            JsonRecoveryAction::parse("repair").unwrap(),
+            JsonRecoveryAction::Repair
+        );
         assert_eq!(
             JsonRecoveryAction::parse("restore-backups").unwrap(),
             JsonRecoveryAction::RestoreBackups

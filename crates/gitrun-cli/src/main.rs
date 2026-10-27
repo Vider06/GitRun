@@ -5149,7 +5149,7 @@ mod doctor_json_validation_tests {
         std::fs::write(&large, vec![b' '; 16 * 1024 * 1024 + 1]).unwrap();
         assert!(doctor_json_file_check(&large)
             .unwrap_err()
-            .contains("16 MiB safety limit"));
+            .contains("16 MiB JSON safety limit"));
         std::fs::remove_file(large).unwrap();
     }
 }

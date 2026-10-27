@@ -74,7 +74,25 @@ export async function renderOverview(navigate, cachedOverview = null, background
     const number = known ? Math.max(0,Math.min(100,Number(value))) : 0;
     return '<div class="resource-row"><div class="resource-label"><span>' + esc(label) + '</span><strong>' + (known ? number.toFixed(1) + "%" : "Unknown") + '</strong></div><div class="resource-track"><svg viewBox="0 0 100 7" preserveAspectRatio="none" aria-hidden="true"><rect class="resource-track-bg" width="100" height="7"></rect><rect class="resource-track-fill" width="' + (known ? number : 0) + '" height="7"></rect></svg></div></div>';
   };
-  const resourcePanel = '<div class="section panel panel-pad"><div class="section-heading"><h2>Host resource pressure</h2>' + pill(resourceSnapshot && !resourceSnapshot.stale ? "Sampled" : "Unknown / stale", resourceSnapshot && !resourceSnapshot.stale ? "good" : "warn") + '</div><div class="resource-grid">' + resourceBar("CPU",resourceSnapshot && resourceSnapshot.cpu_percent) + resourceBar("Memory",resourceSnapshot && resourceSnapshot.memory_percent) + resourceBar("Critical filesystem",resourceSnapshot && resourceSnapshot.disk_percent) + '</div><p class="field-hint mt-12">Host-wide snapshot only; this is not per-job resource usage. ' + esc(resourceSnapshot && resourceSnapshot.sampled_at ? "Sampled at " + new Date(Number(resourceSnapshot.sampled_at)*1000).toLocaleTimeString() : "No successful resource sample yet.") + (resourceSnapshot && resourceSnapshot.error ? " · " + esc(resourceSnapshot.error) : "") + '</p></div>';
+  const renderCpuHistory = (points) => {
+    const valid = (Array.isArray(points) ? points : []).filter((point) =>
+      point && Number.isFinite(Number(point.cpu_percent)) && Number.isFinite(Number(point.sampled_at))
+    ).slice(-60);
+    if (valid.length < 2) return '<div class="cpu-history-empty">Collecting CPU samples · the trend appears after another sample.</div>';
+    const width = 600, height = 120, pad = 8;
+    const coords = valid.map((point, index) => {
+      const x = pad + (index / Math.max(1, valid.length - 1)) * (width - pad * 2);
+      const y = height - pad - (Math.max(0, Math.min(100, Number(point.cpu_percent))) / 100) * (height - pad * 2);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    });
+    const area = pad + ',' + (height - pad) + ' ' + coords.join(' ') + ' ' + (width - pad) + ',' + (height - pad);
+    const first = valid[0], last = valid[valid.length - 1];
+    return '<div class="cpu-history-wrap"><svg class="cpu-history" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="CPU utilization history">' +
+      '<line x1="8" y1="8" x2="592" y2="8" class="cpu-gridline"/><line x1="8" y1="60" x2="592" y2="60" class="cpu-gridline"/><line x1="8" y1="112" x2="592" y2="112" class="cpu-gridline"/>' +
+      '<polygon points="' + area + '" class="cpu-history-area"/><polyline points="' + coords.join(' ') + '" class="cpu-history-line"/>' +
+      '</svg><div class="cpu-history-labels"><span>' + esc(new Date(Number(first.sampled_at)*1000).toLocaleTimeString()) + '</span><span>' + valid.length + ' samples · latest ' + esc(Number(last.cpu_percent).toFixed(1)) + '%</span><span>' + esc(new Date(Number(last.sampled_at)*1000).toLocaleTimeString()) + '</span></div></div>';
+  };
+  const resourcePanel = '<div class="section panel panel-pad"><div class="section-heading"><h2>Host resource pressure</h2>' + pill(resourceSnapshot && !resourceSnapshot.stale ? "Live sample" : "Unknown / stale", resourceSnapshot && !resourceSnapshot.stale ? "good" : "warn") + '</div><div class="resource-grid">' + resourceBar("CPU",resourceSnapshot && resourceSnapshot.cpu_percent) + resourceBar("Memory",resourceSnapshot && resourceSnapshot.memory_percent) + resourceBar("Critical filesystem",resourceSnapshot && resourceSnapshot.disk_percent) + '</div><div class="cpu-history-panel"><div class="section-heading"><h3>CPU utilization history</h3><span class="muted">Host-wide · last 15 minutes</span></div><div id="cpu-history-graph">' + renderCpuHistory(resourceSnapshot && resourceSnapshot.cpu_history) + '</div></div><p class="field-hint mt-12">Host-wide snapshot only; this is not per-job resource usage. ' + esc(resourceSnapshot && resourceSnapshot.sampled_at ? "Sampled at " + new Date(Number(resourceSnapshot.sampled_at)*1000).toLocaleTimeString() : "No successful resource sample yet.") + (resourceSnapshot && resourceSnapshot.error ? " · " + esc(resourceSnapshot.error) : "") + '</p></div>';
   const runnerRows = runners.map((runner) => '<tr><td>' + esc(runner.repository) + '</td><td><strong>' + esc(runner.name) + '</strong><div class="subtle mono">ID ' + esc(runner.id) + '</div></td><td>' + pill(runner.online ? "Online" : runner.status, runner.online ? "good" : "bad") + '</td><td>' + pill(runner.busy ? "Busy" : "Idle", runner.busy ? "warn" : "neutral") + '</td><td>' + pill(runner.kind, runner.kind === "Permanent" ? "info" : runner.kind === "Dynamic" ? "good" : "warn") + '</td><td>' + esc(runner.container_status || "Unknown") + '</td></tr>').join("");
   const cards = repos.map((repo) => {
     const stats = activityByRepo.get(repo) || {};
@@ -144,4 +162,19 @@ export async function renderOverview(navigate, cachedOverview = null, background
     }
   }));
   setFooter("Overview refreshed · " + new Date().toLocaleTimeString());
+  if (window.__gitrunCpuHistoryTimer) window.clearInterval(window.__gitrunCpuHistoryTimer);
+  window.__gitrunCpuHistoryTimer = window.setInterval(async () => {
+    if (generation !== window.__gitrunNavigationGeneration || !document.getElementById("cpu-history-graph")) return;
+    try {
+      const sample = await invoke("get_host_resource_snapshot", {forceRefresh: true});
+      if (generation !== window.__gitrunNavigationGeneration) return;
+      const graph = document.getElementById("cpu-history-graph");
+      if (graph) graph.innerHTML = renderCpuHistory(sample.cpu_history);
+      const resourceGrid = document.querySelector(".resource-grid");
+      const cpuValue = resourceGrid && resourceGrid.querySelector(".resource-row .resource-label strong");
+      if (cpuValue && sample.cpu_percent != null) cpuValue.textContent = Number(sample.cpu_percent).toFixed(1) + "%";
+    } catch (_) {
+      // Retain the last successful graph on a transient sampling failure.
+    }
+  }, 15000);
 }

@@ -1,4 +1,8 @@
+pub mod json_recovery;
 pub mod ui;
+pub use json_recovery::{
+    run_json_recovery_action, run_json_recovery_root_action, JsonRecoveryAction, JsonRecoveryReport,
+};
 
 use gitrun_core::{Config, StateError, StateStore};
 use gitrun_setup::InstallationState;

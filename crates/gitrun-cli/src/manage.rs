@@ -15,7 +15,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap,
+        Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Sparkline,
+        Wrap,
     },
     Frame, Terminal,
 };
@@ -315,6 +316,18 @@ const RECOVERY_ACTIONS: &[Action] = &[
         title: "Uninstall GitRun",
         hint: "Destructive: remove GitRun; asks for a second explicit confirmation.",
     },
+    Action {
+        title: "Try to repair JSON files",
+        hint: "Conservative formatting/syntax normalization; ambiguous files remain untouched.",
+    },
+    Action {
+        title: "Restore JSON from .Back",
+        hint: "Destructive: overwrite current JSON files from available local backups.",
+    },
+    Action {
+        title: "Restore Main Library",
+        hint: "Restore only the official reference library from the signed release.",
+    },
 ];
 const SETTINGS_ACTIONS: &[Action] = &[
     Action {
@@ -501,6 +514,7 @@ fn app_write(action: &str, mut args: Value) -> Result<Value, String> {
                 Some("stop" | "restart")
             ))
             || action == "maintenance_task"
+            || action == "json_recovery"
             || (matches!(action, "gitrun_settings_save" | "dashboard_settings_save")
                 && args.get("confirm_socket_opt_out").and_then(Value::as_bool) == Some(true))
         {
@@ -986,17 +1000,30 @@ fn render(frame: &mut Frame<'_>, state: &State) {
 
     let metrics = resource_metrics(state);
     let has_metrics = !metrics.is_empty();
+    let cpu_history = resource_history(state);
+    let has_history = cpu_history.len() >= 2;
+    let detail_constraints = match (has_metrics, has_history) {
+        (true, true) => vec![
+            Constraint::Length(6),
+            Constraint::Length(5),
+            Constraint::Length(4),
+            Constraint::Min(1),
+        ],
+        (true, false) => vec![
+            Constraint::Length(6),
+            Constraint::Length(5),
+            Constraint::Min(1),
+        ],
+        (false, true) => vec![
+            Constraint::Length(6),
+            Constraint::Length(4),
+            Constraint::Min(1),
+        ],
+        (false, false) => vec![Constraint::Length(6), Constraint::Min(1)],
+    };
     let detail_area = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(if has_metrics {
-            vec![
-                Constraint::Length(6),
-                Constraint::Length(5),
-                Constraint::Min(1),
-            ]
-        } else {
-            vec![Constraint::Length(6), Constraint::Min(1)]
-        })
+        .constraints(detail_constraints)
         .split(detail_parent);
     let page = PAGES[state.page];
     let selected_action = state
@@ -1041,8 +1068,10 @@ fn render(frame: &mut Frame<'_>, state: &State) {
     .wrap(Wrap { trim: false });
     frame.render_widget(heading, detail_area[0]);
 
-    let body_area = if has_metrics {
-        let metric_area = detail_area[1];
+    let mut body_index = 1usize;
+    if has_metrics {
+        let metric_area = detail_area[body_index];
+        body_index += 1;
         let metric_columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
@@ -1072,10 +1101,23 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 .label(format!("{value:.0}%"));
             frame.render_widget(gauge, metric_columns[index]);
         }
-        detail_area[2]
-    } else {
-        detail_area[1]
-    };
+    }
+    if has_history {
+        let sparkline = Sparkline::default()
+            .block(
+                Block::default()
+                    .title(" CPU HISTORY · recent samples ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(BORDER)),
+            )
+            .data(&cpu_history)
+            .max(100)
+            .style(Style::default().fg(CYAN).bg(PANEL_BG));
+        frame.render_widget(sparkline, detail_area[body_index]);
+        body_index += 1;
+    }
+    let body_area = detail_area[body_index];
 
     let body_text = Text::from(
         state
@@ -1427,6 +1469,32 @@ fn resource_metrics(state: &State) -> Vec<(&'static str, f64)> {
     .collect()
 }
 
+fn resource_history(state: &State) -> Vec<u64> {
+    fn find(value: &Value) -> Option<Vec<u64>> {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::Array(points)) = map.get("cpu_history") {
+                    return Some(
+                        points
+                            .iter()
+                            .filter_map(|point| point.get("cpu_percent").and_then(Value::as_f64))
+                            .filter(|percent| percent.is_finite())
+                            .map(|percent| percent.clamp(0.0, 100.0).round() as u64)
+                            .collect(),
+                    );
+                }
+                map.values().find_map(find)
+            }
+            Value::Array(items) => items.iter().find_map(find),
+            _ => None,
+        }
+    }
+    serde_json::from_str::<Value>(&state.body.join("\n"))
+        .ok()
+        .and_then(|value| find(&value))
+        .unwrap_or_default()
+}
+
 fn logs_clipboard_text(body: &[String]) -> String {
     let displayed = body.join("\n");
     let Ok(Value::Array(entries)) = serde_json::from_str::<Value>(&displayed) else {
@@ -1564,6 +1632,27 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (8, 5) => maintenance_task_with_confirmation(terminal, "reinstall_latest", &["--no-cat", "reinstall"], "Reinstall GitRun from the official release? [y/N]", "GitRun reinstall"),
         (8, 6) => service_action(terminal, "restart").map(|v| ("GitRun service".into(), v)),
         (8, 7) => maintenance_task_with_confirmation(terminal, "uninstall", &["--no-cat", "uninstall"], "UNINSTALL GitRun and its managed components? [y/N]", "GitRun uninstall"),
+        (8, 8) => {
+            if confirm(terminal, "Attempt safe JSON formatting repair? Unrepairable files will remain untouched. [y/N]")? {
+                app_write("json_recovery", json!({"action":"repair"})).map(|v| ("JSON repair report".into(), v))
+            } else {
+                Ok(("JSON repair cancelled".into(), json!({"cancelled":true})))
+            }
+        }
+        (8, 9) => {
+            if confirm(terminal, "RESTORE JSON from .json.Back? Current values may be overwritten and lost. [y/N]")? {
+                app_write("json_recovery", json!({"action":"restore-backups"})).map(|v| ("JSON backup restore report".into(), v))
+            } else {
+                Ok(("JSON restore cancelled".into(), json!({"cancelled":true})))
+            }
+        }
+        (8, 10) => {
+            if confirm(terminal, "RESTORE the official Main Library from the signed release? Active config files are not overwritten. [y/N]")? {
+                app_write("json_recovery", json!({"action":"restore-main-library"})).map(|v| ("Main Library restore report".into(), v))
+            } else {
+                Ok(("Main Library restore cancelled".into(), json!({"cancelled":true})))
+            }
+        }
         (9, 0) => app_read("config", json!({})).map(|v| ("Global configuration".into(),v)),
         (9, 1) => edit_config(terminal).map(|v| ("Global configuration".into(),v)),
         (9, 2) => app_read("vm_configs", json!({})).map(|v| ("VM definitions".into(),v)),
@@ -2462,6 +2551,7 @@ fn valid_repo(repo: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn every_management_page_has_actions() {
@@ -2625,6 +2715,19 @@ mod visual_design_tests {
     fn settings_icon_avoids_emoji_dependent_presentation() {
         assert_eq!(PAGES[9].icon, "≡");
         assert!(!PAGES[9].icon.contains('\u{FE0E}'));
+    }
+
+    #[test]
+    fn cpu_history_sparkline_uses_reported_samples_and_clamps_values() {
+        let mut state = State::new();
+        state.set_result(
+            "CPU sample",
+            serde_json::from_str(
+                r#"{"cpu_history":[{"sampled_at":10,"cpu_percent":4.4},{"sampled_at":20,"cpu_percent":71.8},{"sampled_at":30,"cpu_percent":130.0}]}"#,
+            )
+            .expect("CPU history fixture must be valid JSON"),
+        );
+        assert_eq!(super::resource_history(&state), vec![4, 72, 100]);
     }
 
     #[test]

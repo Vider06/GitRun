@@ -105,6 +105,12 @@ fn run_gtuu() -> Result<super::RecoveryReport, String> {
     Ok(report)
 }
 #[tauri::command]
+fn json_recovery(action: String) -> Result<super::JsonRecoveryReport, String> {
+    let action = super::JsonRecoveryAction::parse(&action)?;
+    super::run_json_recovery_action(action)
+}
+
+#[tauri::command]
 fn repair_service() -> Result<(), String> {
     super::restart_service()
 }
@@ -120,6 +126,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_report,
             run_gtuu,
+            json_recovery,
             repair_service,
             open_dashboard
         ])

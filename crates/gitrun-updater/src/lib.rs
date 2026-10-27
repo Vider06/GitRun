@@ -428,6 +428,274 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
     fetch_manifest(&url)
 }
 
+/// Download and install the official JSON.Back reference library from the signed
+/// release manifest. Existing files are preserved unless the caller explicitly
+/// requests a main-library restore.
+pub fn install_main_library_from_latest_release(
+    repository: &str,
+    library_root: impl AsRef<Path>,
+    overwrite_existing: bool,
+) -> Result<usize, UpdateError> {
+    let manifest = latest_manifest(repository)?;
+    install_main_library_from_manifest(repository, &manifest, library_root, overwrite_existing)
+}
+
+pub fn install_main_library_from_manifest(
+    repository: &str,
+    manifest: &ReleaseManifest,
+    library_root: impl AsRef<Path>,
+    overwrite_existing: bool,
+) -> Result<usize, UpdateError> {
+    validate_repository(repository)?;
+    manifest.validate()?;
+    manifest.verify_signature_from_env()?;
+    let artifact = manifest.artifact_for("library-json-backup")?;
+    let url = artifact.download_url.clone().unwrap_or_else(|| {
+        format!(
+            "https://github.com/{repository}/releases/download/{}/{}",
+            manifest.version, artifact.file
+        )
+    });
+    validate_https_url(&url)?;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| UpdateError::Command(format!("system clock unavailable: {error}")))?
+        .as_nanos();
+    let archive_path =
+        std::env::temp_dir().join(format!("gitrun-library-{}-{nonce}.zip", std::process::id()));
+    let result = (|| -> Result<usize, UpdateError> {
+        download_and_verify(&url, &artifact.sha256, &archive_path)?;
+        let file = fs::File::open(&archive_path)?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|error| {
+            UpdateError::InvalidManifest(format!("invalid library ZIP: {error}"))
+        })?;
+        if archive.is_empty() || archive.len() > 256 {
+            return Err(UpdateError::InvalidManifest(
+                "library ZIP has an empty or excessive entry count".into(),
+            ));
+        }
+
+        let root = library_root.as_ref();
+        reject_symlink_components(root)?;
+        let mut seen = std::collections::HashSet::new();
+        let mut installed = 0usize;
+        let mut total_uncompressed = 0u64;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(|error| {
+                UpdateError::InvalidManifest(format!("invalid library ZIP entry: {error}"))
+            })?;
+            let name = entry
+                .name()
+                .map_err(|error| {
+                    UpdateError::InvalidManifest(format!("invalid library member name: {error}"))
+                })?
+                .into_owned();
+            if name.is_empty() || name.contains('\\') || name.starts_with('/') {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "unsafe library member path: {name}"
+                )));
+            }
+            let relative = Path::new(&name);
+            if relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "unsafe library member path: {name}"
+                )));
+            }
+            if entry.is_dir() {
+                continue;
+            }
+            if !name.to_ascii_lowercase().ends_with(".json.back") {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "library ZIP contains a non-JSON.Back file: {name}"
+                )));
+            }
+            if !seen.insert(name.clone()) {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "library ZIP contains a duplicate file: {name}"
+                )));
+            }
+            if entry.size() > 16 * 1024 * 1024 {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "library JSON.Back exceeds 16 MiB: {name}"
+                )));
+            }
+            total_uncompressed = total_uncompressed
+                .checked_add(entry.size())
+                .ok_or_else(|| {
+                    UpdateError::InvalidManifest("library expanded size overflow".into())
+                })?;
+            if total_uncompressed > 128 * 1024 * 1024 {
+                return Err(UpdateError::InvalidManifest(
+                    "library ZIP expands beyond the 128 MiB safety limit".into(),
+                ));
+            }
+            if let Some(mode) = entry.unix_mode() {
+                let file_type = mode & 0o170000;
+                if file_type != 0 && file_type != 0o100000 {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "library member is not a regular file: {name}"
+                    )));
+                }
+            }
+            let mut bytes = Vec::with_capacity(entry.size() as usize);
+            entry.read_to_end(&mut bytes)?;
+            let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+                UpdateError::InvalidManifest(format!("{name} is not valid JSON: {error}"))
+            })?;
+            if !(value.is_object() || value.is_array()) {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "{name} must contain a JSON object or array"
+                )));
+            }
+
+            let destination = root.join(relative);
+            reject_symlink_components(&destination)?;
+            let existing = match fs::symlink_metadata(&destination) {
+                Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                    return Err(UpdateError::InvalidManifest(format!(
+                        "library destination is not a regular file: {}",
+                        destination.display()
+                    )));
+                }
+                Ok(metadata) => Some(metadata),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            if existing.is_some() && !overwrite_existing {
+                continue;
+            }
+            #[cfg(unix)]
+            let mode = existing
+                .as_ref()
+                .map(|metadata| {
+                    use std::os::unix::fs::PermissionsExt;
+                    metadata.permissions().mode() & 0o777
+                })
+                .unwrap_or(0o644);
+            #[cfg(not(unix))]
+            let mode = 0o644;
+            atomic_write_installed_file(&destination, &bytes, mode)?;
+            installed += 1;
+        }
+        if seen.is_empty() {
+            return Err(UpdateError::InvalidManifest(
+                "library ZIP contained no JSON.Back files".into(),
+            ));
+        }
+        Ok(installed)
+    })();
+    let _ = fs::remove_file(&archive_path);
+    result
+}
+
+/// Create missing local .json.Back snapshots for recognized configuration JSON.
+/// Existing snapshots are deliberately never replaced: they may be the only
+/// known-good recovery copy for an edited or subsequently corrupted file.
+pub fn refresh_json_backups(roots: &[PathBuf]) -> Result<usize, UpdateError> {
+    let mut created = 0usize;
+    let mut checked = 0usize;
+    for root in roots {
+        match fs::symlink_metadata(root) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(UpdateError::InvalidManifest(format!(
+                    "JSON backup root must be a real directory: {}",
+                    root.display()
+                )));
+            }
+            Ok(_) => {}
+        }
+        reject_symlink_components(root)?;
+        let mut pending = vec![root.clone()];
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(&directory)? {
+                let entry = entry?;
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path)?;
+                if metadata.file_type().is_symlink() {
+                    continue;
+                }
+                if metadata.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if !metadata.is_file() || !json_backup_candidate(&path, root) {
+                    continue;
+                }
+                checked += 1;
+                if checked > 10_000 {
+                    return Err(UpdateError::InvalidManifest(
+                        "JSON backup scan reached its 10,000-file safety limit".into(),
+                    ));
+                }
+                if metadata.len() > 16 * 1024 * 1024 {
+                    continue;
+                }
+                let bytes = fs::read(&path)?;
+                let value: serde_json::Value =
+                    match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        Ok(value) if value.is_object() || value.is_array() => value,
+                        _ => continue,
+                    };
+                let _ = value;
+                let mut backup_name = path.as_os_str().to_os_string();
+                backup_name.push(".Back");
+                let backup = PathBuf::from(backup_name);
+                match fs::symlink_metadata(&backup) {
+                    Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                        return Err(UpdateError::InvalidManifest(format!(
+                            "JSON backup path is not a regular file: {}",
+                            backup.display()
+                        )));
+                    }
+                    Ok(_) => continue,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+                atomic_write_installed_file(&backup, &bytes, 0o600)?;
+                created += 1;
+            }
+        }
+    }
+    Ok(created)
+}
+
+fn json_backup_candidate(path: &Path, root: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    if !name.ends_with(".json")
+        || name.ends_with("-status.json")
+        || name.starts_with("model-")
+        || matches!(
+            name.as_str(),
+            "health.json" | "crash.json" | "last-crash.json" | "state.json"
+        )
+    {
+        return false;
+    }
+    if root == Path::new("/etc/gitrun") {
+        return true;
+    }
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let relative_text = relative.to_string_lossy().replace('\\', "/");
+    matches!(
+        relative_text.as_str(),
+        "gitrun-settings.json"
+            | "vm-configs.json"
+            | "logic-containers.json"
+            | "kitty/settings.json"
+            | "api-policies.json"
+            | "repo-api-policies.json"
+    )
+}
+
 pub fn stage_update(
     manifest: &ReleaseManifest,
     current_version: &str,
@@ -1544,7 +1812,7 @@ fn atomic_replace_installed_file(
     result
 }
 
-fn atomic_write_installed_file(
+pub fn atomic_write_installed_file(
     destination: &Path,
     content: &[u8],
     mode: u32,
@@ -3741,5 +4009,57 @@ mod tests {
         second.target = "aarch64-unknown-linux-gnu".into();
         duplicate_file.artifacts.push(second);
         assert!(duplicate_file.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod main_json_library_tests {
+    use super::{json_backup_candidate, refresh_json_backups};
+    use std::path::Path;
+
+    #[test]
+    fn local_json_backup_candidates_exclude_generated_state() {
+        assert!(json_backup_candidate(
+            Path::new("/etc/gitrun/kitty.json"),
+            Path::new("/etc/gitrun")
+        ));
+        assert!(!json_backup_candidate(
+            Path::new("/etc/gitrun/kitty-status.json"),
+            Path::new("/etc/gitrun")
+        ));
+        assert!(!json_backup_candidate(
+            Path::new("/var/lib/gitrun/kitty/model-abc.json"),
+            Path::new("/var/lib/gitrun")
+        ));
+        assert!(json_backup_candidate(
+            Path::new("/var/lib/gitrun/kitty/settings.json"),
+            Path::new("/var/lib/gitrun")
+        ));
+    }
+
+    #[test]
+    fn json_backups_are_created_once_and_never_overwrite_existing_copies() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("gitrun-json-backup-{}-{nonce}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let original = root.join("gitrun-settings.json");
+        let backup = root.join("gitrun-settings.json.Back");
+        std::fs::write(&original, br#"{"schema_version":1}"#).unwrap();
+        assert_eq!(
+            refresh_json_backups(std::slice::from_ref(&root)).unwrap(),
+            1
+        );
+        assert_eq!(std::fs::read(&backup).unwrap(), br#"{"schema_version":1}"#);
+        std::fs::write(&original, br#"{"schema_version":2}"#).unwrap();
+        assert_eq!(
+            refresh_json_backups(std::slice::from_ref(&root)).unwrap(),
+            0
+        );
+        assert_eq!(std::fs::read(&backup).unwrap(), br#"{"schema_version":1}"#);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

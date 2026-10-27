@@ -2041,12 +2041,19 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct DashboardCpuHistoryPoint {
+    sampled_at: u64,
+    cpu_percent: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct DashboardHostResourceSnapshot {
     sampled_at: u64,
     stale: bool,
     cpu_percent: f32,
     memory_percent: f32,
     disk_percent: f32,
+    cpu_history: Vec<DashboardCpuHistoryPoint>,
     error: Option<String>,
 }
 
@@ -2059,6 +2066,35 @@ struct CachedDashboardHostResources {
 static DASHBOARD_HOST_RESOURCE_CACHE: std::sync::OnceLock<
     std::sync::Mutex<Option<CachedDashboardHostResources>>,
 > = std::sync::OnceLock::new();
+
+static DASHBOARD_CPU_HISTORY: std::sync::OnceLock<std::sync::Mutex<Vec<DashboardCpuHistoryPoint>>> =
+    std::sync::OnceLock::new();
+
+fn append_dashboard_cpu_sample(
+    history: &mut Vec<DashboardCpuHistoryPoint>,
+    sampled_at: u64,
+    cpu_percent: f32,
+) {
+    let cpu_percent = if cpu_percent.is_finite() {
+        cpu_percent.clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    if let Some(last) = history.last_mut() {
+        if last.sampled_at == sampled_at {
+            last.cpu_percent = cpu_percent;
+            return;
+        }
+    }
+    history.push(DashboardCpuHistoryPoint {
+        sampled_at,
+        cpu_percent,
+    });
+    if history.len() > 60 {
+        let excess = history.len() - 60;
+        history.drain(0..excess);
+    }
+}
 
 #[tauri::command]
 fn get_host_resource_snapshot(
@@ -2087,12 +2123,22 @@ fn get_host_resource_snapshot(
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_secs())
                 .unwrap_or(0);
+            let history_store =
+                DASHBOARD_CPU_HISTORY.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+            let cpu_history = {
+                let mut history = history_store
+                    .lock()
+                    .map_err(|_| "CPU history lock poisoned".to_owned())?;
+                append_dashboard_cpu_sample(&mut history, sampled_at, sample.cpu_percent);
+                history.clone()
+            };
             let snapshot = DashboardHostResourceSnapshot {
                 sampled_at,
                 stale: false,
                 cpu_percent: sample.cpu_percent,
                 memory_percent: sample.memory_percent,
                 disk_percent: sample.disk_percent,
+                cpu_history,
                 error: None,
             };
             *cache
@@ -4069,6 +4115,12 @@ pub fn management_tui_write(
         "service_control" => management_tui_value(control_gitrun_service(management_tui_arg(
             &args, "action",
         )?)?),
+        "json_recovery" => {
+            let action = gitrun_recovery::JsonRecoveryAction::parse(
+                &management_tui_arg::<String>(&args, "action")?,
+            )?;
+            management_tui_value(gitrun_recovery::run_json_recovery_action(action)?)
+        }
         other => Err(format!("unsupported management write action: {other}")),
     }
 }
@@ -4305,5 +4357,35 @@ mod tests {
             Some(path.clone())
         );
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod dashboard_cpu_history_tests {
+    use super::{append_dashboard_cpu_sample, DashboardCpuHistoryPoint};
+
+    #[test]
+    fn cpu_history_is_bounded_ordered_and_clamped() {
+        let mut history: Vec<DashboardCpuHistoryPoint> = Vec::new();
+        append_dashboard_cpu_sample(&mut history, 1, -5.0);
+        append_dashboard_cpu_sample(&mut history, 1, 20.0);
+        append_dashboard_cpu_sample(&mut history, 2, 101.0);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].sampled_at, 1);
+        assert_eq!(history[0].cpu_percent, 20.0);
+        assert_eq!(history[1].cpu_percent, 100.0);
+        for timestamp in 3..=70 {
+            append_dashboard_cpu_sample(&mut history, timestamp, 50.0);
+        }
+        assert_eq!(history.len(), 60);
+        assert_eq!(history.first().unwrap().sampled_at, 11);
+        assert_eq!(history.last().unwrap().sampled_at, 70);
+    }
+
+    #[test]
+    fn cpu_history_normalizes_non_finite_values() {
+        let mut history = Vec::new();
+        append_dashboard_cpu_sample(&mut history, 1, f32::NAN);
+        assert_eq!(history[0].cpu_percent, 0.0);
     }
 }

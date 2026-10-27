@@ -19,6 +19,7 @@ gitrun-smart-scheduler = { path = "../../gitrun-smart-scheduler" }
 gitrun-vault = { path = "../../gitrun-vault" }
 gitrun-gsr = { path = "../../gitrun-gsr" }
 gitrun-setup = { path = "../../gitrun-setup" }
+gitrun-recovery = { path = "../../gitrun-recovery" }
 libc = "0.2"
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }

@@ -326,6 +326,8 @@ jobs:
             "Core/Dockers/runners/linux-x86_64/profiles.json"
             "crates/gitrun-cli/src/cat/cat_states.json"
             "crates/gitrun-cli/src/cat/gitrun.json"
+            "crates/gitrun-dashboard-tauri/package.json"
+            "crates/gitrun-dashboard-tauri/package-lock.json"
             "crates/gitrun-dashboard-tauri/src-tauri/capabilities/default.json"
             "crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json"
             "crates/gitrun-recovery/capabilities/default.json"

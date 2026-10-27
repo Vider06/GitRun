@@ -2782,7 +2782,7 @@ fn render_json_editor(
         JsonEditorMode::Boolean {
             label, selected, ..
         } => {
-            let false_style = if !selected {
+            let false_style = if !*selected {
                 Style::default().fg(TEXT).bg(SELECTED_BG).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(MUTED)

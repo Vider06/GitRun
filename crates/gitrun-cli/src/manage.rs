@@ -720,16 +720,21 @@ fn handle_key(
                     state.notice = clipboard_copy_notice(&outcome);
                     if let Some(path) = outcome.fallback_file.as_ref() {
                         state.body_title = "Logs export fallback".into();
-                        state.body = vec![
-                            "GitRun sent a clipboard request, but a plain SSH terminal cannot acknowledge whether it was accepted.".into(),
+                        let mut fallback_lines = vec![
+                            "Clipboard delivery was not confirmed or the local save was cancelled.".into(),
                             "A private .txt fallback has been saved on the Ubuntu host.".into(),
                             format!("Remote file: {}", path.display()),
-                            "From your local Windows PowerShell session, run the helper command below.".into(),
-                            outcome.fallback_command.clone().unwrap_or_else(|| {
-                                "Download the remote file with scp, then open it in Notepad.".into()
-                            }),
-                            "The helper opens a Save As dialog and launches Notepad after the file is saved.".into(),
+                            "Use the matching command from your local Windows or Linux shell:".into(),
                         ];
+                        if let Some(commands) = outcome.fallback_command.as_deref() {
+                            fallback_lines.extend(commands.lines().map(str::to_owned));
+                        } else {
+                            fallback_lines.push("Download the remote file with scp, then open it in your text editor.".into());
+                        }
+                        fallback_lines.push(
+                            "The local helper opens Save As and then Notepad on Windows or the default text editor on Linux.".into()
+                        );
+                        state.body = fallback_lines;
                         state.scroll = 0;
                     }
                 }

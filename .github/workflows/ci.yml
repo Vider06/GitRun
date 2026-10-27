@@ -1129,6 +1129,17 @@ jobs:
     outputs: *job_outputs
     steps:
       - *boot
+      - name: Test tracked-file cache fingerprints
+        shell: bash
+        run: |
+          set -euo pipefail
+          first="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
+          second="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
+          empty="$(bash scripts/ci/hash-tracked-files.sh .gitrun-ci-nonexistent-fixture/**)"
+          [[ "$first" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$first" == "$second" ]]
+          [[ -z "$empty" ]]
+          echo "tracked-file cache fingerprint is stable and handles unmatched patterns"
       - name: Test log parsers and helpers
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -1530,13 +1541,21 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - &npm_hash
+        name: Compute npm cache fingerprint
+        id: npm_hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          hash="$(bash scripts/ci/hash-tracked-files.sh '**/package-lock.json' '!**/node_modules/**')"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
       - &c_npm
         name: Restore npm cache
         id: c_npm
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .gitrun-ci/npm-cache
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-npm-${{ hashFiles('**/package-lock.json', '!**/node_modules/**') }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-npm-${{ steps.npm_hash.outputs.hash }}
           restore-keys: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-npm-
       - name: Validate frontend packages
         env:
@@ -1647,6 +1666,7 @@ jobs:
       - *checkout
       - *boot
       - *setup_node
+      - *npm_hash
       - *c_npm
       - name: npm audit (no install needed, only the lockfile)
         env:
@@ -1687,12 +1707,11 @@ jobs:
       - &rust_keys
         name: Rust paths and cache keys
         id: keys
-        env:
-          LOCK_HASH: ${{ hashFiles('Cargo.lock') }}
-          CFG_HASH: ${{ hashFiles('rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
-          MANIFEST_HASH: ${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
+          lock_hash="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock)"
+          cfg_hash="$(bash scripts/ci/hash-tracked-files.sh rust-toolchain rust-toolchain.toml .cargo/config .cargo/config.toml)"
+          manifest_hash="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
           if [ "$GITHUB_JOB" != audit-rust ]; then
             ci_need cc build-essential
             # All non-audit Rust jobs can compile crates that invoke
@@ -1728,7 +1747,7 @@ jobs:
           ns="gitrun-${CACHE_EPOCH}-${RUNNER_OS}-${RUNNER_ARCH}"
           comps="$(printf '%s' "${RUST_COMPONENTS:-none}" | tr ',' '+')"
           fp="$(ci_image_fp)"
-          lock="${LOCK_HASH:-nolock}"
+          lock="${lock_hash:-nolock}"
           profile="$(printf 'dev=%s;test=%s' "${CARGO_PROFILE_DEV_DEBUG:-default}" "${CARGO_PROFILE_TEST_DEBUG:-default}" | sha256sum | cut -c1-8)"
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
@@ -1738,8 +1757,8 @@ jobs:
             # deliberately spans lockfile and workspace-crate bumps: Cargo's fingerprints
             # validate restored artifacts and rebuild only incompatible dependencies.
             echo "registry_prefix=$ns-cargo-registry-"
-            echo "target=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-man${MANIFEST_HASH:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
-            echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${CFG_HASH:0:8}-prof${profile}-"
+            echo "target=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-man${manifest_hash:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
+            echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-prof${profile}-"
           } >> "$GITHUB_OUTPUT"
           echo "image fingerprint $fp: target caches are exact per job, with cross-job restore fallback"
       - &c_tc
@@ -2267,6 +2286,7 @@ jobs:
       - *rust_install
       - *rust_tnote
       - *setup_node
+      - *npm_hash
       - *c_npm
       - name: Install Tauri frontend dependencies
         env:
@@ -2346,6 +2366,7 @@ jobs:
       - *rust_install
       - *rust_tnote
       - *setup_node
+      - *npm_hash
       - *c_npm
       - name: Test GitRun Recovery GUI
         run: |
@@ -2446,6 +2467,20 @@ jobs:
           source "$RUNNER_TEMP/ci-lib.sh"
           ci_run "create docker-container builder" docker buildx create --name gitrun-ci --driver docker-container --use --bootstrap
           docker buildx inspect --bootstrap
+      - name: Compute Docker cache fingerprints
+        id: docker_hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          common=(Cargo.lock Cargo.toml '**/Cargo.toml' rust-toolchain rust-toolchain.toml .cargo/config .cargo/config.toml)
+          mounts="$(bash scripts/ci/hash-tracked-files.sh "${common[@]}" docker/manager-rs/Dockerfile docker/runner/Dockerfile)"
+          manager="$(bash scripts/ci/hash-tracked-files.sh docker/manager-rs/Dockerfile docker/manager-rs/entrypoint.sh "${common[@]}")"
+          runner="$(bash scripts/ci/hash-tracked-files.sh docker/runner/Dockerfile docker/runner/entrypoint.sh crates/gitrun-updater/src/lib.rs crates/gitrun-setup/src/resources.rs crates/gitrun-setup/src/runner-bootstrap.lock "${common[@]}")"
+          {
+            echo "mounts=$mounts"
+            echo "manager=$manager"
+            echo "runner=$runner"
+          } >> "$GITHUB_OUTPUT"
       - name: Cache Docker BuildKit cache mounts
         id: c_dmounts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -2453,7 +2488,7 @@ jobs:
           path: |
             .gitrun-ci/docker-cache/manager
             .gitrun-ci/docker-cache/runner
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-mounts-v11-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml', 'docker/manager-rs/Dockerfile', 'docker/runner/Dockerfile') }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-mounts-v11-${{ steps.docker_hashes.outputs.mounts }}
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-mounts-v11-
       - name: Inject manager BuildKit cache mounts
@@ -2559,8 +2594,8 @@ jobs:
           exit "$rc"
       - name: Build images
         env:
-          MANAGER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-manager-rs-v11-${{ hashFiles('docker/manager-rs/Dockerfile', 'docker/manager-rs/entrypoint.sh', 'Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
-          RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v11-${{ hashFiles('docker/runner/Dockerfile', 'docker/runner/entrypoint.sh', 'crates/gitrun-updater/src/lib.rs', 'crates/gitrun-setup/src/resources.rs', 'crates/gitrun-setup/src/runner-bootstrap.lock', 'Cargo.lock', '**/Cargo.toml', 'rust-toolchain', 'rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}
+          MANAGER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-manager-rs-v11-${{ steps.docker_hashes.outputs.manager }}
+          RUNNER_CACHE_SCOPE: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-runner-v11-${{ steps.docker_hashes.outputs.runner }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           test -S /var/run/docker.sock

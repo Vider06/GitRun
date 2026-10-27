@@ -195,7 +195,9 @@ jobs:
             librsvg2-dev \
             patchelf \
             xdg-utils \
-            imagemagick
+            imagemagick \
+            zip \
+            unzip
 
       - name: Normalize Tauri PNG icons to RGBA
         shell: bash

@@ -29,7 +29,19 @@ fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
             "Premade runner Dockerfile is missing the expected workspace marker".into(),
         ));
     }
-    let adapted = source.replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY);
+    const LEGACY_ENTRYPOINT: &str = "ENTRYPOINT [\"/entrypoint.sh\"]";
+    const SAFE_ENTRYPOINT: &str = "ENTRYPOINT [\"/bin/bash.gitrun-real\", \"/entrypoint.sh\"]";
+
+    let adapted = source
+        .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
+        .replace(LEGACY_ENTRYPOINT, SAFE_ENTRYPOINT);
+
+    if !adapted.contains(SAFE_ENTRYPOINT) || adapted.contains(LEGACY_ENTRYPOINT) {
+        return Err(SetupError::Command(
+            "Premade runner Dockerfile must launch the bootstrap through the original Bash binary"
+                .into(),
+        ));
+    }
 
     if adapted.contains(FULL_WORKSPACE_COPY) || adapted.contains("COPY crates ./crates") {
         return Err(SetupError::Command(
@@ -292,15 +304,22 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_dockerfile_uses_minimal_gsr_build_context() {
-        let dockerfile =
-            runner_dockerfile_from_source(include_str!("../../../docker/runner/Dockerfile"))
-                .unwrap();
+    fn bootstrap_dockerfile_uses_minimal_gsr_build_context_and_original_bash() {
+        // Model the pinned older Premade Dockerfile, whose entrypoint invokes
+        // /entrypoint.sh through /usr/bin/env bash. The adapter must make that
+        // bootstrap use the retained, unwrapped Bash binary before GSR starts.
+        let source = include_str!("../../../docker/runner/Dockerfile").replace(
+            r#"ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]"#,
+            r#"ENTRYPOINT ["/entrypoint.sh"]"#,
+        );
+        let dockerfile = runner_dockerfile_from_source(&source).unwrap();
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
         assert!(dockerfile.contains("COPY crates/gitrun-exe ./crates/gitrun-exe"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
         assert!(!dockerfile.contains("COPY crates ./crates"));
         assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
+        assert!(dockerfile.contains(r#"ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]"#));
+        assert!(!dockerfile.contains(r#"ENTRYPOINT ["/entrypoint.sh"]"#));
     }
 
     #[test]
@@ -311,6 +330,10 @@ mod tests {
             assert!(dockerfile.contains("gitrun-gsr-agent"));
             assert!(dockerfile.contains("GITRUN_GSR_COMMAND_POLICY_ENABLED=true"));
             assert!(dockerfile.contains("cp /usr/local/bin/gitrun-gsr-agent /bin/sh"));
+            assert!(
+                dockerfile.contains(r#"ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]"#)
+            );
+            assert!(!dockerfile.contains(r#"ENTRYPOINT ["/entrypoint.sh"]"#));
         }
     }
 

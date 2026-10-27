@@ -2642,7 +2642,6 @@ mod visual_design_tests {
     }
 
     #[test]
-    #[test]
     fn cpu_history_sparkline_uses_reported_samples_and_clamps_values() {
         let mut state = State::new();
         state.set_result("CPU sample", json!({

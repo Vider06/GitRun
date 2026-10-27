@@ -309,11 +309,41 @@ jobs:
           mkdir -p "$root/server" "$deb_root/DEBIAN" "$deb_root/usr/bin" "$deb_root/usr/libexec/gitrun" "$deb_root/usr/share/gitrun" "$deb_root/usr/share/doc/gitrun" "$deb_root/usr/share/applications"
           deb="GitRun-$VERSION-linux-x86_64-deb.deb"
           server_archive="GitRun-$VERSION-$TARGET-server.tar.gz"
+          library_archive="library.zip"
 
           install -m 0755 target/release/gitrun "$root/server/gitrun"
           install -m 0644 version.txt "$root/server/version.txt"
           cp LICENSE README.md config/config.example.env "$root/server/"
           tar -C "$root/server" -czf "$root/$server_archive" .
+
+          # The published Main Library archive intentionally contains only
+          # .json.Back reference files. It never contains live secrets or
+          # overwrites a user's installed JSON during Setup/Updater extraction.
+          library_root="$RUNNER_TEMP/gitrun-library-archive"
+          rm -rf "$library_root"
+          mkdir -p "$library_root"
+          library_sources=(
+            "Core/Dockers/runners/linux-x86_64/profiles.json"
+            "crates/gitrun-cli/src/cat/cat_states.json"
+            "crates/gitrun-cli/src/cat/gitrun.json"
+            "crates/gitrun-dashboard-tauri/src-tauri/capabilities/default.json"
+            "crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json"
+            "crates/gitrun-recovery/capabilities/default.json"
+            "crates/gitrun-recovery/tauri.conf.json"
+            "release/release-manifest.example.json"
+            "release/release-manifest.schema.json"
+          )
+          library_entries=()
+          for source in "${library_sources[@]}"; do
+            test -f "$source" || { echo "Missing Main Library source JSON: $source" >&2; exit 1; }
+            jq -e 'type == "object" or type == "array"' "$source" >/dev/null
+            destination="$library_root/$source.Back"
+            mkdir -p "$(dirname "$destination")"
+            install -m 0644 "$source" "$destination"
+            library_entries+=("$source.Back")
+          done
+          (cd "$library_root" && zip -q -9 "$root/$library_archive" "${library_entries[@]}")
+          test -s "$root/$library_archive"
 
           cat > "$deb_root/DEBIAN/control" <<CONTROL
           Package: gitrun
@@ -358,6 +388,7 @@ jobs:
           sbom_sha="$(sha256sum "$root/sbom.spdx.json" | awk '{print $1}')"
           deb_sha="$(sha256sum "$root/$deb" | awk '{print $1}')"
           server_sha="$(sha256sum "$root/$server_archive" | awk '{print $1}')"
+          library_sha="$(sha256sum "$root/$library_archive" | awk '{print $1}')"
           cat > "$root/release-manifest.json" <<JSON
           {
             "name": "GitRun",
@@ -369,6 +400,11 @@ jobs:
                 "target": "$TARGET",
                 "file": "$server_archive",
                 "sha256": "$server_sha"
+              },
+              {
+                "target": "library-json-backup",
+                "file": "$library_archive",
+                "sha256": "$library_sha"
               },
               {
                 "target": "linux-x86_64-deb",
@@ -398,6 +434,7 @@ jobs:
             echo "root=$root"
             echo "deb=$deb"
             echo "server_archive=$server_archive"
+            echo "library_archive=$library_archive"
           } >> "$GITHUB_OUTPUT"
       - name: Sign release manifest
         env:
@@ -473,11 +510,22 @@ jobs:
           ROOT: ${{ steps.artifacts.outputs.root }}
           DEB: ${{ steps.artifacts.outputs.deb }}
           SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+          LIBRARY_ARCHIVE: ${{ steps.artifacts.outputs.library_archive }}
         run: |
           set -euo pipefail
           deb="$ROOT/$DEB"
           server="$ROOT/$SERVER_ARCHIVE"
-          test -f "$deb" && test -f "$server" && test -f "$ROOT/release-manifest.json"
+          library="$ROOT/$LIBRARY_ARCHIVE"
+          test -f "$deb" && test -f "$server" && test -f "$library" && test -f "$ROOT/release-manifest.json"
+          mapfile -t library_members < <(unzip -Z1 "$library")
+          (("${#library_members[@]}" > 0)) || { echo "library.zip is empty" >&2; exit 1; }
+          for member in "${library_members[@]}"; do
+            [[ "$member" == *.json.Back && "$member" != /* && "$member" != *".."* && "$member" != *\\* ]] || {
+              echo "Unsafe or unexpected Main Library archive member: $member" >&2
+              exit 1
+            }
+            unzip -p "$library" "$member" | jq -e 'type == "object" or type == "array"' >/dev/null
+          done
           test -f "$ROOT/cargo-metadata.json" && test -f "$ROOT/provenance.json" && test -f "$ROOT/sbom.spdx.json"
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
           test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun$')" -eq 1
@@ -506,7 +554,7 @@ jobs:
           test "$(target/release/gitrun --version --gitrun)" = "GitRun ${VERSION#v}"
 
           command -v jq >/dev/null 2>&1
-          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["cargo-metadata", "linux-x86_64-deb", "provenance", "sbom-spdx", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 5) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
+          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["cargo-metadata", "library-json-backup", "linux-x86_64-deb", "provenance", "sbom-spdx", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 6) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
           echo "Release manifest: PASS"
       - name: Generate release notes
         id: release-notes
@@ -546,6 +594,7 @@ jobs:
             echo "| [GitRun-$VERSION-linux-x86_64-deb.deb](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/GitRun-$VERSION-linux-x86_64-deb.deb) | Debian/Ubuntu amd64 package |"
             echo "| [GitRun-$VERSION-$RELEASE_TARGET-server.tar.gz](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/GitRun-$VERSION-$RELEASE_TARGET-server.tar.gz) | Standalone Linux x86_64 server archive |"
             echo "| [release-manifest.json](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/release-manifest.json) | Signed manifest with SHA-256 hashes for release artifacts |"
+            echo "| [library.zip](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/library.zip) | Signed-manifest-verified JSON.Back reference library |"
             echo "| [sbom.spdx.json](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/sbom.spdx.json) | SPDX software bill of materials |"
             echo "| [provenance.json](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/provenance.json) | Build provenance metadata |"
             echo "| [cargo-metadata.json](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/cargo-metadata.json) | Cargo dependency metadata used for the build |"
@@ -582,6 +631,7 @@ jobs:
           ROOT: ${{ steps.artifacts.outputs.root }}
           DEB: ${{ steps.artifacts.outputs.deb }}
           SERVER_ARCHIVE: ${{ steps.artifacts.outputs.server_archive }}
+          LIBRARY_ARCHIVE: ${{ steps.artifacts.outputs.library_archive }}
           NOTES_FILE: ${{ steps.release-notes.outputs.notes_file }}
         shell: bash
         run: |
@@ -589,6 +639,7 @@ jobs:
           assets=(
             "$ROOT/$DEB"
             "$ROOT/$SERVER_ARCHIVE"
+            "$ROOT/$LIBRARY_ARCHIVE"
             "$ROOT/cargo-metadata.json"
             "$ROOT/provenance.json"
             "$ROOT/sbom.spdx.json"

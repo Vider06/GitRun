@@ -900,6 +900,11 @@ fn install_root_command(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         runner_profile,
     )?;
 
+    initialize_update_signing_environment(true);
+    let installed_config = Config::from_env_file(TRUSTED_SYSTEM_CONFIG_FILE)?;
+    let (backups, library) = refresh_json_setup_assets(&installed_config, true)
+        .map_err(|error| format!("GitRun setup completed but Main Library initialization failed: {error}"))?;
+    println!("GitRun JSON library: {backups} local backup(s) created; {library} Main Library file(s) added");
     println!("GitRun setup: PASS");
     Ok(())
 }
@@ -2550,6 +2555,10 @@ fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
                         eprintln!("GitRun setup: FAIL — {failed} dependency check(s) failed");
                         return 1;
                     }
+                    match refresh_json_setup_assets(&config, system_install_paths().is_some()) {
+                        Ok((backups, library)) => println!("GitRun JSON library: {backups} local backup(s) created; {library} Main Library file(s) added"),
+                        Err(error) => eprintln!("GitRun setup: WARN — JSON library refresh deferred/failed: {error}"),
+                    }
                     presenter.transition(presenter::ValidationState::Success);
                     println!("GitRun setup: PASS");
                     0
@@ -2565,6 +2574,33 @@ fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
             1
         }
     }
+}
+
+fn refresh_json_setup_assets(config: &Config, system_install: bool) -> Result<(usize, usize), String> {
+    let mut roots = vec![PathBuf::from(config.state_dir.as_str())];
+    if system_install {
+        roots.push(PathBuf::from("/etc/gitrun"));
+    }
+    let backups = gitrun_updater::refresh_json_backups(&roots)
+        .map_err(|error| format!("create missing JSON.Back snapshots: {error}"))?;
+
+    let can_write_system_library = !system_install || running_as_root();
+    let library_root = if system_install {
+        PathBuf::from("/usr/share/gitrun/library")
+    } else {
+        PathBuf::from("config/gitrun-library")
+    };
+    let library = if can_write_system_library {
+        initialize_update_signing_environment(system_install);
+        gitrun_updater::install_main_library_from_latest_release(
+            "Vider06/GitRun",
+            &library_root,
+            false,
+        ).map_err(|error| format!("install signed Main Library: {error}"))?
+    } else {
+        0
+    };
+    Ok((backups, library))
 }
 
 fn doctor_check(
@@ -2833,6 +2869,7 @@ fn run_doctor() -> i32 {
     let mut json_roots = vec![
         config_path.parent().unwrap_or_else(|| Path::new("config")).to_path_buf(),
         PathBuf::from("config"),
+        PathBuf::from("/usr/share/gitrun/library"),
     ];
     match load_config() {
         Ok(config) => {
@@ -3356,7 +3393,15 @@ fn run_update(
         None => vec!["update".to_owned()],
     };
     match update_command(&args, presenter, force) {
-        Ok(()) => 0,
+        Ok(()) => {
+            if let Ok(config) = load_config() {
+                match refresh_json_setup_assets(&config, system_install) {
+                    Ok((backups, library)) => println!("GitRun JSON library: {backups} missing backup(s) created; {library} Main Library file(s) added"),
+                    Err(error) => eprintln!("GitRun update: WARN — JSON library refresh will need retry: {error}"),
+                }
+            }
+            0
+        }
         Err(error) => {
             eprintln!("GitRun update: FAIL — {error}");
             1

@@ -480,6 +480,7 @@ pub fn install_main_library_from_manifest(
         reject_symlink_components(root)?;
         let mut seen = std::collections::HashSet::new();
         let mut installed = 0usize;
+        let mut total_uncompressed = 0u64;
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index)
                 .map_err(|error| UpdateError::InvalidManifest(format!("invalid library ZIP entry: {error}")))?;
@@ -502,6 +503,12 @@ pub fn install_main_library_from_manifest(
             }
             if entry.size() > 16 * 1024 * 1024 {
                 return Err(UpdateError::InvalidManifest(format!("library JSON.Back exceeds 16 MiB: {name}")));
+            }
+            total_uncompressed = total_uncompressed
+                .checked_add(entry.size())
+                .ok_or_else(|| UpdateError::InvalidManifest("library expanded size overflow".into()))?;
+            if total_uncompressed > 128 * 1024 * 1024 {
+                return Err(UpdateError::InvalidManifest("library ZIP expands beyond the 128 MiB safety limit".into()));
             }
             if let Some(mode) = entry.unix_mode() {
                 let file_type = mode & 0o170000;

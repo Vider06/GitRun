@@ -1807,7 +1807,9 @@ fn main() {
         } => run_api_policy(&api, operation.as_deref(), enabled),
     };
 
-    if !is_cat_command && !is_status_command && !is_manage_command && !is_doctor_command {
+    if !is_cat_command && !is_status_command && !is_manage_command {
+        // Doctor keeps the report in scrollback, then prints the mascot as a
+        // final status line instead of running an inline viewport over output.
         presenter.finish(exit_code);
     }
     std::process::exit(exit_code);

@@ -24,10 +24,8 @@ use serde_json::{json, Number, Value};
 use std::{
     env,
     error::Error,
-    fs,
     io::{self, IsTerminal, Write},
     process::Command as ProcessCommand,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 type ManagementTerminal = Terminal<CrosstermBackend<io::Stdout>>;
@@ -3114,7 +3112,7 @@ fn edit_json_document(
             JsonEditorMode::NullType {
                 path,
                 label,
-                selected: mut type_selected,
+                selected: type_selected,
             } => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => JsonEditorMode::NullType {
                     path,
@@ -3360,9 +3358,11 @@ mod tests {
 #[cfg(test)]
 mod visual_design_tests {
     use super::{
-        build_osc52_sequence, header_separator, logs_clipboard_text, mascot_state, State,
-        OSC52_MAX_COPY_BYTES, PAGES, WIDE_HEADER_TAGLINE,
+        build_osc52_sequence, header_separator, json_editor_fields, json_editor_value_at_path_mut,
+        logs_clipboard_text, mascot_state, parse_json_editor_input, JsonEditorInputKind,
+        JsonEditorPathSegment, State, OSC52_MAX_COPY_BYTES, PAGES, WIDE_HEADER_TAGLINE,
     };
+    use serde_json::json;
 
     #[test]
     fn wide_header_separator_fits_the_available_terminal_width() {

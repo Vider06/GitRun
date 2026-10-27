@@ -35,6 +35,9 @@
         <p class="panel-intro">Repair actions can change host-level services or runner containers. Run them only after reviewing the findings.</p>
         <button id="gtuu" class="action primary"><span aria-hidden="true">↻</span><span><strong>Run GTUU</strong><small>Check and reconcile GitRun / permanent runner updates</small></span></button>
         <button id="service" class="action"><span aria-hidden="true">⛭</span><span><strong>Repair system service</strong><small>Restore unit file and restart the service</small></span></button>
+        <button id="json-repair" class="action"><span aria-hidden="true">{ }</span><span><strong>Try to repair JSON files</strong><small>Safely normalize formatting and trailing commas using .json.Back references</small></span></button>
+        <button id="json-restore-backups" class="action"><span aria-hidden="true">↶</span><span><strong>Restore JSON from backups</strong><small>Overwrite current JSON files from available .json.Back copies</small></span></button>
+        <button id="json-restore-library" class="action"><span aria-hidden="true">▦</span><span><strong>Restore Main Library</strong><small>Verify the signed release and restore official reference backups</small></span></button>
         <button id="dashboard" class="action"><span aria-hidden="true">↗</span><span><strong>Open dashboard</strong><small>Return to the GitRun control plane</small></span></button>
         <button id="refresh" class="action"><span aria-hidden="true">⌁</span><span><strong>Re-run diagnostics</strong><small>Read the latest health and crash records</small></span></button>
         <div class="risk-note"><strong>Before repairing</strong><p>Recovery does not delete workflow data by default. GTUU may replace eligible idle permanent runner containers; dynamic runners are handled by the scheduler.</p></div>

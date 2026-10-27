@@ -125,6 +125,40 @@ document.querySelector("#service").addEventListener("click", async () => {
   catch (error) { log("Service repair failed: " + error, "error"); summary.textContent = "Service repair failed"; alertDetail.textContent = String(error); }
   finally { setBusy(false); }
 });
+async function runJsonRecovery(action, title, confirmation) {
+  if (!window.confirm(confirmation)) return;
+  setBusy(true, title + "…");
+  try {
+    const report = await invoke("json_recovery", {action});
+    const errors = Array.isArray(report.errors) ? report.errors : [];
+    const details = Array.isArray(report.details) ? report.details : [];
+    log(title + ": " + Number(report.changed || 0) + " changed, " + Number(report.skipped || 0) + " skipped, " + errors.length + " issue(s).", errors.length ? "error" : "success");
+    details.slice(0, 20).forEach((detail) => log(String(detail)));
+    errors.slice(0, 20).forEach((detail) => log(String(detail), "error"));
+    render(await invoke("get_report"));
+  } catch (error) {
+    log(title + " failed: " + error, "error");
+    summary.textContent = title + " failed";
+    alertDetail.textContent = String(error);
+  } finally {
+    setBusy(false);
+  }
+}
+document.querySelector("#json-repair").addEventListener("click", () => runJsonRecovery(
+  "repair",
+  "JSON repair attempt",
+  "Attempt only conservative normalization: remove a BOM or trailing commas and format valid JSON. Files that remain ambiguous or disagree with their .Back reference will be left unchanged."
+));
+document.querySelector("#json-restore-backups").addEventListener("click", () => runJsonRecovery(
+  "restore-backups",
+  "Restore JSON from .Back",
+  "This overwrites current JSON configuration files with available sibling .json.Back copies. Changes made since those backups were created may be lost. Continue?"
+));
+document.querySelector("#json-restore-library").addEventListener("click", () => runJsonRecovery(
+  "restore-main-library",
+  "Restore Main Library",
+  "Download and verify the signed release manifest and library.zip, then replace only files inside /usr/share/gitrun/library. Active configuration files will not be overwritten. Continue?"
+));
 document.querySelector("#dashboard").addEventListener("click", async () => {
   setBusy(true, "Opening GitRun dashboard…");
   try { await invoke("open_dashboard"); log("Dashboard launch requested.", "success"); }

@@ -45,25 +45,19 @@ pub struct JsonRecoveryReport {
 /// Route privileged changes through the installed GitRun helper; the UI never
 /// supplies an arbitrary path or shell command.
 pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecoveryReport, String> {
-    if super::is_root() && action != JsonRecoveryAction::RestoreMainLibrary {
+    // Root callers can execute the fixed operation directly. In particular,
+    // the Recovery Tauri process must not re-exec its own binary as if it were
+    // the GitRun CLI for the Main Library restore action.
+    if super::is_root() {
         return run_json_recovery_root_action(action.as_str());
     }
 
-    let executable = if super::is_root() {
-        std::env::current_exe().map_err(|error| format!("resolve GitRun executable: {error}"))?
-    } else {
-        super::find_trusted_installed_gitrun_binary()
-            .ok_or("trusted installed GitRun executable was not found for JSON recovery")?
-    };
-    let mut command = if super::is_root() {
-        Command::new(executable.clone())
-    } else {
-        let pkexec = super::find_trusted_pkexec()
-            .ok_or("trusted /usr/bin/pkexec executable was not found")?;
-        let mut command = Command::new(pkexec);
-        command.arg(executable);
-        command
-    };
+    let executable = super::find_trusted_installed_gitrun_binary()
+        .ok_or("trusted installed GitRun executable was not found for JSON recovery")?;
+    let pkexec = super::find_trusted_pkexec()
+        .ok_or("trusted /usr/bin/pkexec executable was not found")?;
+    let mut command = Command::new(pkexec);
+    command.arg(executable);
     let output = command
         .arg("--no-cat")
         .arg("--json-recovery-root")

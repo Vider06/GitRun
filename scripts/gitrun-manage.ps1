@@ -91,27 +91,63 @@ function Receive-RemoteLogFile {
 }
 function Invoke-NativeClipboardCopy {
     param([byte[]]$Bytes)
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo.FileName = (Get-Command 'clip.exe' -ErrorAction Stop).Source
-    $process.StartInfo.UseShellExecute = $false
-    $process.StartInfo.RedirectStandardInput = $true
-    $process.StartInfo.CreateNoWindow = $true
-    [void]$process.Start()
+
+    # Preserve UTF-8 logs using a short-lived STA PowerShell process.
+    # Clipboard contents are written, never read.
+    $temporary = Join-Path $env:TEMP ('GitRun-clipboard-{0}.txt' -f [Guid]::NewGuid().ToString('N'))
     try {
-        $writeTask = $process.StandardInput.BaseStream.WriteAsync($Bytes,0,$Bytes.Length)
-        if (-not $writeTask.Wait(2000)) {
-            try { $process.Kill() } catch {}
-            return $false
+        [System.IO.File]::WriteAllBytes($temporary,$Bytes)
+        $powershell = Get-Command 'powershell.exe' -ErrorAction SilentlyContinue
+        if ($null -eq $powershell) { $powershell = Get-Command 'pwsh.exe' -ErrorAction SilentlyContinue }
+        if ($null -ne $powershell) {
+            $escapedPath = $temporary.Replace("'","''")
+            $command = "Set-Clipboard -Value ([System.IO.File]::ReadAllText('$escapedPath',[System.Text.Encoding]::UTF8))"
+            $setProcess = New-Object System.Diagnostics.Process
+            $setProcess.StartInfo.FileName = $powershell.Source
+            $setProcess.StartInfo.UseShellExecute = $false
+            $setProcess.StartInfo.CreateNoWindow = $true
+            $setProcess.StartInfo.Arguments = '-NoProfile -NonInteractive -STA -Command "' + $command + '"'
+            try {
+                [void]$setProcess.Start()
+                if ($setProcess.WaitForExit(2000) -and $setProcess.ExitCode -eq 0) {
+                    return $true
+                }
+                if (-not $setProcess.HasExited) {
+                    try { $setProcess.Kill() } catch {}
+                }
+            }
+            finally { $setProcess.Dispose() }
         }
-        $writeTask.GetAwaiter().GetResult()
-        $process.StandardInput.Close()
-        if (-not $process.WaitForExit(2000)) {
-            try { $process.Kill() } catch {}
-            return $false
+
+        # Keep clip.exe as a bounded fallback for stripped-down setups.
+        $clip = New-Object System.Diagnostics.Process
+        $clip.StartInfo.FileName = (Get-Command 'clip.exe' -ErrorAction Stop).Source
+        $clip.StartInfo.UseShellExecute = $false
+        $clip.StartInfo.RedirectStandardInput = $true
+        $clip.StartInfo.CreateNoWindow = $true
+        [void]$clip.Start()
+        try {
+            $writeTask = $clip.StandardInput.BaseStream.WriteAsync($Bytes,0,$Bytes.Length)
+            if (-not $writeTask.Wait(2000)) {
+                try { $clip.Kill() } catch {}
+                return $false
+            }
+            $writeTask.GetAwaiter().GetResult()
+            $clip.StandardInput.Close()
+            if (-not $clip.WaitForExit(2000)) {
+                try { $clip.Kill() } catch {}
+                return $false
+            }
+            return ($clip.ExitCode -eq 0)
         }
-        return ($process.ExitCode -eq 0)
+        finally { $clip.Dispose() }
     }
-    finally { $process.Dispose() }
+    catch {
+        return $false
+    }
+    finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
 }
 function Handle-LogExportClient {
     param([System.Net.Sockets.TcpClient]$Client,[string]$ExpectedToken)

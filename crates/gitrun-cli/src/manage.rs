@@ -2551,6 +2551,7 @@ fn valid_repo(repo: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn every_management_page_has_actions() {
@@ -2729,7 +2730,7 @@ mod visual_design_tests {
                 ]
             }),
         );
-        assert_eq!(resource_history(&state), vec![4, 72, 100]);
+        assert_eq!(super::resource_history(&state), vec![4, 72, 100]);
     }
 
     #[test]

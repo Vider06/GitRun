@@ -164,4 +164,7 @@ LABEL org.opencontainers.image.title="GitRun Actions runner" \
       org.opencontainers.image.description="GitHub Actions runner with GitSecureRun enforcement" \
       org.opencontainers.image.source="https://github.com/Vider06/GitRun"
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Run the bootstrap script with the original Bash binary. At runtime, the /run/gitrun tmpfs
+# hides the build-time policy file, so the bootstrap must create the runtime policy before
+# starting gitrun-gsr-agent; the wrapped /bin/bash cannot do that without the policy.
+ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]

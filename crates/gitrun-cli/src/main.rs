@@ -1756,7 +1756,9 @@ fn main() {
             }
         }
         Command::JsonRecoveryRoot { action } => {
-            initialize_update_signing_environment(system_install_paths().is_some());
+            let system_install = system_install_paths().is_some();
+            initialize_update_signing_environment(system_install);
+            initialize_system_update_config_path(system_install);
             match gitrun_recovery::run_json_recovery_root_action(&action) {
                 Ok(report) => {
                     println!(

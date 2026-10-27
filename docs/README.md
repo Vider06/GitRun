@@ -17,11 +17,12 @@ Start with the [main README](../README.md) for a readable overview of GitRun's f
 
 ## Current source line
 
-The current source/product version on this branch is **<!-- gitrun-version:start -->1.8.11<!-- gitrun-version:end -->** (`version.txt`). Current-version markers are maintained by `scripts/sync-markdown-version.py`. PR CI validates marker pairing and required coverage; the release workflow refreshes marker values and strictly checks them before packaging, then opens a docs-only pull request when `main/version.txt` matches the selected release version. It does not push directly to `main`. This page describes the source tree and does not by itself assert that a signed release artifact has been published; verify [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+The current source/product version on this branch is **<!-- gitrun-version:start -->1.8.12<!-- gitrun-version:end -->** (`version.txt`). Current-version markers are maintained by `scripts/sync-markdown-version.py`. PR CI validates marker pairing and required coverage; the release workflow refreshes marker values and strictly checks them before packaging, then opens a docs-only pull request when `main/version.txt` matches the selected release version. It does not push directly to `main`. This page describes the source tree and does not by itself assert that a signed release artifact has been published; verify [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## Version history
 
 - [GitRun 1.8.9 source-line notes](v1.8.9-fixes.md) — isolated Main Library restoration, protected JSON diagnostics and version alignment.
+- [GitRun 1.8.12 source-line notes](v1.8.12-fixes.md) — copy Logs to a native clipboard where available and forward OSC 52 correctly through tmux.
 - [GitRun 1.8.11 source-line notes](v1.8.11-fixes.md) — remove the immediate Main Library restore timeout and safely recover the workflow API socket path.
 - [GitRun 1.8.10 source-line notes](v1.8.10-fixes.md) — Docker's built-in seccomp profile handling and Main Library restore diagnostics.
 - [GitRun 1.8.0 source-line notes](v1.8.0-fixes.md) — CLI management console, child-process output handling and version alignment.

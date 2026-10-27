@@ -4921,6 +4921,21 @@ mod internal_lifecycle_command_tests {
     }
 
     #[test]
+    fn update_check_flag_is_parsed_as_read_only_mode() {
+        let cli = Cli::try_parse_from(["gitrun", "update", "--check"])
+            .expect("update --check should be a valid read-only request");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Update {
+                check: true,
+                only_containers: false,
+                force: false,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn system_update_config_path_ignores_environment_selected_paths() {
         let result = select_update_config_path(
             true,

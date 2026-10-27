@@ -91,13 +91,11 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
         return Err("trusted root-owned /usr/bin/systemd-run executable was not found".into());
     }
 
+    let unit_name = format!("gitrun-main-library-restore-{}.service", std::process::id());
     let output = Command::new(systemd_run)
+        .args(["--system", "--wait", "--pipe", "--collect", "--unit"])
+        .arg(&unit_name)
         .args([
-            "--system",
-            "--wait",
-            "--pipe",
-            "--collect",
-            "--quiet",
             "--property=Type=oneshot",
             "--property=TimeoutStartSec=0",
             "--property=PrivateTmp=yes",
@@ -116,22 +114,48 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
-        return Err(if detail.is_empty() {
-            format!(
-                "isolated Main Library restore exited with {}",
-                output.status
-            )
-        } else {
-            format!(
-                "isolated Main Library restore exited with {}: {detail}",
-                output.status
-            )
-        });
+        let mut detail = if stderr.is_empty() { stdout } else { stderr };
+        if detail.is_empty() {
+            detail = transient_unit_journal(&unit_name).unwrap_or_else(|| {
+                format!(
+                    "no stdout/stderr captured; inspect the unit journal with `journalctl --no-pager --unit {unit_name} --lines 40`"
+                )
+            });
+        }
+        return Err(format!(
+            "isolated Main Library restore exited with {} (unit {unit_name}): {detail}",
+            output.status
+        ));
     }
 
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("decode isolated Main Library restore report: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn transient_unit_journal(unit_name: &str) -> Option<String> {
+    let journalctl = Path::new("/usr/bin/journalctl");
+    if !super::is_trusted_root_executable(journalctl) {
+        return None;
+    }
+    let output = Command::new(journalctl)
+        .args([
+            "--no-pager",
+            "--unit",
+            unit_name,
+            "--lines=40",
+            "--output=cat",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let detail = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if detail.is_empty() {
+        return None;
+    }
+    Some(detail.chars().take(12_000).collect())
 }
 
 #[cfg(not(target_os = "linux"))]

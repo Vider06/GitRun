@@ -1,6 +1,14 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.9<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.8.10<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.8.10 — Docker seccomp default and recovery diagnostics
+
+- **Source/product target:** `1.8.10`, recorded in `version.txt`. This entry describes the source line; it does not claim that a signed release artifact has been published.
+- Treat `GITRUN_RUNNER_SECCOMP_PROFILE=default` as Docker's built-in default profile: omit the `seccomp=default` override because Docker interprets that value as a profile path named `default`. Explicit daemon-visible profile paths continue to be passed through.
+- Improve the signed Main Library recovery path by allowing the systemd transient unit's failure message through and including the unique unit name plus bounded journal output when the subprocess produces no stdout/stderr.
+- Keep the transient restore isolated with `ProtectSystem=full`, `NoNewPrivileges=yes` and write access restricted to `/usr/share/gitrun/library`.
+- Bump only the changed `gitrun-scheduler` and `gitrun-recovery` crates, and synchronize `Cargo.lock`, `version.txt` and current-source Markdown markers.
 
 ## GitRun 1.8.9 — Main Library recovery and protected JSON diagnostics
 

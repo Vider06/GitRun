@@ -487,7 +487,9 @@ pub fn install_main_library_from_manifest(
             })?;
             let name = entry
                 .name()
-                .map_err(|error| UpdateError::InvalidManifest(format!("invalid library member name: {error}")))?
+                .map_err(|error| {
+                    UpdateError::InvalidManifest(format!("invalid library member name: {error}"))
+                })?
                 .into_owned();
             if name.is_empty() || name.contains('\\') || name.starts_with('/') {
                 return Err(UpdateError::InvalidManifest(format!(
@@ -635,10 +637,11 @@ pub fn refresh_json_backups(roots: &[PathBuf]) -> Result<usize, UpdateError> {
                     continue;
                 }
                 let bytes = fs::read(&path)?;
-                let value: serde_json::Value = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-                    Ok(value) if value.is_object() || value.is_array() => value,
-                    _ => continue,
-                };
+                let value: serde_json::Value =
+                    match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        Ok(value) if value.is_object() || value.is_array() => value,
+                        _ => continue,
+                    };
                 let _ = value;
                 let mut backup_name = path.as_os_str().to_os_string();
                 backup_name.push(".Back");

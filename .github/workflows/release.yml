@@ -523,7 +523,7 @@ jobs:
           test -f "$deb" && test -f "$server" && test -f "$library" && test -f "$ROOT/release-manifest.json"
           mapfile -t library_members < <(unzip -Z1 "$library")
           (("${#library_members[@]}" == 11)) || { echo "Expected 11 Main Library .json.Back entries, found ${#library_members[@]}" >&2; exit 1; }
-          unique_members="$(printf '%s\\n' "${library_members[@]}" | sort -u | wc -l)"
+          unique_members="$(printf '%s\n' "${library_members[@]}" | sort -u | wc -l)"
           test "$unique_members" -eq "${#library_members[@]}" || { echo "library.zip contains duplicate members" >&2; exit 1; }
           for member in "${library_members[@]}"; do
             [[ "$member" == *.json.Back && "$member" != /* && "$member" != *".."* && "$member" != *\\* ]] || {

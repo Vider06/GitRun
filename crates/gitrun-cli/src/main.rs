@@ -2651,6 +2651,9 @@ fn doctor_check(
 ) {
     match result {
         Ok(detail) => println!("[PASS] {label}: {detail}"),
+        Err(detail) if detail.starts_with("INFO: ") => {
+            println!("[INFO] {label}: {}", detail.trim_start_matches("INFO: "));
+        }
         Err(detail) if detail.starts_with("WARN: ") => {
             *warnings += 1;
             println!("[WARN] {label}: {}", detail.trim_start_matches("WARN: "));
@@ -2725,6 +2728,12 @@ fn doctor_service_check(service: &str) -> Result<String, String> {
     }
 }
 
+fn doctor_expected_protected_json_permissions() -> bool {
+    system_install_paths().is_some()
+        && !running_as_root()
+        && gitrun_dashboard_tauri_lib::control_manager_enabled()
+}
+
 fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usize) {
     if !root.exists() {
         println!(
@@ -2752,12 +2761,19 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
         }
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            doctor_check(
-                &format!("JSON directory {}", root.display()),
-                Err(format!(
+            let detail = if doctor_expected_protected_json_permissions() {
+                format!(
+                    "INFO: protected system directory is not readable by this account; run `sudo gitrun doctor` for full JSON validation ({error})"
+                )
+            } else {
+                format!(
                     "WARN: permission denied while inspecting {}: {error}",
                     root.display()
-                )),
+                )
+            };
+            doctor_check(
+                &format!("JSON directory {}", root.display()),
+                Err(detail),
                 failures,
                 warnings,
             );
@@ -2774,12 +2790,20 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
         }
     }
 
+    let expected_protected_permissions = doctor_expected_protected_json_permissions();
     let mut pending = vec![root.to_path_buf()];
     let mut checked = 0usize;
+    let mut skipped_protected = 0usize;
     while let Some(directory) = pending.pop() {
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) => {
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    && expected_protected_permissions
+                {
+                    skipped_protected += 1;
+                    continue;
+                }
                 let detail = if error.kind() == std::io::ErrorKind::PermissionDenied {
                     format!(
                         "WARN: permission denied while reading {}: {error}",
@@ -2847,10 +2871,15 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
             if !metadata.is_file() || !is_json {
                 continue;
             }
+            let file_result = doctor_json_file_check(&path, expected_protected_permissions);
+            if matches!(&file_result, Err(detail) if detail.starts_with("INFO: ")) {
+                skipped_protected += 1;
+                continue;
+            }
             checked += 1;
             doctor_check(
                 &format!("JSON {}", path.display()),
-                doctor_json_file_check(&path),
+                file_result,
                 failures,
                 warnings,
             );
@@ -2865,13 +2894,23 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
             }
         }
     }
-    println!(
-        "[INFO] JSON scan complete: inspected {checked} JSON / JSON.Back file(s) under {}",
-        root.display()
-    );
+    if skipped_protected > 0 {
+        println!(
+            "[INFO] JSON scan under {} inspected {checked} file(s) and skipped {skipped_protected} protected path(s); run `sudo gitrun doctor` for full JSON validation",
+            root.display()
+        );
+    } else {
+        println!(
+            "[INFO] JSON scan complete: inspected {checked} JSON / JSON.Back file(s) under {}",
+            root.display()
+        );
+    }
 }
 
-fn doctor_json_file_check(path: &Path) -> Result<String, String> {
+fn doctor_json_file_check(
+    path: &Path,
+    expected_protected_permissions: bool,
+) -> Result<String, String> {
     let metadata =
         std::fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -2887,7 +2926,9 @@ fn doctor_json_file_check(path: &Path) -> Result<String, String> {
         ));
     }
     let content = std::fs::read_to_string(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::PermissionDenied {
+        if error.kind() == std::io::ErrorKind::PermissionDenied && expected_protected_permissions {
+            "INFO: protected by system permissions; run `sudo gitrun doctor` to validate this file".to_owned()
+        } else if error.kind() == std::io::ErrorKind::PermissionDenied {
             format!(
                 "WARN: permission denied reading {}: {error}",
                 path.display()

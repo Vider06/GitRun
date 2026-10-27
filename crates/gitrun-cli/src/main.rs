@@ -1623,13 +1623,17 @@ fn main() {
         ),
         Command::Update {
             manifest_url,
+            check: true,
+            ..
+        } => run_update_check(manifest_url.as_deref()),
+        Command::Update {
+            manifest_url,
             only_containers,
-            check,
+            check: false,
             force,
         } => run_update(
             manifest_url.as_deref(),
             only_containers,
-            check,
             force,
             &mut presenter,
         ),
@@ -2651,6 +2655,9 @@ fn doctor_check(
 ) {
     match result {
         Ok(detail) => println!("[PASS] {label}: {detail}"),
+        Err(detail) if detail.starts_with("INFO: ") => {
+            println!("[INFO] {label}: {}", detail.trim_start_matches("INFO: "));
+        }
         Err(detail) if detail.starts_with("WARN: ") => {
             *warnings += 1;
             println!("[WARN] {label}: {}", detail.trim_start_matches("WARN: "));
@@ -2725,6 +2732,12 @@ fn doctor_service_check(service: &str) -> Result<String, String> {
     }
 }
 
+fn doctor_expected_protected_json_permissions() -> bool {
+    system_install_paths().is_some()
+        && !running_as_root()
+        && gitrun_dashboard_tauri_lib::control_manager_enabled()
+}
+
 fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usize) {
     if !root.exists() {
         println!(
@@ -2752,12 +2765,19 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
         }
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            doctor_check(
-                &format!("JSON directory {}", root.display()),
-                Err(format!(
+            let detail = if doctor_expected_protected_json_permissions() {
+                format!(
+                    "INFO: protected system directory is not readable by this account; run `sudo gitrun doctor` for full JSON validation ({error})"
+                )
+            } else {
+                format!(
                     "WARN: permission denied while inspecting {}: {error}",
                     root.display()
-                )),
+                )
+            };
+            doctor_check(
+                &format!("JSON directory {}", root.display()),
+                Err(detail),
                 failures,
                 warnings,
             );
@@ -2774,12 +2794,20 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
         }
     }
 
+    let expected_protected_permissions = doctor_expected_protected_json_permissions();
     let mut pending = vec![root.to_path_buf()];
     let mut checked = 0usize;
+    let mut skipped_protected = 0usize;
     while let Some(directory) = pending.pop() {
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) => {
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    && expected_protected_permissions
+                {
+                    skipped_protected += 1;
+                    continue;
+                }
                 let detail = if error.kind() == std::io::ErrorKind::PermissionDenied {
                     format!(
                         "WARN: permission denied while reading {}: {error}",
@@ -2847,10 +2875,15 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
             if !metadata.is_file() || !is_json {
                 continue;
             }
+            let file_result = doctor_json_file_check(&path, expected_protected_permissions);
+            if matches!(&file_result, Err(detail) if detail.starts_with("INFO: ")) {
+                skipped_protected += 1;
+                continue;
+            }
             checked += 1;
             doctor_check(
                 &format!("JSON {}", path.display()),
-                doctor_json_file_check(&path),
+                file_result,
                 failures,
                 warnings,
             );
@@ -2865,13 +2898,23 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
             }
         }
     }
-    println!(
-        "[INFO] JSON scan complete: inspected {checked} JSON / JSON.Back file(s) under {}",
-        root.display()
-    );
+    if skipped_protected > 0 {
+        println!(
+            "[INFO] JSON scan under {} inspected {checked} file(s) and skipped {skipped_protected} protected path(s); run `sudo gitrun doctor` for full JSON validation",
+            root.display()
+        );
+    } else {
+        println!(
+            "[INFO] JSON scan complete: inspected {checked} JSON / JSON.Back file(s) under {}",
+            root.display()
+        );
+    }
 }
 
-fn doctor_json_file_check(path: &Path) -> Result<String, String> {
+fn doctor_json_file_check(
+    path: &Path,
+    expected_protected_permissions: bool,
+) -> Result<String, String> {
     let metadata =
         std::fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -2887,7 +2930,10 @@ fn doctor_json_file_check(path: &Path) -> Result<String, String> {
         ));
     }
     let content = std::fs::read_to_string(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::PermissionDenied {
+        if error.kind() == std::io::ErrorKind::PermissionDenied && expected_protected_permissions {
+            "INFO: protected by system permissions; run `sudo gitrun doctor` to validate this file"
+                .to_owned()
+        } else if error.kind() == std::io::ErrorKind::PermissionDenied {
             format!(
                 "WARN: permission denied reading {}: {error}",
                 path.display()
@@ -3401,7 +3447,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
                 "GitRun fix-update: applying latest release {} -> {}",
                 plan.current_version, plan.target_version
             );
-            let code = run_update(None, false, false, false, presenter);
+            let code = run_update(None, false, false, presenter);
             if code != 0 {
                 eprintln!("GitRun fix-update: latest-release update failed");
                 return code;
@@ -3426,10 +3472,29 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
     0
 }
 
+fn run_update_check(manifest_url: Option<&str>) -> i32 {
+    // Keep the read-only path separate from the update transaction dispatcher:
+    // this function never reaches dependency changes, file installation or
+    // service restarts.
+    let system_install = system_install_paths().is_some();
+    initialize_update_signing_environment(system_install);
+    initialize_system_update_config_path(system_install);
+    let args: Vec<String> = match manifest_url {
+        Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
+        None => vec!["update".to_owned(), "--check".to_owned()],
+    };
+    match update_check_command(&args) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("GitRun update check: FAIL — {error}");
+            1
+        }
+    }
+}
+
 fn run_update(
     manifest_url: Option<&str>,
     only_containers: bool,
-    check_only: bool,
     force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
@@ -3438,24 +3503,10 @@ fn run_update(
     // paths bypass sudo's normal signing-key hand-off, so initialize the fixed
     // trust anchors and service config before branching.
     let system_install = system_install_paths().is_some();
-    if system_install || check_only || only_containers {
+    if system_install || only_containers {
         initialize_update_signing_environment(system_install);
     }
     initialize_system_update_config_path(system_install);
-
-    if check_only {
-        let args: Vec<String> = match manifest_url {
-            Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
-            None => vec!["update".to_owned(), "--check".to_owned()],
-        };
-        return match update_check_command(&args) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("GitRun update check: FAIL — {error}");
-                1
-            }
-        };
-    }
 
     if only_containers {
         presenter.transition(presenter::ValidationState::Running);
@@ -4879,6 +4930,21 @@ mod internal_lifecycle_command_tests {
     }
 
     #[test]
+    fn update_check_flag_is_parsed_as_read_only_mode() {
+        let cli = Cli::try_parse_from(["gitrun", "update", "--check"])
+            .expect("update --check should be a valid read-only request");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Update {
+                check: true,
+                only_containers: false,
+                force: false,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn system_update_config_path_ignores_environment_selected_paths() {
         let result = select_update_config_path(
             true,
@@ -5150,12 +5216,12 @@ mod doctor_json_validation_tests {
     fn doctor_validates_each_json_file_not_just_the_directory() {
         let valid = path("valid");
         std::fs::write(&valid, r#"{"schema_version":1,"enabled":false}"#).unwrap();
-        assert!(doctor_json_file_check(&valid).is_ok());
+        assert!(doctor_json_file_check(&valid, false).is_ok());
         std::fs::remove_file(valid).unwrap();
 
         let invalid = path("invalid");
         std::fs::write(&invalid, r#"{"schema_version":1,}"#).unwrap();
-        assert!(doctor_json_file_check(&invalid)
+        assert!(doctor_json_file_check(&invalid, false)
             .unwrap_err()
             .contains("invalid JSON"));
         std::fs::remove_file(invalid).unwrap();
@@ -5165,7 +5231,7 @@ mod doctor_json_validation_tests {
     fn doctor_rejects_scalar_json_roots() {
         let scalar = path("scalar");
         std::fs::write(&scalar, "true").unwrap();
-        assert!(doctor_json_file_check(&scalar)
+        assert!(doctor_json_file_check(&scalar, false)
             .unwrap_err()
             .contains("scalar JSON root"));
         std::fs::remove_file(scalar).unwrap();
@@ -5175,7 +5241,7 @@ mod doctor_json_validation_tests {
     fn doctor_rejects_json_files_that_are_too_large() {
         let large = path("large");
         std::fs::write(&large, vec![b' '; 16 * 1024 * 1024 + 1]).unwrap();
-        assert!(doctor_json_file_check(&large)
+        assert!(doctor_json_file_check(&large, false)
             .unwrap_err()
             .contains("16 MiB JSON safety limit"));
         std::fs::remove_file(large).unwrap();

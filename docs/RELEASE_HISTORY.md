@@ -1,6 +1,24 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.7<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.8.9<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.8.9 — Main Library recovery and protected JSON diagnostics
+
+- **Source/product target:** `1.8.9`, recorded in `version.txt`. This entry describes the source line; it does not claim that a signed release artifact has been published.
+- Run the signed official Main Library restore in a separate transient systemd unit rather than inheriting the Control Manager's read-only mount namespace. The transient unit keeps `ProtectSystem=full` and makes only `/usr/share/gitrun/library` writable.
+- Keep the restore on fixed, root-owned GitRun and systemd-run executables; the UI cannot supply arbitrary paths or commands.
+- Make `gitrun doctor` explicitly report protected JSON paths skipped because of expected non-root permissions, while malformed JSON and unexpected permission failures remain warnings or failures. Run `sudo gitrun doctor` when full validation of root-owned files is required.
+- Route `gitrun update --check` through a dedicated read-only dispatcher, separate from the transaction that downloads and installs an update; add parser regression coverage for the flag.
+- Bump all workspace crate patch versions and synchronize `Cargo.lock`, `runner-bootstrap.lock` and the current-source Markdown markers.
+- **Implementation PR:** [#135](https://github.com/Vider06/GitRun/pull/135).
+
+## GitRun 1.8.8 — CI cache fingerprints and version alignment
+
+- **Source/product target:** `1.8.8`, recorded in `version.txt`. This entry describes the source line; it does not claim that a signed release artifact has been published.
+- Replaced GitHub Actions `hashFiles()` cache-key evaluation with `scripts/ci/hash-tracked-files.sh`, which fingerprints tracked paths and contents after checkout. CI/release cache consumers reuse the computed digest; existing restore prefixes remain available.
+- Kept workflow job timeouts unchanged and made both the cache helper and runtime-contract test script executable in Git.
+- Synchronized `version.txt`, the workspace crate patch versions, `Cargo.lock` and `runner-bootstrap.lock`.
+- **Implementation PR:** [#133](https://github.com/Vider06/GitRun/pull/133).
 
 ## GitRun 1.8.7 — JSON recovery, Main Library integrity and CPU history
 

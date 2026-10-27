@@ -45,25 +45,23 @@ pub struct JsonRecoveryReport {
 /// Route privileged changes through the installed GitRun helper; the UI never
 /// supplies an arbitrary path or shell command.
 pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecoveryReport, String> {
-    // Root callers can handle backup/repair actions directly. The official
-    // Main Library restore goes through the installed CLI so it can load the
-    // trusted release-verification keys before downloading the signed artifact.
-    if super::is_root() && action != JsonRecoveryAction::RestoreMainLibrary {
+    if super::is_root() {
+        // The Control Manager runs inside a hardened systemd mount namespace.
+        // A normal child inherits that namespace and can still see the library
+        // as read-only. Run the fixed-purpose restore in its own transient unit
+        // with only the official library destination writable.
+        if action == JsonRecoveryAction::RestoreMainLibrary {
+            return restore_main_library_via_transient_unit();
+        }
         return run_json_recovery_root_action(action.as_str());
     }
 
     let executable = super::find_trusted_installed_gitrun_binary()
         .ok_or("trusted installed GitRun executable was not found for JSON recovery")?;
-    let mut command = if super::is_root() {
-        Command::new(executable)
-    } else {
-        let pkexec = super::find_trusted_pkexec()
-            .ok_or("trusted /usr/bin/pkexec executable was not found")?;
-        let mut command = Command::new(pkexec);
-        command.arg(executable);
-        command
-    };
-    let output = command
+    let pkexec =
+        super::find_trusted_pkexec().ok_or("trusted /usr/bin/pkexec executable was not found")?;
+    let output = Command::new(pkexec)
+        .arg(executable)
         .arg("--no-cat")
         .arg("--json-recovery-root")
         .arg(action.as_str())
@@ -82,6 +80,63 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("decode JSON recovery report: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, String> {
+    let executable = super::find_trusted_installed_gitrun_binary()
+        .ok_or("trusted installed GitRun executable was not found for Main Library restore")?;
+    let systemd_run = Path::new("/usr/bin/systemd-run");
+    if !super::is_trusted_root_executable(systemd_run) {
+        return Err("trusted root-owned /usr/bin/systemd-run executable was not found".into());
+    }
+
+    let output = Command::new(systemd_run)
+        .args([
+            "--system",
+            "--wait",
+            "--pipe",
+            "--collect",
+            "--quiet",
+            "--property=Type=oneshot",
+            "--property=TimeoutStartSec=0",
+            "--property=PrivateTmp=yes",
+            "--property=ProtectSystem=full",
+            "--property=ProtectHome=yes",
+            "--property=NoNewPrivileges=yes",
+            "--property=ReadWritePaths=/usr/share/gitrun/library",
+            "--description=GitRun signed Main Library restore",
+            "--",
+        ])
+        .arg(executable)
+        .args(["--no-cat", "--json-recovery-root", "restore-main-library"])
+        .output()
+        .map_err(|error| format!("unable to start isolated Main Library restore: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(if detail.is_empty() {
+            format!(
+                "isolated Main Library restore exited with {}",
+                output.status
+            )
+        } else {
+            format!(
+                "isolated Main Library restore exited with {}: {detail}",
+                output.status
+            )
+        });
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode isolated Main Library restore report: {error}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, String> {
+    Err("Main Library restore through the system service is supported only on Linux".into())
 }
 
 /// Root-only target for a fixed-purpose CLI entry point.

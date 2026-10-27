@@ -337,7 +337,9 @@ mod tests {
         assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("WantedBy=multi-user.target"));
         assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("Restart=on-failure"));
         assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("Group=gitrun-control"));
-        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains("ReadWritePaths=/etc/gitrun /var/lib/gitrun /var/log/gitrun /var/cache/gitrun /opt/gitrun /usr/share/gitrun /run/gitrun-control"));
+        assert!(SYSTEMD_CONTROL_MANAGER_SERVICE.contains(
+            "ReadWritePaths=/etc/gitrun /var/lib/gitrun /var/log/gitrun /var/cache/gitrun /opt/gitrun /usr/share/gitrun /run/gitrun-control"
+        ));
         assert!(SYSTEMD_CONTROL_MANAGER_SERVICE
             .contains("Environment=GITRUN_CONFIG_FILE=/etc/gitrun/gitrun.env"));
     }

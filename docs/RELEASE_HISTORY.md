@@ -1,6 +1,34 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.6<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.8.7<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.8.7 — JSON recovery, Main Library integrity and CPU history
+
+- **Source/product target:** `1.8.7`, recorded in `version.txt`. This entry describes the source line; it does not by itself claim that a signed release artifact is published.
+- Expanded `gitrun doctor` JSON diagnostics so each discovered file is checked and the report distinguishes malformed JSON, inaccessible files and safety-limit failures while preserving terminal scrollback.
+- Added conservative JSON repair, explicit restoration from sibling `.json.Back` backups, and an explicit Main Library restore operation. Repair normalizes only recognized safe cases; ambiguous input is left untouched. Recovery writes are atomic and reject symbolic-link targets.
+- Added a separate `library.zip` release artifact containing the 11 selected JSON reference files as `.json.Back` entries. The signed release manifest supplies its checksum; validation checks archive membership, safe paths, JSON shape and extraction limits. Setup/updater populate missing Main Library entries and create only missing local backups; they do not overwrite existing copies during routine runs. The explicit Main Library restore changes the reference-library area, not active operational configuration.
+- Added actual host CPU utilization history to the dashboard Overview and a CPU sparkline in `gitrun manage` when the backend supplies samples. The history is bounded to 60 samples, is host-wide rather than per-job telemetry, and is process-local so it resets when GitRun restarts.
+- Protected system configuration reads can use the existing fixed-purpose Control Manager path after a real permission-denied result; inaccessible protected state is not treated as corruption and permissions are not loosened as a fallback.
+- Corrected the release workflow's duplicate-library-member check so it counts archive names line-by-line instead of falsely detecting duplicates due to an incorrectly escaped `printf` format.
+- **Implementation PRs:** [#129](https://github.com/Vider06/GitRun/pull/129) and [#131](https://github.com/Vider06/GitRun/pull/131).
+
+## GitRun 1.8.6 — runner-network bootstrap and Logs clipboard shortcut
+
+- **Source/product target:** `1.8.6`, recorded in `version.txt` for this historical source line.
+- Fixed managed runner-network bootstrap when Docker reports the exact named-network error `network gitrun-runner not found`. The scheduler can reach the existing creation path for the configured missing network while unrelated network names and permission failures remain errors; the GitRun-managed bridge and Linux inter-container isolation checks remain in place.
+- Added a Logs-only `c Copy logs` shortcut in `gitrun manage`. It sends an OSC 52 clipboard-write request for loaded log output, bounded to the newest 64 KiB; acceptance depends on the local terminal and any SSH/tmux configuration. GitRun does not read clipboard contents or claim that the request was accepted.
+- Updated `gitrun-scheduler` from 0.11.1 to 0.11.2 and `gitrun-cli` from 0.13.6 to 0.13.7 for the corresponding source changes.
+- **Implementation PR:** [#127](https://github.com/Vider06/GitRun/pull/127).
+
+## GitRun 1.8.5 — responsive management-console polish
+
+- **Source/product target:** `1.8.5`, recorded in `version.txt` for this historical source line.
+- Replaced the Settings gear with the neutral `≡` glyph, added restrained TUI panel styling, and introduced a compact cat status panel only when the terminal is at least 110 columns by 24 rows. The panel reuses validated sprite data and reports UI operation state; it is not an independent health check.
+- Added structural Markdown-marker validation so ordinary PR checks can verify marker pairing/coverage without requiring version values to match early. Strict value synchronization remains part of release preparation.
+- Follow-up release automation now opens or refreshes a docs-only PR for marker synchronization instead of pushing documentation directly to protected `main`.
+- Updated `gitrun-cli` from 0.13.5 to 0.13.6 for the terminal-console changes.
+- **Implementation PRs:** [#124](https://github.com/Vider06/GitRun/pull/124) and [#125](https://github.com/Vider06/GitRun/pull/125).
 
 ## GitRun 1.8.4 — crate version reconciliation and Markdown automation
 

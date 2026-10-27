@@ -1,6 +1,6 @@
-# GitRun architecture — GitRun <!-- gitrun-version:start -->1.8.6<!-- gitrun-version:end -->
+# GitRun architecture — GitRun <!-- gitrun-version:start -->1.8.7<!-- gitrun-version:end -->
 
-> This is the high-level architecture overview for the <!-- gitrun-version:start -->1.8.6<!-- gitrun-version:end --> source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
+> This is the high-level architecture overview for the <!-- gitrun-version:start -->1.8.7<!-- gitrun-version:end --> source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 
@@ -59,6 +59,14 @@ Important shared state lives under `GITRUN_STATE_DIR`:
 Some setup, health and crash records are intentionally root-owned and mode `0600`. An unprivileged recovery UI can receive `PermissionDenied` when reading them; that alone is not evidence of corruption or incomplete setup. The repair path treats this as protected state and only migrates the validated legacy files/directories described in the [release history](RELEASE_HISTORY.md).
 
 The Tauri dashboard and scheduler intentionally share file formats for VM and Logic Containers configuration.
+
+## JSON integrity, recovery and host telemetry
+
+Doctor scans discovered JSON files individually and reports the affected path when content is malformed, inaccessible or exceeds a safety limit. The recovery surface separates active configuration, sibling `.json.Back` snapshots and the Main Library reference set. JSON repair is conservative and leaves ambiguous content unchanged; explicit backup restoration requires confirmation and recovery writes are atomic.
+
+The release's `library.zip` contains the 11 selected JSON reference sources under `.json.Back` names. Its checksum is recorded in the signed release manifest, and installation checks member paths, JSON structure and extraction limits. Routine setup/update creates missing local snapshots and fills missing reference-library entries without overwriting existing copies. The explicit Main Library restore replaces reference files in the dedicated library location, not active operational configuration.
+
+For system installs, protected configuration remains root-owned. A fixed-purpose Control Manager read may be used after a real permission-denied result; inaccessible protected state is not interpreted as corrupt and is not made user-readable as a workaround. The Overview also exposes a bounded history of up to 60 actual host CPU samples for recent operations; that history is process-local, resets on restart and is not per-job telemetry. See the [Recovery guide](../crates/gitrun-recovery/README.md) and [dashboard guide](../crates/gitrun-dashboard-tauri/README.md#host-cpu-history).
 
 ## Security boundaries
 

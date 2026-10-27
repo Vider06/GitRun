@@ -112,7 +112,11 @@ pub fn run_json_recovery_root_action(action: &str) -> Result<JsonRecoveryReport,
         action: action.as_str().into(),
         ..JsonRecoveryReport::default()
     };
-    let targets = collect_recovery_json_targets(&roots, &mut report);
+    let targets = collect_recovery_json_targets(
+        &roots,
+        action == JsonRecoveryAction::RestoreBackups,
+        &mut report,
+    );
     report.scanned = targets.len();
     match action {
         JsonRecoveryAction::Repair => repair_json_targets(&targets, &mut report),
@@ -181,6 +185,7 @@ fn recovery_json_candidate(path: &Path, root: &Path) -> bool {
 
 fn collect_recovery_json_targets(
     roots: &[PathBuf],
+    include_missing_backed_up_files: bool,
     report: &mut JsonRecoveryReport,
 ) -> Vec<PathBuf> {
     let mut targets = Vec::new();
@@ -232,10 +237,20 @@ fn collect_recovery_json_targets(
                     pending.push(path);
                     continue;
                 }
-                if !metadata.is_file() || !recovery_json_candidate(&path, root) {
+                if !metadata.is_file() {
                     continue;
                 }
-                targets.push(path);
+                if recovery_json_candidate(&path, root) {
+                    targets.push(path);
+                } else if include_missing_backed_up_files {
+                    if let Some(target) = active_path_for_backup(&path) {
+                        if recovery_json_candidate(&target, root) {
+                            // Restore can recreate a deleted active JSON file from its backup.
+                            // Any existing symlink is still rejected at write time.
+                            targets.push(target);
+                        }
+                    }
+                }
                 if targets.len() >= 10_000 {
                     push_recovery_error(report, "JSON recovery scan reached the 10,000-file safety limit".into());
                     return targets;
@@ -246,6 +261,17 @@ fn collect_recovery_json_targets(
     targets.sort();
     targets.dedup();
     targets
+}
+
+fn active_path_for_backup(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_str()?;
+    let active_name = name
+        .strip_suffix(".Back")
+        .or_else(|| name.strip_suffix(".back"))?;
+    if !active_name.to_ascii_lowercase().ends_with(".json") {
+        return None;
+    }
+    Some(path.with_file_name(active_name))
 }
 
 fn append_backup_suffix(path: &Path) -> PathBuf {
@@ -483,7 +509,7 @@ fn push_recovery_detail(report: &mut JsonRecoveryReport, detail: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_backup_suffix, remove_trailing_json_commas, repaired_json_value, same_json_root_shape};
+    use super::{active_path_for_backup, append_backup_suffix, remove_trailing_json_commas, repaired_json_value, same_json_root_shape};
     use std::path::Path;
 
     #[test]
@@ -507,6 +533,15 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&normalized).unwrap();
         assert_eq!(value["message"], "hello,}");
         assert_eq!(value["items"][0], 1);
+    }
+
+    #[test]
+    fn restore_can_map_a_backup_to_a_missing_active_json_file() {
+        assert_eq!(
+            active_path_for_backup(Path::new("/var/lib/gitrun/kitty/settings.json.Back")).unwrap(),
+            Path::new("/var/lib/gitrun/kitty/settings.json")
+        );
+        assert!(active_path_for_backup(Path::new("/var/lib/gitrun/model-123.json")).is_none());
     }
 
     #[test]

@@ -470,7 +470,7 @@ pub fn install_main_library_from_manifest(
         let mut archive = zip::ZipArchive::new(file).map_err(|error| {
             UpdateError::InvalidManifest(format!("invalid library ZIP: {error}"))
         })?;
-        if archive.len() == 0 || archive.len() > 256 {
+        if archive.is_empty() || archive.len() > 256 {
             return Err(UpdateError::InvalidManifest(
                 "library ZIP has an empty or excessive entry count".into(),
             ));

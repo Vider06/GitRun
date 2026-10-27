@@ -28,6 +28,7 @@ use std::{
     net::TcpStream,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
+    sync::OnceLock,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -1606,7 +1607,7 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
 
     // The Windows helper acknowledges a clipboard sequence-number change
     // without reading clipboard contents, and transfers logs only if needed.
-    if env::var_os("GITRUN_LOG_EXPORT_PORT").is_some() && env::var_os("GITRUN_LOG_EXPORT_TOKEN").is_some() {
+    if env::var_os("GITRUN_LOG_EXPORT_PORT").is_some() && env::var_os("GITRUN_LOG_EXPORT_TOKEN_FILE").is_some() {
         if let Some(attempt) = request_windows_client_copy(text, &sequence, truncated) {
             match attempt {
                 Ok((method, copied_truncated)) => {
@@ -1645,10 +1646,57 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
     })
 }
 
+fn windows_log_export_token() -> Option<String> {
+    static TOKEN: OnceLock<Option<String>> = OnceLock::new();
+    TOKEN.get_or_init(load_windows_log_export_token_file).clone()
+}
+
+#[cfg(unix)]
+fn load_windows_log_export_token_file() -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let path_text = env::var("GITRUN_LOG_EXPORT_TOKEN_FILE").ok()?;
+    let path = Path::new(&path_text);
+    // Accept only the exact, generated /tmp filename shape. The token itself
+    // never appears in the remote command line or the process environment.
+    let name = path.file_name()?.to_str()?;
+    let suffix = name
+        .strip_prefix("GitRun-logs-token-")?
+        .strip_suffix(".txt")?;
+    if path_text != format!("/tmp/{name}")
+        || suffix.len() != 32
+        || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o777 != 0o600
+    {
+        return None;
+    }
+
+    let token = std::fs::read_to_string(path).ok()?;
+    let token = token.trim().to_owned();
+    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    // Unlink immediately after validating the user-owned, private token file.
+    // The token remains only in process memory for this management-console run.
+    std::fs::remove_file(path).ok()?;
+    Some(token)
+}
+
+#[cfg(not(unix))]
+fn load_windows_log_export_token_file() -> Option<String> {
+    None
+}
+
 fn request_windows_client_copy(text: &str, sequence: &str, truncated: bool) -> Option<Result<(ClipboardCopyMethod, bool), String>> {
     let port = env::var("GITRUN_LOG_EXPORT_PORT").ok()?.parse::<u16>().ok().filter(|port| *port != 0)?;
-    let token = env::var("GITRUN_LOG_EXPORT_TOKEN").ok()?;
-    if token.len() < 32 || token.bytes().any(|byte| !byte.is_ascii_hexdigit()) { return None; }
+    let token = windows_log_export_token()?;
     let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     // Missing tunnel is normal for a plain SSH session; use OSC 52 and remote-file fallback.
     let mut stream = match TcpStream::connect_timeout(&address, Duration::from_millis(500)) { Ok(stream) => stream, Err(_) => return None };

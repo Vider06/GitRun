@@ -148,8 +148,33 @@ $listener.Start()
 $localPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
 $remotePort = Get-Random -Minimum 41000 -Maximum 58000
 $token = [Guid]::NewGuid().ToString('N')
+$tokenFilePath = '/tmp/GitRun-logs-token-{0}.txt' -f $token
 $forward = '127.0.0.1:{0}:127.0.0.1:{1}' -f $remotePort,$localPort
-$remoteCommand = 'GITRUN_LOG_EXPORT_PORT={0} GITRUN_LOG_EXPORT_TOKEN={1} gitrun manage' -f $remotePort,$token
+
+# Send the random token through SSH stdin into a user-owned 0600 file.
+# Keeping the token out of command-line arguments prevents other host users
+# from reading it via process listings while the console is running.
+$tokenStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+$tokenStartInfo.FileName = $ssh.Source
+$tokenStartInfo.UseShellExecute = $false
+$tokenStartInfo.RedirectStandardInput = $true
+$tokenStartInfo.CreateNoWindow = $false
+$tokenStartInfo.Arguments = @('-T',$Target,('umask 077; cat > {0} && chmod 600 {0}' -f $tokenFilePath)) -join ' '
+$tokenProcess = $null
+try {
+    $tokenProcess = [System.Diagnostics.Process]::Start($tokenStartInfo)
+    $tokenProcess.StandardInput.WriteLine($token)
+    $tokenProcess.StandardInput.Close()
+    $tokenProcess.WaitForExit()
+    if ($tokenProcess.ExitCode -ne 0) {
+        throw "Could not create the private GitRun log-export token file (ssh exit $($tokenProcess.ExitCode))."
+    }
+}
+finally {
+    if ($null -ne $tokenProcess) { $tokenProcess.Dispose() }
+}
+
+$remoteCommand = "trap 'rm -f $tokenFilePath' EXIT; GITRUN_LOG_EXPORT_PORT=$remotePort GITRUN_LOG_EXPORT_TOKEN_FILE=$tokenFilePath gitrun manage"
 $startInfo = New-Object System.Diagnostics.ProcessStartInfo
 $startInfo.FileName = $ssh.Source
 $startInfo.UseShellExecute = $false

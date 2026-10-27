@@ -2915,9 +2915,7 @@ fn doctor_json_file_check(path: &Path) -> Result<String, String> {
 
 fn doctor_load_config() -> Result<Config, String> {
     let system_install = system_install_paths().is_some();
-    if system_install
-        && !running_as_root()
-        && gitrun_dashboard_tauri_lib::control_manager_enabled()
+    if system_install && !running_as_root() && gitrun_dashboard_tauri_lib::control_manager_enabled()
     {
         // The system env file may be root-owned and intentionally unreadable
         // to the desktop account. Reuse the same allowlisted Control Manager

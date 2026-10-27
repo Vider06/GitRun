@@ -126,7 +126,7 @@ function Handle-LogExportClient {
 
 if ($PSCmdlet.ParameterSetName -eq 'Receive') {
     Receive-RemoteLogFile -RemoteSource $Source
-    exit 0
+    return
 }
 if ($Target -notmatch '^[A-Za-z0-9._@:-]+$' -or $Target.StartsWith('-')) {
     throw 'Target must be a simple SSH target such as user@MainNode or 100.x.y.z.'
@@ -167,7 +167,7 @@ try {
     }
     $sshProcess.WaitForExit()
     if ($sshProcess.ExitCode -ne 0) { Write-Warning "SSH exited with code $($sshProcess.ExitCode). Confirm that remote port forwarding is allowed." }
-    exit $sshProcess.ExitCode
+    return
 }
 finally {
     if ($null -ne $sshProcess) {

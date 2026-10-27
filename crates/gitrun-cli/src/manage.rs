@@ -1671,6 +1671,12 @@ fn request_windows_client_copy(text: &str, sequence: &str, truncated: bool) -> O
     match response.as_str() {
         "COPIED" => Some(Ok((ClipboardCopyMethod::WindowsClipboard, truncated))),
         "FALLBACK" => {
+            // The user may leave Save As open while choosing a destination.
+            // The clipboard-detection phase is bounded separately; allow a
+            // generous but finite window only for the explicit file-save step.
+            stream.set_read_timeout(Some(Duration::from_secs(10 * 60)))
+                .map_err(|error| format!("could not extend Windows save timeout: {error}"))
+                .ok()?;
             if text.len() > WINDOWS_LOG_EXPORT_MAX_BYTES {
                 let _ = writeln!(stream, "ERROR logs exceed the 32 MiB Windows transfer limit");
                 return Some(Err("logs exceed the 32 MiB Windows transfer limit".into()));

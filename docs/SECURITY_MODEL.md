@@ -1,4 +1,4 @@
-# Security model — GitRun <!-- gitrun-version:start -->1.8.6<!-- gitrun-version:end -->
+# Security model — GitRun <!-- gitrun-version:start -->1.8.7<!-- gitrun-version:end -->
 
 ## Optional Kitty Smart Scheduler
 
@@ -182,6 +182,10 @@ Several installation-state files are intentionally inaccessible to the unprivile
 The privileged Repair path is fail-closed. It validates the `/etc/gitrun` and `/etc/systemd/system` directories, checks config/settings file type, ownership, link count and permissions, and only auto-migrates a known legacy desktop-user-owned configuration when its state directory is exactly `/var/lib/gitrun`. It repairs only the validated directory entry and known config/settings files; it does not recursively change ownership, delete health/crash records, or adopt arbitrary Vault, backup, update or registry contents. Noncanonical paths, unexpected owners, symbolic links and hard links are rejected.
 
 Service recovery restores the packaged `gitrun.service` and `gitrun-gsr.service` contracts and restarts both after a systemd reload. The installed unit must match the packaged contract, including its hardening settings; an arbitrary unit with a plausible `ExecStart` is not treated as equivalent. See the [release history](RELEASE_HISTORY.md) for the historical migration summary and deployment-check boundaries.
+
+JSON recovery keeps three data classes separate: active operational configuration, local sibling `.json.Back` snapshots and the official Main Library reference set. Routine setup/update creates only missing local backups and fills only missing reference-library entries; it does not silently replace existing copies. Explicit backup restoration may overwrite active JSON and therefore requires confirmation. Automated repair handles only unambiguous cases and leaves uncertain files unchanged. Recovery writes are atomic and reject symbolic-link targets.
+
+The official `library.zip` is a reference artifact rather than a configuration export. Its contents are selected JSON reference files renamed with the `.json.Back` suffix; the signed manifest provides the artifact checksum, while extraction validation checks member paths, JSON structure and expansion limits. Explicit Main Library restoration operates only on the dedicated reference-library directory and must not overwrite active configuration. These checks reduce archive and accidental-overwrite risk but do not replace inspection of the exact release commit and its verification results.
 
 ## Verification status — historical v1.5.0 baseline
 

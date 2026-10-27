@@ -518,6 +518,18 @@ mod tests {
         assert!(ResourceCapacity::from_measurements(4.0, 20.0, 16 * GIB, 20 * GIB).is_none());
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn host_cpu_sampler_returns_a_bounded_live_measurement() {
+        let usage = sample_cpu_percent()
+            .expect("Linux host CPU utilization must be measurable from /proc/stat");
+        assert!(usage.is_finite(), "CPU utilization must be finite");
+        assert!(
+            (0.0..=100.0).contains(&usage),
+            "CPU utilization must be in 0..=100, got {usage}"
+        );
+    }
+
     #[test]
     fn pressure_is_triggered_by_any_threshold() {
         let c = Config {

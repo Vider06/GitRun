@@ -1749,6 +1749,19 @@ fn main() {
                 }
             }
         }
+        Command::JsonRecoveryRoot { action } => {
+            initialize_update_signing_environment(system_install_paths().is_some());
+            match gitrun_recovery::run_json_recovery_root_action(&action) {
+                Ok(report) => {
+                    println!("{}", serde_json::to_string(&report).unwrap_or_else(|_| "{}".into()));
+                    0
+                }
+                Err(error) => {
+                    eprintln!("GitRun JSON recovery: FAIL — {error}");
+                    1
+                }
+            }
+        },
         Command::ReadGitRunSettingsRoot => match read_gitrun_settings_root_command() {
             Ok(()) => 0,
             Err(error) => {
@@ -1828,6 +1841,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::SaveKittySettingsRoot { .. }
         | Command::ReadKittyDashboardRoot
         | Command::ReadGitRunSettingsRoot
+        | Command::JsonRecoveryRoot { .. }
         | Command::FixUpdateRoot => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
             ValidationState::Recovering
@@ -2005,6 +2019,12 @@ enum Command {
     SaveGitRunSettingsRoot {
         /// Private JSON file containing a GitRunSettings object.
         input_path: String,
+    },
+    /// Internal fixed-purpose privileged JSON recovery action.
+    #[command(name = "--json-recovery-root", hide = true)]
+    JsonRecoveryRoot {
+        /// One of repair, restore-backups, or restore-main-library.
+        action: String,
     },
     /// Internal read-only helper for root-protected GitRun security settings.
     #[command(name = "--read-gitrun-settings-root", hide = true)]
@@ -3309,6 +3329,12 @@ fn run_update(
         return match run_runner_only_update() {
             Ok(count) => {
                 println!("GitRun GTUU: updated {count} permanent runner(s)");
+                if let Ok(config) = load_config() {
+                    match refresh_json_setup_assets(&config, system_install) {
+                        Ok((backups, library)) => println!("GitRun JSON library: {backups} missing backup(s) created; {library} Main Library file(s) added"),
+                        Err(error) => eprintln!("GitRun GTUU: WARN — JSON library refresh will need retry: {error}"),
+                    }
+                }
                 0
             }
             Err(error) => {

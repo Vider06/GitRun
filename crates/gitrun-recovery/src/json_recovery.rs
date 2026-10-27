@@ -58,8 +58,8 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
 
     let executable = super::find_trusted_installed_gitrun_binary()
         .ok_or("trusted installed GitRun executable was not found for JSON recovery")?;
-    let pkexec = super::find_trusted_pkexec()
-        .ok_or("trusted /usr/bin/pkexec executable was not found")?;
+    let pkexec =
+        super::find_trusted_pkexec().ok_or("trusted /usr/bin/pkexec executable was not found")?;
     let output = Command::new(pkexec)
         .arg(executable)
         .arg("--no-cat")
@@ -118,7 +118,10 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         let detail = if stderr.is_empty() { stdout } else { stderr };
         return Err(if detail.is_empty() {
-            format!("isolated Main Library restore exited with {}", output.status)
+            format!(
+                "isolated Main Library restore exited with {}",
+                output.status
+            )
         } else {
             format!(
                 "isolated Main Library restore exited with {}: {detail}",

@@ -2927,7 +2927,8 @@ fn doctor_json_file_check(
     }
     let content = std::fs::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::PermissionDenied && expected_protected_permissions {
-            "INFO: protected by system permissions; run `sudo gitrun doctor` to validate this file".to_owned()
+            "INFO: protected by system permissions; run `sudo gitrun doctor` to validate this file"
+                .to_owned()
         } else if error.kind() == std::io::ErrorKind::PermissionDenied {
             format!(
                 "WARN: permission denied reading {}: {error}",

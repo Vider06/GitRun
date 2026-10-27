@@ -1609,12 +1609,10 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
 
     let local_helper_configured = env::var_os("GITRUN_LOG_EXPORT_PORT").is_some()
         && env::var_os("GITRUN_LOG_EXPORT_TOKEN_FILE").is_some();
-    let mut native_failure = None;
-
     // The user's own desktop clipboard is the first choice when launched via
     // the Windows/Linux wrapper. Do not report success for an Ubuntu desktop
     // clipboard before trying the clipboard attached to the SSH client.
-    if local_helper_configured {
+    let native_failure = if local_helper_configured {
         match request_client_log_export(text) {
             Some(Ok(method)) => {
                 let cancelled = method == ClipboardCopyMethod::ClientFallbackCancelled;
@@ -1635,13 +1633,12 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
                 });
             }
             Some(Err(error)) => {
-                native_failure = Some(format!("local clipboard/export helper failed: {error}"));
+                Some(format!("local clipboard/export helper failed: {error}"))
             }
-            None => {
-                native_failure = Some(
-                    "local clipboard helper was not reachable; falling back to SSH clipboard handling".into(),
-                );
-            }
+            None => Some(
+                "local clipboard helper was not reachable; falling back to SSH clipboard handling"
+                    .into(),
+            ),
         }
     } else {
         let (native_method, helper_failure) = try_native_clipboard_copy(text);
@@ -1654,8 +1651,8 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
                 fallback_command: None,
             });
         }
-        native_failure = helper_failure;
-    }
+        helper_failure
+    };
 
     // Plain SSH cannot report whether OSC 52 reached the clipboard. Send it
     // as a best effort, wait briefly, then prepare a private remote text file.

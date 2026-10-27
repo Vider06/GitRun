@@ -1578,9 +1578,9 @@ enum ClipboardCopyMethod {
     Native(&'static str),
     Osc52,
     TmuxPassthrough,
-    WindowsClipboard,
-    WindowsFallbackSaved,
-    WindowsFallbackCancelled,
+    ClientClipboard,
+    ClientFallbackSaved,
+    ClientFallbackCancelled,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1596,63 +1596,83 @@ fn request_logs_clipboard(text: &str) -> io::Result<ClipboardCopyOutcome> {
     if text.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "there is no log output to copy"));
     }
+
     let (native_method, mut native_failure) = try_native_clipboard_copy(text);
     if let Some(method) = native_method {
-        return Ok(ClipboardCopyOutcome { method: ClipboardCopyMethod::Native(method), truncated: false, native_failure: None, fallback_file: None, fallback_command: None });
+        return Ok(ClipboardCopyOutcome {
+            method: ClipboardCopyMethod::Native(method),
+            truncated: false,
+            native_failure: None,
+            fallback_file: None,
+            fallback_command: None,
+        });
     }
 
-    let (sequence, truncated) = build_osc52_sequence(text).map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-    let in_tmux = env::var_os("TMUX").is_some();
-    let mut sequence_sent = false;
-
-    // The Windows helper acknowledges a clipboard sequence-number change
-    // without reading clipboard contents, and transfers logs only if needed.
-    if env::var_os("GITRUN_LOG_EXPORT_PORT").is_some() && env::var_os("GITRUN_LOG_EXPORT_TOKEN_FILE").is_some() {
-        if let Some(attempt) = request_windows_client_copy(text, &sequence, truncated) {
-            match attempt {
-                Ok((method, copied_truncated)) => {
-                    return Ok(ClipboardCopyOutcome { method, truncated: copied_truncated, native_failure: None, fallback_file: None, fallback_command: None });
-                }
-                Err(error) => {
-                    sequence_sent = true;
-                    native_failure = Some(match native_failure {
-                        Some(previous) => format!("{previous}; Windows fallback: {error}"),
-                        None => format!("Windows client fallback unavailable: {error}"),
-                    });
-                }
+    // Local Windows/Linux helpers provide a real native clipboard operation
+    // and a platform-native file-save fallback, with a bounded response.
+    if env::var_os("GITRUN_LOG_EXPORT_PORT").is_some()
+        && env::var_os("GITRUN_LOG_EXPORT_TOKEN_FILE").is_some()
+    {
+        match request_client_log_export(text) {
+            Some(Ok(method)) => {
+                let cancelled = method == ClipboardCopyMethod::ClientFallbackCancelled;
+                let fallback_file = if cancelled && env::var_os("SSH_CONNECTION").is_some() {
+                    Some(write_logs_fallback_file(text)?)
+                } else {
+                    None
+                };
+                let fallback_command = fallback_file
+                    .as_ref()
+                    .and_then(|path| fallback_receive_command(path));
+                return Ok(ClipboardCopyOutcome {
+                    method,
+                    truncated: false,
+                    native_failure: None,
+                    fallback_file,
+                    fallback_command,
+                });
             }
+            Some(Err(error)) => {
+                native_failure = Some(format!("local clipboard/export helper failed: {error}"));
+            }
+            None => {}
         }
     }
 
-    if !sequence_sent {
-        let output = if in_tmux { wrap_osc52_for_tmux(&sequence) } else { sequence.clone() };
+    // Plain SSH cannot report whether OSC 52 reached the clipboard. Send it
+    // as a best effort, wait briefly, then prepare a private remote text file.
+    let (sequence, truncated) = build_osc52_sequence(text)
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+    let in_tmux = env::var_os("TMUX").is_some();
+    let output = if in_tmux { wrap_osc52_for_tmux(&sequence) } else { sequence };
+    {
         let mut stdout = io::stdout().lock();
         stdout.write_all(output.as_bytes())?;
         stdout.flush()?;
     }
-
-    // OSC 52 has no portable success acknowledgement. For plain SSH, wait
-    // briefly and prepare a private .txt export so the loaded logs remain recoverable.
     let fallback_file = if env::var_os("SSH_CONNECTION").is_some() {
-        if env::var_os("GITRUN_LOG_EXPORT_PORT").is_none() || !sequence_sent {
-            std::thread::sleep(Duration::from_secs(2));
-        }
+        std::thread::sleep(Duration::from_secs(2));
         Some(write_logs_fallback_file(text)?)
-    } else { None };
+    } else {
+        None
+    };
     let fallback_command = fallback_file.as_ref().and_then(|path| fallback_receive_command(path));
     Ok(ClipboardCopyOutcome {
         method: if in_tmux { ClipboardCopyMethod::TmuxPassthrough } else { ClipboardCopyMethod::Osc52 },
-        truncated, native_failure, fallback_file, fallback_command,
+        truncated,
+        native_failure,
+        fallback_file,
+        fallback_command,
     })
 }
 
-fn windows_log_export_token() -> Option<String> {
+fn client_log_export_token() -> Option<String> {
     static TOKEN: OnceLock<Option<String>> = OnceLock::new();
-    TOKEN.get_or_init(load_windows_log_export_token_file).clone()
+    TOKEN.get_or_init(load_client_log_export_token_file).clone()
 }
 
 #[cfg(unix)]
-fn load_windows_log_export_token_file() -> Option<String> {
+fn load_client_log_export_token_file() -> Option<String> {
     use std::os::unix::fs::MetadataExt;
 
     let path_text = env::var("GITRUN_LOG_EXPORT_TOKEN_FILE").ok()?;
@@ -1690,56 +1710,66 @@ fn load_windows_log_export_token_file() -> Option<String> {
 }
 
 #[cfg(not(unix))]
-fn load_windows_log_export_token_file() -> Option<String> {
+fn load_client_log_export_token_file() -> Option<String> {
     None
 }
 
-fn request_windows_client_copy(text: &str, sequence: &str, truncated: bool) -> Option<Result<(ClipboardCopyMethod, bool), String>> {
+fn request_client_log_export(text: &str) -> Option<Result<ClipboardCopyMethod, String>> {
     let port = env::var("GITRUN_LOG_EXPORT_PORT").ok()?.parse::<u16>().ok().filter(|port| *port != 0)?;
-    let token = windows_log_export_token()?;
-    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    // Missing tunnel is normal for a plain SSH session; use OSC 52 and remote-file fallback.
-    let mut stream = match TcpStream::connect_timeout(&address, Duration::from_millis(500)) { Ok(stream) => stream, Err(_) => return None };
-    let timeout = Duration::from_secs(5);
-    if stream.set_read_timeout(Some(timeout)).is_err() || stream.set_write_timeout(Some(timeout)).is_err() { return None; }
-    if writeln!(stream, "GITRUN_LOGS_V1 {token}").is_err() { return None; }
-    match read_protocol_line(&mut stream) { Ok(line) if line == "READY" => {}, _ => return None }
-
-    let output = if env::var_os("TMUX").is_some() { wrap_osc52_for_tmux(sequence) } else { sequence.to_owned() };
-    let mut stdout = io::stdout().lock();
-    if let Err(error) = stdout.write_all(output.as_bytes()).and_then(|()| stdout.flush()) {
-        return Some(Err(format!("could not send clipboard request: {error}")));
+    let token = client_log_export_token()?;
+    if text.len() > WINDOWS_LOG_EXPORT_MAX_BYTES {
+        return Some(Err(format!("logs exceed the {} MiB client-transfer limit", WINDOWS_LOG_EXPORT_MAX_BYTES / (1024 * 1024))));
     }
-    drop(stdout);
-    if let Err(error) = writeln!(stream, "CHECK") { return Some(Err(format!("clipboard acknowledgement channel failed: {error}"))); }
-    let response = match read_protocol_line(&mut stream) {
-        Ok(line) => line,
-        Err(error) => return Some(Err(format!("clipboard acknowledgement timed out: {error}"))),
+
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = match TcpStream::connect_timeout(&address, Duration::from_millis(500)) {
+        Ok(stream) => stream,
+        Err(_) => return None,
     };
-    match response.as_str() {
-        "COPIED" => Some(Ok((ClipboardCopyMethod::WindowsClipboard, truncated))),
-        "FALLBACK" => {
-            // The user may leave Save As open while choosing a destination.
-            // The clipboard-detection phase is bounded separately; allow a
-            // generous but finite window only for the explicit file-save step.
-            stream.set_read_timeout(Some(Duration::from_secs(10 * 60)))
-                .map_err(|error| format!("could not extend Windows save timeout: {error}"))
-                .ok()?;
-            if text.len() > WINDOWS_LOG_EXPORT_MAX_BYTES {
-                let _ = writeln!(stream, "ERROR logs exceed the 32 MiB Windows transfer limit");
-                return Some(Err("logs exceed the 32 MiB Windows transfer limit".into()));
+    let handshake_timeout = Duration::from_secs(5);
+    if stream.set_read_timeout(Some(handshake_timeout)).is_err()
+        || stream.set_write_timeout(Some(handshake_timeout)).is_err()
+    {
+        return None;
+    }
+    if writeln!(stream, "GITRUN_LOGS_V1 {token}").is_err() {
+        return None;
+    }
+    match read_protocol_line(&mut stream) {
+        Ok(line) if line == "READY" => {}
+        _ => return None,
+    }
+    if let Err(error) = writeln!(stream, "LOGS {}", text.len())
+        .and_then(|()| stream.write_all(text.as_bytes()))
+        .and_then(|()| stream.flush())
+    {
+        return Some(Err(format!("could not send logs to the local helper: {error}")));
+    }
+
+    match read_protocol_line(&mut stream) {
+        Ok(line) if line == "COPIED" => Some(Ok(ClipboardCopyMethod::ClientClipboard)),
+        Ok(line) if line == "SAVED" => Some(Ok(ClipboardCopyMethod::ClientFallbackSaved)),
+        Ok(line) if line == "FALLBACK" => {
+            let save_timeout = Duration::from_secs(10 * 60);
+            if stream.set_read_timeout(Some(save_timeout)).is_err() {
+                return Some(Err("could not set the local Save As timeout".into()));
             }
-            if let Err(error) = writeln!(stream, "LOGS {}", text.len()).and_then(|()| stream.write_all(text.as_bytes())).and_then(|()| stream.flush()) {
-                return Some(Err(format!("could not send logs to Windows: {error}")));
+            if let Err(error) = writeln!(stream, "LOGS {}", text.len())
+                .and_then(|()| stream.write_all(text.as_bytes()))
+                .and_then(|()| stream.flush())
+            {
+                return Some(Err(format!("could not send the log fallback: {error}")));
             }
             match read_protocol_line(&mut stream) {
-                Ok(line) if line == "SAVED" => Some(Ok((ClipboardCopyMethod::WindowsFallbackSaved, false))),
-                Ok(line) if line == "CANCELLED" => Some(Ok((ClipboardCopyMethod::WindowsFallbackCancelled, false))),
-                Ok(line) => Some(Err(format!("Windows receiver returned {line}"))),
-                Err(error) => Some(Err(format!("Windows save result timed out: {error}"))),
+                Ok(line) if line == "SAVED" => Some(Ok(ClipboardCopyMethod::ClientFallbackSaved)),
+                Ok(line) if line == "CANCELLED" => Some(Ok(ClipboardCopyMethod::ClientFallbackCancelled)),
+                Ok(line) => Some(Err(format!("local helper returned {line}"))),
+                Err(error) => Some(Err(format!("local Save As result timed out: {error}"))),
             }
         }
-        other => Some(Err(format!("unexpected Windows clipboard response: {other}"))),
+        Ok(line) if line == "CANCELLED" => Some(Ok(ClipboardCopyMethod::ClientFallbackCancelled)),
+        Ok(line) => Some(Err(format!("unexpected local helper response: {line}"))),
+        Err(error) => Some(Err(format!("local helper response timed out: {error}"))),
     }
 }
 
@@ -1769,9 +1799,9 @@ fn clipboard_copy_notice(outcome: &ClipboardCopyOutcome) -> String {
             if outcome.fallback_file.is_some() { "Clipboard request sent through tmux; a .txt fallback is ready".to_owned() }
             else { "OSC 52 sent through tmux; requires allow-passthrough on and terminal clipboard support".to_owned() }
         }
-        ClipboardCopyMethod::WindowsClipboard => "Copied logs to Windows clipboard (terminal clipboard update acknowledged)".to_owned(),
-        ClipboardCopyMethod::WindowsFallbackSaved => "Clipboard was not updated; logs saved on Windows and opened in Notepad".to_owned(),
-        ClipboardCopyMethod::WindowsFallbackCancelled => "Clipboard was not updated; Windows Save As was cancelled".to_owned(),
+        ClipboardCopyMethod::ClientClipboard => "Copied logs to the local system clipboard".to_owned(),
+        ClipboardCopyMethod::ClientFallbackSaved => "Clipboard unavailable; logs saved locally and opened".to_owned(),
+        ClipboardCopyMethod::ClientFallbackCancelled => "Local save was cancelled; a remote .txt fallback is available".to_owned(),
     };
     if outcome.truncated { notice.push_str(" · newest 64 KiB copied to clipboard"); }
     if let Some(error) = outcome.native_failure.as_deref() {
@@ -1812,13 +1842,22 @@ fn write_logs_fallback_file(text: &str) -> io::Result<PathBuf> {
 
 fn fallback_receive_command(path: &Path) -> Option<String> {
     let username = env::var("USER").ok()?;
-    if username.is_empty() || !username.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')) { return None; }
+    if username.is_empty()
+        || !username.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return None;
+    }
     let connection = env::var("SSH_CONNECTION").ok()?;
     let server_address = connection.split_whitespace().nth(2)?;
-    if server_address.is_empty() || !server_address.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-')) { return None; }
+    if server_address.is_empty()
+        || !server_address.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    {
+        return None;
+    }
     let source = format!("{username}@{server_address}:{}", path.display());
-    let helper_url = "https://raw.githubusercontent.com/Vider06/GitRun/fix/gsr-bootstrap-all-runner-profiles/scripts/gitrun-manage.ps1";
-    Some(format!("$helper = Join-Path $env:TEMP 'gitrun-manage.ps1'; Invoke-WebRequest '{helper_url}' -OutFile $helper; & $helper -Source '{source}'"))
+    Some(format!(
+        "Windows: powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\gitrun-manage.ps1 -Source '{source}'\nLinux: bash scripts/gitrun-manage.sh --source '{source}'"
+    ))
 }
 
 fn wrap_osc52_for_tmux(sequence: &str) -> String {

@@ -89,6 +89,36 @@ function Receive-RemoteLogFile {
     }
     finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
 }
+function Read-ProtocolBytes {
+    param([System.Net.Sockets.NetworkStream]$Stream,[int]$Length)
+    $buffer = New-Object byte[] $Length
+    $offset = 0
+    while ($offset -lt $Length) {
+        $read = $Stream.Read($buffer,$offset,$Length-$offset)
+        if ($read -le 0) { throw 'Connection closed while receiving GitRun logs.' }
+        $offset += $read
+    }
+    return ,$buffer
+}
+function Invoke-NativeClipboardCopy {
+    param([byte[]]$Bytes)
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo.FileName = (Get-Command 'clip.exe' -ErrorAction Stop).Source
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.RedirectStandardInput = $true
+    $process.StartInfo.CreateNoWindow = $true
+    [void]$process.Start()
+    try {
+        $process.StandardInput.BaseStream.Write($Bytes,0,$Bytes.Length)
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit(2000)) {
+            try { $process.Kill() } catch {}
+            return $false
+        }
+        return ($process.ExitCode -eq 0)
+    }
+    finally { $process.Dispose() }
+}
 function Handle-LogExportClient {
     param([System.Net.Sockets.TcpClient]$Client,[string]$ExpectedToken)
     $stream = $Client.GetStream()
@@ -97,24 +127,24 @@ function Handle-LogExportClient {
     try {
         $hello = Read-ProtocolLine -Stream $stream
         if ($hello -cne ('GITRUN_LOGS_V1 ' + $ExpectedToken)) { Write-ProtocolLine $stream 'DENIED'; return }
-        # Only observe the clipboard sequence number; clipboard data is never read.
-        $baseline = [GitRunClipboardSequence]::GetClipboardSequenceNumber()
         Write-ProtocolLine $stream 'READY'
-        if ((Read-ProtocolLine -Stream $stream) -cne 'CHECK') { Write-ProtocolLine $stream 'ERROR expected CHECK'; return }
-        $deadline = [DateTime]::UtcNow.AddMilliseconds(2500)
-        $changed = $false
-        while ([DateTime]::UtcNow -lt $deadline) {
-            if ([GitRunClipboardSequence]::GetClipboardSequenceNumber() -ne $baseline) { $changed = $true; break }
-            Start-Sleep -Milliseconds 40
-        }
-        if ($changed) { Write-ProtocolLine $stream 'COPIED'; return }
-        Write-ProtocolLine $stream 'FALLBACK'
         $header = Read-ProtocolLine -Stream $stream
         if ($header -notmatch '^LOGS ([0-9]{1,8})$') { Write-ProtocolLine $stream 'ERROR invalid log payload header'; return }
         $length = [int]$Matches[1]
         if ($length -gt $MaximumLogBytes) { Write-ProtocolLine $stream 'ERROR log payload exceeds limit'; return }
         $bytes = Read-ProtocolBytes -Stream $stream -Length $length
-        if (Save-LogBytesWithDialog -Bytes $bytes) { Write-ProtocolLine $stream 'SAVED' }
+        if (Invoke-NativeClipboardCopy -Bytes $bytes) {
+            Write-ProtocolLine $stream 'COPIED'
+            return
+        }
+        Write-ProtocolLine $stream 'FALLBACK'
+        $stream.ReadTimeout = 600000
+        $fallbackHeader = Read-ProtocolLine -Stream $stream
+        if ($fallbackHeader -notmatch '^LOGS ([0-9]{1,8})$') { Write-ProtocolLine $stream 'ERROR invalid fallback payload header'; return }
+        $fallbackLength = [int]$Matches[1]
+        if ($fallbackLength -gt $MaximumLogBytes) { Write-ProtocolLine $stream 'ERROR fallback exceeds limit'; return }
+        $fallbackBytes = Read-ProtocolBytes -Stream $stream -Length $fallbackLength
+        if (Save-LogBytesWithDialog -Bytes $fallbackBytes) { Write-ProtocolLine $stream 'SAVED' }
         else { Write-ProtocolLine $stream 'CANCELLED' }
     }
     catch {
@@ -130,16 +160,6 @@ if ($PSCmdlet.ParameterSetName -eq 'Receive') {
 }
 if ($Target -notmatch '^[A-Za-z0-9._@:-]+$' -or $Target.StartsWith('-')) {
     throw 'Target must be a simple SSH target such as user@MainNode or 100.x.y.z.'
-}
-if (-not ('GitRunClipboardSequence' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System.Runtime.InteropServices;
-public static class GitRunClipboardSequence
-{
-    [DllImport("user32.dll")]
-    public static extern uint GetClipboardSequenceNumber();
-}
-'@
 }
 $ssh = Get-Command 'ssh.exe' -ErrorAction SilentlyContinue
 if ($null -eq $ssh) { $ssh = Get-Command 'ssh' -ErrorAction Stop }
@@ -179,7 +199,7 @@ $startInfo = New-Object System.Diagnostics.ProcessStartInfo
 $startInfo.FileName = $ssh.Source
 $startInfo.UseShellExecute = $false
 $startInfo.CreateNoWindow = $false
-$startInfo.Arguments = @('-o','ExitOnForwardFailure=yes','-R',$forward,'-tt',$Target,$remoteCommand) -join ' '
+$startInfo.Arguments = @('-o','ExitOnForwardFailure=no','-R',$forward,'-tt',$Target,$remoteCommand) -join ' '
 $sshProcess = $null
 try {
     $sshProcess = [System.Diagnostics.Process]::Start($startInfo)

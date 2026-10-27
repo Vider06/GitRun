@@ -2722,13 +2722,10 @@ mod visual_design_tests {
         let mut state = State::new();
         state.set_result(
             "CPU sample",
-            json!({
-                "cpu_history": [
-                    {"sampled_at": 10, "cpu_percent": 4.4},
-                    {"sampled_at": 20, "cpu_percent": 71.8},
-                    {"sampled_at": 30, "cpu_percent": 130.0}
-                ]
-            }),
+            serde_json::from_str(
+                r#"{"cpu_history":[{"sampled_at":10,"cpu_percent":4.4},{"sampled_at":20,"cpu_percent":71.8},{"sampled_at":30,"cpu_percent":130.0}]}"#,
+            )
+            .expect("CPU history fixture must be valid JSON"),
         );
         assert_eq!(super::resource_history(&state), vec![4, 72, 100]);
     }

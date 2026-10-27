@@ -691,11 +691,8 @@ mod tests {
 
     #[test]
     fn repair_closes_only_unambiguous_end_of_file_containers() {
-        let value = repaired_json_value(
-            r#"{"nested":[1,2"#,
-            Path::new("truncated.json"),
-        )
-        .expect("missing terminal brackets can be restored without guessing values");
+        let value = repaired_json_value(r#"{"nested":[1,2"#, Path::new("truncated.json"))
+            .expect("missing terminal brackets can be restored without guessing values");
         assert_eq!(value["nested"][0], 1);
         assert_eq!(value["nested"][1], 2);
 
@@ -707,7 +704,10 @@ mod tests {
         assert_eq!(value["items"][1], 2);
 
         assert!(repaired_json_value(r#"{"enabled": "#, Path::new("missing-value.json")).is_err());
-        assert!(repaired_json_value(r#"{"message":"unterminated"#, Path::new("open-string.json")).is_err());
+        assert!(
+            repaired_json_value(r#"{"message":"unterminated"#, Path::new("open-string.json"))
+                .is_err()
+        );
         assert!(repaired_json_value(r#"{"items":[1,2}}"#, Path::new("mismatched.json")).is_err());
     }
 

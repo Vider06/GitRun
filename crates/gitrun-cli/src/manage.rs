@@ -1643,11 +1643,14 @@ fn wrap_osc52_for_tmux(sequence: &str) -> String {
 }
 
 fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io::Result<()> {
+    // Clipboard helpers may fork a resident process that keeps inherited
+    // output pipes open. Send diagnostics to /dev/null so waiting only tracks
+    // the short-lived foreground helper, not a clipboard-owner descendant.
     let mut child = ProcessCommand::new(program)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()?;
     let mut input = child.stdin.take().ok_or_else(|| {
         io::Error::new(io::ErrorKind::BrokenPipe, "clipboard helper stdin unavailable")
@@ -1660,19 +1663,14 @@ fn run_native_clipboard_command(program: &str, args: &[&str], text: &str) -> io:
     }
     drop(input);
 
-    let output = child.wait_with_output()?;
-    if output.status.success() {
-        return Ok(());
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "{program} exited with {status}"
+        )))
     }
-    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        if detail.is_empty() {
-            format!("{program} exited with {}", output.status)
-        } else {
-            format!("{program} exited with {}: {detail}", output.status)
-        },
-    ))
 }
 
 #[cfg(target_os = "linux")]

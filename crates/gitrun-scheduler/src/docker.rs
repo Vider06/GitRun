@@ -2001,10 +2001,7 @@ fn append_seccomp_profile_args(args: &mut Vec<String>, profile: &str) {
     if profile.eq_ignore_ascii_case("default") {
         return;
     }
-    args.extend([
-        "--security-opt".to_owned(),
-        format!("seccomp={profile}"),
-    ]);
+    args.extend(["--security-opt".to_owned(), format!("seccomp={profile}")]);
 }
 
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {

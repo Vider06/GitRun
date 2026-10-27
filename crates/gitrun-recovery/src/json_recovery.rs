@@ -91,10 +91,7 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
         return Err("trusted root-owned /usr/bin/systemd-run executable was not found".into());
     }
 
-    let unit_name = format!(
-        "gitrun-main-library-restore-{}.service",
-        std::process::id()
-    );
+    let unit_name = format!("gitrun-main-library-restore-{}.service", std::process::id());
     let output = Command::new(systemd_run)
         .args(["--system", "--wait", "--pipe", "--collect", "--unit"])
         .arg(&unit_name)

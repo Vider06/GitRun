@@ -707,10 +707,10 @@ fn handle_key(
                 Ok(truncated) => {
                     state.error = false;
                     state.notice = if truncated {
-                        "Copy request sent · latest 64 KiB only · OSC 52 terminal support required"
+                        "OSC 52 request sent (latest 64 KiB); clipboard depends on terminal/SSH/tmux support"
                             .into()
                     } else {
-                        "Copy request sent · OSC 52 terminal support required".into()
+                        "OSC 52 request sent; clipboard depends on terminal/SSH/tmux support".into()
                     };
                 }
                 Err(error) => {
@@ -757,6 +757,10 @@ fn handle_key(
     Ok(false)
 }
 
+fn logs_footer_height(page: usize) -> u16 {
+    if page == 7 { 3 } else { 2 }
+}
+
 const WIDE_HEADER_TAGLINE: &str = "  SSH-FIRST  ·  LIVE OPERATIONS  ·  SAFE BY DEFAULT";
 
 fn header_separator(area_width: u16, tagline: &str) -> String {
@@ -777,7 +781,7 @@ fn render(frame: &mut Frame<'_>, state: &State) {
                 3
             }),
             Constraint::Min(7),
-            Constraint::Length(2),
+            Constraint::Length(logs_footer_height(state.page)),
         ])
         .split(area);
 
@@ -1174,13 +1178,29 @@ fn render(frame: &mut Frame<'_>, state: &State) {
         Span::styled(" Help  ", Style::default().fg(MUTED)),
         Span::styled("q", Style::default().fg(BAD).add_modifier(Modifier::BOLD)),
         Span::styled(" Exit  ", Style::default().fg(MUTED)),
-        Span::raw("│ "),
-        Span::styled(
-            state.notice.as_str(),
-            Style::default().fg(if state.error { BAD } else { GOOD }),
-        ),
     ]);
-    let footer = Paragraph::new(Line::from(footer_spans))
+
+    // Keep Logs feedback on its own full-width row. Appending it after the
+    // navigation shortcuts could clip the status on narrow SSH terminals.
+    let footer_lines = if state.page == 7 {
+        vec![
+            Line::from(footer_spans),
+            Line::from(Span::styled(
+                format!("  {}", state.notice),
+                Style::default().fg(if state.error { BAD } else { GOOD }),
+            )),
+        ]
+    } else {
+        footer_spans.extend([
+            Span::raw("│ "),
+            Span::styled(
+                state.notice.as_str(),
+                Style::default().fg(if state.error { BAD } else { GOOD }),
+            ),
+        ]);
+        vec![Line::from(footer_spans)]
+    };
+    let footer = Paragraph::new(footer_lines)
         .style(Style::default().bg(PANEL_BG))
         .block(
             Block::default()
@@ -3359,7 +3379,7 @@ mod tests {
 mod visual_design_tests {
     use super::{
         build_osc52_sequence, header_separator, json_editor_fields, json_editor_value_at_path_mut,
-        logs_clipboard_text, mascot_state, parse_json_editor_input, JsonEditorInputKind,
+        logs_clipboard_text, logs_footer_height, mascot_state, parse_json_editor_input, JsonEditorInputKind,
         JsonEditorPathSegment, State, OSC52_MAX_COPY_BYTES, PAGES, WIDE_HEADER_TAGLINE,
     };
     use serde_json::json;
@@ -3439,6 +3459,13 @@ mod visual_design_tests {
     #[test]
     fn osc52_rejects_empty_copy_payloads() {
         assert!(build_osc52_sequence("").is_err());
+    }
+
+    #[test]
+    fn logs_footer_reserves_a_separate_line_for_visible_feedback() {
+        assert_eq!(logs_footer_height(7), 3);
+        assert_eq!(logs_footer_height(0), 2);
+        assert_eq!(logs_footer_height(10), 2);
     }
 
     #[test]

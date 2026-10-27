@@ -333,7 +333,12 @@ fn read_valid_json(path: &Path) -> Result<(Vec<u8>, serde_json::Value), String> 
 
 fn repaired_json_value(content: &str, path: &Path) -> Result<serde_json::Value, String> {
     let without_bom = content.strip_prefix('\u{feff}').unwrap_or(content);
-    let normalized = remove_trailing_json_commas(without_bom);
+    // Missing closing braces/brackets at end-of-file can be repaired
+    // deterministically when every opener and closer still matches. Do not
+    // guess missing values, commas, or the end of an unterminated string.
+    let completed = close_unfinished_containers(without_bom)
+        .map_err(|detail| format!("{} could not be repaired safely: {detail}", path.display()))?;
+    let normalized = remove_trailing_json_commas(&completed);
     let value: serde_json::Value = serde_json::from_str(&normalized).map_err(|error| {
         format!(
             "{} remains invalid after safe normalization at line {}, column {}: {error}",
@@ -349,6 +354,64 @@ fn repaired_json_value(content: &str, path: &Path) -> Result<serde_json::Value, 
         ));
     }
     Ok(value)
+}
+
+fn close_unfinished_containers(input: &str) -> Result<String, &'static str> {
+    let mut output = String::with_capacity(input.len().saturating_add(8));
+    let mut stack = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for ch in input.chars() {
+        if in_string {
+            output.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => {
+                in_string = true;
+                output.push(ch);
+            }
+            '{' | '[' => {
+                stack.push(ch);
+                output.push(ch);
+            }
+            '}' => {
+                if stack.pop() != Some('{') {
+                    return Err("mismatched or unexpected closing brace");
+                }
+                output.push(ch);
+            }
+            ']' => {
+                if stack.pop() != Some('[') {
+                    return Err("mismatched or unexpected closing bracket");
+                }
+                output.push(ch);
+            }
+            _ => output.push(ch),
+        }
+    }
+
+    if in_string {
+        return Err("unterminated string; refusing to guess its value");
+    }
+
+    while let Some(open) = stack.pop() {
+        output.push(match open {
+            '{' => '}',
+            '[' => ']',
+            _ => return Err("unknown JSON container delimiter"),
+        });
+    }
+    Ok(output)
 }
 
 fn remove_trailing_json_commas(input: &str) -> String {
@@ -627,8 +690,25 @@ mod tests {
     }
 
     #[test]
-    fn repair_does_not_guess_missing_brackets_or_close_unbalanced_json() {
-        assert!(repaired_json_value(r#"{ "enabled": true "#, Path::new("broken.json")).is_err());
+    fn repair_closes_only_unambiguous_end_of_file_containers() {
+        let value = repaired_json_value(
+            r#"{"nested":[1,2"#,
+            Path::new("truncated.json"),
+        )
+        .expect("missing terminal brackets can be restored without guessing values");
+        assert_eq!(value["nested"][0], 1);
+        assert_eq!(value["nested"][1], 2);
+
+        let value = repaired_json_value(
+            r#"{"items":[1,2, "#,
+            Path::new("trailing-comma-and-brackets.json"),
+        )
+        .expect("terminal containers and a trailing comma can be repaired safely");
+        assert_eq!(value["items"][1], 2);
+
+        assert!(repaired_json_value(r#"{"enabled": "#, Path::new("missing-value.json")).is_err());
+        assert!(repaired_json_value(r#"{"message":"unterminated"#, Path::new("open-string.json")).is_err());
+        assert!(repaired_json_value(r#"{"items":[1,2}}"#, Path::new("mismatched.json")).is_err());
     }
 
     #[test]

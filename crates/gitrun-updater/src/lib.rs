@@ -485,7 +485,10 @@ pub fn install_main_library_from_manifest(
             let mut entry = archive.by_index(index).map_err(|error| {
                 UpdateError::InvalidManifest(format!("invalid library ZIP entry: {error}"))
             })?;
-            let name = entry.name().to_owned();
+            let name = entry
+                .name()
+                .map_err(|error| UpdateError::InvalidManifest(format!("invalid library member name: {error}")))?
+                .into_owned();
             if name.is_empty() || name.contains('\\') || name.starts_with('/') {
                 return Err(UpdateError::InvalidManifest(format!(
                     "unsafe library member path: {name}"
@@ -632,7 +635,7 @@ pub fn refresh_json_backups(roots: &[PathBuf]) -> Result<usize, UpdateError> {
                     continue;
                 }
                 let bytes = fs::read(&path)?;
-                let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+                let value: serde_json::Value = match serde_json::from_slice::<serde_json::Value>(&bytes) {
                     Ok(value) if value.is_object() || value.is_array() => value,
                     _ => continue,
                 };

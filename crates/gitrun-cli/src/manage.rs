@@ -2546,9 +2546,9 @@ fn collect_json_editor_fields(
             }
         }
         _ => {
-            let read_only = path.iter().any(|part| {
-                matches!(part, JsonEditorPathSegment::Key(key) if key == "_instructions")
-            });
+            let read_only = path.iter().any(
+                |part| matches!(part, JsonEditorPathSegment::Key(key) if key == "_instructions"),
+            );
             fields.push(JsonEditorField {
                 path: path.clone(),
                 label: json_editor_path_label(path),
@@ -2602,10 +2602,7 @@ fn json_editor_value_at_path_mut<'a>(
     }
 }
 
-fn parse_json_editor_input(
-    kind: JsonEditorInputKind,
-    input: &str,
-) -> Result<Value, String> {
+fn parse_json_editor_input(kind: JsonEditorInputKind, input: &str) -> Result<Value, String> {
     match kind {
         JsonEditorInputKind::String => Ok(Value::String(input.to_owned())),
         JsonEditorInputKind::Integer => {
@@ -2783,12 +2780,18 @@ fn render_json_editor(
             label, selected, ..
         } => {
             let false_style = if !*selected {
-                Style::default().fg(TEXT).bg(SELECTED_BG).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(TEXT)
+                    .bg(SELECTED_BG)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(MUTED)
             };
             let true_style = if *selected {
-                Style::default().fg(TEXT).bg(SELECTED_BG).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(TEXT)
+                    .bg(SELECTED_BG)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(MUTED)
             };
@@ -2827,7 +2830,10 @@ fn render_json_editor(
                 "integer",
                 "float",
             ];
-            let items = types.iter().map(|kind| ListItem::new(*kind)).collect::<Vec<_>>();
+            let items = types
+                .iter()
+                .map(|kind| ListItem::new(*kind))
+                .collect::<Vec<_>>();
             let mut list_state = ListState::default();
             list_state.select(Some(*selected));
             let list = List::new(items)
@@ -2851,7 +2857,9 @@ fn render_json_editor(
 
     let help = match mode {
         JsonEditorMode::Browse => "↑/↓ Navigate  Enter Edit  s Save  Esc Cancel",
-        JsonEditorMode::Text { .. } => "Type value  Backspace Edit  Enter Apply  Esc Keep current value",
+        JsonEditorMode::Text { .. } => {
+            "Type value  Backspace Edit  Enter Apply  Esc Keep current value"
+        }
         JsonEditorMode::Boolean { .. } => "←/→ or ↑/↓ Choose  Enter Apply  Esc Keep current value",
         JsonEditorMode::NullType { .. } => "↑/↓ Choose type  Enter Continue  Esc Keep null",
     };
@@ -2884,7 +2892,8 @@ fn edit_json_document(
     let mut document = value.clone();
     let mut selected = 0usize;
     let mut mode = JsonEditorMode::Browse;
-    let mut notice = "Edit individual values. Press s to save the draft; backend validation still applies.";
+    let mut notice =
+        "Edit individual values. Press s to save the draft; backend validation still applies.";
     let mut error = false;
 
     loop {
@@ -2895,7 +2904,9 @@ fn edit_json_document(
         selected = selected.min(fields.len() - 1);
         terminal
             .draw(|frame| render_json_editor(frame, &fields, selected, &mode, notice, error))
-            .map_err(|draw_error| format!("unable to render structured JSON editor: {draw_error}"))?;
+            .map_err(|draw_error| {
+                format!("unable to render structured JSON editor: {draw_error}")
+            })?;
 
         let key = match event::read().map_err(|read_error| read_error.to_string())? {
             Event::Key(key) if key.kind == KeyEventKind::Press => key,
@@ -2955,21 +2966,20 @@ fn edit_json_document(
                     JsonEditorMode::Browse
                 }
                 KeyCode::Enter => {
-                    let parsed = if kind == JsonEditorInputKind::String
-                        && redacted
-                        && input.is_empty()
-                    {
-                        Ok(Value::String(REDACTED.into()))
-                    } else {
-                        parse_json_editor_input(kind, &input)
-                    };
+                    let parsed =
+                        if kind == JsonEditorInputKind::String && redacted && input.is_empty() {
+                            Ok(Value::String(REDACTED.into()))
+                        } else {
+                            parse_json_editor_input(kind, &input)
+                        };
                     match parsed {
                         Ok(value) => {
                             if let Some(target) =
                                 json_editor_value_at_path_mut(&mut document, &path)
                             {
                                 *target = value;
-                                notice = "Value applied to draft; press s on the field list to save.";
+                                notice =
+                                    "Value applied to draft; press s on the field list to save.";
                                 error = false;
                             } else {
                                 notice = "The selected field no longer exists; no change was made.";
@@ -2978,7 +2988,8 @@ fn edit_json_document(
                             JsonEditorMode::Browse
                         }
                         Err(_) => {
-                            notice = "Invalid input for this type; correct the value and try again.";
+                            notice =
+                                "Invalid input for this type; correct the value and try again.";
                             error = true;
                             JsonEditorMode::Text {
                                 path,
@@ -3059,11 +3070,19 @@ fn edit_json_document(
             } => match key.code {
                 KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
                     bool_selected = false;
-                    JsonEditorMode::Boolean { path, label, selected: bool_selected }
+                    JsonEditorMode::Boolean {
+                        path,
+                        label,
+                        selected: bool_selected,
+                    }
                 }
                 KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
                     bool_selected = true;
-                    JsonEditorMode::Boolean { path, label, selected: bool_selected }
+                    JsonEditorMode::Boolean {
+                        path,
+                        label,
+                        selected: bool_selected,
+                    }
                 }
                 KeyCode::Char(' ') => JsonEditorMode::Boolean {
                     path,
@@ -3086,7 +3105,11 @@ fn edit_json_document(
                     error = false;
                     JsonEditorMode::Browse
                 }
-                _ => JsonEditorMode::Boolean { path, label, selected: bool_selected },
+                _ => JsonEditorMode::Boolean {
+                    path,
+                    label,
+                    selected: bool_selected,
+                },
             },
             JsonEditorMode::NullType {
                 path,
@@ -3150,7 +3173,11 @@ fn edit_json_document(
                     error = false;
                     JsonEditorMode::Browse
                 }
-                _ => JsonEditorMode::NullType { path, label, selected: type_selected },
+                _ => JsonEditorMode::NullType {
+                    path,
+                    label,
+                    selected: type_selected,
+                },
             },
         };
     }
@@ -3468,9 +3495,7 @@ mod visual_design_tests {
         });
         let fields = json_editor_fields(&document);
         assert!(fields.iter().any(|field| {
-            field.label == "$.scheduler.enabled"
-                && field.kind == "boolean"
-                && field.editable
+            field.label == "$.scheduler.enabled" && field.kind == "boolean" && field.editable
         }));
         assert!(fields.iter().any(|field| {
             field.label == "$.labels[1]" && field.kind == "string" && field.editable
@@ -3507,5 +3532,4 @@ mod visual_design_tests {
         assert!(parse_json_editor_input(JsonEditorInputKind::Integer, "1.2").is_err());
         assert!(parse_json_editor_input(JsonEditorInputKind::Float, "NaN").is_err());
     }
-
 }

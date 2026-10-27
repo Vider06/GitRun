@@ -177,14 +177,11 @@ def handle_client(client: socket.socket, token: str, saved_paths: list[Path]) ->
             if result == "SAVED" and path is not None:
                 saved_paths.append(path)
             write_line(client, result)
-            if reason:
-                print(f"GitRun native clipboard unavailable: {reason}", file=sys.stderr)
         except (OSError, ValueError, ConnectionError) as error:
             try:
                 write_line(client, "ERROR local export failed")
             except OSError:
                 pass
-            print(f"GitRun Logs helper: {error}", file=sys.stderr)
 
 def remote_token(ssh: str, target: str, token: str) -> str:
     path = f"{TOKEN_PREFIX}{token}.txt"

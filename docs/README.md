@@ -22,6 +22,7 @@ The current source/product version on this branch is **<!-- gitrun-version:start
 ## Version history
 
 - [GitRun 1.8.9 source-line notes](v1.8.9-fixes.md) — isolated Main Library restoration, protected JSON diagnostics and version alignment.
+- [GitRun 1.8.14 source-line notes](v1.8.14-fixes.md) — acknowledged Windows/Linux Logs copying with a file-save fallback and consistent GSR runner bootstrap.
 - [GitRun 1.8.12 source-line notes](v1.8.12-fixes.md) — copy Logs to a native clipboard where available and forward OSC 52 correctly through tmux.
 - [GitRun 1.8.11 source-line notes](v1.8.11-fixes.md) — remove the immediate Main Library restore timeout and safely recover the workflow API socket path.
 - [GitRun 1.8.10 source-line notes](v1.8.10-fixes.md) — Docker's built-in seccomp profile handling and Main Library restore diagnostics.

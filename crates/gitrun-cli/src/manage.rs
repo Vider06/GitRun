@@ -1800,7 +1800,7 @@ fn clipboard_copy_notice(outcome: &ClipboardCopyOutcome) -> String {
             else { "OSC 52 sent through tmux; requires allow-passthrough on and terminal clipboard support".to_owned() }
         }
         ClipboardCopyMethod::ClientClipboard => "Copied logs to the local system clipboard".to_owned(),
-        ClipboardCopyMethod::ClientFallbackSaved => "Clipboard unavailable; logs saved locally and opened".to_owned(),
+        ClipboardCopyMethod::ClientFallbackSaved => "Clipboard unavailable; logs saved locally".to_owned(),
         ClipboardCopyMethod::ClientFallbackCancelled => "Local save was cancelled; a remote .txt fallback is available".to_owned(),
     };
     if outcome.truncated { notice.push_str(" · newest 64 KiB copied to clipboard"); }

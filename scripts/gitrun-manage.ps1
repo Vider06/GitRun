@@ -149,7 +149,6 @@ function Handle-LogExportClient {
     }
     catch {
         try { Write-ProtocolLine $stream 'ERROR receiver failed' } catch {}
-        Write-Warning $_.Exception.Message
     }
     finally { $stream.Dispose(); $Client.Close() }
 }

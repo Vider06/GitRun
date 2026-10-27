@@ -10,7 +10,7 @@ GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It
 
 It is designed for developers and teams who want to use their own runner infrastructure without turning every workflow into an unrestricted host administrator. **No Kubernetes cluster is required.**
 
-> **Source version:** this branch targets <!-- gitrun-version:start -->1.8.9<!-- gitrun-version:end -->. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+> **Source version:** this branch targets <!-- gitrun-version:start -->1.8.10<!-- gitrun-version:end -->. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## What can GitRun do?
 

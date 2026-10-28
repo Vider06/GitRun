@@ -1,6 +1,6 @@
 [package]
 name = "gitrun-scheduler"
-version = "0.11.8"
+version = "0.11.9"
 edition = "2021"
 license = "Apache-2.0"
 description = "GitRun autoscaler: reconciles desired vs actual runner containers against GitHub Actions and Docker"
@@ -12,6 +12,7 @@ gitrun-exe = { path = "../gitrun-exe" }
 gitrun-gsr = { path = "../gitrun-gsr" }
 gitrun-vault = { path = "../gitrun-vault" }
 gitrun-updater = { path = "../gitrun-updater" }
+gitrun-setup = { path = "../gitrun-setup" }
 base64 = "0.23"
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }

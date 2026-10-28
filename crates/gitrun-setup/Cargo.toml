@@ -1,6 +1,6 @@
 [package]
 name = "gitrun-setup"
-version = "0.9.10"
+version = "0.9.11"
 edition = "2021"
 license = "Apache-2.0"
 description = "Host dependency and setup checks for GitRun"
@@ -10,3 +10,4 @@ gitrun-core = { path = "../gitrun-core" }
 gitrun-updater = { path = "../gitrun-updater" }
 thiserror = "2"
 libc = "0.2"
+sha2 = "0.11"

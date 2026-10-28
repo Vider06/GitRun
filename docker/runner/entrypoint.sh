@@ -120,6 +120,27 @@ touch "$GSR_EVENTS_FILE"
 chown root:root "$GSR_EVENTS_FILE"
 chmod 0600 "$GSR_EVENTS_FILE"
 
+# Used only by GitRun's image validator. The updater starts the real entrypoint
+# with /run/gitrun mounted as tmpfs and exits here before runner registration.
+if [[ "${1:-}" == "--policy-bootstrap-smoke-test" ]]; then
+  if [[ "$(stat -c '%u:%g:%a' -- "$GSR_POLICY_FILE")" != "0:0:444" ]]; then
+    echo "gitrun-runner: GSR policy bootstrap smoke test failed: unsafe policy ownership or mode" >&2
+    exit 1
+  fi
+  for required_binary in /bin/bash.gitrun-real /usr/local/bin/gitrun-gsr-agent /usr/local/bin/gitrun-api; do
+    if [[ ! -x "$required_binary" ]]; then
+      echo "gitrun-runner: GSR policy bootstrap smoke test failed: missing executable $required_binary" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '^GITRUN_GSR_COMMAND_POLICY_ENABLED=true' "$GSR_POLICY_FILE"; then
+    echo "gitrun-runner: GSR policy bootstrap smoke test failed: policy content is missing" >&2
+    exit 1
+  fi
+  echo "gitrun-runner: GSR policy bootstrap smoke test PASS"
+  exit 0
+fi
+
 mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 

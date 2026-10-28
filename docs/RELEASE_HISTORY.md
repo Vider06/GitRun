@@ -1,6 +1,16 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.14<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.8.15<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.8.15 — fingerprinted local runner-image refresh and GTUU reconciliation
+
+- **Source/product target:** `1.8.15`, recorded in `version.txt`. This entry describes source behavior and does not assert that a signed release artifact has been published.
+- Build the Workbench runner Dockerfile from the Dockerfile embedded in the signed GitRun release instead of silently fetching an older, separately pinned Premade copy during setup.
+- Fingerprint the selected runner profile, Dockerfile, entrypoint, source files and file modes used by the minimal GSR build context. A matching image label avoids unnecessary rebuilds; Dockerfile, entrypoint or build-context changes invalidate the fingerprint.
+- Build under a temporary tag, validate the build fingerprint and exact original-Bash entrypoint, then execute the real entrypoint with the runtime `/run/gitrun` tmpfs mounted. The smoke test verifies that the root-owned protected policy and required GSR binaries are created before any runner registration.
+- Promote the public local image tag only after every validation succeeds. A failed build, invalid entrypoint or failed policy-bootstrap smoke test leaves the prior tag and existing containers untouched.
+- Refresh local images before GTUU compares image IDs. The normal system update triggers GTUU after a validated rebuild; eligible permanent runners are replaced safely while busy runners remain untouched. Registry-qualified images retain the signed-manifest and digest-verification path.
+- Bump only the changed `gitrun-cli` (`0.13.14` to `0.13.15`), `gitrun-setup` (`0.9.10` to `0.9.11`) and `gitrun-scheduler` (`0.11.8` to `0.11.9`) crates, keeping `Cargo.lock` aligned.
 
 ## GitRun 1.8.14 — acknowledged Logs export and consistent GSR bootstrap
 

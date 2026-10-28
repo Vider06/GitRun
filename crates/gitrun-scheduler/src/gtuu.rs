@@ -39,6 +39,8 @@ pub enum GtuuError {
     Io(#[from] std::io::Error),
     #[error("GitVault secret resolution failed: {0}")]
     Vault(String),
+    #[error("local runner image refresh failed: {0}")]
+    RunnerImageRefresh(String),
 }
 
 pub type Result<T> = std::result::Result<T, GtuuError>;
@@ -255,6 +257,8 @@ pub struct GtuuConfig<'a> {
 /// image differs from the freshly pulled one. Returns the number actually
 /// updated (mirrors the Python `update_permanent_containers` return value).
 pub fn update_permanent_containers(client: &GitHubClient, config: &GtuuConfig) -> Result<u32> {
+    gitrun_setup::refresh_local_runner_image_if_stale(config.image)
+        .map_err(|error| GtuuError::RunnerImageRefresh(error.to_string()))?;
     docker::ensure_shared_cache_volume(config.shared_cache_volume)?;
     let new_image_id = pull_image(config.image)?;
 

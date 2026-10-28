@@ -1930,7 +1930,9 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         // Update validates the release plan before entering the updating state.
         // Keeping the initial state neutral avoids showing "updating" when the
         // requested release is already installed or otherwise rejected.
-        Command::Update { .. } | Command::Gtuu { .. } | Command::FixUpdate => ValidationState::Ready,
+        Command::Update { .. } | Command::Gtuu { .. } | Command::FixUpdate => {
+            ValidationState::Ready
+        }
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
         Command::Manage => ValidationState::Reading,
         Command::Uninstall
@@ -3486,7 +3488,9 @@ fn run_gtuu_command(
         return match command.status() {
             Ok(status) => status.code().unwrap_or(1),
             Err(error) => {
-                eprintln!("GitRun GTUU: FAIL — unable to request administrator authorization: {error}");
+                eprintln!(
+                    "GitRun GTUU: FAIL — unable to request administrator authorization: {error}"
+                );
                 1
             }
         };
@@ -3716,7 +3720,9 @@ fn run_update(
             let executable = match std::env::current_exe() {
                 Ok(path) => path,
                 Err(error) => {
-                    eprintln!("GitRun GTUU: FAIL — unable to resolve installed executable: {error}");
+                    eprintln!(
+                        "GitRun GTUU: FAIL — unable to resolve installed executable: {error}"
+                    );
                     return 1;
                 }
             };

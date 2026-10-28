@@ -281,15 +281,23 @@ pub fn update_permanent_containers_with_options(
     let new_image_id = pull_image(config.image)?;
 
     let mut updated = 0u32;
-    for repo in config.repositories.iter().filter(|repo| {
-        repository_filter.map_or(true, |filter| repo.eq_ignore_ascii_case(filter))
-    }) {
+    for repo in config
+        .repositories
+        .iter()
+        .filter(|repo| repository_filter.map_or(true, |filter| repo.eq_ignore_ascii_case(filter)))
+    {
         for container in docker::managed_containers(repo)? {
             if !container.permanent {
                 continue;
             }
-            if update_one(client, config, repo, &container.name, &new_image_id, force_replace)?
-                == UpdateOutcome::Updated
+            if update_one(
+                client,
+                config,
+                repo,
+                &container.name,
+                &new_image_id,
+                force_replace,
+            )? == UpdateOutcome::Updated
             {
                 updated += 1;
             }
@@ -312,9 +320,11 @@ pub fn check_permanent_containers(
         expected_image.as_deref().unwrap_or("MISSING")
     )];
     let mut found = 0usize;
-    for repo in config.repositories.iter().filter(|repo| {
-        repository_filter.map_or(true, |filter| repo.eq_ignore_ascii_case(filter))
-    }) {
+    for repo in config
+        .repositories
+        .iter()
+        .filter(|repo| repository_filter.map_or(true, |filter| repo.eq_ignore_ascii_case(filter)))
+    {
         let containers = docker::managed_containers(repo)?;
         for container in containers.into_iter().filter(|item| item.permanent) {
             found += 1;
@@ -328,7 +338,10 @@ pub fn check_permanent_containers(
         }
     }
     if found == 0 {
-        report.push("No permanent GitRun runner containers found for the selected repository scope.".to_owned());
+        report.push(
+            "No permanent GitRun runner containers found for the selected repository scope."
+                .to_owned(),
+        );
     }
     Ok(report)
 }

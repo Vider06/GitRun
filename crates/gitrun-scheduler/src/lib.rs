@@ -3372,7 +3372,11 @@ pub fn run_gtuu_with_options(
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
     if let Some(repo) = repository_filter {
-        if !config.repositories.iter().any(|configured| configured.eq_ignore_ascii_case(repo)) {
+        if !config
+            .repositories
+            .iter()
+            .any(|configured| configured.eq_ignore_ascii_case(repo))
+        {
             return Err(format!("repository {repo:?} is not configured in GitRun").into());
         }
     }
@@ -3432,8 +3436,7 @@ pub fn run_gtuu_with_options(
             if line.contains("image_id=MISSING")
                 || line.contains("image_match=false")
                 || line.contains("No permanent GitRun runner containers")
-                || (line.contains(" status=")
-                    && !line.to_ascii_lowercase().contains(" status=up "))
+                || (line.contains(" status=") && !line.to_ascii_lowercase().contains(" status=up "))
             {
                 issues = issues.saturating_add(1);
             }

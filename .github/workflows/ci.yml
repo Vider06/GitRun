@@ -1750,6 +1750,15 @@ jobs:
           fp="$(ci_image_fp)"
           lock="${lock_hash:-nolock}"
           profile="$(printf 'dev=%s;test=%s' "${CARGO_PROFILE_DEV_DEBUG:-default}" "${CARGO_PROFILE_TEST_DEBUG:-default}" | sha256sum | cut -c1-8)"
+          target="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-man${manifest_hash:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
+          # Restore prefixes must be literal prefixes of the primary key. Keep
+          # this through cfg: manifest, lock, profile, and job follow it. Cargo
+          # fingerprints validate artifacts restored from older keys or other jobs.
+          target_prefix="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-"
+          if [[ "$target" != "$target_prefix"* ]]; then
+            ci_err "target cache restore prefix is not a prefix of its primary key"
+            exit 1
+          fi
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
             echo "toolchain_prefix=$ns-rustup-${RUST_VERSION}-"
@@ -1758,8 +1767,8 @@ jobs:
             # deliberately spans lockfile and workspace-crate bumps: Cargo's fingerprints
             # validate restored artifacts and rebuild only incompatible dependencies.
             echo "registry_prefix=$ns-cargo-registry-"
-            echo "target=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-man${manifest_hash:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
-            echo "target_prefix=$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-prof${profile}-"
+            echo "target=$target"
+            echo "target_prefix=$target_prefix"
           } >> "$GITHUB_OUTPUT"
           echo "image fingerprint $fp: target caches are exact per job, with cross-job restore fallback"
       - &c_tc

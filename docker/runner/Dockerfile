@@ -89,6 +89,7 @@ COPY --from=gsr-builder /usr/local/cargo/bin /opt/cargo/bin
 RUN rustc --version \
     && cargo --version
 
+# Keep the toolchain root-owned and non-writable by group/other. Symlink mode bits are not chmod-able, so audit their ownership but check write bits only on non-symlinks.
 RUN useradd --create-home --shell /bin/bash runner \
     && mkdir -p /home/runner/actions-runner /var/lib/gitrun/shared /var/lib/gitrun/control \
     && chown -R runner:runner /home/runner /var/lib/gitrun/shared \
@@ -97,7 +98,6 @@ RUN useradd --create-home --shell /bin/bash runner \
     && chown -R root:root /opt/rustup /opt/cargo \
     && chmod -R go-w /opt/rustup /opt/cargo \
     && test -x /opt/cargo/bin/cargo \
-    # Symlink permission bits are not chmod-able; still require root ownership for every path. \
     && test -z "$(find /opt/cargo /opt/rustup -xdev \( ! -user root -o \( ! -type l -a -perm /022 \) \) -print -quit)"
 
 WORKDIR /home/runner/actions-runner

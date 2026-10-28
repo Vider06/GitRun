@@ -428,7 +428,9 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
                         }
                     );
                 }
-                Err(error) => println!("Runner image status unknown: Docker is unavailable ({error})."),
+                Err(error) => {
+                    println!("Runner image status unknown: Docker is unavailable ({error}).")
+                }
             }
         }
     } else {

@@ -68,22 +68,20 @@ pub fn run_gtuu_startup_once() -> Result<GtuuStartupReport, Box<dyn std::error::
             if image.reference.contains('/') {
                 // Registry-qualified images retain signed-manifest and digest verification.
                 match gitrun_updater::update_runner_image(image) {
-                    Ok(()) => {
-                        match configured_config_file() {
-                            Some(path) => match gitrun_updater::pin_runner_image(path, image) {
-                                Ok(()) => runner_image = image.reference.clone(),
-                                Err(error) => {
-                                    report.runner_image_error = Some(error.to_string());
-                                    runner_image_ready = false;
-                                }
-                            },
-                            None => {
-                                report.runner_image_error =
-                                    Some("runner image updated but no GitRun config file is available to pin it".into());
+                    Ok(()) => match configured_config_file() {
+                        Some(path) => match gitrun_updater::pin_runner_image(path, image) {
+                            Ok(()) => runner_image = image.reference.clone(),
+                            Err(error) => {
+                                report.runner_image_error = Some(error.to_string());
                                 runner_image_ready = false;
                             }
+                        },
+                        None => {
+                            report.runner_image_error =
+                                    Some("runner image updated but no GitRun config file is available to pin it".into());
+                            runner_image_ready = false;
                         }
-                    }
+                    },
                     Err(error) => {
                         report.runner_image_error = Some(error.to_string());
                         runner_image_ready = false;

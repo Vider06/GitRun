@@ -1164,7 +1164,8 @@ pub fn refresh_local_runner_image_if_stale(image_ref: &str) -> Result<bool, Setu
         || metadata.permissions().mode() & 0o022 != 0
     {
         return Err(SetupError::Command(
-            "trusted runner build root /opt/gitrun must be a root-owned, non-writable directory".into(),
+            "trusted runner build root /opt/gitrun must be a root-owned, non-writable directory"
+                .into(),
         ));
     }
 
@@ -1300,7 +1301,9 @@ fn refresh_local_runner_image_if_stale_at(
         if !entrypoint.status.success()
             || entrypoint_value != r#"["/bin/bash.gitrun-real","/entrypoint.sh"]"#
         {
-            let detail = String::from_utf8_lossy(&entrypoint.stderr).trim().to_owned();
+            let detail = String::from_utf8_lossy(&entrypoint.stderr)
+                .trim()
+                .to_owned();
             return Err(SetupError::Command(format!(
                 "temporary runner image has an invalid GSR bootstrap entrypoint ({entrypoint_value}); expected [\"/bin/bash.gitrun-real\", \"/entrypoint.sh\"]{detail}; existing image was preserved"
             )));
@@ -1361,10 +1364,7 @@ fn refresh_local_runner_image_if_stale_at(
 }
 
 fn validate_local_image_reference(image_ref: &str) -> Result<(), SetupError> {
-    if image_ref.is_empty()
-        || image_ref.trim() != image_ref
-        || image_ref.matches(':').count() > 1
-    {
+    if image_ref.is_empty() || image_ref.trim() != image_ref || image_ref.matches(':').count() > 1 {
         return Err(SetupError::Command(format!(
             "invalid local runner image reference: {image_ref:?}"
         )));
@@ -1378,9 +1378,9 @@ fn validate_local_image_reference(image_ref: &str) -> Result<(), SetupError> {
         });
     let valid_tag = tag.is_none_or(|tag| {
         !tag.is_empty()
-            && tag.chars().all(|ch| {
-                ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')
-            })
+            && tag
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
     });
     if !valid_name || !valid_tag {
         return Err(SetupError::Command(format!(
@@ -1390,9 +1390,15 @@ fn validate_local_image_reference(image_ref: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
-fn temporary_runner_image_reference(image_ref: &str, fingerprint: &str) -> Result<String, SetupError> {
+fn temporary_runner_image_reference(
+    image_ref: &str,
+    fingerprint: &str,
+) -> Result<String, SetupError> {
     validate_local_image_reference(image_ref)?;
-    let name = image_ref.rsplit_once(':').map(|(name, _)| name).unwrap_or(image_ref);
+    let name = image_ref
+        .rsplit_once(':')
+        .map(|(name, _)| name)
+        .unwrap_or(image_ref);
     Ok(format!("{name}:gitrun-build-{}", &fingerprint[..16]))
 }
 
@@ -2916,7 +2922,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod runner_image_refresh_tests {
     use super::*;
@@ -3002,8 +3007,7 @@ exit 0
             0,
             0,
         );
-        let result =
-            refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
         assert_eq!(result.unwrap(), false);
         let commands = fs::read_to_string(&log).unwrap();
         assert!(!commands.contains("buildx build"));
@@ -3025,7 +3029,12 @@ exit 0
         );
         assert_ne!(
             original,
-            runner_build_fingerprint("workbench", "FROM pinned", "#!/bin/bash", &[("Cargo.toml", "member-b", 0o644)])
+            runner_build_fingerprint(
+                "workbench",
+                "FROM pinned",
+                "#!/bin/bash",
+                &[("Cargo.toml", "member-b", 0o644)]
+            )
         );
     }
 
@@ -3041,8 +3050,7 @@ exit 0
             47,
             0,
         );
-        let result =
-            refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
         assert!(result.is_err());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(commands.contains("buildx build"));
@@ -3062,8 +3070,7 @@ exit 0
             0,
             0,
         );
-        let result =
-            refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
         assert!(result.is_err());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(!commands.lines().any(|line| line.starts_with("run --rm")));
@@ -3083,8 +3090,7 @@ exit 0
             0,
             0,
         );
-        let result =
-            refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
         assert_eq!(result.unwrap(), true);
         let commands = fs::read_to_string(&log).unwrap();
         assert!(commands.lines().any(|line| line.starts_with("run --rm")));

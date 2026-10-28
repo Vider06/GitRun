@@ -26,7 +26,7 @@ if [ "$aligned" -ne 1 ]; then
     exit 1
   fi
 
-  stamp="$(date -u +%Y%m%dT%H%M%SZ)-$"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
   if [ -e "$legacy" ] || [ -L "$legacy" ]; then
     backup_dir=/var/lib/gitrun/backups/legacy-binaries
     mkdir -p "$backup_dir"
@@ -39,7 +39,7 @@ if [ "$aligned" -ne 1 ]; then
     echo "gitrun postinst: preserved the previous /usr/local binary at $backup_dir/gitrun.local.$stamp"
   fi
 
-  temporary="/usr/local/bin/.gitrun-link.$"
+  temporary="/usr/local/bin/.gitrun-link.$$"
   trap 'rm -f "$temporary"' EXIT HUP INT TERM
   ln -s "$canonical" "$temporary"
   mv -f "$temporary" "$legacy"

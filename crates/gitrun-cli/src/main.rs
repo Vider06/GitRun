@@ -454,7 +454,11 @@ fn update_command(
 
     println!("GitRun update: fetching and verifying the release manifest");
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
-    let manifest = if let Some(url) = args.get(1) {
+    let manifest_url = args
+        .get(1)
+        .filter(|value| !value.starts_with("--"))
+        .map(String::as_str);
+    let manifest = if let Some(url) = manifest_url {
         fetch_manifest(url)?
     } else {
         latest_manifest(&repository)?
@@ -512,10 +516,33 @@ fn update_command(
     }
 
     if let Some((gitrun_binary, version_file)) = system_install {
-        let should_run_gtuu = match plan.runner_image.as_ref() {
+        let mut should_run_gtuu = match plan.runner_image.as_ref() {
             Some(_) => true,
             None => !load_config()?.runner_image.contains('/'),
         };
+        println!("GitRun update: applying the verified binary transaction");
+        // Keep privileged update destinations fixed, independent of environment overrides.
+        let backup_root = PathBuf::from("/var/lib/gitrun/backups");
+        let artifacts = [InstalledArtifact {
+            archive_name: "gitrun".into(),
+            destination: gitrun_binary.clone(),
+            required: true,
+        }];
+        let backup = apply_installed_update(
+            &archive,
+            &target,
+            &manifest.version,
+            &artifacts,
+            &version_file,
+            &backup_root,
+            &gitrun_binary,
+            config_path.as_deref(),
+        )?;
+        let desktop_uid = std::env::var("PKEXEC_UID")
+            .or_else(|_| std::env::var("SUDO_UID"))
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|uid| *uid != 0);
 
         // Replacing the on-disk executable does not replace the code already
         // running in this process. Run GTUU through the newly installed binary

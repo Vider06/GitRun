@@ -366,7 +366,9 @@ jobs:
           install -m 0755 scripts/reinstall-latest.sh "$deb_root/usr/libexec/gitrun/reinstall-latest.sh"
           install -m 0755 scripts/uninstall.sh "$deb_root/usr/libexec/gitrun/uninstall.sh"
           install -m 0755 packaging/gitrun-prerm "$deb_root/DEBIAN/prerm"
+          install -m 0755 packaging/gitrun-postinst "$deb_root/DEBIAN/postinst"
           sh -n "$deb_root/DEBIAN/prerm"
+          sh -n "$deb_root/DEBIAN/postinst"
           install -m 0644 version.txt "$deb_root/usr/share/gitrun/version.txt"
           install -m 0644 LICENSE "$deb_root/usr/share/doc/gitrun/LICENSE"
           install -m 0644 README.md "$deb_root/usr/share/doc/gitrun/README.md"
@@ -582,6 +584,15 @@ jobs:
           mkdir -p "$deb_check"
           dpkg-deb -x "$deb" "$deb_check"
           test -x "$deb_check/usr/bin/gitrun"
+          deb_control_check="$RUNNER_TEMP/deb-control-check"
+          rm -rf "$deb_control_check"
+          dpkg-deb -e "$deb" "$deb_control_check"
+          test -x "$deb_control_check/postinst"
+          cmp -s packaging/gitrun-postinst "$deb_control_check/postinst" || {
+            echo "Debian package does not contain the verified legacy-binary reconciliation hook" >&2
+            exit 1
+          }
+          sh -n "$deb_control_check/postinst"
           cmp -s target/release/gitrun "$deb_check/usr/bin/gitrun" || {
             echo "Debian package contains a GitRun binary different from the verified build output" >&2
             exit 1

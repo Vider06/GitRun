@@ -185,6 +185,99 @@ fn system_install_paths() -> Option<(PathBuf, PathBuf)> {
     Some((executable, version_file))
 }
 
+#[cfg(unix)]
+fn ensure_binary_alias(alias: &Path, canonical: &Path) -> Result<bool, String> {
+    use std::os::unix::fs::symlink;
+
+    if alias == canonical {
+        return Ok(false);
+    }
+    let canonical_target = std::fs::canonicalize(canonical).map_err(|error| {
+        format!(
+            "unable to resolve canonical binary {}: {error}",
+            canonical.display()
+        )
+    })?;
+    if std::fs::canonicalize(alias).ok().as_ref() == Some(&canonical_target) {
+        return Ok(false);
+    }
+    if !canonical_target.is_file() {
+        return Err(format!(
+            "canonical binary is not a file: {}",
+            canonical.display()
+        ));
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before the Unix epoch: {error}"))?
+        .as_nanos();
+    let file_name = alias
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("invalid alias path: {}", alias.display()))?;
+    let parent = alias
+        .parent()
+        .ok_or_else(|| format!("alias has no parent directory: {}", alias.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("unable to prepare {}: {error}", parent.display()))?;
+
+    if let Ok(metadata) = std::fs::symlink_metadata(alias) {
+        if metadata.file_type().is_symlink() {
+            let target = std::fs::read_link(alias).map_err(|error| {
+                format!(
+                    "unable to inspect legacy alias {}: {error}",
+                    alias.display()
+                )
+            })?;
+            std::fs::write(
+                parent.join(format!("{file_name}.legacy-link-{stamp}")),
+                target.to_string_lossy().as_bytes(),
+            )
+            .map_err(|error| format!("unable to preserve legacy alias target: {error}"))?;
+        } else if metadata.is_file() {
+            let backup = parent.join(format!("{file_name}.legacy-{stamp}"));
+            std::fs::copy(alias, &backup).map_err(|error| {
+                format!(
+                    "unable to preserve legacy binary {} at {}: {error}",
+                    alias.display(),
+                    backup.display()
+                )
+            })?;
+            std::fs::set_permissions(&backup, metadata.permissions()).map_err(|error| {
+                format!("unable to preserve legacy binary permissions: {error}")
+            })?;
+        } else {
+            return Err(format!(
+                "refusing to replace non-file legacy binary path {}",
+                alias.display()
+            ));
+        }
+    }
+
+    let temporary = parent.join(format!(".{file_name}.link-{}-{stamp}", std::process::id()));
+    symlink(canonical, &temporary).map_err(|error| {
+        format!(
+            "unable to stage canonical binary link {}: {error}",
+            temporary.display()
+        )
+    })?;
+    if let Err(error) = std::fs::rename(&temporary, alias) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!(
+            "unable to replace legacy binary {} with {}: {error}",
+            alias.display(),
+            canonical.display()
+        ));
+    }
+    Ok(true)
+}
+
+#[cfg(not(unix))]
+fn ensure_binary_alias(_alias: &Path, _canonical: &Path) -> Result<bool, String> {
+    Ok(false)
+}
+
 fn running_as_root() -> bool {
     #[cfg(unix)]
     {
@@ -3607,6 +3700,19 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         }
     };
 
+    if installed_binary == Path::new("/usr/bin/gitrun") {
+        match ensure_binary_alias(Path::new("/usr/local/bin/gitrun"), &installed_binary) {
+            Ok(true) => println!(
+                "GitRun fix-update: aligned /usr/local/bin/gitrun with the Debian-managed /usr/bin/gitrun"
+            ),
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("GitRun fix-update: binary-path reconciliation failed: {error}");
+                return 1;
+            }
+        }
+    }
+
     initialize_update_signing_environment(true);
     initialize_system_update_config_path(true);
     // Do not allow inherited environment variables to redirect a privileged
@@ -5105,6 +5211,53 @@ mod internal_lifecycle_command_tests {
         TRUSTED_SYSTEM_CONFIG_FILE,
     };
     use clap::Parser;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_alias_reconciliation_preserves_old_binary_and_uses_canonical_target() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-binary-alias-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let canonical = dir.join("gitrun-package");
+        let alias = dir.join("gitrun");
+        fs::write(&canonical, b"new-binary").unwrap();
+        fs::write(&alias, b"old-binary").unwrap();
+
+        assert!(super::ensure_binary_alias(&alias, &canonical).unwrap());
+        assert_eq!(fs::read(&alias).unwrap().as_slice(), b"new-binary");
+        assert!(fs::read_dir(&dir).unwrap().any(|entry| {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            name.starts_with("gitrun.legacy-")
+                && fs::read(dir.join(name))
+                    .is_ok_and(|contents| contents.as_slice() == b"old-binary")
+        }));
+        assert!(!super::ensure_binary_alias(&alias, &canonical).unwrap());
+
+        // Reconciliation also replaces an old symlink without deleting its target.
+        let second_target = dir.join("gitrun-legacy-target");
+        fs::write(&second_target, b"another-old-binary").unwrap();
+        std::fs::remove_file(&alias).unwrap();
+        symlink(&second_target, &alias).unwrap();
+        assert!(super::ensure_binary_alias(&alias, &canonical).unwrap());
+        assert_eq!(fs::read(&alias).unwrap(), b"new-binary");
+        assert_eq!(
+            fs::read(&second_target).unwrap().as_slice(),
+            b"another-old-binary"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn terminal_setup_disables_live_mascot_during_prompts() {

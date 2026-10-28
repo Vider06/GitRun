@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+# The Debian package owns /usr/bin/gitrun. Older GitRun setup flows may leave
+# a separate executable at /usr/local/bin/gitrun, which is also used by
+# historical systemd units and commonly wins PATH lookup. Keep that entrypoint
+# pointed at the package-owned binary, but preserve the pre-existing file/link.
+case "${1:-}" in
+  configure) ;;
+  *) exit 0 ;;
+esac
+
+canonical=/usr/bin/gitrun
+legacy=/usr/local/bin/gitrun
+
+[ -x "$canonical" ] || exit 0
+
+aligned=0
+if [ -L "$legacy" ] && [ "$(readlink -f "$legacy" 2>/dev/null || true)" = "$(readlink -f "$canonical")" ]; then
+  aligned=1
+fi
+
+if [ "$aligned" -ne 1 ]; then
+  if [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
+    echo "gitrun postinst: refusing to replace directory at $legacy" >&2
+    exit 1
+  fi
+
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  if [ -e "$legacy" ] || [ -L "$legacy" ]; then
+    backup="$legacy.legacy-$stamp"
+    if [ -L "$legacy" ]; then
+      cp -a "$legacy" "$backup"
+    else
+      cp -p "$legacy" "$backup"
+    fi
+    echo "gitrun postinst: preserved the previous /usr/local binary at $backup"
+  fi
+
+  temporary="/usr/local/bin/.gitrun-link.$$"
+  trap 'rm -f "$temporary"' EXIT HUP INT TERM
+  ln -s "$canonical" "$temporary"
+  mv -f "$temporary" "$legacy"
+  trap - EXIT HUP INT TERM
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || {
+    echo "gitrun postinst: warning: systemd daemon-reload failed" >&2
+  }
+  # A running process keeps its already mapped executable after the path is
+  # replaced. Restart only active services so they load the canonical binary.
+  for unit in gitrun-control.service gitrun-gsr.service gitrun.service; do
+    if systemctl is-active --quiet "$unit"; then
+      systemctl restart "$unit" || {
+        echo "gitrun postinst: warning: failed to restart active $unit" >&2
+      }
+    fi
+  done
+fi
+
+exit 0

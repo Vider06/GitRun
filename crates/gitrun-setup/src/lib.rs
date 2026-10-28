@@ -1,4 +1,5 @@
 use gitrun_core::{Config, GitRunSettings};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
     fs,
@@ -832,6 +833,11 @@ pub fn bootstrap_linux_with_auth_and_profile(
         0o644,
     )?;
     write_resource(
+        &root.join("runner-profile"),
+        &format!("{runner_profile}\n"),
+        0o644,
+    )?;
+    write_resource(
         &root.join("docker/runner/entrypoint.sh"),
         resources::RUNNER_ENTRYPOINT,
         0o755,
@@ -1134,6 +1140,338 @@ fn ensure_buildx() -> Result<(), SetupError> {
         ));
     }
     Ok(())
+}
+
+const RUNNER_BUILD_FINGERPRINT_LABEL: &str = "io.gitrun.runner.build-input-sha256";
+const RUNNER_BUILD_PROFILE_LABEL: &str = "io.gitrun.runner.build-profile";
+
+/// Rebuild the standard local runner image only when the signed release's full
+/// runner build inputs differ from the fingerprint recorded on the current
+/// image. Registry-qualified references stay on the signed-manifest/digest path.
+pub fn refresh_local_runner_image_if_stale(image_ref: &str) -> Result<bool, SetupError> {
+    if image_ref.contains('/') {
+        return Ok(false);
+    }
+    if !running_as_root() {
+        return Err(SetupError::NotRoot);
+    }
+
+    let install_root = Path::new("/opt/gitrun");
+    let metadata = fs::symlink_metadata(install_root)?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err(SetupError::Command(
+            "trusted runner build root /opt/gitrun must be a root-owned, non-writable directory".into(),
+        ));
+    }
+
+    refresh_local_runner_image_if_stale_at(image_ref, install_root, Path::new("/usr/bin/docker"))
+}
+
+fn refresh_local_runner_image_if_stale_at(
+    image_ref: &str,
+    install_root: &Path,
+    docker_bin: &Path,
+) -> Result<bool, SetupError> {
+    if image_ref.contains('/') {
+        return Ok(false);
+    }
+    validate_local_image_reference(image_ref)?;
+
+    let profile = installed_runner_profile(install_root)?;
+    let dockerfile = resources::runner_dockerfile_for_profile(profile)?;
+    let fingerprint = runner_build_fingerprint(
+        profile,
+        &dockerfile,
+        resources::RUNNER_ENTRYPOINT,
+        resources::RUNNER_BUILD_FILES,
+    );
+    let label_format = format!(
+        "{{{{ index .Config.Labels \"{}\" }}}}",
+        RUNNER_BUILD_FINGERPRINT_LABEL
+    );
+    let inspect = Command::new(docker_bin)
+        .args(["image", "inspect", "--format", &label_format, image_ref])
+        .output()?;
+    if inspect.status.success() {
+        let current = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
+        if current == fingerprint {
+            return Ok(false);
+        }
+    } else {
+        let detail = String::from_utf8_lossy(&inspect.stderr).trim().to_owned();
+        let lower = detail.to_ascii_lowercase();
+        if !(lower.contains("no such image")
+            || lower.contains("no such object")
+            || lower.contains("not found"))
+        {
+            return Err(SetupError::Command(format!(
+                "unable to inspect local runner image {image_ref:?}: {detail}"
+            )));
+        }
+    }
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let build_context = install_root.join(format!(
+        ".runner-build-context-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir(&build_context)?;
+    fs::set_permissions(&build_context, fs::Permissions::from_mode(0o700))?;
+
+    let temporary_image = temporary_runner_image_reference(image_ref, &fingerprint)?;
+    let result = (|| -> Result<(), SetupError> {
+        write_resource(
+            &build_context.join("docker/runner/Dockerfile"),
+            &dockerfile,
+            0o644,
+        )?;
+        write_resource(
+            &build_context.join("docker/runner/entrypoint.sh"),
+            resources::RUNNER_ENTRYPOINT,
+            0o755,
+        )?;
+        for (relative_path, source, mode) in resources::RUNNER_BUILD_FILES {
+            write_resource(&build_context.join(relative_path), source, *mode)?;
+        }
+
+        let dockerfile_path = build_context.join("docker/runner/Dockerfile");
+        let context_arg = build_context.to_str().ok_or_else(|| {
+            SetupError::Command("runner build context path is not valid UTF-8".into())
+        })?;
+        let dockerfile_arg = dockerfile_path.to_str().ok_or_else(|| {
+            SetupError::Command("runner Dockerfile path is not valid UTF-8".into())
+        })?;
+        let fingerprint_label = format!("{RUNNER_BUILD_FINGERPRINT_LABEL}={fingerprint}");
+        let profile_label = format!("{RUNNER_BUILD_PROFILE_LABEL}={profile}");
+        let build_args = vec![
+            "buildx".to_owned(),
+            "build".to_owned(),
+            "--pull".to_owned(),
+            "--load".to_owned(),
+            "--tag".to_owned(),
+            temporary_image.clone(),
+            "--label".to_owned(),
+            fingerprint_label,
+            "--label".to_owned(),
+            profile_label,
+            "-f".to_owned(),
+            dockerfile_arg.to_owned(),
+            context_arg.to_owned(),
+        ];
+        let build = Command::new(docker_bin).args(&build_args).output()?;
+        if !build.status.success() {
+            let detail = String::from_utf8_lossy(&build.stderr).trim().to_owned();
+            return Err(SetupError::Command(format!(
+                "local runner image build failed; existing image was preserved: {detail}"
+            )));
+        }
+
+        let built_fingerprint = inspect_runner_image_label(
+            docker_bin,
+            &temporary_image,
+            RUNNER_BUILD_FINGERPRINT_LABEL,
+        )?
+        .unwrap_or_default();
+        if built_fingerprint != fingerprint {
+            return Err(SetupError::Command(
+                "temporary runner image does not contain the expected build fingerprint; existing image was preserved".into(),
+            ));
+        }
+
+        let entrypoint = Command::new(docker_bin)
+            .args([
+                "image",
+                "inspect",
+                "--format",
+                "{{json .Config.Entrypoint}}",
+                &temporary_image,
+            ])
+            .output()?;
+        let entrypoint_value = String::from_utf8_lossy(&entrypoint.stdout)
+            .trim()
+            .replace(' ', "");
+        if !entrypoint.status.success()
+            || entrypoint_value != r#"["/bin/bash.gitrun-real","/entrypoint.sh"]"#
+        {
+            let detail = String::from_utf8_lossy(&entrypoint.stderr).trim().to_owned();
+            return Err(SetupError::Command(format!(
+                "temporary runner image has an invalid GSR bootstrap entrypoint ({entrypoint_value}); expected [\"/bin/bash.gitrun-real\", \"/entrypoint.sh\"]{detail}; existing image was preserved"
+            )));
+        }
+
+        // Execute the real entrypoint against a runtime tmpfs, which hides the
+        // build-time policy file exactly as it does for real runner containers.
+        // The dedicated argument exits after verifying the root-owned policy,
+        // before registration or workflow execution begins.
+        let smoke = Command::new(docker_bin)
+            .args([
+                "run",
+                "--rm",
+                "--tmpfs",
+                "/run/gitrun:rw,nosuid,nodev,noexec,size=16m,mode=0755",
+                "-e",
+                "RUNNER_URL=https://github.com",
+                "-e",
+                "RUNNER_NAME=gitrun-image-refresh-smoke",
+                &temporary_image,
+                "--policy-bootstrap-smoke-test",
+            ])
+            .output()?;
+        if !smoke.status.success() {
+            let detail = String::from_utf8_lossy(&smoke.stderr).trim().to_owned();
+            return Err(SetupError::Command(format!(
+                "GSR runtime tmpfs bootstrap smoke test failed; existing runner image was preserved: {detail}"
+            )));
+        }
+
+        // Do not change the public tag until every build and bootstrap check has
+        // passed. Existing containers keep their original immutable image IDs.
+        let promote = Command::new(docker_bin)
+            .args(["tag", &temporary_image, image_ref])
+            .output()?;
+        if !promote.status.success() {
+            let detail = String::from_utf8_lossy(&promote.stderr).trim().to_owned();
+            return Err(SetupError::Command(format!(
+                "validated runner image could not be promoted to {image_ref:?}; existing tag was preserved: {detail}"
+            )));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&build_context);
+    if result.is_err() {
+        let _ = Command::new(docker_bin)
+            .args(["image", "rm", "-f", &temporary_image])
+            .output();
+        return result.map(|_| false);
+    }
+
+    let _ = Command::new(docker_bin)
+        .args(["image", "rm", "-f", &temporary_image])
+        .output();
+    result?;
+    Ok(true)
+}
+
+fn validate_local_image_reference(image_ref: &str) -> Result<(), SetupError> {
+    if image_ref.is_empty()
+        || image_ref.trim() != image_ref
+        || image_ref.matches(':').count() > 1
+    {
+        return Err(SetupError::Command(format!(
+            "invalid local runner image reference: {image_ref:?}"
+        )));
+    }
+    let mut parts = image_ref.splitn(2, ':');
+    let name = parts.next().unwrap_or_default();
+    let tag = parts.next();
+    let valid_name = !name.is_empty()
+        && name.chars().all(|ch| {
+            ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_' | '-')
+        });
+    let valid_tag = tag.is_none_or(|tag| {
+        !tag.is_empty()
+            && tag.chars().all(|ch| {
+                ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')
+            })
+    });
+    if !valid_name || !valid_tag {
+        return Err(SetupError::Command(format!(
+            "invalid local runner image reference: {image_ref:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn temporary_runner_image_reference(image_ref: &str, fingerprint: &str) -> Result<String, SetupError> {
+    validate_local_image_reference(image_ref)?;
+    let name = image_ref.rsplit_once(':').map(|(name, _)| name).unwrap_or(image_ref);
+    Ok(format!("{name}:gitrun-build-{}", &fingerprint[..16]))
+}
+
+fn installed_runner_profile(install_root: &Path) -> Result<&'static str, SetupError> {
+    let profile_path = install_root.join("runner-profile");
+    match fs::symlink_metadata(&profile_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(SetupError::Command(
+                "installed runner-profile marker must be a regular non-symlink file".into(),
+            ))
+        }
+        Ok(_) => {
+            let contents = fs::read_to_string(&profile_path)?;
+            match contents.trim() {
+                "minimum" => Ok("minimum"),
+                "workbench" => Ok("workbench"),
+                other => Err(SetupError::Command(format!(
+                    "unsupported installed runner profile {other:?}"
+                ))),
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("workbench"),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn runner_build_fingerprint(
+    profile: &str,
+    dockerfile: &str,
+    entrypoint: &str,
+    build_files: &[(&str, &str, u32)],
+) -> String {
+    let mut hasher = Sha256::new();
+    let mut add = |path: &str, content: &str, mode: u32| {
+        hasher.update((path.len() as u64).to_be_bytes());
+        hasher.update(path.as_bytes());
+        hasher.update(mode.to_be_bytes());
+        hasher.update((content.len() as u64).to_be_bytes());
+        hasher.update(content.as_bytes());
+    };
+    add("runner-profile", profile, 0o644);
+    add("docker/runner/Dockerfile", dockerfile, 0o644);
+    add("docker/runner/entrypoint.sh", entrypoint, 0o755);
+    for (path, content, mode) in build_files {
+        add(path, content, *mode);
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn inspect_runner_image_label(
+    docker_bin: &Path,
+    image_ref: &str,
+    label: &str,
+) -> Result<Option<String>, SetupError> {
+    let format = format!("{{{{ index .Config.Labels \"{label}\" }}}}");
+    let output = Command::new(docker_bin)
+        .args(["image", "inspect", "--format", &format, image_ref])
+        .output()?;
+    if output.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        ));
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("no such image")
+        || lower.contains("no such object")
+        || lower.contains("not found")
+    {
+        Ok(None)
+    } else {
+        Err(SetupError::Command(format!(
+            "unable to inspect temporary runner image {image_ref:?}: {detail}"
+        )))
+    }
 }
 
 fn build_image(tag: &str, context: &Path, dockerfile: &Path) -> Result<(), SetupError> {
@@ -2575,5 +2913,190 @@ mod tests {
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         fs::remove_file(path).unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod runner_image_refresh_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn unique_test_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-runner-refresh-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn fake_docker(
+        root: &Path,
+        old_fingerprint: &str,
+        built_fingerprint: &str,
+        entrypoint: &str,
+        build_status: i32,
+        smoke_status: i32,
+    ) -> (PathBuf, PathBuf) {
+        let executable = root.join("fake-docker");
+        let log = root.join("docker.log");
+        let script = format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "{log}"
+case "$1:$2" in
+  image:inspect)
+    case "$*" in
+      *io.gitrun.runner.build-input-sha256*)
+        case "$*" in
+          *gitrun-build-*) printf '%s\n' '{built_fingerprint}' ;;
+          *) printf '%s\n' '{old_fingerprint}' ;;
+        esac
+        ;;
+      *Config.Entrypoint*) printf '%s\n' '{entrypoint}' ;;
+      *) printf '%s\n' '{old_fingerprint}' ;;
+    esac
+    ;;
+  buildx:build) exit {build_status} ;;
+  run:--rm) exit {smoke_status} ;;
+esac
+exit 0
+"#,
+            log = log.display(),
+            old_fingerprint = old_fingerprint,
+            built_fingerprint = built_fingerprint,
+            entrypoint = entrypoint,
+            build_status = build_status,
+            smoke_status = smoke_status,
+        );
+        fs::write(&executable, script).unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+        (executable, log)
+    }
+
+    fn expected_fingerprint() -> String {
+        let dockerfile = resources::runner_dockerfile_for_profile("workbench").unwrap();
+        runner_build_fingerprint(
+            "workbench",
+            &dockerfile,
+            resources::RUNNER_ENTRYPOINT,
+            resources::RUNNER_BUILD_FILES,
+        )
+    }
+
+    #[test]
+    fn identical_release_inputs_skip_rebuild() {
+        let root = unique_test_root("unchanged");
+        let fingerprint = expected_fingerprint();
+        let (docker, log) = fake_docker(
+            &root,
+            &fingerprint,
+            &fingerprint,
+            r#"["/bin/bash.gitrun-real","/entrypoint.sh"]"#,
+            0,
+            0,
+        );
+        let result =
+            refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        assert_eq!(result.unwrap(), false);
+        let commands = fs::read_to_string(&log).unwrap();
+        assert!(!commands.contains("buildx build"));
+        assert!(!commands.lines().any(|line| line.starts_with("tag ")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn changed_dockerfile_entrypoint_or_build_context_changes_fingerprint() {
+        let files = [("Cargo.toml", "member-a", 0o644)];
+        let original = runner_build_fingerprint("workbench", "FROM pinned", "#!/bin/bash", &files);
+        assert_ne!(
+            original,
+            runner_build_fingerprint("workbench", "FROM newer-pinned", "#!/bin/bash", &files)
+        );
+        assert_ne!(
+            original,
+            runner_build_fingerprint("workbench", "FROM pinned", "#!/bin/bash -e", &files)
+        );
+        assert_ne!(
+            original,
+            runner_build_fingerprint("workbench", "FROM pinned", "#!/bin/bash", &[("Cargo.toml", "member-b", 0o644)])
+        );
+    }
+
+    #[test]
+    fn failed_build_never_promotes_the_temporary_image() {
+        let root = unique_test_root("failed-build");
+        let fingerprint = expected_fingerprint();
+        let (docker, log) = fake_docker(
+            &root,
+            "old-fingerprint",
+            &fingerprint,
+            r#"["/bin/bash.gitrun-real","/entrypoint.sh"]"#,
+            47,
+            0,
+        );
+        let result =
+            refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        assert!(result.is_err());
+        let commands = fs::read_to_string(&log).unwrap();
+        assert!(commands.contains("buildx build"));
+        assert!(!commands.lines().any(|line| line.starts_with("tag ")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn wrong_entrypoint_never_promotes_the_temporary_image() {
+        let root = unique_test_root("wrong-entrypoint");
+        let fingerprint = expected_fingerprint();
+        let (docker, log) = fake_docker(
+            &root,
+            "old-fingerprint",
+            &fingerprint,
+            r#"["/entrypoint.sh"]"#,
+            0,
+            0,
+        );
+        let result =
+            refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        assert!(result.is_err());
+        let commands = fs::read_to_string(&log).unwrap();
+        assert!(!commands.lines().any(|line| line.starts_with("run --rm")));
+        assert!(!commands.lines().any(|line| line.starts_with("tag ")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validated_runtime_bootstrap_is_promoted() {
+        let root = unique_test_root("validated");
+        let fingerprint = expected_fingerprint();
+        let (docker, log) = fake_docker(
+            &root,
+            "old-fingerprint",
+            &fingerprint,
+            r#"["/bin/bash.gitrun-real","/entrypoint.sh"]"#,
+            0,
+            0,
+        );
+        let result =
+            refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        assert_eq!(result.unwrap(), true);
+        let commands = fs::read_to_string(&log).unwrap();
+        assert!(commands.lines().any(|line| line.starts_with("run --rm")));
+        assert!(commands.lines().any(|line| line.starts_with("tag ")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registry_images_stay_on_the_digest_update_path() {
+        assert_eq!(
+            refresh_local_runner_image_if_stale("ghcr.io/vider06/gitrun-runner:stable").unwrap(),
+            false
+        );
     }
 }

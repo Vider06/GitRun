@@ -597,10 +597,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn old_lock_owned_by_live_pid_is_not_reclaimed() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitrun-gtuu-live-old-lock-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("gitrun-gtuu-live-old-lock-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let lock_path = dir.join("gtuu.lock");

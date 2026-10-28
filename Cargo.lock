@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-setup"
-version = "0.9.14"
+version = "0.9.15"
 dependencies = [
  "gitrun-core",
  "gitrun-updater",

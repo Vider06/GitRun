@@ -513,8 +513,7 @@ fn update_command(
 
     if let Some((gitrun_binary, version_file)) = system_install {
         let configured_image = load_config()?.runner_image;
-        let should_run_gtuu =
-            plan.runner_image.is_some() || !configured_image.contains('/');
+        let should_run_gtuu = plan.runner_image.is_some() || !configured_image.contains('/');
 
         // Replacing the on-disk executable does not replace the code already
         // running in this process. Run GTUU through the newly installed binary
@@ -522,7 +521,9 @@ fn update_command(
         // Stop the scheduler first to prevent its scheduled GTUU worker from
         // racing this image rebuild and permanent-runner reconciliation.
         if should_run_gtuu {
-            println!("GitRun update: stopping scheduler before target-version runner reconciliation");
+            println!(
+                "GitRun update: stopping scheduler before target-version runner reconciliation"
+            );
             if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
                 .args(["stop", "gitrun.service"])
                 .status()
@@ -556,12 +557,16 @@ fn update_command(
             let child_result = std::process::Command::new(&gitrun_binary)
                 .args(["--no-cat", "update", "--only-containers"])
                 .status()
-                .map_err(|error| format!("unable to launch the newly installed GTUU updater: {error}"))
+                .map_err(|error| {
+                    format!("unable to launch the newly installed GTUU updater: {error}")
+                })
                 .and_then(|status| {
                     if status.success() {
                         Ok(())
                     } else {
-                        Err(format!("newly installed GTUU updater exited with status {status}"))
+                        Err(format!(
+                            "newly installed GTUU updater exited with status {status}"
+                        ))
                     }
                 });
             if let Err(error) = child_result {

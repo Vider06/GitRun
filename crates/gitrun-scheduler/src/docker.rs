@@ -1317,6 +1317,123 @@ fn control_volume_mount_argument(container_name: &str) -> String {
     )
 }
 
+/// Create and secure the dedicated control volume before the runner is started.
+/// Docker's default empty-volume mode is not the private mode required by the
+/// runner entrypoint, so relying on Docker's implicit volume creation causes
+/// the container to fail closed and enter a restart loop.
+#[cfg(target_os = "linux")]
+fn prepare_control_volume(host: &DockerHost, container_name: &str) -> Result<()> {
+    let volume = control_volume_name(container_name);
+    run_checked_on(
+        host,
+        &["volume", "create", "--label", "gitrun.managed=true", volume.as_str()],
+    )?;
+    let raw_mountpoint =
+        run_checked_on(host, &["volume", "inspect", "--format", "{{.Mountpoint}}", volume.as_str()])?;
+    let mountpoint = PathBuf::from(raw_mountpoint.trim());
+    if !mountpoint.is_absolute()
+        || mountpoint.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::CurDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(DockerError::Command(
+            "Docker returned an unsafe control-volume mountpoint".into(),
+        ));
+    }
+
+    // The volume path must be within a trusted root-owned directory chain
+    // before the scheduler changes permissions on the volume's final entry.
+    let mut prefix = PathBuf::from("/");
+    for component in mountpoint.components() {
+        match component {
+            Component::RootDir => continue,
+            Component::Normal(part) => prefix.push(part),
+            _ => {
+                return Err(DockerError::Command(
+                    "control-volume mountpoint contains unsupported path components".into(),
+                ))
+            }
+        }
+        let metadata = std::fs::symlink_metadata(&prefix)?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_dir()
+            || metadata.uid() != 0
+            || metadata.permissions().mode() & 0o022 != 0
+        {
+            return Err(DockerError::Command(format!(
+                "control-volume path component {} is not a trusted root-owned directory",
+                prefix.display()
+            )));
+        }
+    }
+
+    secure_control_volume_directory(&mountpoint, 0)
+}
+
+#[cfg(target_os = "linux")]
+fn secure_control_volume_directory(control_dir: &Path, expected_uid: u32) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let directory = std::fs::symlink_metadata(control_dir)?;
+    if directory.file_type().is_symlink()
+        || !directory.is_dir()
+        || directory.uid() != expected_uid
+        || directory.permissions().mode() & 0o022 != 0
+    {
+        return Err(DockerError::Command(
+            "control volume must be a real directory owned by the expected identity and not writable by group or others"
+                .into(),
+        ));
+    }
+
+    // The control volume only supports the optional dock-only marker. Refuse
+    // unknown entries or malformed markers instead of silently trusting old
+    // or tampered volume contents.
+    for entry in std::fs::read_dir(control_dir)? {
+        let entry = entry?;
+        if entry.file_name() != "dock-only" {
+            return Err(DockerError::Command(format!(
+                "unexpected entry in GitRun control volume: {}",
+                entry.file_name().to_string_lossy()
+            )));
+        }
+        let marker = entry.path();
+        let metadata = std::fs::symlink_metadata(&marker)?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.nlink() != 1
+            || metadata.uid() != expected_uid
+            || metadata.permissions().mode() & 0o777 != 0o600
+        {
+            return Err(DockerError::Command(
+                "dock-only marker must be a private, single-link regular file owned by the expected identity"
+                    .into(),
+            ));
+        }
+        if std::fs::read(&marker)? != b"GitRun dock-only v1\n" {
+            return Err(DockerError::Command(
+                "dock-only marker contents are invalid".into(),
+            ));
+        }
+    }
+
+    std::fs::set_permissions(control_dir, std::fs::Permissions::from_mode(0o700))?;
+    let secured = std::fs::symlink_metadata(control_dir)?;
+    if secured.file_type().is_symlink()
+        || !secured.is_dir()
+        || secured.uid() != expected_uid
+        || secured.permissions().mode() & 0o777 != 0o700
+    {
+        return Err(DockerError::Command(
+            "control volume could not be secured to owner-only mode 0700".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Set or clear the dock-only marker from the host side. The control volume is
 /// mounted read-only inside the runner container because even a root process
 /// created by an explicitly enabled install API must not be able to forge
@@ -2046,6 +2163,17 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
 
     validate_secret_env(spec.secret_env)?;
     ensure_runner_network(host, spec.network, !spec.is_windows)?;
+
+    #[cfg(target_os = "linux")]
+    if !spec.is_windows {
+        prepare_control_volume(host, spec.name)?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    if !spec.is_windows {
+        return Err(DockerError::Command(
+            "Linux runner control-volume initialization requires a Linux Docker host".into(),
+        ));
+    }
     if spec.is_windows && spec.docker_socket_enabled {
         return Err(DockerError::Command(
             "Windows runner cannot enable the Linux Docker socket compatibility option".into(),
@@ -3932,6 +4060,31 @@ mod tests {
         std::fs::remove_file(hardlink).unwrap();
         std::fs::remove_dir_all(&directory).unwrap();
         std::fs::remove_file(outside).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn runner_control_volume_is_secured_before_mounting() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "gitrun-control-volume-test-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let uid = std::fs::metadata(&directory).unwrap().uid();
+
+        secure_control_volume_directory(&directory, uid).unwrap();
+        let metadata = std::fs::symlink_metadata(&directory).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+        assert_eq!(metadata.uid(), uid);
+
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

@@ -281,7 +281,7 @@ jobs:
           path: target
           # Omit the release version and commit SHA: Cargo fingerprints validate restored artifacts,
           # while the manifest/lock fingerprint gives each dependency graph its own refreshed cache.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-${{ github.sha }}
 
       - name: Generate release SBOM and provenance
         shell: bash

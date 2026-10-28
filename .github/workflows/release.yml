@@ -162,9 +162,9 @@ jobs:
             .gitrun-ci/cargo
             .gitrun-ci/rustup
           # Cargo registry and rustup contents depend on the toolchain, not workspace package versions.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}
           restore-keys: |
-            gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}-
+            gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-
 
       - name: Restore release target cache
         id: release-target-cache
@@ -173,9 +173,9 @@ jobs:
           path: target
           # The manifest/lock fingerprint scopes dependency changes; the commit SHA makes the
           # cache immutable per build so updated artifacts can be saved for the next run.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-${{ github.sha }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}
           restore-keys: |
-            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-
+            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-
 
       - name: Install Linux build dependencies
         shell: bash
@@ -271,7 +271,7 @@ jobs:
             .gitrun-ci/cargo
             .gitrun-ci/rustup
           # Cargo registry and rustup contents depend on the toolchain, not workspace package versions.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}
 
       # The default-branch cache warmer owns target-cache creation. Do not create
       # one-off tag-scoped target caches here: later tag runs cannot reliably reuse them.

@@ -19,6 +19,8 @@ gitrun doctor
 
 Check GitHub Releases for the newest version before installing. This artifact targets amd64/x86-64; it is not suitable for ARM64. Docker must be installed and configured separately. A local `.deb` install through APT resolves package dependencies.
 
+First-run setup and day-to-day configuration can be completed in the **desktop GUI**. If you prefer the terminal, use `gitrun setup --terminal` for guided setup and `gitrun manage` for the keyboard-driven TUI. The GUI and TUI use the same validated backend operations.
+
 Use `scripts/install-server.sh` when you deliberately need a source build rather than the published package. The macOS and Windows helper scripts have separate platform requirements; see their script-specific instructions before running them.
 
 ## Main Library release archive

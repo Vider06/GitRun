@@ -7,6 +7,10 @@ FROM rust:1.99.1-slim-bookworm@sha256:86234e857a413004348b471d11a4ebe1aa92d2eae2
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+# gitrun-setup embeds these release-owned resources with include_str! at compile time.
+COPY systemd ./systemd
+COPY docker/runner ./docker/runner
+COPY Core/Dockers/runners/linux-x86_64/minimum/Dockerfile ./Core/Dockers/runners/linux-x86_64/minimum/Dockerfile
 
 RUN grep -Fq 'pub mod app_auth;' crates/gitrun-core/src/lib.rs \
     && test -f crates/gitrun-core/src/app_auth.rs

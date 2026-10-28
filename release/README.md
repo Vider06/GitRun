@@ -30,6 +30,23 @@ The release check requires 11 distinct, safe member paths and valid JSON object/
 
 Routine setup and update operations fill missing reference-library entries and create only missing local backups; they do not overwrite existing entries. The explicit Restore Main Library operation restores the dedicated reference library and does not replace active operator configuration.
 
-## Deployment
+## Deployment and Debian package installation
+
+Each stable release publishes a prebuilt Debian package for amd64/x86-64 named `GitRun-vVERSION-linux-x86_64-deb.deb`, alongside the signed release manifest and its checksum metadata. For standard Debian/Ubuntu installations, use that package rather than cloning the source tree and running the source installer.
+
+Example for v1.8.21 (check [GitHub Releases](https://github.com/Vider06/GitRun/releases) for the latest stable tag):
+
+```bash
+VERSION="v1.8.21"
+ASSET="GitRun-${VERSION}-linux-x86_64-deb.deb"
+curl -fL --proto '=https' --tlsv1.2 \
+  "https://github.com/Vider06/GitRun/releases/download/${VERSION}/${ASSET}" \
+  -o "${ASSET}"
+sudo apt install "./${ASSET}"
+gitrun setup --terminal
+gitrun doctor
+```
+
+The package targets Debian/Ubuntu-compatible amd64 systems. It does not install Docker or configure GitHub credentials on the operator's behalf; those are deployment prerequisites and first-run setup tasks. APT resolves declared package dependencies when installing the local package.
 
 Validate release-signing configuration, rollback behavior and target-host health before rollout. Keep the distinction between source metadata, signed release assets and installed runtime state explicit when diagnosing an installation.

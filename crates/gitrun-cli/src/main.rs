@@ -526,7 +526,7 @@ fn update_command(
     }
 
     if let Some((gitrun_binary, version_file)) = system_install {
-        let mut should_run_gtuu = match plan.runner_image.as_ref() {
+        let should_run_gtuu = match plan.runner_image.as_ref() {
             Some(_) => true,
             None => !load_config()?.runner_image.contains('/'),
         };

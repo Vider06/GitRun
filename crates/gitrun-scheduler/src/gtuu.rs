@@ -74,9 +74,9 @@ pub struct GtuuLock {
     _guard: fs::File,
 }
 
-/// Fallback age for a lock that has no usable PID. A valid live PID is
-/// never reclaimed solely because the run is old, so a slow but legitimate
-/// update cannot accidentally overlap with another GTUU instance.
+/// Fallback age for locks whose owner cannot be determined. Unix checks
+/// valid PIDs directly; the non-Unix fallback uses this age cutoff for every
+/// lock and can therefore reclaim an unusually long-running operation.
 const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 
 impl GtuuLock {

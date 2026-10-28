@@ -137,13 +137,9 @@ sudo apt install "./${ASSET}"
 
 APT resolves the package's declared dependencies. Install and configure Docker separately if it is not already available on the host. The package is for Debian/Ubuntu-compatible **amd64** systems; it is not an ARM64 package.
 
-After installation, start the first-run setup:
+After installation, you can complete first-run setup and configure GitRun from either the **desktop GUI** or the terminal. The GUI is a full management surface, not just a viewer; use it for setup and day-to-day configuration if you prefer a graphical workflow. From a terminal, run `gitrun setup --terminal` for the guided setup, then `gitrun manage` to open the keyboard-driven TUI for ongoing operations. The GUI and TUI share GitRun's validated backend operations.
 
-```bash
-gitrun setup --terminal
-```
-
-Follow the prompts to configure GitHub authentication and the repositories GitRun may manage. Then verify the installation with `gitrun doctor`.
+Verify the installation with `gitrun doctor`.
 
 ### Build/install from source
 

@@ -594,6 +594,32 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn old_lock_owned_by_live_pid_is_not_reclaimed() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitrun-gtuu-live-old-lock-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let lock_path = dir.join("gtuu.lock");
+        fs::create_dir(&lock_path).unwrap();
+        fs::write(lock_path.join("pid"), std::process::id().to_string()).unwrap();
+
+        let old_time = filetime::FileTime::from_system_time(
+            SystemTime::now() - Duration::from_secs(60 * 60 * 2),
+        );
+        filetime::set_file_mtime(&lock_path, old_time).unwrap();
+
+        let second = GtuuLock::acquire(&dir);
+        assert!(
+            matches!(second, Err(GtuuError::AlreadyRunning)),
+            "a live PID must keep its lock even when the directory mtime is old"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn stale_lock_without_pid_is_reclaimed_after_old_age() {
         let dir =

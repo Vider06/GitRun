@@ -497,7 +497,9 @@ fn update_command(
     // fails before the system update performs any mutations.
     let mut gtuu_lock = if system_install.is_some() {
         let config = load_config()?;
-        Some(gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?)
+        Some(gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(
+            &config.state_dir,
+        ))?)
     } else {
         None
     };
@@ -5188,8 +5190,7 @@ mod internal_lifecycle_command_tests {
             })) if repo == "Vider06/Eridania_Site"
         ));
         assert!(matches!(
-            Cli::try_parse_from(["gitrun", "gtuu", "--all", "--force"])
-                .map(|cli| cli.command),
+            Cli::try_parse_from(["gitrun", "gtuu", "--all", "--force"]).map(|cli| cli.command),
             Ok(Some(Command::Gtuu {
                 check: false,
                 rebuild: false,
@@ -5200,8 +5201,13 @@ mod internal_lifecycle_command_tests {
         ));
         assert!(Cli::try_parse_from(["gitrun", "gtuu", "--check", "--rebuild"]).is_err());
         assert!(Cli::try_parse_from([
-            "gitrun", "gtuu", "--repo", "Vider06/Eridania_Site", "--all"
-        ]).is_err());
+            "gitrun",
+            "gtuu",
+            "--repo",
+            "Vider06/Eridania_Site",
+            "--all"
+        ])
+        .is_err());
     }
 
     #[test]

@@ -28,15 +28,13 @@ if [ "$aligned" -ne 1 ]; then
 
   stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
   if [ -e "$legacy" ] || [ -L "$legacy" ]; then
-    backup_dir=/var/lib/gitrun/backups/legacy-binaries
-    mkdir -p "$backup_dir"
-    chmod 0700 "$backup_dir"
+    backup="$legacy.legacy-$stamp"
     if [ -L "$legacy" ]; then
-      cp -a "$legacy" "$backup_dir/gitrun.local.$stamp"
+      cp -a "$legacy" "$backup"
     else
-      cp -p "$legacy" "$backup_dir/gitrun.local.$stamp"
+      cp -p "$legacy" "$backup"
     fi
-    echo "gitrun postinst: preserved the previous /usr/local binary at $backup_dir/gitrun.local.$stamp"
+    echo "gitrun postinst: preserved the previous /usr/local binary at $backup"
   fi
 
   temporary="/usr/local/bin/.gitrun-link.$$"

@@ -454,7 +454,10 @@ fn update_command(
 
     println!("GitRun update: fetching and verifying the release manifest");
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
-    let manifest_url = args.get(1).filter(|value| !value.starts_with("--")).map(String::as_str);
+    let manifest_url = args
+        .get(1)
+        .filter(|value| !value.starts_with("--"))
+        .map(String::as_str);
     let manifest = if let Some(url) = manifest_url {
         fetch_manifest(url)?
     } else {

@@ -1727,6 +1727,7 @@ fn main() {
             force,
         } => run_gtuu_command(
             repo.as_deref(),
+            all,
             rebuild,
             force || rebuild,
             check,
@@ -3445,6 +3446,7 @@ fn run_doctor() -> i32 {
 }
 fn run_gtuu_command(
     repository_filter: Option<&str>,
+    all_repositories: bool,
     rebuild: bool,
     force_replace: bool,
     check_only: bool,
@@ -3452,6 +3454,10 @@ fn run_gtuu_command(
 ) -> i32 {
     if !check_only && !rebuild && !force_replace {
         eprintln!("GitRun GTUU: choose --check, --rebuild, or --force; no operation was performed");
+        return 2;
+    }
+    if repository_filter.is_none() && !all_repositories {
+        eprintln!("GitRun GTUU: select --repo <owner/repository> or --all; no operation was performed");
         return 2;
     }
 

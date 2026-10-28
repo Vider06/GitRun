@@ -5283,11 +5283,11 @@ mod internal_lifecycle_command_tests {
         fs::write(&alias, b"old-binary").unwrap();
 
         assert!(super::ensure_binary_alias(&alias, &canonical).unwrap());
-        assert_eq!(fs::read(&alias).unwrap(), b"new-binary");
+        assert_eq!(fs::read(&alias).unwrap().as_slice(), b"new-binary");
         assert!(fs::read_dir(&dir).unwrap().any(|entry| {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             name.starts_with("gitrun.legacy-")
-                && fs::read(dir.join(name)).is_ok_and(|contents| contents == b"old-binary")
+                && fs::read(dir.join(name)).is_ok_and(|contents| contents.as_slice() == b"old-binary")
         }));
         assert!(!super::ensure_binary_alias(&alias, &canonical).unwrap());
 
@@ -5298,7 +5298,7 @@ mod internal_lifecycle_command_tests {
         symlink(&second_target, &alias).unwrap();
         assert!(super::ensure_binary_alias(&alias, &canonical).unwrap());
         assert_eq!(fs::read(&alias).unwrap(), b"new-binary");
-        assert_eq!(fs::read(&second_target).unwrap(), b"another-old-binary");
+        assert_eq!(fs::read(&second_target).unwrap().as_slice(), b"another-old-binary");
 
         let _ = fs::remove_dir_all(&dir);
     }

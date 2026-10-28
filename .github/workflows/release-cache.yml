@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --locked --release -p gitrun-cli --bin gitrun
-          cargo test --locked --release --no-run -p gitrun-updater --test release_manifest_signature
+          cargo test --locked --no-run -p gitrun-updater --test release_manifest_signature
           test -x target/release/gitrun
 
       - name: Save Rust common cache

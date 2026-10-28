@@ -392,37 +392,44 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
     }
 
     if let Some(image) = &manifest.runner_image {
-        println!("Runner image target: {}@{}", image.reference, image.digest);
-        let inspection = std::process::Command::new("docker")
-            .args([
-                "image",
-                "inspect",
-                "--format",
-                "{{json .RepoDigests}}",
-                &image.reference,
-            ])
-            .output();
-        match inspection {
-            Ok(output) if output.status.success() => {
-                let digests = String::from_utf8_lossy(&output.stdout);
-                if digests.contains(&image.digest) {
-                    println!("Runner image is up to date (digest verified).");
-                } else {
-                    println!("Runner image update available: configured local image does not match the release digest.");
-                }
-            }
-            Ok(output) => {
-                let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-                println!(
-                    "Runner image status unknown: {}",
-                    if detail.is_empty() {
-                        "Docker image inspect failed"
+        if !image.reference.contains('/') {
+            println!(
+                "Runner image target: local {} (the update will check its complete build fingerprint).",
+                image.reference
+            );
+        } else {
+            println!("Runner image target: {}@{}", image.reference, image.digest);
+            let inspection = std::process::Command::new("docker")
+                .args([
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoDigests}}",
+                    &image.reference,
+                ])
+                .output();
+            match inspection {
+                Ok(output) if output.status.success() => {
+                    let digests = String::from_utf8_lossy(&output.stdout);
+                    if digests.contains(&image.digest) {
+                        println!("Runner image is up to date (digest verified).");
                     } else {
-                        detail.as_str()
+                        println!("Runner image update available: configured image does not match the release digest.");
                     }
-                );
+                }
+                Ok(output) => {
+                    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                    println!(
+                        "Runner image status unknown: {}",
+                        if detail.is_empty() {
+                            "Docker image inspect failed"
+                        } else {
+                            detail.as_str()
+                        }
+                    );
+                }
+                Err(error) => println!("Runner image status unknown: Docker is unavailable ({error})."),
             }
-            Err(error) => println!("Runner image status unknown: Docker is unavailable ({error})."),
         }
     } else {
         println!("Runner image: this release manifest does not declare a runner image.");
@@ -503,6 +510,7 @@ fn update_command(
     }
 
     if let Some((gitrun_binary, version_file)) = system_install {
+        let mut should_run_gtuu = plan.runner_image.is_some();
         println!("GitRun update: applying the verified binary transaction");
         // System-update backup destinations are fixed even when running as root.
         let backup_root = PathBuf::from("/var/lib/gitrun/backups");
@@ -550,7 +558,11 @@ fn update_command(
             ).into());
         }
 
-        if let Some(image) = &plan.runner_image {
+        if let Some(image) = plan
+            .runner_image
+            .as_ref()
+            .filter(|image| image.reference.contains('/'))
+        {
             if let Err(error) = update_runner_image(image) {
                 let rollback_error = rollback_installed_update_with_config(
                     &backup,
@@ -591,6 +603,49 @@ fn update_command(
             }
         }
 
+        // Local images are rebuilt from the Dockerfile and full GSR build context
+        // embedded in this verified release. Build failure is handled before the
+        // scheduler restart and never replaces the currently working image tag.
+        let local_runner_image = match plan.runner_image.as_ref() {
+            Some(image) if !image.reference.contains('/') => Some(image.reference.clone()),
+            Some(_) => None,
+            None => {
+                let configured_image = load_config()?.runner_image;
+                (!configured_image.contains('/')).then_some(configured_image)
+            }
+        };
+        if let Some(image_ref) = local_runner_image {
+            match gitrun_setup::refresh_local_runner_image_if_stale(&image_ref) {
+                Ok(refreshed) => {
+                    if refreshed {
+                        should_run_gtuu = true;
+                        println!("GitRun update: local runner image rebuilt and validated from the release build inputs");
+                    } else {
+                        println!("GitRun update: local runner image build fingerprint is current");
+                    }
+                }
+                Err(error) => {
+                    let rollback_error = rollback_installed_update_with_config(
+                        &backup,
+                        &artifacts,
+                        &version_file,
+                        config_path.as_deref(),
+                        &backup_root,
+                    )
+                    .err();
+                    return Err(match rollback_error {
+                        Some(rollback_error) => format!(
+                            "local runner image refresh failed: {error}; GitRun rollback also failed: {rollback_error}"
+                        ),
+                        None => format!(
+                            "local runner image refresh failed; GitRun was rolled back: {error}"
+                        ),
+                    }
+                    .into());
+                }
+            }
+        }
+
         presenter.transition(presenter::ValidationState::Running);
         println!("GitRun update: restarting and verifying the scheduler");
         if let Err(error) = restart_scheduler_service() {
@@ -618,9 +673,30 @@ fn update_command(
             };
         }
 
+        if should_run_gtuu {
+            println!("GitRun update: invoking GTUU to reconcile permanent runners");
+            let gtuu_result = (|| -> Result<u32, Box<dyn std::error::Error>> {
+                let config = load_config()?;
+                let _gtuu_lock =
+                    gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
+                Ok(gitrun_scheduler::run_gtuu_once()?)
+            })();
+            match gtuu_result {
+                Ok(updated) => println!(
+                    "GitRun update: GTUU reconciled {updated} permanent runner(s); busy runners remain untouched"
+                ),
+                Err(error) => {
+                    return Err(format!(
+                        "GitRun was installed and the scheduler restarted, but GTUU runner reconciliation failed: {error}. Retry sudo gitrun update --only-containers after resolving the reported issue. Failed image builds preserve the prior image tag and existing containers."
+                    )
+                    .into());
+                }
+            }
+        }
+
         if force {
             eprintln!(
-                "GitRun update: WARNING — --force requested; skipping only the post-update doctor gate. Manifest signature, artifact SHA-256, executable validation, systemd reconciliation and scheduler restart checks remain enabled."
+                "GitRun update: WARNING — --force requested; skipping only the post-update doctor gate. Manifest signature, artifact SHA-256, executable validation, systemd reconciliation, GTUU reconciliation and scheduler restart checks remain enforced."
             );
         } else if let Err(error) = verify_post_update_doctor(&gitrun_binary) {
             let rollback_result = rollback_installed_update_with_config(
@@ -696,7 +772,11 @@ fn update_command(
         .into());
     }
 
-    if let Some(image) = &plan.runner_image {
+    if let Some(image) = plan
+        .runner_image
+        .as_ref()
+        .filter(|image| image.reference.contains('/'))
+    {
         if let Err(error) = update_runner_image(image) {
             rollback(&paths, &backup)?;
             return Err(format!("runner update failed; GitRun was rolled back: {error}").into());
@@ -3343,22 +3423,26 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     let _gtuu_lock = gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest = latest_manifest(&repository)?;
-    if let Some(image) = &manifest.runner_image {
+    if let Some(image) = manifest
+        .runner_image
+        .as_ref()
+        .filter(|image| image.reference.contains('/'))
+    {
         let config_file = update_config_path(system_install).ok_or(
             "GitRun config path is unavailable; cannot safely pin the verified runner image",
         )?;
         update_runner_image(image)?;
         pin_runner_image(&config_file, image)?;
         println!(
-            "Verified runner image pinned: {}@{}",
+            "Verified registry runner image pinned: {}@{}",
             image.reference, image.digest
         );
-    } else {
-        println!("Release manifest does not declare a runner image; using the currently configured image.");
+    } else if manifest.runner_image.is_none() {
+        println!("Release manifest does not declare a registry runner image; checking the configured local image build fingerprint through GTUU.");
     }
 
-    // GTUU compares container image IDs and skips busy permanent runners. Those
-    // runners remain intact and are reconciled on a later GTUU run.
+    // GTUU refreshes local build inputs before comparing container image IDs,
+    // then updates only eligible permanent runners and leaves busy runners intact.
     gitrun_scheduler::run_gtuu_once()
 }
 

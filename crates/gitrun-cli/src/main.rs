@@ -243,7 +243,10 @@ fn ensure_binary_alias(alias: &Path, canonical: &Path) -> Result<bool, String> {
         return Ok(false);
     }
     if !canonical_target.is_file() {
-        return Err(format!("canonical binary is not a file: {}", canonical.display()));
+        return Err(format!(
+            "canonical binary is not a file: {}",
+            canonical.display()
+        ));
     }
 
     let stamp = SystemTime::now()
@@ -263,7 +266,10 @@ fn ensure_binary_alias(alias: &Path, canonical: &Path) -> Result<bool, String> {
     if let Ok(metadata) = std::fs::symlink_metadata(alias) {
         if metadata.file_type().is_symlink() {
             let target = std::fs::read_link(alias).map_err(|error| {
-                format!("unable to inspect legacy alias {}: {error}", alias.display())
+                format!(
+                    "unable to inspect legacy alias {}: {error}",
+                    alias.display()
+                )
             })?;
             std::fs::write(
                 parent.join(format!("{file_name}.legacy-link-{stamp}")),
@@ -279,8 +285,9 @@ fn ensure_binary_alias(alias: &Path, canonical: &Path) -> Result<bool, String> {
                     backup.display()
                 )
             })?;
-            std::fs::set_permissions(&backup, metadata.permissions())
-                .map_err(|error| format!("unable to preserve legacy binary permissions: {error}"))?;
+            std::fs::set_permissions(&backup, metadata.permissions()).map_err(|error| {
+                format!("unable to preserve legacy binary permissions: {error}")
+            })?;
         } else {
             return Err(format!(
                 "refusing to replace non-file legacy binary path {}",
@@ -5274,7 +5281,10 @@ mod internal_lifecycle_command_tests {
         let dir = std::env::temp_dir().join(format!(
             "gitrun-binary-alias-test-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
         let canonical = dir.join("gitrun-package");
@@ -5287,7 +5297,8 @@ mod internal_lifecycle_command_tests {
         assert!(fs::read_dir(&dir).unwrap().any(|entry| {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             name.starts_with("gitrun.legacy-")
-                && fs::read(dir.join(name)).is_ok_and(|contents| contents.as_slice() == b"old-binary")
+                && fs::read(dir.join(name))
+                    .is_ok_and(|contents| contents.as_slice() == b"old-binary")
         }));
         assert!(!super::ensure_binary_alias(&alias, &canonical).unwrap());
 
@@ -5298,7 +5309,10 @@ mod internal_lifecycle_command_tests {
         symlink(&second_target, &alias).unwrap();
         assert!(super::ensure_binary_alias(&alias, &canonical).unwrap());
         assert_eq!(fs::read(&alias).unwrap(), b"new-binary");
-        assert_eq!(fs::read(&second_target).unwrap().as_slice(), b"another-old-binary");
+        assert_eq!(
+            fs::read(&second_target).unwrap().as_slice(),
+            b"another-old-binary"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

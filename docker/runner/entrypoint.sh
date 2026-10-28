@@ -120,6 +120,117 @@ touch "$GSR_EVENTS_FILE"
 chown root:root "$GSR_EVENTS_FILE"
 chmod 0600 "$GSR_EVENTS_FILE"
 
+# Used only by GitRun's image validator. The updater starts the real entrypoint
+# with /run/gitrun mounted as tmpfs and exits here before runner registration.
+if [[ "${1:-}" == "--policy-bootstrap-smoke-test" ]]; then
+  if [[ "$(stat -c '%u:%g:%a' -- "$GSR_POLICY_FILE")" != "0:0:444" ]]; then
+    echo "gitrun-runner: GSR policy bootstrap smoke test failed: unsafe policy ownership or mode" >&2
+    exit 1
+  fi
+  for required_binary in /bin/bash.gitrun-real /usr/local/bin/gitrun-gsr-agent /usr/local/bin/gitrun-api; do
+    if [[ ! -x "$required_binary" ]]; then
+      echo "gitrun-runner: GSR policy bootstrap smoke test failed: missing executable $required_binary" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '^GITRUN_GSR_COMMAND_POLICY_ENABLED=true
+chown runner:runner "$SHARED_CACHE_DIR"
+
+# GitDockRun's lifecycle marker lives in the root-only persistent control
+# volume, not the read-only rootfs or a runner-writable home/cache location.
+if [[ ! -f "$DOCK_ONLY_MARKER" ]]; then
+  : "${RUNNER_TOKEN:?RUNNER_TOKEN is required}"
+fi
+if [[ -f "$DOCK_ONLY_MARKER" ]]; then
+  echo "gitrun-runner: starting in GitDockRun dock-only mode"
+  unset RUNNER_TOKEN
+  unset GITRUN_API_TOKEN
+  unset GITRUN_GSR_COMMAND_POLICY_ENABLED
+  unset GITRUN_GSR_ALLOW_UNSAFE_RUNNER
+  unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED
+  unset GITRUN_GSR_COMMAND_BLACKLIST_ENABLED
+  unset GITRUN_GSR_COMMAND_BLACKLIST
+  unset GITRUN_GSR_COMMAND_WHITELIST_ENABLED
+  unset GITRUN_GSR_COMMAND_WHITELIST
+  unset GITRUN_GSR_VIOLATION_ACTION
+  exec sudo -P -u runner -E /bin/bash -c 'exec sleep infinity'
+fi
+
+ensure_runner_owned_dir() {
+  local path="$1"
+  if [[ -L "$path" ]]; then
+    echo "gitrun-runner: refusing symlinked runner state directory: $path" >&2
+    exit 1
+  fi
+  mkdir -p -- "$path"
+  if [[ -L "$path" || ! -d "$path" ]]; then
+    echo "gitrun-runner: runner state path is not a real directory: $path" >&2
+    exit 1
+  fi
+  # -h avoids following a symlink if an untrusted runner process races the
+  # checks above and replaces the final path component before chown executes.
+  chown --no-dereference runner:runner -- "$path"
+}
+
+ensure_runner_owned_dir "$HOME"
+ensure_runner_owned_dir "$XDG_CONFIG_HOME"
+
+sudo -P -u runner -E mkdir -p \
+  "$SHARED_CACHE_DIR/cargo" \
+  "$SHARED_CACHE_DIR/cargo-target" \
+  "$SHARED_CACHE_DIR/pip" \
+  "$SHARED_CACHE_DIR/npm"
+
+for runner_state in .runner .credentials .credentials_rsaparams; do
+  if [[ -L "$runner_state" ]]; then
+    echo "gitrun-runner: refusing symlinked runner credential/state file: $runner_state" >&2
+    exit 1
+  fi
+done
+if [[ -f .runner ]]; then
+  for runner_state in .runner .credentials .credentials_rsaparams; do
+    if [[ -e "$runner_state" ]]; then
+      if [[ ! -f "$runner_state" ]]; then
+        echo "gitrun-runner: runner credential/state path is not a regular file: $runner_state" >&2
+        exit 1
+      fi
+      chown --no-dereference runner:runner -- "$runner_state"
+    fi
+  done
+fi
+
+if [[ ! -f .runner ]]; then
+  args=(--url "$RUNNER_URL" --token "$RUNNER_TOKEN" --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" --unattended --replace)
+  [[ "$RUNNER_NO_DEFAULT_LABELS" == "true" ]] && args+=(--no-default-labels)
+  [[ "$RUNNER_EPHEMERAL" == "true" ]] && args+=(--ephemeral)
+  [[ "$RUNNER_DISABLE_UPDATE" == "true" ]] && args+=(--disableupdate)
+  sudo -P -u runner -E ./config.sh "${args[@]}"
+fi
+
+unset RUNNER_TOKEN
+unset GITRUN_RUNNER_NO_DEFAULT_LABELS
+unset GITRUN_GSR_ALLOW_UNSAFE_RUNNER
+unset GITRUN_GSR_COMMAND_POLICY_ENABLED
+unset GITRUN_GSR_COMMAND_BASELINE_BLACKLIST_ENABLED
+unset GITRUN_GSR_COMMAND_BLACKLIST_ENABLED
+unset GITRUN_GSR_COMMAND_BLACKLIST
+unset GITRUN_GSR_COMMAND_WHITELIST_ENABLED
+unset GITRUN_GSR_COMMAND_WHITELIST
+unset GITRUN_GSR_VIOLATION_ACTION
+
+# GSR supervisor is intentionally the final PID 1 process. It keeps the
+# CAP_SYS_PTRACE retained by the container solely for the supervisor and
+# permanently drops the runner child to the unprivileged "runner" account
+# before the Actions workload begins.
+exec /usr/local/bin/gitrun-gsr-agent --supervise-runner
+ "$GSR_POLICY_FILE"; then
+    echo "gitrun-runner: GSR policy bootstrap smoke test failed: policy content is missing" >&2
+    exit 1
+  fi
+  echo "gitrun-runner: GSR policy bootstrap smoke test PASS"
+  exit 0
+fi
+
 mkdir -p "$SHARED_CACHE_DIR"
 chown runner:runner "$SHARED_CACHE_DIR"
 

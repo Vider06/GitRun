@@ -1149,7 +1149,23 @@ const RUNNER_BUILD_PROFILE_LABEL: &str = "io.gitrun.runner.build-profile";
 /// runner build inputs differ from the fingerprint recorded on the current
 /// image. Registry-qualified references stay on the signed-manifest/digest path.
 pub fn refresh_local_runner_image_if_stale(image_ref: &str) -> Result<bool, SetupError> {
+    refresh_local_runner_image(image_ref, false)
+}
+
+/// Rebuild and validate the local runner image even when its recorded build
+/// fingerprint matches the current build inputs. The existing public tag is
+/// promoted only after fingerprint, entrypoint, and runtime-bootstrap checks pass.
+pub fn rebuild_local_runner_image(image_ref: &str) -> Result<bool, SetupError> {
+    refresh_local_runner_image(image_ref, true)
+}
+
+fn refresh_local_runner_image(image_ref: &str, force: bool) -> Result<bool, SetupError> {
     if image_ref.contains('/') {
+        if force {
+            return Err(SetupError::Command(
+                "forced local rebuild requires a local image reference; registry images are managed by the signed manifest".into(),
+            ));
+        }
         return Ok(false);
     }
     if !running_as_root() {
@@ -1169,13 +1185,19 @@ pub fn refresh_local_runner_image_if_stale(image_ref: &str) -> Result<bool, Setu
         ));
     }
 
-    refresh_local_runner_image_if_stale_at(image_ref, install_root, Path::new("/usr/bin/docker"))
+    refresh_local_runner_image_if_stale_at_with_force(
+        image_ref,
+        install_root,
+        Path::new("/usr/bin/docker"),
+        force,
+    )
 }
 
-fn refresh_local_runner_image_if_stale_at(
+fn refresh_local_runner_image_if_stale_at_with_force(
     image_ref: &str,
     install_root: &Path,
     docker_bin: &Path,
+    force: bool,
 ) -> Result<bool, SetupError> {
     if image_ref.contains('/') {
         return Ok(false);
@@ -1199,7 +1221,7 @@ fn refresh_local_runner_image_if_stale_at(
         .output()?;
     if inspect.status.success() {
         let current = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
-        if current == fingerprint {
+        if current == fingerprint && !force {
             return Ok(false);
         }
     } else {
@@ -3007,7 +3029,12 @@ exit 0
             0,
             0,
         );
-        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at_with_force(
+            "gitrun-runner:latest",
+            &root,
+            &docker,
+            false,
+        );
         assert!(!result.unwrap());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(!commands.contains("buildx build"));
@@ -3050,7 +3077,12 @@ exit 0
             47,
             0,
         );
-        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at_with_force(
+            "gitrun-runner:latest",
+            &root,
+            &docker,
+            false,
+        );
         assert!(result.is_err());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(commands.contains("buildx build"));
@@ -3070,7 +3102,12 @@ exit 0
             0,
             0,
         );
-        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at_with_force(
+            "gitrun-runner:latest",
+            &root,
+            &docker,
+            false,
+        );
         assert!(result.is_err());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(!commands.lines().any(|line| line.starts_with("run --rm")));
@@ -3090,7 +3127,12 @@ exit 0
             0,
             0,
         );
-        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at_with_force(
+            "gitrun-runner:latest",
+            &root,
+            &docker,
+            false,
+        );
         assert!(result.unwrap());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(commands.lines().any(|line| line.starts_with("run --rm")));

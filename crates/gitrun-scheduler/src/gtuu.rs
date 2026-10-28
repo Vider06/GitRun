@@ -257,25 +257,93 @@ pub struct GtuuConfig<'a> {
 /// image differs from the freshly pulled one. Returns the number actually
 /// updated (mirrors the Python `update_permanent_containers` return value).
 pub fn update_permanent_containers(client: &GitHubClient, config: &GtuuConfig) -> Result<u32> {
-    gitrun_setup::refresh_local_runner_image_if_stale(config.image)
-        .map_err(|error| GtuuError::RunnerImageRefresh(error.to_string()))?;
+    update_permanent_containers_with_options(client, config, None, false, false)
+}
+
+/// Reconcile selected permanent runners. A forced rebuild validates a fresh
+/// local image before promoting its tag; a forced replacement bypasses only
+/// the image-ID equality shortcut, never the busy-runner safety gate.
+pub fn update_permanent_containers_with_options(
+    client: &GitHubClient,
+    config: &GtuuConfig,
+    repository_filter: Option<&str>,
+    force_rebuild: bool,
+    force_replace: bool,
+) -> Result<u32> {
+    if force_rebuild {
+        gitrun_setup::rebuild_local_runner_image(config.image)
+            .map_err(|error| GtuuError::RunnerImageRefresh(error.to_string()))?;
+    } else {
+        gitrun_setup::refresh_local_runner_image_if_stale(config.image)
+            .map_err(|error| GtuuError::RunnerImageRefresh(error.to_string()))?;
+    }
     docker::ensure_shared_cache_volume(config.shared_cache_volume)?;
     let new_image_id = pull_image(config.image)?;
 
     let mut updated = 0u32;
-    for repo in config.repositories {
+    for repo in config
+        .repositories
+        .iter()
+        .filter(|repo| repository_filter.is_none_or(|filter| repo.eq_ignore_ascii_case(filter)))
+    {
         for container in docker::managed_containers(repo)? {
             if !container.permanent {
                 continue;
             }
-            if update_one(client, config, repo, &container.name, &new_image_id)?
-                == UpdateOutcome::Updated
+            if update_one(
+                client,
+                config,
+                repo,
+                &container.name,
+                &new_image_id,
+                force_replace,
+            )? == UpdateOutcome::Updated
             {
                 updated += 1;
             }
         }
     }
     Ok(updated)
+}
+
+/// Read-only inventory for the GTUU CLI. It reports the configured image,
+/// permanent container state, and whether each container uses the current
+/// image without contacting GitHub or mutating Docker resources.
+pub fn check_permanent_containers(
+    config: &GtuuConfig,
+    repository_filter: Option<&str>,
+) -> Result<Vec<String>> {
+    let expected_image = docker::image_id(config.image).ok();
+    let mut report = vec![format!(
+        "configured_image={} image_id={}",
+        config.image,
+        expected_image.as_deref().unwrap_or("MISSING")
+    )];
+    let mut found = 0usize;
+    for repo in config
+        .repositories
+        .iter()
+        .filter(|repo| repository_filter.is_none_or(|filter| repo.eq_ignore_ascii_case(filter)))
+    {
+        let containers = docker::managed_containers(repo)?;
+        for container in containers.into_iter().filter(|item| item.permanent) {
+            found += 1;
+            let image_id = docker::container_image_id(&container.name)?
+                .unwrap_or_else(|| "MISSING".to_owned());
+            let matches_image = expected_image.as_deref() == Some(image_id.as_str());
+            report.push(format!(
+                "repo={} name={} status={} image_id={} image_match={}",
+                repo, container.name, container.status, image_id, matches_image
+            ));
+        }
+    }
+    if found == 0 {
+        report.push(
+            "No permanent GitRun runner containers found for the selected repository scope."
+                .to_owned(),
+        );
+    }
+    Ok(report)
 }
 
 fn is_registry_image_reference(image: &str) -> bool {
@@ -317,12 +385,13 @@ fn update_one(
     repo: &str,
     name: &str,
     new_image_id: &str,
+    force_replace: bool,
 ) -> Result<UpdateOutcome> {
     let old_image_id = match current_image_id(name)? {
         UpdateCurrentImage::Present(id) => id,
         UpdateCurrentImage::Missing => return Ok(UpdateOutcome::Missing),
     };
-    if old_image_id == new_image_id {
+    if old_image_id == new_image_id && !force_replace {
         return Ok(UpdateOutcome::Current);
     }
 

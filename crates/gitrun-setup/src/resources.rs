@@ -1,18 +1,9 @@
 use super::SetupError;
 
-/// The runner Dockerfile is maintained in GitRun Premade and pinned by the
-/// updater crate. Setup fetches that immutable source and applies the same
-/// minimal-build-context adaptation used by the existing installer.
+/// Build from the Dockerfile shipped in this signed GitRun release. The updater
+/// must not silently keep using an older independently pinned Premade file.
 pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
-    let source = gitrun_updater::fetch_premade_runner_dockerfile(
-        &gitrun_updater::canonical_premade_runner_dockerfile(),
-    )
-    .map_err(|error| {
-        SetupError::Command(format!(
-            "unable to fetch the canonical Premade runner Dockerfile: {error}"
-        ))
-    })?;
-    runner_dockerfile_from_source(&source)
+    runner_dockerfile_from_source(include_str!("../../../docker/runner/Dockerfile"))
 }
 
 fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {

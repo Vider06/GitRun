@@ -6,7 +6,7 @@
 
 **Your self-hosted GitHub Actions runners, under your control.**
 
-*Born from the problems of the people, for the problems of the people.*
+*Born from people's problems, built to solve them.*
 
 GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It provisions and scales Docker runners, can route selected workloads to virtual machines, and brings secrets, security policy, recovery and day-to-day operations into one desktop dashboard and CLI.
 

@@ -3457,7 +3457,9 @@ fn run_gtuu_command(
         return 2;
     }
     if repository_filter.is_none() && !all_repositories {
-        eprintln!("GitRun GTUU: select --repo <owner/repository> or --all; no operation was performed");
+        eprintln!(
+            "GitRun GTUU: select --repo <owner/repository> or --all; no operation was performed"
+        );
         return 2;
     }
 

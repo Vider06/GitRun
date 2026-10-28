@@ -513,7 +513,10 @@ fn update_command(
     }
 
     if let Some((gitrun_binary, version_file)) = system_install {
-        let mut should_run_gtuu = plan.runner_image.is_some();
+        let mut should_run_gtuu = match plan.runner_image.as_ref() {
+            Some(_) => true,
+            None => !load_config()?.runner_image.contains('/'),
+        };
         println!("GitRun update: applying the verified binary transaction");
         // Keep privileged update destinations fixed, independent of environment overrides.
         let backup_root = PathBuf::from("/var/lib/gitrun/backups");

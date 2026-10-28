@@ -3461,9 +3461,7 @@ fn run_gtuu_command(
     }
 }
 
-fn run_runner_only_update(
-    manifest_url: Option<&str>,
-) -> Result<u32, Box<dyn std::error::Error>> {
+fn run_runner_only_update(manifest_url: Option<&str>) -> Result<u32, Box<dyn std::error::Error>> {
     let system_install = system_install_paths().is_some();
     initialize_update_signing_environment(system_install);
     initialize_system_update_config_path(system_install);

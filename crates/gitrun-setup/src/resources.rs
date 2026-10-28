@@ -295,6 +295,19 @@ mod tests {
     }
 
     #[test]
+    fn shipped_workbench_dockerfile_keeps_symlink_modes_out_of_permission_audit() {
+        let dockerfile = runner_dockerfile_for_profile("workbench").unwrap();
+        assert!(
+            dockerfile.contains("! -type l -a -perm /022"),
+            "runner Dockerfile must not reject symlink permission bits"
+        );
+        assert!(
+            !dockerfile.contains("! -user root -o -perm /022"),
+            "legacy predicate incorrectly checks symlink mode bits"
+        );
+    }
+
+    #[test]
     fn bootstrap_dockerfile_uses_minimal_gsr_build_context_and_original_bash() {
         // Model the pinned older Premade Dockerfile, whose entrypoint invokes
         // /entrypoint.sh through /usr/bin/env bash. The adapter must make that

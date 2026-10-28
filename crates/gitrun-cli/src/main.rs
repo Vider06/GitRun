@@ -512,34 +512,90 @@ fn update_command(
     }
 
     if let Some((gitrun_binary, version_file)) = system_install {
-        let mut should_run_gtuu = plan.runner_image.is_some();
-        println!("GitRun update: applying the verified binary transaction");
-        // System-update backup destinations are fixed even when running as root.
-        let backup_root = PathBuf::from("/var/lib/gitrun/backups");
-        let artifacts = [InstalledArtifact {
-            archive_name: "gitrun".into(),
-            destination: gitrun_binary.clone(),
-            required: true,
-        }];
-        let backup = apply_installed_update(
-            &archive,
-            &target,
-            &manifest.version,
-            &artifacts,
-            &version_file,
-            &backup_root,
-            &gitrun_binary,
-            config_path.as_deref(),
-        )?;
+        let should_run_gtuu = match plan.runner_image.as_ref() {
+            Some(_) => true,
+            None => !load_config()?.runner_image.contains('/'),
+        };
 
-        // Install/repair the persistent privileged control plane as part of
-        // a system upgrade. The user UI stays unprivileged; no per-operation
-        // sudo prompt is needed after the service is active.
-        let desktop_uid = std::env::var("PKEXEC_UID")
-            .or_else(|_| std::env::var("SUDO_UID"))
-            .ok()
-            .and_then(|value| value.parse::<u32>().ok())
-            .filter(|uid| *uid != 0);
+        // Replacing the on-disk executable does not replace the code already
+        // running in this process. Run GTUU through the newly installed binary
+        // so the runner Dockerfile embedded in the target release is used.
+        // Stop the scheduler first to prevent its scheduled GTUU worker from
+        // racing this image rebuild and permanent-runner reconciliation.
+        if should_run_gtuu {
+            println!(
+                "GitRun update: stopping scheduler before target-version runner reconciliation"
+            );
+            if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
+                .args(["stop", "gitrun.service"])
+                .status()
+                .and_then(|status| {
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(std::io::Error::other(format!(
+                            "systemctl stop gitrun.service exited with status {status}"
+                        )))
+                    }
+                })
+            {
+                let rollback_error = rollback_installed_update_with_config(
+                    &backup,
+                    &artifacts,
+                    &version_file,
+                    config_path.as_deref(),
+                    &backup_root,
+                )
+                .err();
+                let restart_error = restart_scheduler_service().err();
+                return Err(format!(
+                    "unable to stop scheduler before runner reconciliation: {error}; rollback: {}; scheduler recovery: {}",
+                    rollback_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string()),
+                    restart_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string())
+                ).into());
+            }
+
+            println!("GitRun update: invoking the newly installed binary for GTUU");
+            let mut child = std::process::Command::new(&gitrun_binary);
+            child.args(["--no-cat", "update", "--only-containers"]);
+            if let Some(url) = manifest_url {
+                child.arg(url);
+            }
+            let child_result = child
+                .status()
+                .map_err(|error| {
+                    format!("unable to launch the newly installed GTUU updater: {error}")
+                })
+                .and_then(|status| {
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "newly installed GTUU updater exited with status {status}"
+                        ))
+                    }
+                });
+            if let Err(error) = child_result {
+                let rollback_error = rollback_installed_update_with_config(
+                    &backup,
+                    &artifacts,
+                    &version_file,
+                    config_path.as_deref(),
+                    &backup_root,
+                )
+                .err();
+                let restart_error = restart_scheduler_service().err();
+                return Err(format!(
+                    "runner image refresh / GTUU reconciliation failed: {error}; GitRun rollback: {}; scheduler recovery: {}",
+                    rollback_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string()),
+                    restart_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string())
+                ).into());
+            }
+        }
+
+        // Reconcile systemd only after the target-version GTUU process has
+        // completed. This restarts and verifies the scheduler after the runner
+        // image has been validated and permanent containers have been handled.
         println!("GitRun update: reconciling systemd units, control group and GitRun services");
         if let Err(error) =
             gitrun_setup::ensure_control_manager_service_with_binary(desktop_uid, &gitrun_binary)
@@ -560,142 +616,8 @@ fn update_command(
             ).into());
         }
 
-        if let Some(image) = plan
-            .runner_image
-            .as_ref()
-            .filter(|image| image.reference.contains('/'))
-        {
-            if let Err(error) = update_runner_image(image) {
-                let rollback_error = rollback_installed_update_with_config(
-                    &backup,
-                    &artifacts,
-                    &version_file,
-                    config_path.as_deref(),
-                    &backup_root,
-                )
-                .err();
-                return Err(match rollback_error {
-                    Some(rollback_error) => format!(
-                        "runner update failed: {error}; GitRun rollback also failed: {rollback_error}"
-                    ),
-                    None => format!("runner update failed; GitRun was rolled back: {error}"),
-                }
-                .into());
-            }
-            if let Some(config_file) = config_path.as_deref() {
-                if let Err(error) = pin_runner_image(config_file, image) {
-                    let rollback_error = rollback_installed_update_with_config(
-                        &backup,
-                        &artifacts,
-                        &version_file,
-                        config_path.as_deref(),
-                        &backup_root,
-                    )
-                    .err();
-                    return Err(match rollback_error {
-                        Some(rollback_error) => format!(
-                            "runner configuration update failed: {error}; GitRun rollback also failed: {rollback_error}"
-                        ),
-                        None => format!(
-                            "runner configuration update failed; GitRun was rolled back: {error}"
-                        ),
-                    }
-                    .into());
-                }
-            }
-        }
-
-        // Local images are rebuilt from the Dockerfile and full GSR build context
-        // embedded in this verified release. Build failure is handled before the
-        // scheduler restart and never replaces the currently working image tag.
-        let local_runner_image = match plan.runner_image.as_ref() {
-            Some(image) if !image.reference.contains('/') => Some(image.reference.clone()),
-            Some(_) => None,
-            None => {
-                let configured_image = load_config()?.runner_image;
-                (!configured_image.contains('/')).then_some(configured_image)
-            }
-        };
-        if let Some(image_ref) = local_runner_image {
-            match gitrun_setup::refresh_local_runner_image_if_stale(&image_ref) {
-                Ok(refreshed) => {
-                    if refreshed {
-                        should_run_gtuu = true;
-                        println!("GitRun update: local runner image rebuilt and validated from the release build inputs");
-                    } else {
-                        println!("GitRun update: local runner image build fingerprint is current");
-                    }
-                }
-                Err(error) => {
-                    let rollback_error = rollback_installed_update_with_config(
-                        &backup,
-                        &artifacts,
-                        &version_file,
-                        config_path.as_deref(),
-                        &backup_root,
-                    )
-                    .err();
-                    return Err(match rollback_error {
-                        Some(rollback_error) => format!(
-                            "local runner image refresh failed: {error}; GitRun rollback also failed: {rollback_error}"
-                        ),
-                        None => format!(
-                            "local runner image refresh failed; GitRun was rolled back: {error}"
-                        ),
-                    }
-                    .into());
-                }
-            }
-        }
-
         presenter.transition(presenter::ValidationState::Running);
-        println!("GitRun update: restarting and verifying the scheduler");
-        if let Err(error) = restart_scheduler_service() {
-            let rollback_result = rollback_installed_update_with_config(
-                &backup,
-                &artifacts,
-                &version_file,
-                config_path.as_deref(),
-                &backup_root,
-            );
-            let restore_result = restart_scheduler_service();
-            return match (rollback_result, restore_result) {
-                (Ok(()), Ok(())) => Err(format!(
-                    "scheduler restart failed; GitRun was rolled back and the previous service was restarted: {error}"
-                ).into()),
-                (Err(rollback_error), Ok(())) => Err(format!(
-                    "scheduler restart failed: {error}; rollback also failed: {rollback_error}"
-                ).into()),
-                (Ok(()), Err(restore_error)) => Err(format!(
-                    "scheduler restart failed and the restored service could not be restarted: {error}; restore restart failed: {restore_error}"
-                ).into()),
-                (Err(rollback_error), Err(restore_error)) => Err(format!(
-                    "scheduler restart failed: {error}; rollback failed: {rollback_error}; restoring the previous service also failed: {restore_error}"
-                ).into()),
-            };
-        }
-
-        if should_run_gtuu {
-            println!("GitRun update: invoking GTUU to reconcile permanent runners");
-            let gtuu_result = (|| -> Result<u32, Box<dyn std::error::Error>> {
-                let config = load_config()?;
-                let _gtuu_lock =
-                    gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
-                gitrun_scheduler::run_gtuu_once()
-            })();
-            match gtuu_result {
-                Ok(updated) => println!(
-                    "GitRun update: GTUU reconciled {updated} permanent runner(s); busy runners remain untouched"
-                ),
-                Err(error) => {
-                    return Err(format!(
-                        "GitRun was installed and the scheduler restarted, but GTUU runner reconciliation failed: {error}. Retry sudo gitrun update --only-containers after resolving the reported issue. Failed image builds preserve the prior image tag and existing containers."
-                    )
-                    .into());
-                }
-            }
-        }
-
+        println!("GitRun update: scheduler and control services restarted and verified");
         if force {
             eprintln!(
                 "GitRun update: WARNING — --force requested; skipping only the post-update doctor gate. Manifest signature, artifact SHA-256, executable validation, systemd reconciliation, GTUU reconciliation and scheduler restart checks remain enforced."
@@ -3539,7 +3461,7 @@ fn run_gtuu_command(
     }
 }
 
-fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
+fn run_runner_only_update(manifest_url: Option<&str>) -> Result<u32, Box<dyn std::error::Error>> {
     let system_install = system_install_paths().is_some();
     initialize_update_signing_environment(system_install);
     initialize_system_update_config_path(system_install);
@@ -3553,7 +3475,10 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
     let _gtuu_lock = gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
-    let manifest = latest_manifest(&repository)?;
+    let manifest = match manifest_url {
+        Some(url) => fetch_manifest(url)?,
+        None => latest_manifest(&repository)?,
+    };
     if let Some(image) = manifest
         .runner_image
         .as_ref()
@@ -3735,11 +3660,14 @@ fn run_update(
                 }
             };
             presenter.prepare_for_external_process();
-            return match std::process::Command::new("/usr/bin/sudo")
+            let mut command = std::process::Command::new("/usr/bin/sudo");
+            command
                 .arg(executable)
-                .args(["--no-cat", "update", "--only-containers"])
-                .status()
-            {
+                .args(["--no-cat", "update", "--only-containers"]);
+            if let Some(url) = manifest_url {
+                command.arg(url);
+            }
+            return match command.status() {
                 Ok(status) => status.code().unwrap_or(1),
                 Err(error) => {
                     eprintln!("GitRun GTUU: FAIL — unable to request administrator authorization: {error}");
@@ -3748,7 +3676,7 @@ fn run_update(
             };
         }
         presenter.transition(presenter::ValidationState::Running);
-        return match run_runner_only_update() {
+        return match run_runner_only_update(manifest_url) {
             Ok(count) => {
                 println!("GitRun GTUU: updated {count} permanent runner(s)");
                 if let Ok(config) = load_config() {

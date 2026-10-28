@@ -561,6 +561,36 @@ jobs:
           test "$(cat "$RUNNER_TEMP/server-check/version.txt")" = "${VERSION#v}"
           test "$(target/release/gitrun --version --gitrun)" = "GitRun ${VERSION#v}"
 
+          # Verify the executable actually shipped in the archive is the exact
+          # executable produced by this release build, then inspect the embedded
+          # runner Dockerfile. Source checks alone cannot detect a stale binary.
+          cmp -s target/release/gitrun "$RUNNER_TEMP/server-check/gitrun" || {
+            echo "Server archive contains a GitRun binary different from the verified build output" >&2
+            exit 1
+          }
+          grep -aFq -- '! -type l -a -perm /022' "$RUNNER_TEMP/server-check/gitrun" || {
+            echo "Released GitRun binary does not embed the expected symlink-safe runner Dockerfile" >&2
+            exit 1
+          }
+          if grep -aFq -- '! -user root -o -perm /022' "$RUNNER_TEMP/server-check/gitrun"; then
+            echo "Released GitRun binary still embeds the legacy runner permission predicate" >&2
+            exit 1
+          fi
+
+          deb_check="$RUNNER_TEMP/deb-check"
+          rm -rf "$deb_check"
+          mkdir -p "$deb_check"
+          dpkg-deb -x "$deb" "$deb_check"
+          test -x "$deb_check/usr/bin/gitrun"
+          cmp -s target/release/gitrun "$deb_check/usr/bin/gitrun" || {
+            echo "Debian package contains a GitRun binary different from the verified build output" >&2
+            exit 1
+          }
+          grep -aFq -- '! -type l -a -perm /022' "$deb_check/usr/bin/gitrun" || {
+            echo "Debian package binary does not embed the expected symlink-safe runner Dockerfile" >&2
+            exit 1
+          }
+
           command -v jq >/dev/null 2>&1
           jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" '.name == "GitRun" and .version == $version and .git_commit == $commit and (([.artifacts[].target] | sort) == ["cargo-metadata", "library-json-backup", "linux-x86_64-deb", "provenance", "sbom-spdx", "x86_64-unknown-linux-gnu"]) and (.artifacts | length == 6) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' "$ROOT/release-manifest.json" >/dev/null
           echo "Release manifest: PASS"

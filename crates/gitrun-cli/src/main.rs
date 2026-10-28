@@ -1719,6 +1719,19 @@ fn main() {
             force,
             &mut presenter,
         ),
+        Command::Gtuu {
+            check,
+            rebuild,
+            repo,
+            all,
+            force,
+        } => run_gtuu_command(
+            repo.as_deref(),
+            rebuild,
+            force || rebuild,
+            check,
+            &mut presenter,
+        ),
         Command::FixUpdate => run_fix_update(&mut presenter),
         Command::FixUpdateRoot => run_fix_update(&mut presenter),
         Command::Scheduler => run_scheduler(),
@@ -2043,6 +2056,24 @@ enum Command {
         force: bool,
         /// Optional manifest URL to inspect instead of the latest GitHub release.
         manifest_url: Option<String>,
+    },
+    /// Inspect or repair GitRun-managed permanent runner containers.
+    Gtuu {
+        /// Read-only image and permanent-container inventory.
+        #[arg(long, conflicts_with_all = ["rebuild", "force"])]
+        check: bool,
+        /// Force a fresh, validated local runner image build before reconciliation.
+        #[arg(long, conflicts_with = "check")]
+        rebuild: bool,
+        /// Restrict the operation to one configured owner/repository.
+        #[arg(long, conflicts_with = "all")]
+        repo: Option<String>,
+        /// Explicitly select every configured repository.
+        #[arg(long)]
+        all: bool,
+        /// Replace selected permanent runners even when image IDs match.
+        #[arg(long, conflicts_with = "check")]
+        force: bool,
     },
     /// Repair the system update integration and then apply the latest official release if newer.
     FixUpdate,
@@ -3410,6 +3441,87 @@ fn run_doctor() -> i32 {
         1
     }
 }
+fn run_gtuu_command(
+    repository_filter: Option<&str>,
+    rebuild: bool,
+    force_replace: bool,
+    check_only: bool,
+    presenter: &mut presenter::CatPresenter,
+) -> i32 {
+    let system_install = system_install_paths().is_some();
+
+    // A system install reads /etc/gitrun/gitrun.env and operates on the root
+    // Docker daemon. Delegate the whole operation rather than letting an
+    // unprivileged invocation fail while loading protected configuration.
+    if system_install && !running_as_root() {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("GitRun GTUU: FAIL — unable to resolve installed executable: {error}");
+                return 1;
+            }
+        };
+        presenter.prepare_for_external_process();
+        let mut command = std::process::Command::new("/usr/bin/sudo");
+        command.arg(executable).args(["--no-cat", "gtuu"]);
+        if check_only {
+            command.arg("--check");
+        }
+        if rebuild {
+            command.arg("--rebuild");
+        }
+        if let Some(repo) = repository_filter {
+            command.arg("--repo").arg(repo);
+        } else {
+            command.arg("--all");
+        }
+        if force_replace && !rebuild {
+            command.arg("--force");
+        }
+        return match command.status() {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(error) => {
+                eprintln!("GitRun GTUU: FAIL — unable to request administrator authorization: {error}");
+                1
+            }
+        };
+    }
+
+    if system_install {
+        initialize_update_signing_environment(true);
+        initialize_system_update_config_path(true);
+    }
+
+    if rebuild && !system_install {
+        eprintln!("GitRun GTUU: FAIL — rebuilding the trusted local runner image requires the installed system command and administrator privileges");
+        return 2;
+    }
+
+    match gitrun_scheduler::run_gtuu_with_options(
+        repository_filter,
+        rebuild,
+        force_replace,
+        check_only,
+    ) {
+        Ok(count) if check_only && count == 0 => {
+            println!("GitRun GTUU check: PASS");
+            0
+        }
+        Ok(count) if check_only => {
+            eprintln!("GitRun GTUU check: FAIL ({count} issue(s))");
+            1
+        }
+        Ok(count) => {
+            println!("GitRun GTUU: updated {count} permanent runner(s)");
+            0
+        }
+        Err(error) => {
+            eprintln!("GitRun GTUU: FAIL — {error}");
+            1
+        }
+    }
+}
+
 fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     let system_install = system_install_paths().is_some();
     initialize_update_signing_environment(system_install);
@@ -3595,6 +3707,27 @@ fn run_update(
     initialize_system_update_config_path(system_install);
 
     if only_containers {
+        if system_install && !running_as_root() {
+            let executable = match std::env::current_exe() {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!("GitRun GTUU: FAIL — unable to resolve installed executable: {error}");
+                    return 1;
+                }
+            };
+            presenter.prepare_for_external_process();
+            return match std::process::Command::new("/usr/bin/sudo")
+                .arg(executable)
+                .args(["--no-cat", "update", "--only-containers"])
+                .status()
+            {
+                Ok(status) => status.code().unwrap_or(1),
+                Err(error) => {
+                    eprintln!("GitRun GTUU: FAIL — unable to request administrator authorization: {error}");
+                    1
+                }
+            };
+        }
         presenter.transition(presenter::ValidationState::Running);
         return match run_runner_only_update() {
             Ok(count) => {

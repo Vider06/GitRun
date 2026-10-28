@@ -3357,8 +3357,25 @@ fn resolve_docker_socket_gid() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
+    run_gtuu_with_options(None, false, false, false)
+}
+
+/// Run GTUU for all configured repositories or a single configured repository.
+/// `check_only` performs a read-only image/container inventory; `force_rebuild`
+/// rebuilds the validated local image, and `force_replace` replaces matching
+/// permanent runners even when their image IDs already match.
+pub fn run_gtuu_with_options(
+    repository_filter: Option<&str>,
+    force_rebuild: bool,
+    force_replace: bool,
+    check_only: bool,
+) -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
-    let client = build_github_client(&config)?;
+    if let Some(repo) = repository_filter {
+        if !config.repositories.iter().any(|configured| configured.eq_ignore_ascii_case(repo)) {
+            return Err(format!("repository {repo:?} is not configured in GitRun").into());
+        }
+    }
     let settings = gitrun_core::GitRunSettings::load_or_default(
         gitrun_core::GitRunSettings::path_for_state_dir(&config.state_dir),
     )?;
@@ -3407,7 +3424,35 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
         gsr_policy_env: &gsr_policy_env,
         docker_socket_enabled_for_repo: &socket_enabled_for_repo,
     };
-    Ok(gtuu::update_permanent_containers(&client, &gtuu_config)?)
+    if check_only {
+        let report = gtuu::check_permanent_containers(&gtuu_config, repository_filter)?;
+        let mut issues = 0u32;
+        for line in report {
+            println!("{line}");
+            if line.contains("image_id=MISSING")
+                || line.contains("image_match=false")
+                || line.contains("No permanent GitRun runner containers")
+                || (line.contains(" status=")
+                    && !line.to_ascii_lowercase().contains(" status=up "))
+            {
+                issues = issues.saturating_add(1);
+            }
+        }
+        if issues == 0 {
+            println!("GitRun GTUU check: PASS");
+        } else {
+            println!("GitRun GTUU check: FAIL ({issues} issue(s))");
+        }
+        return Ok(issues);
+    }
+    let client = build_github_client(&config)?;
+    Ok(gtuu::update_permanent_containers_with_options(
+        &client,
+        &gtuu_config,
+        repository_filter,
+        force_rebuild,
+        force_replace,
+    )?)
 }
 fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) -> std::io::Result<()> {
     let stopping = stopping.clone();

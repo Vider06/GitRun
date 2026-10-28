@@ -173,9 +173,9 @@ jobs:
           path: target
           # The manifest/lock fingerprint scopes dependency changes; the commit SHA makes the
           # cache immutable per build so updated artifacts can be saved for the next run.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-${{ github.sha }}
           restore-keys: |
-            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-
+            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-
 
       - name: Install Linux build dependencies
         shell: bash

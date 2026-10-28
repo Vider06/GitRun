@@ -1193,14 +1193,6 @@ fn refresh_local_runner_image(image_ref: &str, force: bool) -> Result<bool, Setu
     )
 }
 
-fn refresh_local_runner_image_if_stale_at(
-    image_ref: &str,
-    install_root: &Path,
-    docker_bin: &Path,
-) -> Result<bool, SetupError> {
-    refresh_local_runner_image_if_stale_at_with_force(image_ref, install_root, docker_bin, false)
-}
-
 fn refresh_local_runner_image_if_stale_at_with_force(
     image_ref: &str,
     install_root: &Path,

@@ -512,8 +512,10 @@ fn update_command(
     }
 
     if let Some((gitrun_binary, version_file)) = system_install {
-        let configured_image = load_config()?.runner_image;
-        let should_run_gtuu = plan.runner_image.is_some() || !configured_image.contains('/');
+        let should_run_gtuu = match plan.runner_image.as_ref() {
+            Some(_) => true,
+            None => !load_config()?.runner_image.contains('/'),
+        };
 
         // Replacing the on-disk executable does not replace the code already
         // running in this process. Run GTUU through the newly installed binary
@@ -554,8 +556,12 @@ fn update_command(
             }
 
             println!("GitRun update: invoking the newly installed binary for GTUU");
-            let child_result = std::process::Command::new(&gitrun_binary)
-                .args(["--no-cat", "update", "--only-containers"])
+            let mut child = std::process::Command::new(&gitrun_binary);
+            child.args(["--no-cat", "update", "--only-containers"]);
+            if let Some(url) = manifest_url {
+                child.arg(url);
+            }
+            let child_result = child
                 .status()
                 .map_err(|error| {
                     format!("unable to launch the newly installed GTUU updater: {error}")
@@ -3455,7 +3461,9 @@ fn run_gtuu_command(
     }
 }
 
-fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
+fn run_runner_only_update(
+    manifest_url: Option<&str>,
+) -> Result<u32, Box<dyn std::error::Error>> {
     let system_install = system_install_paths().is_some();
     initialize_update_signing_environment(system_install);
     initialize_system_update_config_path(system_install);
@@ -3469,7 +3477,10 @@ fn run_runner_only_update() -> Result<u32, Box<dyn std::error::Error>> {
     let config = load_config()?;
     let _gtuu_lock = gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
-    let manifest = latest_manifest(&repository)?;
+    let manifest = match manifest_url {
+        Some(url) => fetch_manifest(url)?,
+        None => latest_manifest(&repository)?,
+    };
     if let Some(image) = manifest
         .runner_image
         .as_ref()
@@ -3664,7 +3675,7 @@ fn run_update(
             };
         }
         presenter.transition(presenter::ValidationState::Running);
-        return match run_runner_only_update() {
+        return match run_runner_only_update(manifest_url) {
             Ok(count) => {
                 println!("GitRun GTUU: updated {count} permanent runner(s)");
                 if let Ok(config) = load_config() {

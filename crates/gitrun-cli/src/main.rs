@@ -5213,6 +5213,11 @@ mod internal_lifecycle_command_tests {
         TRUSTED_SYSTEM_CONFIG_FILE,
     };
     use clap::Parser;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn system_binary_selection_prefers_debian_owned_path_when_both_exist() {

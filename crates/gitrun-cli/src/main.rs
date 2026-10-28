@@ -1930,7 +1930,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         // Update validates the release plan before entering the updating state.
         // Keeping the initial state neutral avoids showing "updating" when the
         // requested release is already installed or otherwise rejected.
-        Command::Update { .. } | Command::FixUpdate => ValidationState::Ready,
+        Command::Update { .. } | Command::Gtuu { .. } | Command::FixUpdate => ValidationState::Ready,
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
         Command::Manage => ValidationState::Reading,
         Command::Uninstall
@@ -3448,6 +3448,11 @@ fn run_gtuu_command(
     check_only: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
+    if !check_only && !rebuild && !force_replace {
+        eprintln!("GitRun GTUU: choose --check, --rebuild, or --force; no operation was performed");
+        return 2;
+    }
+
     let system_install = system_install_paths().is_some();
 
     // A system install reads /etc/gitrun/gitrun.env and operates on the root

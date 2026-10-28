@@ -15,33 +15,36 @@ legacy=/usr/local/bin/gitrun
 
 [ -x "$canonical" ] || exit 0
 
+aligned=0
 if [ -L "$legacy" ] && [ "$(readlink -f "$legacy" 2>/dev/null || true)" = "$(readlink -f "$canonical")" ]; then
-  exit 0
+  aligned=1
 fi
 
-if [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
-  echo "gitrun postinst: refusing to replace directory at $legacy" >&2
-  exit 1
-fi
-
-stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-if [ -e "$legacy" ] || [ -L "$legacy" ]; then
-  backup_dir=/var/lib/gitrun/backups/legacy-binaries
-  mkdir -p "$backup_dir"
-  chmod 0700 "$backup_dir"
-  if [ -L "$legacy" ]; then
-    cp -a "$legacy" "$backup_dir/gitrun.local.$stamp"
-  else
-    cp -p "$legacy" "$backup_dir/gitrun.local.$stamp"
+if [ "$aligned" -ne 1 ]; then
+  if [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
+    echo "gitrun postinst: refusing to replace directory at $legacy" >&2
+    exit 1
   fi
-  echo "gitrun postinst: preserved the previous /usr/local binary at $backup_dir/gitrun.local.$stamp"
-fi
 
-temporary="/usr/local/bin/.gitrun-link.$$"
-trap 'rm -f "$temporary"' EXIT HUP INT TERM
-ln -s "$canonical" "$temporary"
-mv -f "$temporary" "$legacy"
-trap - EXIT HUP INT TERM
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)-$"
+  if [ -e "$legacy" ] || [ -L "$legacy" ]; then
+    backup_dir=/var/lib/gitrun/backups/legacy-binaries
+    mkdir -p "$backup_dir"
+    chmod 0700 "$backup_dir"
+    if [ -L "$legacy" ]; then
+      cp -a "$legacy" "$backup_dir/gitrun.local.$stamp"
+    else
+      cp -p "$legacy" "$backup_dir/gitrun.local.$stamp"
+    fi
+    echo "gitrun postinst: preserved the previous /usr/local binary at $backup_dir/gitrun.local.$stamp"
+  fi
+
+  temporary="/usr/local/bin/.gitrun-link.$"
+  trap 'rm -f "$temporary"' EXIT HUP INT TERM
+  ln -s "$canonical" "$temporary"
+  mv -f "$temporary" "$legacy"
+  trap - EXIT HUP INT TERM
+fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || {

@@ -284,7 +284,7 @@ pub fn update_permanent_containers_with_options(
     for repo in config
         .repositories
         .iter()
-        .filter(|repo| repository_filter.map_or(true, |filter| repo.eq_ignore_ascii_case(filter)))
+        .filter(|repo| repository_filter.is_none_or(|filter| repo.eq_ignore_ascii_case(filter)))
     {
         for container in docker::managed_containers(repo)? {
             if !container.permanent {
@@ -323,7 +323,7 @@ pub fn check_permanent_containers(
     for repo in config
         .repositories
         .iter()
-        .filter(|repo| repository_filter.map_or(true, |filter| repo.eq_ignore_ascii_case(filter)))
+        .filter(|repo| repository_filter.is_none_or(|filter| repo.eq_ignore_ascii_case(filter)))
     {
         let containers = docker::managed_containers(repo)?;
         for container in containers.into_iter().filter(|item| item.permanent) {

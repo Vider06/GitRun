@@ -681,7 +681,7 @@ fn update_command(
                 let config = load_config()?;
                 let _gtuu_lock =
                     gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?;
-                Ok(gitrun_scheduler::run_gtuu_once()?)
+                gitrun_scheduler::run_gtuu_once()
             })();
             match gtuu_result {
                 Ok(updated) => println!(

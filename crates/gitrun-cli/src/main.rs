@@ -5004,7 +5004,6 @@ mod kitty_settings_promotion_tests {
     use std::{
         fs,
         os::unix::fs::{MetadataExt, PermissionsExt},
-        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 

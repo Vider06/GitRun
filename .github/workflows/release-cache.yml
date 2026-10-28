@@ -1,0 +1,113 @@
+name: GitRun Release Cache
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitrun-release-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: "1.99.0"
+
+jobs:
+  warm:
+    name: Warm release Rust caches
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-ci/cargo
+      RUSTUP_HOME: ${{ github.workspace }}/.gitrun-ci/rustup
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+
+      - name: Prepare cache paths and fingerprint
+        id: cache_hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .gitrun-ci/cargo .gitrun-ci/rustup target
+          {
+            echo "CARGO_HOME=$GITHUB_WORKSPACE/.gitrun-ci/cargo"
+            echo "RUSTUP_HOME=$GITHUB_WORKSPACE/.gitrun-ci/rustup"
+            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
+          } >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/.gitrun-ci/cargo/bin" >> "$GITHUB_PATH"
+          manifest_hash="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
+          echo "manifest_hash=$manifest_hash" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Rust common cache
+        id: rust-common-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo
+            .gitrun-ci/rustup
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}
+          restore-keys: |
+            gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-
+
+      - name: Restore release target cache
+        id: release-target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}-${{ github.sha }}
+          restore-keys: |
+            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}-
+
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n apt-get update -qq
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            pkg-config \
+            libglib2.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils \
+            imagemagick \
+            zip \
+            unzip
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Build release executable and updater signature test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p gitrun-cli --bin gitrun
+          cargo test --locked --no-run -p gitrun-updater --test release_manifest_signature
+          test -x target/release/gitrun
+
+      - name: Save Rust common cache
+        if: success() && steps.rust-common-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/cargo
+            .gitrun-ci/rustup
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}
+
+      - name: Save release target cache
+        if: success() && steps.release-target-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}-${{ github.sha }}

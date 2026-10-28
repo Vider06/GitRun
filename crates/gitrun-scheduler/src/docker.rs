@@ -1323,13 +1323,29 @@ fn control_volume_mount_argument(container_name: &str) -> String {
 /// the container to fail closed and enter a restart loop.
 #[cfg(target_os = "linux")]
 fn prepare_control_volume(host: &DockerHost, container_name: &str) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
     let volume = control_volume_name(container_name);
     run_checked_on(
         host,
-        &["volume", "create", "--label", "gitrun.managed=true", volume.as_str()],
+        &[
+            "volume",
+            "create",
+            "--label",
+            "gitrun.managed=true",
+            volume.as_str(),
+        ],
     )?;
-    let raw_mountpoint =
-        run_checked_on(host, &["volume", "inspect", "--format", "{{.Mountpoint}}", volume.as_str()])?;
+    let raw_mountpoint = run_checked_on(
+        host,
+        &[
+            "volume",
+            "inspect",
+            "--format",
+            "{{.Mountpoint}}",
+            volume.as_str(),
+        ],
+    )?;
     let mountpoint = PathBuf::from(raw_mountpoint.trim());
     if !mountpoint.is_absolute()
         || mountpoint.components().any(|component| {
@@ -1394,7 +1410,7 @@ fn secure_control_volume_directory(control_dir: &Path, expected_uid: u32) -> Res
     // or tampered volume contents.
     for entry in std::fs::read_dir(control_dir)? {
         let entry = entry?;
-        if entry.file_name() != "dock-only" {
+        if entry.file_name() != std::ffi::OsStr::new("dock-only") {
             return Err(DockerError::Command(format!(
                 "unexpected entry in GitRun control volume: {}",
                 entry.file_name().to_string_lossy()

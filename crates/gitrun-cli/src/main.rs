@@ -168,62 +168,21 @@ fn target_triple() -> Result<String, Box<dyn std::error::Error>> {
     }
 }
 
-fn debian_package_binary_is_trusted() -> bool {
-    let path = Path::new("/usr/bin/gitrun");
-    let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return false;
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.uid() != 0 || metadata.mode() & 0o022 != 0 || metadata.mode() & 0o111 == 0 {
-            return false;
-        }
-    }
-
-    let Ok(output) = std::process::Command::new("/usr/bin/dpkg-query")
-        .args(["-S", "/usr/bin/gitrun"])
-        .output()
-    else {
-        return false;
-    };
-    output.status.success()
-        && String::from_utf8_lossy(&output.stdout).lines().any(|line| {
-            let Some((owner, owned_path)) = line.trim().split_once(": ") else {
-                return false;
-            };
-            (owner == "gitrun" || owner.starts_with("gitrun:")) && owned_path == "/usr/bin/gitrun"
-        })
-}
-
-fn preferred_system_binary(executable: &Path, debian_binary_is_trusted: bool) -> Option<PathBuf> {
-    let is_system_binary = executable == Path::new("/usr/bin/gitrun")
-        || executable == Path::new("/usr/local/bin/gitrun");
+fn system_install_paths() -> Option<(PathBuf, PathBuf)> {
+    let executable = std::env::current_exe().ok()?;
+    let is_system_binary = [
+        Path::new("/usr/bin/gitrun"),
+        Path::new("/usr/local/bin/gitrun"),
+    ]
+    .iter()
+    .any(|path| executable == *path);
     if !is_system_binary {
         return None;
     }
 
-    // A package-managed /usr/bin/gitrun and /usr/share/gitrun/version.txt form
-    // the canonical Debian installation. Prefer that binary when both historic
-    // paths exist; a separate /usr/local copy can otherwise mask its newer code.
-    if debian_binary_is_trusted {
-        Some(PathBuf::from("/usr/bin/gitrun"))
-    } else {
-        Some(executable.to_path_buf())
-    }
-}
-
-fn system_install_paths() -> Option<(PathBuf, PathBuf)> {
-    let executable = std::env::current_exe().ok()?;
-    let installed_binary =
-        preferred_system_binary(&executable, debian_package_binary_is_trusted())?;
-
     // Never let inherited environment variables redirect a privileged update.
     let version_file = PathBuf::from("/usr/share/gitrun/version.txt");
-    Some((installed_binary, version_file))
+    Some((executable, version_file))
 }
 
 #[cfg(unix)]
@@ -5254,25 +5213,9 @@ mod internal_lifecycle_command_tests {
     use clap::Parser;
     use std::{
         fs,
-        path::{Path, PathBuf},
+        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
-
-    #[test]
-    fn system_binary_selection_prefers_debian_owned_path_when_both_exist() {
-        assert_eq!(
-            super::preferred_system_binary(Path::new("/usr/local/bin/gitrun"), true),
-            Some(PathBuf::from("/usr/bin/gitrun"))
-        );
-        assert_eq!(
-            super::preferred_system_binary(Path::new("/usr/local/bin/gitrun"), false),
-            Some(PathBuf::from("/usr/local/bin/gitrun"))
-        );
-        assert_eq!(
-            super::preferred_system_binary(Path::new("/tmp/gitrun"), true),
-            None
-        );
-    }
 
     #[cfg(unix)]
     #[test]

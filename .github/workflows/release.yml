@@ -273,15 +273,8 @@ jobs:
           # Cargo registry and rustup contents depend on the toolchain, not workspace package versions.
           key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v3-${{ env.RUST_VERSION }}
 
-      - name: Save release target cache
-        if: success() && steps.release-target-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: target
-          # Omit the release version and commit SHA: Cargo fingerprints validate restored artifacts,
-          # while the manifest/lock fingerprint gives each dependency graph its own refreshed cache.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v3-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-${{ github.sha }}
+      # The default-branch cache warmer owns target-cache creation. Do not create
+      # one-off tag-scoped target caches here: later tag runs cannot reliably reuse them.
 
       - name: Generate release SBOM and provenance
         shell: bash

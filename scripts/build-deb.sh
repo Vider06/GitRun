@@ -44,6 +44,10 @@ install -m 0644 "$ROOT/LICENSE" "$root/usr/share/doc/gitrun/LICENSE"
 install -m 0644 "$ROOT/README.md" "$root/usr/share/doc/gitrun/README.md"
 install -m 0644 "$ROOT/config/config.example.env" "$root/usr/share/doc/gitrun/config.example.env"
 install -m 0644 "$ROOT/packaging/gitrun.desktop" "$root/usr/share/applications/gitrun.desktop"
+install -m 0755 "$ROOT/packaging/gitrun-prerm" "$root/DEBIAN/prerm"
+install -m 0755 "$ROOT/packaging/gitrun-postinst" "$root/DEBIAN/postinst"
+sh -n "$root/DEBIAN/prerm"
+sh -n "$root/DEBIAN/postinst"
 
 for size in 32 64 128 256 512; do
   install -D -m 0644 "$ROOT/assets/gitrun-icon-$size.png" "$root/usr/share/icons/hicolor/${size}x${size}/apps/gitrun.png"

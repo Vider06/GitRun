@@ -492,6 +492,16 @@ fn update_command(
         );
     }
 
+    // Use the same lock as scheduled GTUU before changing dependencies or the
+    // installed executable. If a scheduled update is already running, this
+    // fails before the system update performs any mutations.
+    let mut gtuu_lock = if system_install.is_some() {
+        let config = load_config()?;
+        Some(gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir))?)
+    } else {
+        None
+    };
+
     let work_root = match system_install {
         Some(_) => PathBuf::from("/var/lib/gitrun/update"),
         None => PathBuf::from(
@@ -544,44 +554,48 @@ fn update_command(
             .and_then(|value| value.parse::<u32>().ok())
             .filter(|uid| *uid != 0);
 
-        // Replacing the on-disk executable does not replace the code already
-        // running in this process. Run GTUU through the newly installed binary
-        // so the runner Dockerfile embedded in the target release is used.
-        // Stop the scheduler first to prevent its scheduled GTUU worker from
-        // racing this image rebuild and permanent-runner reconciliation.
-        if should_run_gtuu {
-            println!(
-                "GitRun update: stopping scheduler before target-version runner reconciliation"
-            );
-            if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
-                .args(["stop", "gitrun.service"])
-                .status()
-                .and_then(|status| {
-                    if status.success() {
-                        Ok(())
-                    } else {
-                        Err(std::io::Error::other(format!(
-                            "systemctl stop gitrun.service exited with status {status}"
-                        )))
-                    }
-                })
-            {
-                let rollback_error = rollback_installed_update_with_config(
-                    &backup,
-                    &artifacts,
-                    &version_file,
-                    config_path.as_deref(),
-                    &backup_root,
-                )
-                .err();
-                let restart_error = restart_scheduler_service().err();
-                return Err(format!(
-                    "unable to stop scheduler before runner reconciliation: {error}; rollback: {}; scheduler recovery: {}",
-                    rollback_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string()),
-                    restart_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string())
-                ).into());
-            }
+        // The exclusive GTUU lock has been held since before the update
+        // transaction began. Stop the scheduler while holding it, even when
+        // no image refresh is needed, so a newly scheduled run cannot race the
+        // executable replacement or the subsequent systemd reconciliation.
+        println!("GitRun update: stopping scheduler before completing the system update");
+        if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
+            .args(["stop", "gitrun.service"])
+            .status()
+            .and_then(|status| {
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "systemctl stop gitrun.service exited with status {status}"
+                    )))
+                }
+            })
+        {
+            let rollback_error = rollback_installed_update_with_config(
+                &backup,
+                &artifacts,
+                &version_file,
+                config_path.as_deref(),
+                &backup_root,
+            )
+            .err();
+            // Release the lock only after rolling back, before attempting to
+            // bring the previous scheduler process back.
+            drop(gtuu_lock.take());
+            let restart_error = restart_scheduler_service().err();
+            return Err(format!(
+                "unable to stop scheduler before completing the system update: {error}; rollback: {}; scheduler recovery: {}",
+                rollback_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string()),
+                restart_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string())
+            ).into());
+        }
 
+        // The scheduler is stopped now, so the exclusive lock can be handed
+        // off to the target binary's runner-only GTUU invocation.
+        drop(gtuu_lock.take());
+
+        if should_run_gtuu {
             println!("GitRun update: invoking the newly installed binary for GTUU");
             let mut child = std::process::Command::new(&gitrun_binary);
             child.args(["--no-cat", "update", "--only-containers"]);

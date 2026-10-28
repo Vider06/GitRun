@@ -64,9 +64,10 @@ pub enum UpdateOutcome {
 /// directory rename prevents concurrent current-version GTUU runs from
 /// reclaiming a newly-created live lock based on an earlier stale observation.
 ///
-/// Non-Unix platforms retain the PID-directory fallback; its race and crash
-/// recovery semantics are therefore weaker and must not be described as
-/// cross-platform-safe.
+/// Non-Unix platforms retain an age-based PID-directory fallback because
+/// portable process-liveness checks are unavailable there. It can reclaim an
+/// old live lock after the cutoff, so its race and crash-recovery guarantees
+/// are weaker than the Unix flock implementation.
 pub struct GtuuLock {
     path: PathBuf,
     #[cfg(unix)]
@@ -167,17 +168,33 @@ fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
 /// file is absent or unreadable, the age cutoff provides a conservative
 /// fallback for abandoned locks whose owner cannot be identified.
 fn is_stale(lock_path: &Path) -> bool {
-    let recorded_pid: Option<u32> = fs::read_to_string(lock_path.join("pid"))
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok());
-    match recorded_pid {
-        Some(pid) => !process_is_alive(pid),
-        None => fs::metadata(lock_path)
-            .and_then(|meta| meta.modified())
+    #[cfg(unix)]
+    {
+        let recorded_pid: Option<u32> = fs::read_to_string(lock_path.join("pid"))
             .ok()
-            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-            .is_some_and(|age| age > STALE_LOCK_AGE),
+            .and_then(|raw| raw.trim().parse().ok());
+        match recorded_pid {
+            Some(pid) => !process_is_alive(pid),
+            None => lock_age_exceeded(lock_path),
+        }
     }
+
+    #[cfg(not(unix))]
+    {
+        // Do not treat an unverifiable PID as definitely alive forever: that
+        // would make a crash-abandoned lock unrecoverable on non-Unix hosts.
+        // Without a portable liveness query, the fallback is necessarily
+        // age-based and less precise than Unix flock + PID validation.
+        lock_age_exceeded(lock_path)
+    }
+}
+
+fn lock_age_exceeded(lock_path: &Path) -> bool {
+    fs::metadata(lock_path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age > STALE_LOCK_AGE)
 }
 
 #[cfg(unix)]
@@ -193,13 +210,6 @@ fn process_is_alive(pid: u32) -> bool {
     // alive" without a `/proc` dependency.
     let result = unsafe { libc_kill(pid as i32, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1) // EPERM: alive, just not ours
-}
-
-#[cfg(not(unix))]
-fn process_is_alive(_pid: u32) -> bool {
-    // Conservative default off Unix: assume alive so staleness falls back
-    // to the age check only.
-    true
 }
 
 #[cfg(unix)]
@@ -561,6 +571,16 @@ mod tests {
         fs::create_dir(&lock_path).unwrap();
         // A PID astronomically unlikely to be alive right now.
         fs::write(lock_path.join("pid"), "999999").unwrap();
+        #[cfg(not(unix))]
+        {
+            // Non-Unix cannot check process liveness portably, so give the
+            // fallback an old directory timestamp to simulate an abandoned
+            // lock rather than assuming the PID is definitely dead.
+            let old_time = filetime::FileTime::from_system_time(
+                SystemTime::now() - Duration::from_secs(60 * 60 * 2),
+            );
+            filetime::set_file_mtime(&lock_path, old_time).unwrap();
+        }
 
         // This must succeed by reclaiming the abandoned lock, not error out
         // with AlreadyRunning forever — this is exactly the "SIGKILL left a

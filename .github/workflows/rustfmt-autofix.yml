@@ -65,6 +65,16 @@ jobs:
           rustup default 1.99.0
           rustfmt --version
 
+      - name: Save Rust toolchain cache
+        if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/rustup
+            .gitrun-ci/cargo/bin
+          key: ${{ steps.c_tc.outputs.cache-primary-key }}
+
       - name: Apply rustfmt
         shell: bash
         env:

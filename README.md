@@ -120,7 +120,34 @@ The CLI supports setup, repository connection, diagnostics, update checks, dashb
 
 For the standard Linux host deployment, prepare a dedicated Linux machine with Docker and a GitHub credential authorized for the repositories and runner operations you intend to manage. Keep the host and Docker API private. VM-backed workflows additionally require a supported hypervisor, operator-provided guest images and a configured guest Docker endpoint.
 
-### Install on Linux
+### Install on Debian or Ubuntu (recommended)
+
+A prebuilt **AMD64/x86-64 .deb package** is published with each stable release. You do not need to clone the repository or compile Rust to install GitRun.
+
+Download and install the current published package (this example uses v1.8.21; check [GitHub Releases](https://github.com/Vider06/GitRun/releases) for the newest version):
+
+```bash
+VERSION="v1.8.21"
+ASSET="GitRun-${VERSION}-linux-x86_64-deb.deb"
+curl -fL --proto '=https' --tlsv1.2 \
+  "https://github.com/Vider06/GitRun/releases/download/${VERSION}/${ASSET}" \
+  -o "${ASSET}"
+sudo apt install "./${ASSET}"
+```
+
+APT resolves the package's declared dependencies. Install and configure Docker separately if it is not already available on the host. The package is for Debian/Ubuntu-compatible **amd64** systems; it is not an ARM64 package.
+
+After installation, start the first-run setup:
+
+```bash
+gitrun setup --terminal
+```
+
+Follow the prompts to configure GitHub authentication and the repositories GitRun may manage. Then verify the installation with `gitrun doctor`.
+
+### Build/install from source
+
+Use the source installer only when you intentionally want to build the current checkout yourself:
 
 ```bash
 git clone https://github.com/Vider06/GitRun.git /opt/gitrun-source
@@ -128,13 +155,7 @@ cd /opt/gitrun-source
 sudo ./scripts/install-server.sh
 ```
 
-Then launch the first-run setup, or configure from a terminal:
-
-```bash
-gitrun setup --terminal
-```
-
-Install scripts are also provided for macOS and Windows; see [scripts/README.md](scripts/README.md) for the exact platform paths and constraints. Use [GitHub Releases](https://github.com/Vider06/GitRun/releases) when you want a published artifact rather than a checkout of the source branch.
+Install scripts and platform-specific constraints are documented in [scripts/README.md](scripts/README.md). For published binaries and release checksums, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ### First steps
 

@@ -3008,7 +3008,7 @@ exit 0
             0,
         );
         let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(!commands.contains("buildx build"));
         assert!(!commands.lines().any(|line| line.starts_with("tag ")));
@@ -3091,7 +3091,7 @@ exit 0
             0,
         );
         let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(commands.lines().any(|line| line.starts_with("run --rm")));
         assert!(commands.lines().any(|line| line.starts_with("tag ")));
@@ -3100,9 +3100,8 @@ exit 0
 
     #[test]
     fn registry_images_stay_on_the_digest_update_path() {
-        assert_eq!(
-            refresh_local_runner_image_if_stale("ghcr.io/vider06/gitrun-runner:stable").unwrap(),
-            false
+        assert!(
+            !refresh_local_runner_image_if_stale("ghcr.io/vider06/gitrun-runner:stable").unwrap()
         );
     }
 }

@@ -10,7 +10,7 @@ GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It
 
 It is designed for developers and teams who want to use their own runner infrastructure without turning every workflow into an unrestricted host administrator. **No Kubernetes cluster is required.**
 
-> **Source version:** this branch targets <!-- gitrun-version:start -->1.8.18<!-- gitrun-version:end -->. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+> **Source version:** this branch targets <!-- gitrun-version:start -->1.8.20<!-- gitrun-version:end -->. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## What can GitRun do?
 
@@ -69,7 +69,7 @@ Requests are checked against the current runner/container identity, authoritativ
 - **Container hardening:** read-only Linux root filesystem by default, constrained capabilities, no-new-privileges, resource limits and a dedicated runner network.
 - **Safer filesystem access:** approved path prefixes, symlink/hard-link checks and bounded file operations.
 - **Controlled host mounts:** GitDockRun mounts are a separately gated capability for local Linux Docker; policy, destination capability and runner identity must all permit the operation.
-- **Signed updates:** Ed25519 release-manifest verification, streamed SHA-256 artifact verification, bounded archive extraction, durable recovery journals written before live mutation, symlink/path validation, health verification and rollback on failed installation.
+- **Signed updates:** Ed25519 release-manifest verification, streamed SHA-256 artifact verification, bounded archive extraction, durable recovery journals written before live mutation, symlink/path validation, health verification and rollback on failed installation. Full system updates share an exclusive lock with scheduled GTUU reconciliation and stop the scheduler before handing the lock to the target-version runner refresh.
 
 **Important:** direct Docker-socket access for workflow runners is disabled by default. Enabling it gives workflow code host-level Docker authority; only enable it for repositories and contributors you fully trust. GitRun is intended for infrastructure you administer, not as an open runner service for arbitrary public repositories.
 

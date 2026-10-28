@@ -492,6 +492,18 @@ fn update_command(
         );
     }
 
+    // Use the same lock as scheduled GTUU before changing dependencies or the
+    // installed executable. If a scheduled update is already running, this
+    // fails before the system update performs any mutations.
+    let mut gtuu_lock = if system_install.is_some() {
+        let config = load_config()?;
+        Some(gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(
+            &config.state_dir,
+        ))?)
+    } else {
+        None
+    };
+
     let work_root = match system_install {
         Some(_) => PathBuf::from("/var/lib/gitrun/update"),
         None => PathBuf::from(
@@ -516,7 +528,7 @@ fn update_command(
     }
 
     if let Some((gitrun_binary, version_file)) = system_install {
-        let mut should_run_gtuu = match plan.runner_image.as_ref() {
+        let should_run_gtuu = match plan.runner_image.as_ref() {
             Some(_) => true,
             None => !load_config()?.runner_image.contains('/'),
         };
@@ -544,44 +556,48 @@ fn update_command(
             .and_then(|value| value.parse::<u32>().ok())
             .filter(|uid| *uid != 0);
 
-        // Replacing the on-disk executable does not replace the code already
-        // running in this process. Run GTUU through the newly installed binary
-        // so the runner Dockerfile embedded in the target release is used.
-        // Stop the scheduler first to prevent its scheduled GTUU worker from
-        // racing this image rebuild and permanent-runner reconciliation.
-        if should_run_gtuu {
-            println!(
-                "GitRun update: stopping scheduler before target-version runner reconciliation"
-            );
-            if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
-                .args(["stop", "gitrun.service"])
-                .status()
-                .and_then(|status| {
-                    if status.success() {
-                        Ok(())
-                    } else {
-                        Err(std::io::Error::other(format!(
-                            "systemctl stop gitrun.service exited with status {status}"
-                        )))
-                    }
-                })
-            {
-                let rollback_error = rollback_installed_update_with_config(
-                    &backup,
-                    &artifacts,
-                    &version_file,
-                    config_path.as_deref(),
-                    &backup_root,
-                )
-                .err();
-                let restart_error = restart_scheduler_service().err();
-                return Err(format!(
-                    "unable to stop scheduler before runner reconciliation: {error}; rollback: {}; scheduler recovery: {}",
-                    rollback_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string()),
-                    restart_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string())
-                ).into());
-            }
+        // The exclusive GTUU lock has been held since before the update
+        // transaction began. Stop the scheduler while holding it, even when
+        // no image refresh is needed, so a newly scheduled run cannot race the
+        // executable replacement or the subsequent systemd reconciliation.
+        println!("GitRun update: stopping scheduler before completing the system update");
+        if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
+            .args(["stop", "gitrun.service"])
+            .status()
+            .and_then(|status| {
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "systemctl stop gitrun.service exited with status {status}"
+                    )))
+                }
+            })
+        {
+            let rollback_error = rollback_installed_update_with_config(
+                &backup,
+                &artifacts,
+                &version_file,
+                config_path.as_deref(),
+                &backup_root,
+            )
+            .err();
+            // Release the lock only after rolling back, before attempting to
+            // bring the previous scheduler process back.
+            drop(gtuu_lock.take());
+            let restart_error = restart_scheduler_service().err();
+            return Err(format!(
+                "unable to stop scheduler before completing the system update: {error}; rollback: {}; scheduler recovery: {}",
+                rollback_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string()),
+                restart_error.map_or_else(|| "not needed".to_owned(), |e| e.to_string())
+            ).into());
+        }
 
+        // The scheduler is stopped now. Release the lock before the
+        // optional runner-only GTUU child, which acquires the same lock itself.
+        drop(gtuu_lock.take());
+
+        if should_run_gtuu {
             println!("GitRun update: invoking the newly installed binary for GTUU");
             let mut child = std::process::Command::new(&gitrun_binary);
             child.args(["--no-cat", "update", "--only-containers"]);
@@ -2011,7 +2027,7 @@ enum Command {
     },
     /// Inspect or repair GitRun-managed permanent runner containers.
     Gtuu {
-        /// Read-only image and permanent-container inventory.
+        /// Read-only image and permanent-container inventory (defaults to all configured repositories).
         #[arg(long, conflicts_with_all = ["rebuild", "force"])]
         check: bool,
         /// Force a fresh, validated local runner image build before reconciliation.
@@ -2023,7 +2039,7 @@ enum Command {
         /// Explicitly select every configured repository.
         #[arg(long)]
         all: bool,
-        /// Replace selected permanent runners even when image IDs match.
+        /// Force reconciliation even when image IDs match; busy runners remain untouched.
         #[arg(long, conflicts_with = "check")]
         force: bool,
     },
@@ -3405,9 +3421,9 @@ fn run_gtuu_command(
         eprintln!("GitRun GTUU: choose --check, --rebuild, or --force; no operation was performed");
         return 2;
     }
-    if repository_filter.is_none() && !all_repositories {
+    if repository_filter.is_none() && !all_repositories && !check_only {
         eprintln!(
-            "GitRun GTUU: select --repo <owner/repository> or --all; no operation was performed"
+            "GitRun GTUU: select --repo <owner/repository> or --all for a mutating operation; no operation was performed"
         );
         return 2;
     }
@@ -3458,10 +3474,31 @@ fn run_gtuu_command(
         initialize_system_update_config_path(true);
     }
 
-    if rebuild && !system_install {
-        eprintln!("GitRun GTUU: FAIL — rebuilding the trusted local runner image requires the installed system command and administrator privileges");
+    if !check_only && !system_install {
+        eprintln!("GitRun GTUU: FAIL — runner reconciliation requires the trusted system installation and administrator privileges");
         return 2;
     }
+
+    // Serialize mutating CLI runs with GTUU's scheduled updater. Read-only
+    // checks deliberately avoid creating or changing lock files.
+    let _gtuu_lock = if check_only {
+        None
+    } else {
+        let config = match load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("GitRun GTUU: FAIL — unable to load trusted configuration: {error}");
+                return 1;
+            }
+        };
+        match gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(&config.state_dir)) {
+            Ok(lock) => Some(lock),
+            Err(error) => {
+                eprintln!("GitRun GTUU: FAIL — unable to acquire the runner update lock: {error}");
+                return 1;
+            }
+        }
+    };
 
     match gitrun_scheduler::run_gtuu_with_options(
         repository_filter,
@@ -5120,6 +5157,57 @@ mod internal_lifecycle_command_tests {
                 DEFAULT_UPDATE_PUBLIC_KEY_HEX.to_owned()
             )]
         );
+    }
+
+    #[test]
+    fn gtuu_check_defaults_to_all_configured_repositories() {
+        let cli = Cli::try_parse_from(["gitrun", "gtuu", "--check"])
+            .expect("gtuu --check should be a valid read-only request");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Gtuu {
+                check: true,
+                rebuild: false,
+                repo: None,
+                all: false,
+                force: false,
+            })
+        ));
+    }
+
+    #[test]
+    fn gtuu_targeted_rebuild_and_all_force_are_parseable() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "gitrun", "gtuu", "--rebuild", "--repo", "Vider06/Eridania_Site"
+            ]).map(|cli| cli.command),
+            Ok(Some(Command::Gtuu {
+                check: false,
+                rebuild: true,
+                repo: Some(repo),
+                all: false,
+                force: false,
+            })) if repo == "Vider06/Eridania_Site"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "gtuu", "--all", "--force"]).map(|cli| cli.command),
+            Ok(Some(Command::Gtuu {
+                check: false,
+                rebuild: false,
+                repo: None,
+                all: true,
+                force: true,
+            }))
+        ));
+        assert!(Cli::try_parse_from(["gitrun", "gtuu", "--check", "--rebuild"]).is_err());
+        assert!(Cli::try_parse_from([
+            "gitrun",
+            "gtuu",
+            "--repo",
+            "Vider06/Eridania_Site",
+            "--all"
+        ])
+        .is_err());
     }
 
     #[test]

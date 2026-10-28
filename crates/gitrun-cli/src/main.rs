@@ -168,10 +168,7 @@ fn target_triple() -> Result<String, Box<dyn std::error::Error>> {
     }
 }
 
-fn preferred_system_binary(
-    executable: &Path,
-    usr_bin_available: bool,
-) -> Option<PathBuf> {
+fn preferred_system_binary(executable: &Path, usr_bin_available: bool) -> Option<PathBuf> {
     let is_system_binary = executable == Path::new("/usr/bin/gitrun")
         || executable == Path::new("/usr/local/bin/gitrun");
     if !is_system_binary {
@@ -206,8 +203,12 @@ fn ensure_binary_alias(alias: &Path, canonical: &Path) -> Result<bool, String> {
     if alias == canonical {
         return Ok(false);
     }
-    let canonical_target = std::fs::canonicalize(canonical)
-        .map_err(|error| format!("unable to resolve canonical binary {}: {error}", canonical.display()))?;
+    let canonical_target = std::fs::canonicalize(canonical).map_err(|error| {
+        format!(
+            "unable to resolve canonical binary {}: {error}",
+            canonical.display()
+        )
+    })?;
     if std::fs::canonicalize(alias).ok().as_ref() == Some(&canonical_target) {
         return Ok(false);
     }
@@ -231,8 +232,9 @@ fn ensure_binary_alias(alias: &Path, canonical: &Path) -> Result<bool, String> {
 
     if let Ok(metadata) = std::fs::symlink_metadata(alias) {
         if metadata.file_type().is_symlink() {
-            let target = std::fs::read_link(alias)
-                .map_err(|error| format!("unable to inspect legacy alias {}: {error}", alias.display()))?;
+            let target = std::fs::read_link(alias).map_err(|error| {
+                format!("unable to inspect legacy alias {}: {error}", alias.display())
+            })?;
             std::fs::write(
                 parent.join(format!("{file_name}.legacy-link-{stamp}")),
                 target.to_string_lossy().as_bytes(),

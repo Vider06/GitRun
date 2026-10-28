@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}-${{ github.sha }}-${{ github.sha }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}-${{ github.sha }}
           restore-keys: |
             gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}-
 
@@ -110,4 +110,4 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.cache_hashes.outputs.manifest_hash }}-${{ github.sha }}

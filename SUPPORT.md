@@ -1,10 +1,26 @@
 # Support
 
-For usage questions, configuration help, and reproducible bugs, please open an issue with the relevant GitRun version, platform, configuration context, and sanitized logs.
+## Usage and troubleshooting
 
-Do not post GitHub tokens, credentials, private keys, runtime environment files, or other secrets.
+For usage questions, configuration help and reproducible defects, open an issue using the closest available template. Include:
 
-Security vulnerabilities should be reported privately through GitHub's security advisory flow. See [SECURITY.md](SECURITY.md).
+- GitRun source version or installed release version.
+- Operating system and relevant platform details.
+- The command or operation attempted and the observed result.
+- A minimal, sanitized log excerpt and the expected behavior.
 
+Do not include GitHub tokens, credentials, private keys, environment files, secret values or other sensitive data. Redact private hostnames and repository details when they are not needed to reproduce the issue.
 
-For architecture/API questions, start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/GITRUN_API.md](docs/GITRUN_API.md), [docs/VM.md](docs/VM.md), and [docs/IPC.md](docs/IPC.md). Include whether the issue concerns the local Docker backend, a VM backend, the workflow API socket, GSR authorization, or the dashboard when reporting a problem.
+## Security reports
+
+Do not report vulnerabilities in public issues. Use the private vulnerability-reporting route provided by GitHub for this repository and consult [SECURITY.md](SECURITY.md).
+
+## Technical references
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Git*Run workflow API](docs/GITRUN_API.md)
+- [VM-backed runners](docs/VM.md)
+- [IPC and socket architecture](docs/IPC.md)
+- [Security model](docs/SECURITY_MODEL.md)
+- [Kitty Smart Scheduler](docs/SMART_SCHEDULER.md)
+- [CLI diagnostics and recovery](crates/gitrun-cli/README.md#json-integrity-and-recovery)

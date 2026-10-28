@@ -162,7 +162,7 @@ jobs:
             .gitrun-ci/cargo
             .gitrun-ci/rustup
           # Cargo registry and rustup contents depend on the toolchain, not workspace package versions.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}
           restore-keys: |
             gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-
 
@@ -271,7 +271,7 @@ jobs:
             .gitrun-ci/cargo
             .gitrun-ci/rustup
           # Cargo registry and rustup contents depend on the toolchain, not workspace package versions.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-rust-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}
 
       # The default-branch cache warmer owns target-cache creation. Do not create
       # one-off tag-scoped target caches here: later tag runs cannot reliably reuse them.

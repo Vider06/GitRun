@@ -49,4 +49,6 @@ gitrun doctor
 
 The package targets Debian/Ubuntu-compatible amd64 systems. It does not install Docker or configure GitHub credentials on the operator's behalf; those are deployment prerequisites and first-run setup tasks. APT resolves declared package dependencies when installing the local package.
 
+You can complete first-run setup and manage GitRun from the **desktop GUI**. Terminal-first users can instead run `gitrun setup --terminal` and use `gitrun manage` to open the keyboard-driven TUI. Both interfaces share the same validated backend operations.
+
 Validate release-signing configuration, rollback behavior and target-host health before rollout. Keep the distinction between source metadata, signed release assets and installed runtime state explicit when diagnosing an installation.

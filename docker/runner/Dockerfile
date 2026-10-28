@@ -97,7 +97,8 @@ RUN useradd --create-home --shell /bin/bash runner \
     && chown -R root:root /opt/rustup /opt/cargo \
     && chmod -R go-w /opt/rustup /opt/cargo \
     && test -x /opt/cargo/bin/cargo \
-    && test -z "$(find /opt/cargo /opt/rustup -xdev \( ! -user root -o -perm /022 \) -print -quit)"
+    # Symlink permission bits are not chmod-able; still require root ownership for every path. \
+    && test -z "$(find /opt/cargo /opt/rustup -xdev \( ! -user root -o \( ! -type l -a -perm /022 \) \) -print -quit)"
 
 WORKDIR /home/runner/actions-runner
 

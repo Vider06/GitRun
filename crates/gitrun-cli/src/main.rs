@@ -591,8 +591,8 @@ fn update_command(
             ).into());
         }
 
-        // The scheduler is stopped now, so the exclusive lock can be handed
-        // off to the target binary's runner-only GTUU invocation.
+        // The scheduler is stopped now. Release the lock before the
+        // optional runner-only GTUU child, which acquires the same lock itself.
         drop(gtuu_lock.take());
 
         if should_run_gtuu {

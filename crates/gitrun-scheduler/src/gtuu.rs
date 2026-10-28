@@ -164,9 +164,10 @@ fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
     Ok(guard)
 }
 
-/// A lock is stale when its recorded PID is no longer running. If the PID
-/// file is absent or unreadable, the age cutoff provides a conservative
-/// fallback for abandoned locks whose owner cannot be identified.
+/// On Unix, a readable PID is checked for liveness and an absent or
+/// unreadable PID falls back to the age cutoff. On non-Unix systems, all
+/// locks use the age cutoff because portable process-liveness checks are not
+/// available in this implementation.
 fn is_stale(lock_path: &Path) -> bool {
     #[cfg(unix)]
     {

@@ -1,6 +1,15 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.15<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.8.16<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.8.16 — GTUU runner recovery and privileged delegation
+
+- **Source/product target:** `1.8.16`, recorded in `version.txt`. This entry describes the source line and does not assert that a signed release artifact has been published.
+- Add `gitrun gtuu` with a read-only inventory, repository-scoped reconciliation, forced local image rebuilding and forced replacement of permanent runners.
+- Validate the build fingerprint, expected entrypoint and runtime GSR policy bootstrap before promoting a rebuilt image. Failed validation preserves the prior public image tag.
+- Keep busy runners untouched and retain the old runner until its replacement is online. Registry-qualified images remain on the signed-manifest and digest-verification path.
+- Delegate system-installed GTUU commands through `sudo` only when the invoking shell is not already elevated; users can launch `gitrun gtuu` without prefixing the command with `sudo`. The `gitrun update --only-containers` path also requests administrator authorization instead of failing on protected configuration.
+- Bump the changed `gitrun-cli` (`0.13.15` to `0.13.16`), `gitrun-scheduler` (`0.11.9` to `0.11.10`) and `gitrun-setup` (`0.9.11` to `0.9.12`) crates, keeping `Cargo.lock` aligned.
 
 ## GitRun 1.8.15 — fingerprinted local runner-image refresh and GTUU reconciliation
 

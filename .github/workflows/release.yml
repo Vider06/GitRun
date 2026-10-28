@@ -586,7 +586,6 @@ jobs:
           test -x "$deb_check/usr/bin/gitrun"
           deb_control_check="$RUNNER_TEMP/deb-control-check"
           rm -rf "$deb_control_check"
-          mkdir -p "$deb_control_check"
           dpkg-deb -e "$deb" "$deb_control_check"
           test -x "$deb_control_check/postinst"
           cmp -s packaging/gitrun-postinst "$deb_control_check/postinst" || {

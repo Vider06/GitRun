@@ -21,7 +21,7 @@ read -r -p 'Continue? [y/N] ' answer
 
 gh api --method PATCH "repos/$REPO" -f description="$DESCRIPTION" >/dev/null
 
-# GitHub topic updates replace the topic set, so preserve existing topics first.
+# Preserve existing topics because GitHub's topic endpoint replaces the full set.
 mapfile -t existing_topics < <(gh api "repos/$REPO/topics" --jq '.names[]' 2>/dev/null || true)
 declare -A seen=()
 topics=()
@@ -30,12 +30,15 @@ for topic in "${existing_topics[@]}" "${TOPICS[@]}"; do
   seen["$topic"]=1
   topics+=("$topic")
 done
-topic_json=$(printf '%s\n' "${topics[@]}" | python -c 'import json,sys; print(json.dumps({"names":[x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]}))')
-gh api --method PUT "repos/$REPO/topics" --input - <<<"$topic_json" >/dev/null
+topic_args=()
+for topic in "${topics[@]}"; do topic_args+=(-f "names[]=$topic"); done
+gh api --method PUT "repos/$REPO/topics" "${topic_args[@]}" >/dev/null
 
 ensure_label() {
   local name="$1" color="$2" description="$3"
-  if gh api "repos/$REPO/labels/$(printf '%s' "$name" | sed 's/ /%20/g')" >/dev/null 2>&1; then
+  local encoded_name
+  encoded_name=$(printf '%s' "$name" | sed 's/ /%20/g; s/:/%3A/g')
+  if gh api "repos/$REPO/labels/$encoded_name" >/dev/null 2>&1; then
     printf 'Label exists: %s\n' "$name"
   else
     gh api --method POST "repos/$REPO/labels" -f name="$name" -f color="$color" -f description="$description" >/dev/null

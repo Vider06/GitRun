@@ -3662,11 +3662,14 @@ fn run_update(
                 }
             };
             presenter.prepare_for_external_process();
-            return match std::process::Command::new("/usr/bin/sudo")
+            let mut command = std::process::Command::new("/usr/bin/sudo");
+            command
                 .arg(executable)
-                .args(["--no-cat", "update", "--only-containers"])
-                .status()
-            {
+                .args(["--no-cat", "update", "--only-containers"]);
+            if let Some(url) = manifest_url {
+                command.arg(url);
+            }
+            return match command.status() {
                 Ok(status) => status.code().unwrap_or(1),
                 Err(error) => {
                     eprintln!("GitRun GTUU: FAIL — unable to request administrator authorization: {error}");

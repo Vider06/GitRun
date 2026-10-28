@@ -5004,6 +5004,7 @@ mod kitty_settings_promotion_tests {
     use std::{
         fs,
         os::unix::fs::{MetadataExt, PermissionsExt},
+        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -5212,7 +5213,6 @@ mod internal_lifecycle_command_tests {
     use clap::Parser;
     use std::{
         fs,
-        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 

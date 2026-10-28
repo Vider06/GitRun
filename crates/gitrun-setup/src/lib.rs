@@ -1193,15 +1193,6 @@ fn refresh_local_runner_image(image_ref: &str, force: bool) -> Result<bool, Setu
     )
 }
 
-#[cfg(test)]
-fn refresh_local_runner_image_if_stale_at(
-    image_ref: &str,
-    install_root: &Path,
-    docker_bin: &Path,
-) -> Result<bool, SetupError> {
-    refresh_local_runner_image_if_stale_at_with_force(image_ref, install_root, docker_bin, false)
-}
-
 fn refresh_local_runner_image_if_stale_at_with_force(
     image_ref: &str,
     install_root: &Path,
@@ -3038,7 +3029,12 @@ exit 0
             0,
             0,
         );
-        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at_with_force(
+            "gitrun-runner:latest",
+            &root,
+            &docker,
+            false,
+        );
         assert!(!result.unwrap());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(!commands.contains("buildx build"));
@@ -3081,7 +3077,12 @@ exit 0
             47,
             0,
         );
-        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at_with_force(
+            "gitrun-runner:latest",
+            &root,
+            &docker,
+            false,
+        );
         assert!(result.is_err());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(commands.contains("buildx build"));
@@ -3101,7 +3102,12 @@ exit 0
             0,
             0,
         );
-        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at_with_force(
+            "gitrun-runner:latest",
+            &root,
+            &docker,
+            false,
+        );
         assert!(result.is_err());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(!commands.lines().any(|line| line.starts_with("run --rm")));
@@ -3121,7 +3127,12 @@ exit 0
             0,
             0,
         );
-        let result = refresh_local_runner_image_if_stale_at("gitrun-runner:latest", &root, &docker);
+        let result = refresh_local_runner_image_if_stale_at_with_force(
+            "gitrun-runner:latest",
+            &root,
+            &docker,
+            false,
+        );
         assert!(result.unwrap());
         let commands = fs::read_to_string(&log).unwrap();
         assert!(commands.lines().any(|line| line.starts_with("run --rm")));

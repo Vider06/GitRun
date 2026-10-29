@@ -2,7 +2,7 @@
 
 ## Source versioning
 
-The root version.txt records the current product version, <!-- gitrun-version:start -->1.8.22<!-- gitrun-version:end -->, and is the product-version source of truth. The release workflow synchronizes its marked references in Markdown, the Tauri bundle configuration, frontend package.json and package-lock.json, then checks the synchronized release workspace.
+The root version.txt records the current product version, <!-- gitrun-version:start -->1.8.23<!-- gitrun-version:end -->, and is the product-version source of truth. The release workflow synchronizes its marked references in Markdown, the Tauri bundle configuration, frontend package.json and package-lock.json, then checks the synchronized release workspace.
 
 Cargo crates use independent SemVer versions. Bump only crates affected by a change and keep Cargo.lock aligned with their manifests. The frontend package lock must likewise match its package manifest.
 

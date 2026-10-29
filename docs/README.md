@@ -22,7 +22,7 @@ Use this index to find the maintained technical guide for a GitRun subsystem. St
 
 ## Source version and releases
 
-The current source/product version is <!-- gitrun-version:start -->1.8.22<!-- gitrun-version:end -->, recorded in the root version.txt and mirrored in marked documentation references. This page describes source-tree documentation; it does not establish that a signed release artifact is available. Use [GitHub Releases](https://github.com/Vider06/GitRun/releases) to find published packages.
+The current source/product version is <!-- gitrun-version:start -->1.8.23<!-- gitrun-version:end -->, recorded in the root version.txt and mirrored in marked documentation references. This page describes source-tree documentation; it does not establish that a signed release artifact is available. Use [GitHub Releases](https://github.com/Vider06/GitRun/releases) to find published packages.
 
 ## Validation boundaries
 

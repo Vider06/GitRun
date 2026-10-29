@@ -1,4 +1,4 @@
-# Security model — GitRun <!-- gitrun-version:start -->1.8.22<!-- gitrun-version:end -->
+# Security model — GitRun <!-- gitrun-version:start -->1.8.23<!-- gitrun-version:end -->
 
 ## Optional Kitty Smart Scheduler
 

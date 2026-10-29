@@ -436,10 +436,15 @@ fn validate_workload_routing_contract(
 }
 
 pub fn runner_name_prefix(repo: &str) -> String {
-    use base64::Engine as _;
-    let readable: String = sanitize(repo, '-').chars().take(16).collect();
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(repo.as_bytes());
-    format!("gitrun-{readable}-{encoded}-")
+    // GitHub Actions runner names have a 64-character limit. Keep the prefix
+    // short enough for the unique per-container suffix (up to 36 characters),
+    // while retaining a stable repository-specific identity.
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in repo.trim().to_ascii_lowercase().bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("gitrun-{hash:016x}-")
 }
 
 /// Current usage snapshot for a managed runner container. CPU is expressed in
@@ -3682,16 +3687,21 @@ mod tests {
     }
 
     #[test]
-    fn runner_name_prefix_is_collision_free_and_within_docker_name_limit() {
+    fn runner_name_prefix_is_collision_resistant_and_within_github_limit() {
         let first = "foo-bar/baz";
         let second = "foo/bar-baz";
         assert_eq!(sanitize(first, '-'), sanitize(second, '-'));
         assert_ne!(runner_name_prefix(first), runner_name_prefix(second));
+        assert_eq!(
+            runner_name_prefix("Vider06/Eridania_Site"),
+            runner_name_prefix("vider06/eridania_site")
+        );
 
         let maximum_repo = format!("{}/{}", "a".repeat(39), "b".repeat(100));
-        // uuid_like_suffix is at most 36 ASCII characters; the encoded
-        // prefix must leave room under Docker's 255-character name limit.
-        assert!(runner_name_prefix(&maximum_repo).len() + 36 <= 255);
+        // GitHub permits runner names up to 64 characters; uuid_like_suffix
+        // is at most 36 ASCII characters, so the prefix must fit in 28.
+        assert!(runner_name_prefix(&maximum_repo).len() + 36 <= 64);
+        assert!(format!("{}{}", runner_name_prefix(&maximum_repo), "a".repeat(36)).len() <= 64);
     }
 
     #[test]

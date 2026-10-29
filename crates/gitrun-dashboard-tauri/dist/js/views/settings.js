@@ -218,6 +218,8 @@ function openVmModal(config = null) {
           option("Kvm", "KVM / libvirt", hypervisor) + option("VirtualBox", "VirtualBox", hypervisor) +
         '</select></div>' +
         '<div class="field"><label for="vm-activation">Activation mode</label><select id="vm-activation">' +
+          (activation === "EphemeralSnapshotRollback" ? '<option value="EphemeralSnapshotRollback" selected disabled>Unsupported · snapshot rollback is not implemented</option>' : '') +
+          (activation === "EphemeralVm" ? '<option value="EphemeralVm" selected disabled>Unsupported · VM recreation is not implemented</option>' : '') +
           option("Standard", "Standard · start on demand", activation) +
           option("AlwaysOnExperimental", "Always on (experimental)", activation) +
         '</select></div>' +
@@ -227,7 +229,7 @@ function openVmModal(config = null) {
       '</div>' +
       '<div class="field"><label for="vm-base-image">Base disk image path</label><input id="vm-base-image" autocomplete="off" value="' + esc(config?.base_disk_image || "") + '" placeholder="/var/lib/libvirt/images/windows-base.qcow2"></div>' +
       '<div class="field"><label for="vm-tls-dir">Docker TLS certificate directory</label><input id="vm-tls-dir" autocomplete="off" value="' + esc(config?.docker_tls_cert_dir || "") + '" placeholder="/etc/gitrun/vm-certs/my-vm"><small class="field-hint">Every VM requires ca.pem, cert.pem and key.pem in this directory for authenticated Docker TLS. Keep key.pem private (mode 0600 or stricter).</small></div>' +
-      '<label class="checkbox-row"><input id="vm-windows" type="checkbox"' + (config?.is_windows ? " checked" : "") + '><span><strong>Windows guest</strong>Require mutual TLS for the remote Docker endpoint.</span></label>' +
+      '<label class="checkbox-row"><input id="vm-windows" type="checkbox"' + (config?.is_windows ? " checked" : "") + '><span><strong>Windows guest</strong>Apply Windows-specific runner isolation. Mutual TLS is required for every VM endpoint.</span></label>' +
       '<div class="modal-actions"><button class="btn" data-cancel>Cancel</button><button class="btn btn-primary" data-save-vm>Save definition</button></div>' +
     '</section>';
   document.body.appendChild(modal);

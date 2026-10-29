@@ -2614,6 +2614,8 @@ fn run_api_policy(api_name: &str, operation: Option<&str>, enabled: Option<bool>
             gitrun_core::GitRunOperation::Disconnect,
             gitrun_core::GitRunOperation::Execute,
             gitrun_core::GitRunOperation::Melt,
+            gitrun_core::GitRunOperation::Mount,
+            gitrun_core::GitRunOperation::Unmount,
             gitrun_core::GitRunOperation::File,
             gitrun_core::GitRunOperation::Logs,
             gitrun_core::GitRunOperation::Register,

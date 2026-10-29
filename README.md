@@ -34,8 +34,8 @@ It is designed for developers and teams who want to use their own runner infrast
 - Use **Logic Containers** to match GitHub job labels to a local Linux Docker host or a named VM.
 - Use KVM/libvirt when available, with VirtualBox as a supported fallback.
 - Route Windows workloads only to configured VM-backed Docker endpoints; GitRun does not silently run them on the local Linux daemon.
-- Validate guest Docker endpoints before they become routable. Windows VM endpoints can use mutually authenticated Docker TLS.
-- Use operator-managed snapshot rollback primitives where the selected VM lifecycle supports them.
+- Validate guest Docker endpoints before they become routable. Every VM endpoint requires mutually authenticated Docker TLS and a protected credential directory.
+- Only `Standard` and `AlwaysOnExperimental` VM activation modes are accepted today. Snapshot rollback and per-workload VM recreation remain reserved, rejected modes until their scheduler lifecycle integration is implemented.
 
 GitRun does not ship guest operating-system images or silently install hypervisors. The operator supplies and secures the VM images, guest Docker daemon and credentials. Full VM recreation remains deployment-dependent.
 

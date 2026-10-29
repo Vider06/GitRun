@@ -3692,7 +3692,10 @@ mod tests {
         let second = "foo/bar-baz";
         assert_eq!(sanitize(first, '-'), sanitize(second, '-'));
         assert_ne!(runner_name_prefix(first), runner_name_prefix(second));
-        assert_eq!(runner_name_prefix("Vider06/Eridania_Site"), runner_name_prefix("vider06/eridania_site"));
+        assert_eq!(
+            runner_name_prefix("Vider06/Eridania_Site"),
+            runner_name_prefix("vider06/eridania_site")
+        );
 
         let maximum_repo = format!("{}/{}", "a".repeat(39), "b".repeat(100));
         // GitHub permits runner names up to 64 characters; uuid_like_suffix

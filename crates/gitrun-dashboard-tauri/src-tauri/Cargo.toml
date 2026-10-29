@@ -1,6 +1,6 @@
 [package]
 name = "gitrun-dashboard-tauri"
-version = "0.11.6"
+version = "0.11.7"
 edition = "2021"
 rust-version = "1.99.0"
 description = "GitRun dashboard: Tauri-based operator UI"

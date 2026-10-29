@@ -116,6 +116,23 @@ The CLI supports setup, repository connection, diagnostics, update checks, dashb
 
 </details>
 
+## CLI command reference
+
+The installed `gitrun` CLI provides these operator commands:
+
+| Command | Purpose |
+| --- | --- |
+| `gitrun uninstall` | Remove GitRun services, runtime resources, package registration and application data. |
+| `gitrun reinstall` | Download, verify and reinstall the latest official release. |
+| `gitrun status --runner <ID>` | Inspect a GitHub Actions runner and its GitRun container. |
+| `gitrun desired <min> <max> <busy> <queued>` | Calculate a desired runner count for the supplied inputs. |
+| `gitrun settings` | Print the current security/API settings as JSON. |
+| `gitrun api-list` | List the supported workflow-facing GitRun APIs. |
+| `gitrun api-policy GitDockRun --operation mount` | Inspect the GitDockRun mount operation in the API policy contract. Use `--operation unmount` for unmount. |
+| `gitrun check-compatibility [workflow-path]` | Analyze workflow files for compatibility and GitDockRun requirements; defaults to `.github/workflows`. |
+
+`uninstall` is destructive. Review the command's confirmation prompts and ensure any required configuration or state is backed up before proceeding.
+
 ## Get started
 
 ### Requirements

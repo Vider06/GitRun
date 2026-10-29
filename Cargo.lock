@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-cli"
-version = "0.13.23"
+version = "0.13.24"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-dashboard-tauri"
-version = "0.11.7"
+version = "0.11.8"
 dependencies = [
  "gitrun-core",
  "gitrun-gsr",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-recovery"
-version = "0.6.15"
+version = "0.6.16"
 dependencies = [
  "gitrun-core",
  "gitrun-scheduler",
@@ -1679,7 +1679,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.11.14"
+version = "0.11.15"
 dependencies = [
  "base64 0.23.1",
  "filetime",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-setup"
-version = "0.9.16"
+version = "0.9.17"
 dependencies = [
  "gitrun-core",
  "gitrun-updater",

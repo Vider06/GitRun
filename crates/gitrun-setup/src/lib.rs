@@ -1566,6 +1566,10 @@ fn validate_install_binary(path: &Path, owner_uid: Option<u32>) -> Result<PathBu
     })
 }
 
+fn is_expected_debian_gitrun_symlink(destination: &Path, target: &Path) -> bool {
+    destination == Path::new("/usr/local/bin/gitrun") && target == Path::new("/usr/bin/gitrun")
+}
+
 fn install_binary(
     source: &Path,
     destination: &Path,
@@ -1575,12 +1579,31 @@ fn install_binary(
 
     if let Ok(metadata) = fs::symlink_metadata(destination) {
         if metadata.file_type().is_symlink() {
-            return Err(SetupError::InvalidInstallBinary(format!(
-                "installation destination {} must not be a symbolic link",
-                destination.display()
-            )));
-        }
-        if !metadata.is_file() {
+            let linked_target = fs::read_link(destination).map_err(|error| {
+                SetupError::InvalidInstallBinary(format!(
+                    "unable to inspect installation symlink {}: {error}",
+                    destination.display()
+                ))
+            })?;
+            let target_metadata = fs::symlink_metadata("/usr/bin/gitrun");
+            let trusted_package_target = target_metadata.is_ok_and(|target| {
+                target.is_file()
+                    && !target.file_type().is_symlink()
+                    && target.uid() == 0
+                    && target.permissions().mode() & 0o022 == 0
+                    && target.permissions().mode() & 0o111 != 0
+            });
+            if !is_expected_debian_gitrun_symlink(destination, &linked_target)
+                || !trusted_package_target
+            {
+                return Err(SetupError::InvalidInstallBinary(format!(
+                    "installation destination {} must not be an untrusted symbolic link",
+                    destination.display()
+                )));
+            }
+            // The known Debian compatibility link is safe to replace: the
+            // final rename replaces the link itself, never its /usr/bin target.
+        } else if !metadata.is_file() {
             return Err(SetupError::InvalidInstallBinary(format!(
                 "installation destination {} is not a regular file",
                 destination.display()
@@ -2601,6 +2624,26 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn only_the_debian_gitrun_compatibility_link_is_allowed_for_replacement() {
+        assert!(is_expected_debian_gitrun_symlink(
+            Path::new("/usr/local/bin/gitrun"),
+            Path::new("/usr/bin/gitrun")
+        ));
+        assert!(!is_expected_debian_gitrun_symlink(
+            Path::new("/usr/local/bin/gitrun"),
+            Path::new("/tmp/untrusted-gitrun")
+        ));
+        assert!(!is_expected_debian_gitrun_symlink(
+            Path::new("/usr/local/bin/other"),
+            Path::new("/usr/bin/gitrun")
+        ));
+        assert!(!is_expected_debian_gitrun_symlink(
+            Path::new("/usr/bin/gitrun"),
+            Path::new("/usr/bin/gitrun")
+        ));
+    }
 
     #[test]
     fn systemd_unit_generation_uses_the_selected_trusted_install_path() {

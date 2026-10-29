@@ -718,7 +718,10 @@ fn process_is_scheduler(pid: u32) -> bool {
         Ok(value) => value,
         Err(_) => return false,
     };
-    let args: Vec<&str> = command_line.split('\0').filter(|arg| !arg.is_empty()).collect();
+    let args: Vec<&str> = command_line
+        .split('\0')
+        .filter(|arg| !arg.is_empty())
+        .collect();
     let executable_matches = args.first().is_some_and(|arg| {
         Path::new(arg)
             .file_name()

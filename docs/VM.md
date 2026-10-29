@@ -74,13 +74,11 @@ For a VM-backed runner:
 
 The Docker endpoint is health-checked for reachability, API response and daemon version before the VM is admitted as routable. This is an endpoint health check, not hardware or guest attestation.
 
-## Snapshot rollback
+## Activation modes and snapshot rollback
 
-KVM/libvirt and VirtualBox expose operator-controlled snapshot create/restore primitives. `EphemeralSnapshotRollback` restores the configured clean snapshot before workload admission and restores it again after the workload lifecycle when shutdown succeeds.
+Only `Standard` and `AlwaysOnExperimental` are currently accepted by VM configuration validation. `EphemeralSnapshotRollback` and `EphemeralVm` are reserved enum values, but configuration using either mode is rejected: snapshot rollback is not connected to an authoritative runner-idle boundary, and per-workload VM recreation is not implemented. The dashboard therefore must not offer these modes as selectable options.
 
-The clean snapshot is operator-managed; GitRun does not silently create a trusted baseline snapshot. Snapshot rollback is therefore a lifecycle primitive, not an automatic guarantee of VM immutability.
-
-The `EphemeralVm` mode is represented in the lifecycle model, but full VM recreation remains deployment/operator dependent.
+KVM/libvirt and VirtualBox expose snapshot create/restore primitives, but those primitives alone do not implement a safe ephemeral runner lifecycle. Do not configure either reserved mode until the scheduler lifecycle integration is implemented and validated.
 
 ## Base image requirements
 
@@ -90,9 +88,9 @@ GitRun also does not automate Windows installation or silently accept hypervisor
 
 ## Networking and TLS
 
-For KVM, the Docker endpoint is constructed from the guest IP and configured Docker port. Windows VM-backed endpoints require a Docker TLS credential directory and mutually authenticated Docker TLS.
+Every VM, regardless of guest OS or hypervisor, must configure an absolute Docker TLS credential directory containing regular, non-symlink `ca.pem`, `cert.pem` and `key.pem` files. The private key must not be group/world-accessible. GitRun validates these credentials before VM lifecycle actions and uses authenticated Docker TLS for the remote endpoint.
 
-For VirtualBox, the current model uses a host-side forwarded Docker endpoint, typically `tcp://127.0.0.1:<port>`.
+For KVM, the Docker endpoint is constructed from the guest IP and configured Docker port. For VirtualBox, the current model uses a host-side forwarded Docker endpoint, typically `tcp://127.0.0.1:<port>`; this does not remove the TLS credential requirement.
 
 Use a protected Docker endpoint. Do not expose a guest Docker daemon to an untrusted network. Private-IP validation is applied consistently across supported hypervisors rather than only KVM.
 

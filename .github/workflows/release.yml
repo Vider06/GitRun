@@ -140,6 +140,67 @@ jobs:
             fi
           fi
 
+      - name: Synchronize GitHub Wiki version markers when configured
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version_number }}
+          WIKI_SYNC_TOKEN: ${{ secrets.WIKI_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WIKI_SYNC_TOKEN:-}" ]; then
+            echo "WIKI_SYNC_TOKEN is not configured; skipping optional Wiki synchronization."
+            exit 0
+          fi
+
+          wiki_dir="$RUNNER_TEMP/gitrun-wiki"
+          rm -rf "$wiki_dir"
+          if ! git clone --quiet "https://x-access-token:${WIKI_SYNC_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" "$wiki_dir"; then
+            echo "::warning::GitHub Wiki repository is unavailable to WIKI_SYNC_TOKEN; Wiki synchronization was skipped."
+            exit 0
+          fi
+
+          python3 - "$wiki_dir" "$VERSION" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          version = sys.argv[2]
+          start = "<!-- gitrun-version:start -->"
+          end = "<!-- gitrun-version:end -->"
+          pattern = re.compile(re.escape(start) + r"(.*?)" + re.escape(end), re.DOTALL)
+          changed = []
+          marker_count = 0
+
+          for path in sorted(root.rglob("*.md")):
+              if ".git" in path.relative_to(root).parts:
+                  continue
+              content = path.read_text(encoding="utf-8")
+              matches = list(pattern.finditer(content))
+              if content.count(start) != len(matches) or content.count(end) != len(matches):
+                  raise SystemExit(f"{path.relative_to(root)}: malformed or unpaired version markers")
+              if not matches:
+                  continue
+              marker_count += len(matches)
+              updated = pattern.sub(lambda _: start + version + end, content)
+              if updated != content:
+                  path.write_text(updated, encoding="utf-8", newline="")
+                  changed.append(path.relative_to(root).as_posix())
+
+          if marker_count == 0:
+              print("No GitRun version markers found in the Wiki; no Wiki files changed.")
+          else:
+              print(f"Found {marker_count} Wiki marker(s); updated {len(changed)} page(s).")
+          PY
+
+          if ! git -C "$wiki_dir" diff --quiet; then
+            git -C "$wiki_dir" config user.name "github-actions[bot]"
+            git -C "$wiki_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git -C "$wiki_dir" add -- '*.md'
+            git -C "$wiki_dir" commit -m "docs: sync GitRun version markers to $VERSION"
+            git -C "$wiki_dir" push origin HEAD
+          fi
+
       - name: Prepare release caches
         id: release_cache_hashes
         shell: bash
@@ -251,6 +312,12 @@ jobs:
                   packages[""]["version"] = version
               path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
           PY
+
+      - name: Validate release version metadata
+        run: |
+          set -euo pipefail
+          python3 scripts/check-version-consistency.py
+          python3 scripts/sync-markdown-version.py --check --version "$GITRUN_VERSION"
 
       - name: Build unified GitRun executable
         env:

@@ -129,11 +129,11 @@ Docker uses the host's configured seccomp/AppArmor policy. GitRun-specific harde
 
 ## VM boundary and lifecycle
 
-VM-backed runners use KVM/libvirt or VirtualBox. Windows Docker endpoints require Docker TLS credentials and mutually authenticated TLS. Private guest-IP validation applies across supported hypervisors.
+VM-backed runners use KVM/libvirt or VirtualBox. Every VM Docker endpoint requires an absolute credential directory containing `ca.pem`, `cert.pem` and `key.pem`, with mutual TLS; the private key must not be group/world-accessible. Private guest-IP validation applies across supported hypervisors.
 
 VM Docker endpoint verification checks reachability, daemon version and API response. It is deliberately called **endpoint health verification**, not hardware/guest attestation.
 
-Snapshot create/restore primitives are available for operator-controlled rollback. `EphemeralSnapshotRollback` restores a configured clean snapshot around the workload lifecycle when the VM can be stopped successfully. `EphemeralVm` exists in the lifecycle model, but full VM recreation remains deployment dependent.
+Snapshot create/restore primitives are available for operator-controlled use, but they are not wired into an accepted ephemeral runner lifecycle. VM configuration currently rejects `EphemeralSnapshotRollback` because no authoritative runner-idle boundary protects a restore, and rejects `EphemeralVm` because per-workload VM recreation is not implemented. Only `Standard` and `AlwaysOnExperimental` are currently accepted.
 
 ## Resource pressure
 

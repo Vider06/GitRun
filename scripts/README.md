@@ -29,7 +29,7 @@ The release workflow creates `library.zip` from the explicit JSON reference-sour
 
 ## Current Markdown version markers
 
-`sync-markdown-version.py` keeps the visible current-source version labels synchronized with `version.txt`. GitHub renders Markdown but does not expand arbitrary environment variables, so the script updates values stored inside invisible HTML comments rather than leaving placeholders visible to readers.
+`check-version-consistency.py` validates that every local Cargo package version is represented in `Cargo.lock`; the release workflow additionally checks that Tauri, `package.json`, and `package-lock.json` agree with `version.txt`. CI runs the Cargo-only check so crate versions remain independently versioned rather than being forced to equal the product version. The release workflow can also synchronize version markers in the separate GitHub Wiki repository when a repository secret named `WIKI_SYNC_TOKEN` has write access to that Wiki; it changes only existing paired markers and skips the Wiki when the secret is not configured.\n\n`sync-markdown-version.py` keeps the visible current-source version labels synchronized with `version.txt`. GitHub renders Markdown but does not expand arbitrary environment variables, so the script updates values stored inside invisible HTML comments rather than leaving placeholders visible to readers.
 
 - Run `python3 scripts/sync-markdown-version.py` to update the marked values from `version.txt`.
 - Run `python3 scripts/sync-markdown-version.py --check` to detect markers whose displayed values differ from the requested/current product version.

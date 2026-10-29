@@ -712,6 +712,32 @@ fn process_has_name(pid: u32, expected_name: &str) -> bool {
     }
 }
 
+fn process_is_scheduler(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let command_line = match std::fs::read_to_string(format!("/proc/{pid}/cmdline")) {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        let args: Vec<&str> = command_line
+            .split('\0')
+            .filter(|arg| !arg.is_empty())
+            .collect();
+        let executable_matches = args.first().is_some_and(|arg| {
+            Path::new(arg)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "gitrun" || name == "gitrun-autoscaler")
+        });
+        executable_matches && args.iter().skip(1).any(|arg| *arg == "scheduler")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
 fn process_name_running(expected_name: &str) -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -2506,7 +2532,7 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
             std::fs::read_to_string(&pid_file)
                 .ok()
                 .and_then(|s| s.trim().parse::<u32>().ok())
-                .filter(|pid| process_has_name(*pid, "gitrun-autoscaler"))
+                .filter(|pid| process_is_scheduler(*pid))
         };
     #[cfg(not(target_os = "linux"))]
     let watched_pid = {
@@ -2514,7 +2540,7 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
         std::fs::read_to_string(&pid_file)
             .ok()
             .and_then(|s| s.trim().parse::<u32>().ok())
-            .filter(|pid| process_has_name(*pid, "gitrun-autoscaler"))
+            .filter(|pid| process_is_scheduler(*pid))
     };
 
     Ok(GsrStatus {

@@ -218,18 +218,18 @@ function openVmModal(config = null) {
           option("Kvm", "KVM / libvirt", hypervisor) + option("VirtualBox", "VirtualBox", hypervisor) +
         '</select></div>' +
         '<div class="field"><label for="vm-activation">Activation mode</label><select id="vm-activation">' +
+          (activation === "EphemeralSnapshotRollback" ? '<option value="EphemeralSnapshotRollback" selected disabled>Unsupported · snapshot rollback is not implemented</option>' : '') +
+          (activation === "EphemeralVm" ? '<option value="EphemeralVm" selected disabled>Unsupported · VM recreation is not implemented</option>' : '') +
           option("Standard", "Standard · start on demand", activation) +
           option("AlwaysOnExperimental", "Always on (experimental)", activation) +
-          option("EphemeralSnapshotRollback", "Ephemeral · snapshot rollback", activation) +
-          option("EphemeralVm", "Ephemeral · recreate VM", activation) +
         '</select></div>' +
         '<div class="field"><label for="vm-memory">Memory (MiB)</label><input id="vm-memory" type="number" min="1" max="1048576" value="' + esc(config?.memory_mb ?? 4096) + '"></div>' +
         '<div class="field"><label for="vm-cpus">vCPUs</label><input id="vm-cpus" type="number" min="1" max="256" value="' + esc(config?.cpus ?? 2) + '"></div>' +
         '<div class="field"><label for="vm-port">Docker port</label><input id="vm-port" type="number" min="1" max="65535" value="' + esc(config?.docker_port ?? 2376) + '"></div>' +
       '</div>' +
       '<div class="field"><label for="vm-base-image">Base disk image path</label><input id="vm-base-image" autocomplete="off" value="' + esc(config?.base_disk_image || "") + '" placeholder="/var/lib/libvirt/images/windows-base.qcow2"></div>' +
-      '<div class="field"><label for="vm-tls-dir">Docker TLS certificate directory</label><input id="vm-tls-dir" autocomplete="off" value="' + esc(config?.docker_tls_cert_dir || "") + '" placeholder="/etc/gitrun/vm-certs/my-vm"><small class="field-hint">Windows guests require ca.pem, cert.pem and key.pem in this directory.</small></div>' +
-      '<label class="checkbox-row"><input id="vm-windows" type="checkbox"' + (config?.is_windows ? " checked" : "") + '><span><strong>Windows guest</strong>Require mutual TLS for the remote Docker endpoint.</span></label>' +
+      '<div class="field"><label for="vm-tls-dir">Docker TLS certificate directory</label><input id="vm-tls-dir" autocomplete="off" value="' + esc(config?.docker_tls_cert_dir || "") + '" placeholder="/etc/gitrun/vm-certs/my-vm"><small class="field-hint">Every VM requires ca.pem, cert.pem and key.pem in this directory for authenticated Docker TLS. Keep key.pem private (mode 0600 or stricter).</small></div>' +
+      '<label class="checkbox-row"><input id="vm-windows" type="checkbox"' + (config?.is_windows ? " checked" : "") + '><span><strong>Windows guest</strong>Apply Windows-specific runner isolation. Mutual TLS is required for every VM endpoint.</span></label>' +
       '<div class="modal-actions"><button class="btn" data-cancel>Cancel</button><button class="btn btn-primary" data-save-vm>Save definition</button></div>' +
     '</section>';
   document.body.appendChild(modal);

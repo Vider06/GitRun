@@ -2,6 +2,26 @@
 
 Current source target: GitRun <!-- gitrun-version:start -->1.8.21<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
 
+## GitRun 1.8.21 — system binary alias reconciliation
+
+- **Source/product target:** `1.8.21`, published as a signed release from commit [`ef4d909`](https://github.com/Vider06/GitRun/commit/ef4d9093bd8c0140579952be0146da92d3193ead).
+- Reconcile stale system binary aliases during updates so command resolution continues to target the installed GitRun executable.
+- Bump the CLI and product versions after the alias fix, keeping release metadata aligned.
+
+## GitRun 1.8.20 — updater transaction and cache recovery
+
+- **Source/product target:** `1.8.20`, published as a signed release.
+- Initialize system updater transactions reliably and serialize system updates with GTUU so runner maintenance cannot race an executable replacement.
+- Rebuild runner images with the installed release binary and repair the Rust target-cache restore prefix; reuse Rust build caches across releases.
+- Synchronize current-source Markdown markers as part of the release process. These markers are metadata, not a substitute for verifying signed artifacts.
+
+## GitRun 1.8.17 — runner toolchain permission audit
+
+- **Source/product target:** `1.8.17`, published as a signed release.
+- Correct the runner toolchain permission audit so symlink mode bits are not treated as ordinary file permissions.
+- Publish the release manifest, reference library, SBOM, provenance and Cargo dependency metadata alongside the Linux artifacts.
+
+
 ## GitRun 1.8.16 — GTUU runner recovery and privileged delegation
 
 - **Source/product target:** `1.8.16`, recorded in `version.txt`. This entry describes the source line and does not assert that a signed release artifact has been published.

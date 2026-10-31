@@ -86,6 +86,48 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
+      - name: Normalize Tauri bundle icons to RGBA
+        shell: bash
+        run: |
+          set -euo pipefail
+          icon_dir="crates/gitrun-dashboard-tauri/src-tauri/icons"
+          if command -v magick >/dev/null 2>&1; then
+            image_tool=magick
+          else
+            image_tool=convert
+          fi
+
+          for icon in "$icon_dir"/gitrun-icon-{32,128,256,512}.png; do
+            test -f "$icon"
+            normalized="${icon%.png}.rgba.png"
+            "$image_tool" "$icon" -alpha on -depth 8 "PNG32:$normalized"
+            mv "$normalized" "$icon"
+
+            python3 - "$icon" <<'PY'
+          import struct
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          with path.open("rb") as image:
+              header = image.read(29)
+
+          if header[:8] != b"\\x89PNG\\r\\n\\x1a\\n" or header[12:16] != b"IHDR":
+              raise SystemExit(f"{path}: invalid PNG header")
+
+          bit_depth = header[24]
+          color_type = header[25]
+          if bit_depth != 8 or color_type != 6:
+              raise SystemExit(
+                  f"{path}: expected 8-bit RGBA PNG, got bit_depth={bit_depth}, "
+                  f"color_type={color_type}"
+              )
+
+          width, height = struct.unpack(">II", header[16:24])
+          print(f"{path}: verified {width}x{height} 8-bit RGBA")
+          PY
+          done
+
       - name: Build release executable and updater signature test
         shell: bash
         run: |

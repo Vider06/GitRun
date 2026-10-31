@@ -112,7 +112,7 @@ jobs:
           with path.open("rb") as image:
               header = image.read(29)
 
-          if header[:8] != b"\\x89PNG\\r\\n\\x1a\\n" or header[12:16] != b"IHDR":
+          if header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
               raise SystemExit(f"{path}: invalid PNG header")
 
           bit_depth = header[24]

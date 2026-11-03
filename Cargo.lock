@@ -1625,6 +1625,7 @@ version = "0.11.9"
 dependencies = [
  "gitrun-management",
  "gitrun-platform",
+ "tauri",
  "tauri-build",
 ]
 

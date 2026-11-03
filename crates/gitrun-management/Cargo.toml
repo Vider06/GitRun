@@ -1,0 +1,24 @@
+[package]
+name = "gitrun-management"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "GitRun shared management backend and privileged Control Manager"
+
+[features]
+default = []
+desktop = ["dep:tauri"]
+
+[dependencies]
+gitrun-core = { path = "../gitrun-core" }
+gitrun-scheduler = { path = "../gitrun-scheduler" }
+gitrun-setup = { path = "../gitrun-setup" }
+gitrun-smart-scheduler = { path = "../gitrun-smart-scheduler" }
+gitrun-vault = { path = "../gitrun-vault" }
+gitrun-gsr = { path = "../gitrun-gsr" }
+gitrun-platform = { path = "../gitrun-platform" }
+gitrun-recovery = { path = "../gitrun-recovery" }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", optional = true, features = [] }

@@ -28,14 +28,14 @@ pub use control_manager::{
     serve as run_control_manager,
 };
 
-/// Serializes dashboard-side writes to the shared config/settings files.
+/// Serializes management-side writes to the shared config/settings files.
 /// The snapshot check alone is vulnerable to two Tauri commands checking the
 /// same old state before either one writes it.
-static DASHBOARD_SETTINGS_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+static MANAGEMENT_SETTINGS_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
     std::sync::OnceLock::new();
 
-fn dashboard_settings_write_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
-    DASHBOARD_SETTINGS_WRITE_LOCK
+fn management_settings_write_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    MANAGEMENT_SETTINGS_WRITE_LOCK
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
         .map_err(|_| "dashboard settings write lock is poisoned; refusing to save".to_owned())
@@ -579,12 +579,12 @@ fn persist_dashboard_config_unlocked(config: &Config) -> Result<(), String> {
 }
 
 fn persist_dashboard_config(config: &Config) -> Result<(), String> {
-    let _write_guard = dashboard_settings_write_guard()?;
+    let _write_guard = management_settings_write_guard()?;
     persist_dashboard_config_unlocked(config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn is_first_run() -> bool {
+pub fn is_first_run() -> bool {
     matches!(
         gitrun_setup::installation_state(),
         gitrun_setup::InstallationState::FirstRun
@@ -882,7 +882,7 @@ fn trusted_executable_mode(mode: u32) -> bool {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn secure_private_key(private_key_path: String) -> Result<String, String> {
+pub fn secure_private_key(private_key_path: String) -> Result<String, String> {
     let path = validate_setup_value(&private_key_path, "private key path")?;
     let path_buf = PathBuf::from(&path);
     secure_private_key_file(&path_buf)?;
@@ -1127,7 +1127,7 @@ fn stream_privileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
+pub async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical uninstall currently targets Linux x86_64".into());
     }
@@ -1273,7 +1273,7 @@ fn stream_unprivileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
+pub async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical reinstall currently targets Linux x86_64".into());
     }
@@ -1360,7 +1360,7 @@ struct FirstSetupRequest {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
+pub async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
     let FirstSetupRequest {
         auth_mode,
         token,
@@ -1628,7 +1628,7 @@ pub struct OverviewData {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_overview() -> Result<OverviewData, String> {
+pub fn get_overview() -> Result<OverviewData, String> {
     let config = load_config()?;
     let cutoff = recent_event_cutoff();
     let mut warnings = Vec::new();
@@ -1796,7 +1796,7 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
 /// Force-cancel a configured repository's workflow run using GitHub's run-level API.
 /// This intentionally affects every job in that workflow run, not one individual job.
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, String> {
+pub fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, String> {
     if run_id == 0 {
         return Err("workflow run ID must be greater than zero".into());
     }
@@ -1842,7 +1842,7 @@ fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, Str
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
+pub fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request(
             "read",
@@ -2130,7 +2130,7 @@ fn append_dashboard_cpu_sample(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_host_resource_snapshot(
+pub fn get_host_resource_snapshot(
     force_refresh: Option<bool>,
 ) -> Result<DashboardHostResourceSnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(15);
@@ -2237,7 +2237,7 @@ static DASHBOARD_REPOSITORY_ACTIVITY_CACHE: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_repository_activity(
+pub fn get_repository_activity(
     force_refresh: Option<bool>,
 ) -> Result<DashboardRepositoryActivitySnapshot, String> {
     if control_manager_enabled() && !current_process_is_root() {
@@ -2381,7 +2381,7 @@ pub struct RepoDetail {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
+pub fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     let config = load_config()?;
     if !config
         .repositories
@@ -2453,7 +2453,7 @@ fn open_vault(config: &Config) -> Result<Vault, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
+pub fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request("read", "vault_secrets", serde_json::json!({}))?;
         return serde_json::from_value(value)
@@ -2480,7 +2480,7 @@ fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
 /// who needs to verify a value should re-enter it (overwriting is always
 /// available) rather than the dashboard round-tripping it back to them.
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), String> {
+pub fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), String> {
     const MAX_VAULT_SECRET_BYTES: usize = 1024 * 1024;
     if value.len() > MAX_VAULT_SECRET_BYTES {
         return Err("GitVault secret exceeds the 1 MiB safety limit".into());
@@ -2501,7 +2501,7 @@ fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), 
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
+pub fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
             "write",
@@ -2528,7 +2528,7 @@ pub struct GsrStatus {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_gsr_status() -> Result<GsrStatus, String> {
+pub fn get_gsr_status() -> Result<GsrStatus, String> {
     let config = load_config()?;
     #[cfg(target_os = "linux")]
     let watched_pid =
@@ -2557,7 +2557,7 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
+pub fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
     let config = load_config()?;
     let limit = limit.unwrap_or(500).clamp(1, 500);
     let mut events = list_gsr_events_for_dashboard(&config, limit)?;
@@ -2575,7 +2575,7 @@ fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
+pub fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request(
             "read",
@@ -2654,7 +2654,7 @@ pub struct ZizmorDashboardInfo {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
+pub fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
     let config = load_config()?;
     let already_installed = gitrun_core::zizmor_is_installed();
     Ok(ZizmorDashboardInfo {
@@ -2676,7 +2676,7 @@ fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
 /// validation, then attempts the install so a failed download surfaces to
 /// the operator immediately rather than silently at the next job.
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, String> {
+pub fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request("write", "zizmor_install", serde_json::json!({}))?;
         return match value.get("status").and_then(serde_json::Value::as_str) {
@@ -2722,7 +2722,7 @@ fn persist_zizmor_config(config: &Config) -> Result<(), String> {
 /// the binary either: leaving it on disk is harmless and re-enabling
 /// later should not require a second download.
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn disable_zizmor() -> Result<(), String> {
+pub fn disable_zizmor() -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request("write", "zizmor_disable", serde_json::json!({}))?;
         return Ok(());
@@ -2737,13 +2737,13 @@ fn disable_zizmor() -> Result<(), String> {
 // ---------------------------------------------------------------------
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn list_logic_rules() -> Result<Vec<gitrun_scheduler::logic_containers::LogicRule>, String> {
+pub fn list_logic_rules() -> Result<Vec<gitrun_scheduler::logic_containers::LogicRule>, String> {
     let config = load_config()?;
     logic_rules_for_dashboard(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn save_logic_rules(
+pub fn save_logic_rules(
     rules: Vec<gitrun_scheduler::logic_containers::LogicRule>,
 ) -> Result<(), String> {
     let config = load_config()?;
@@ -2786,13 +2786,13 @@ fn persist_vm_configs_for_dashboard(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn list_vm_configs() -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
+pub fn list_vm_configs() -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
     let config = load_config()?;
     system_vm_configs(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), String> {
+pub fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), String> {
     let config = load_config()?;
     let mut all = system_vm_configs(&config)?;
     all.retain(|vm| !vm.name.eq_ignore_ascii_case(&config_entry.name));
@@ -2801,7 +2801,7 @@ fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), St
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn delete_vm_config(name: String) -> Result<(), String> {
+pub fn delete_vm_config(name: String) -> Result<(), String> {
     let config = load_config()?;
     let mut all = system_vm_configs(&config)?;
     let original_len = all.len();
@@ -2822,7 +2822,7 @@ fn delete_vm_config(name: String) -> Result<(), String> {
 // ---------------------------------------------------------------------
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn list_pending_hypervisor_decisions(
+pub fn list_pending_hypervisor_decisions(
 ) -> Result<Vec<gitrun_core::hypervisor_decision::PendingDecision>, String> {
     let config = load_config()?;
     #[cfg(target_os = "linux")]
@@ -2845,7 +2845,7 @@ fn list_pending_hypervisor_decisions(
 /// abandoned; it'll be retried automatically next time it's needed" rather
 /// than a generic failure.
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn respond_hypervisor_decision(
+pub fn respond_hypervisor_decision(
     vm_name: String,
     choice: gitrun_core::hypervisor_decision::DecisionChoice,
 ) -> Result<(), String> {
@@ -2886,7 +2886,7 @@ struct KittyDashboardData {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
+pub fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
     let config = load_config()?;
     let state_dir = Path::new(&config.state_dir);
     #[cfg(target_os = "linux")]
@@ -2927,8 +2927,8 @@ fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn save_kitty_settings(settings: KittySettings) -> Result<(), String> {
-    let _write_guard = dashboard_settings_write_guard()?;
+pub fn save_kitty_settings(settings: KittySettings) -> Result<(), String> {
+    let _write_guard = management_settings_write_guard()?;
     settings.validate().map_err(|error| error.to_string())?;
     let config = load_config()?;
     let state_dir = Path::new(&config.state_dir);
@@ -2978,17 +2978,17 @@ fn gitrun_settings_for_dashboard(config: &Config) -> Result<GitRunSettings, Stri
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_gitrun_settings() -> Result<GitRunSettings, String> {
+pub fn get_gitrun_settings() -> Result<GitRunSettings, String> {
     let config = load_config()?;
     gitrun_settings_for_dashboard(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn save_gitrun_settings(
+pub fn save_gitrun_settings(
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
 ) -> Result<(), String> {
-    let _write_guard = dashboard_settings_write_guard()?;
+    let _write_guard = management_settings_write_guard()?;
     let config = load_config()?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
         return Err(format!(
@@ -3027,7 +3027,7 @@ fn save_gitrun_settings(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> {
+pub fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> {
     let config = load_config()?;
     let settings = gitrun_settings_for_dashboard(&config)?;
     if !config
@@ -3112,7 +3112,7 @@ fn read_dock_requirements_local(
         .map_err(|error| format!("decode Dock requirements: {error}"))
 }
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
+pub fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
     let config = load_config()?;
     load_dock_requirements_for_repo(&config, &repo)
 }
@@ -3129,7 +3129,7 @@ struct RepoDashboardBootstrap {
 /// snapshot. The frontend previously issued four IPC calls that independently
 /// reloaded config and settings before it could render the policy form.
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, String> {
+pub fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, String> {
     let config = load_config()?;
     if !config
         .repositories
@@ -3178,7 +3178,7 @@ pub struct SecurityRuntimeSummary {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
+pub fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
     let config = load_config()?;
     let network = config.runner_network.trim().to_owned();
     let network_lower = network.to_ascii_lowercase();
@@ -3207,7 +3207,7 @@ fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_config() -> Result<Config, String> {
+pub fn get_config() -> Result<Config, String> {
     load_config()
 }
 
@@ -3296,7 +3296,7 @@ fn trusted_systemctl_path() -> Option<PathBuf> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
+pub fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
         return Err("GitRun system service controls currently target Linux".into());
     }
@@ -3500,7 +3500,7 @@ fn connect_repository_through_manager(repository: String) -> Result<serde_json::
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, String> {
+pub fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, String> {
     const CACHE_TTL: Duration = Duration::from_secs(10);
     let config_key = dashboard_config_cache_key();
     let cache = DASHBOARD_HEALTH_CACHE.get_or_init(|| std::sync::Mutex::new(None));
@@ -3675,7 +3675,7 @@ struct UpdateCheckResult {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn check_gitrun_updates() -> UpdateCheckResult {
+pub fn check_gitrun_updates() -> UpdateCheckResult {
     let mut candidates = Vec::new();
     if let Ok(path) = std::env::var("GITRUN_BINARY_PATH") {
         candidates.push(PathBuf::from(path));
@@ -3785,7 +3785,7 @@ fn check_gitrun_updates() -> UpdateCheckResult {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
+pub async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("privileged runner-image update currently targets Linux x86_64".into());
     }
@@ -3850,14 +3850,14 @@ async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn save_dashboard_settings(
+pub fn save_dashboard_settings(
     updated: Config,
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
     expected_config: Config,
     expected_settings: GitRunSettings,
 ) -> Result<(), String> {
-    let _write_guard = dashboard_settings_write_guard()?;
+    let _write_guard = management_settings_write_guard()?;
     updated.validate().map_err(|error| error.to_string())?;
     let current_config = load_config()?;
     if settings.schema_version != gitrun_core::SETTINGS_SCHEMA_VERSION {
@@ -3952,14 +3952,14 @@ fn save_dashboard_settings(
 /// file, leaving unmanaged keys (including ones this Tauri build doesn't
 /// know about yet) untouched on disk.
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn save_config(updated: Config) -> Result<(), String> {
+pub fn save_config(updated: Config) -> Result<(), String> {
     persist_dashboard_config(&updated)
 }
 
 /// Stable, Tauri-independent management entry points shared by the desktop UI and
 /// the terminal management console. The console deliberately calls the same
 /// validated handlers rather than reimplementing persistence or policy checks.
-fn management_tui_arg<T: serde::de::DeserializeOwned>(
+fn management_arg<T: serde::de::DeserializeOwned>(
     args: &serde_json::Value,
     field: &str,
 ) -> Result<T, String> {
@@ -3971,93 +3971,93 @@ fn management_tui_arg<T: serde::de::DeserializeOwned>(
         .map_err(|error| format!("invalid management argument {field}: {error}"))
 }
 
-fn management_tui_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, String> {
+fn management_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, String> {
     serde_json::to_value(value)
         .map_err(|error| format!("could not encode management response: {error}"))
 }
 
 /// Read live dashboard data from its existing command handlers. Args use
 /// snake_case field names and JSON so callers do not need private response DTOs.
-pub fn management_tui_read(
+pub fn management_read(
     action: &str,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match action {
         "first_run" => Ok(serde_json::Value::Bool(is_first_run())),
-        "overview" => management_tui_value(get_overview()?),
-        "health" => management_tui_value(get_dashboard_health(Some(
+        "overview" => management_value(get_overview()?),
+        "health" => management_value(get_dashboard_health(Some(
             args.get("force_refresh")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
         ))?),
-        "runners" => management_tui_value(get_runner_snapshot(Some(
+        "runners" => management_value(get_runner_snapshot(Some(
             args.get("force_refresh")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
         ))?),
-        "host_resources" => management_tui_value(get_host_resource_snapshot(Some(
+        "host_resources" => management_value(get_host_resource_snapshot(Some(
             args.get("force_refresh")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
         ))?),
-        "repository_activity" => management_tui_value(get_repository_activity(Some(
+        "repository_activity" => management_value(get_repository_activity(Some(
             args.get("force_refresh")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
         ))?),
-        "repo_detail" => management_tui_value(get_repo_detail(management_tui_arg(&args, "repo")?)?),
-        "repo_bootstrap" => management_tui_value(get_repo_dashboard_bootstrap(
-            management_tui_arg(&args, "repo")?,
+        "repo_detail" => management_value(get_repo_detail(management_arg(&args, "repo")?)?),
+        "repo_bootstrap" => management_value(get_repo_dashboard_bootstrap(
+            management_arg(&args, "repo")?,
         )?),
-        "config" => management_tui_value(get_config()?),
-        "gitrun_settings" => management_tui_value(get_gitrun_settings()?),
-        "security_summary" => management_tui_value(get_security_runtime_summary()?),
-        "vault_secrets" => management_tui_value(list_vault_secrets()?),
-        "gsr_status" => management_tui_value(get_gsr_status()?),
+        "config" => management_value(get_config()?),
+        "gitrun_settings" => management_value(get_gitrun_settings()?),
+        "security_summary" => management_value(get_security_runtime_summary()?),
+        "vault_secrets" => management_value(list_vault_secrets()?),
+        "gsr_status" => management_value(get_gsr_status()?),
         "gsr_events" => {
             let limit = args
                 .get("limit")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(30) as usize;
-            management_tui_value(list_gsr_events(Some(limit))?)
+            management_value(list_gsr_events(Some(limit))?)
         }
         "service_logs" => {
-            let source: String = management_tui_arg(&args, "source")?;
+            let source: String = management_arg(&args, "source")?;
             let limit = args
                 .get("limit")
                 .and_then(serde_json::Value::as_u64)
                 .map(|v| v as usize);
-            management_tui_value(list_service_logs(source, limit)?)
+            management_value(list_service_logs(source, limit)?)
         }
-        "zizmor" => management_tui_value(get_zizmor_info()?),
-        "logic_rules" => management_tui_value(list_logic_rules()?),
-        "vm_configs" => management_tui_value(list_vm_configs()?),
-        "hypervisor_decisions" => management_tui_value(list_pending_hypervisor_decisions()?),
-        "kitty" => management_tui_value(get_kitty_dashboard_data()?),
+        "zizmor" => management_value(get_zizmor_info()?),
+        "logic_rules" => management_value(list_logic_rules()?),
+        "vm_configs" => management_value(list_vm_configs()?),
+        "hypervisor_decisions" => management_value(list_pending_hypervisor_decisions()?),
+        "kitty" => management_value(get_kitty_dashboard_data()?),
         "repo_api_policies" => {
-            management_tui_value(get_repo_api_policies(management_tui_arg(&args, "repo")?)?)
+            management_value(get_repo_api_policies(management_arg(&args, "repo")?)?)
         }
         "dock_requirements" => {
-            management_tui_value(get_dock_requirements(management_tui_arg(&args, "repo")?)?)
+            management_value(get_dock_requirements(management_arg(&args, "repo")?)?)
         }
-        "updates" => management_tui_value(check_gitrun_updates()),
+        "updates" => management_value(check_gitrun_updates()),
         other => Err(format!("unsupported management read action: {other}")),
     }
 }
 
 /// Perform a dashboard operation with the exact same validation, privileged
 /// helper routing and danger gates used by the graphical dashboard.
-pub fn management_tui_write(
+pub fn management_write(
     action: &str,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match action {
-        "connect_repository" => management_tui_value(connect_repository_through_manager(
-            management_tui_arg(&args, "repository")?,
+        "connect_repository" => management_value(connect_repository_through_manager(
+            management_arg(&args, "repository")?,
         )?),
         "vm_configs_replace" => {
             let configs: Vec<gitrun_scheduler::vm::VmConfig> =
-                management_tui_arg(&args, "configs")?;
+                management_arg(&args, "configs")?;
             // Reuse the scheduler's loader validation by temporarily using its
             // public save API only in developer installs; system installs use
             // the existing fixed-purpose privileged writer after structural
@@ -4073,57 +4073,57 @@ pub fn management_tui_write(
         }
         "fast_stop" => {
             let message = fast_stop_workflow_run(
-                management_tui_arg(&args, "repository")?,
-                management_tui_arg(&args, "run_id")?,
+                management_arg(&args, "repository")?,
+                management_arg(&args, "run_id")?,
             )?;
-            management_tui_value(serde_json::json!({ "message": message }))
+            management_value(serde_json::json!({ "message": message }))
         }
         "vault_set" => {
             set_vault_secret(
-                management_tui_arg(&args, "name")?,
-                management_tui_arg(&args, "value")?,
-                management_tui_arg(&args, "scope")?,
+                management_arg(&args, "name")?,
+                management_arg(&args, "value")?,
+                management_arg(&args, "scope")?,
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
         "vault_delete" => {
             delete_vault_secret(
-                management_tui_arg(&args, "name")?,
-                management_tui_arg(&args, "scope")?,
+                management_arg(&args, "name")?,
+                management_arg(&args, "scope")?,
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
-        "zizmor_install" => management_tui_value(accept_zizmor_license_and_install()?),
+        "zizmor_install" => management_value(accept_zizmor_license_and_install()?),
         "zizmor_disable" => {
             disable_zizmor()?;
             Ok(serde_json::json!({ "ok": true }))
         }
         "logic_rules_save" => {
-            save_logic_rules(management_tui_arg(&args, "rules")?)?;
+            save_logic_rules(management_arg(&args, "rules")?)?;
             Ok(serde_json::json!({ "ok": true }))
         }
         "vm_save" => {
-            save_vm_config(management_tui_arg(&args, "config_entry")?)?;
+            save_vm_config(management_arg(&args, "config_entry")?)?;
             Ok(serde_json::json!({ "ok": true }))
         }
         "vm_delete" => {
-            delete_vm_config(management_tui_arg(&args, "name")?)?;
+            delete_vm_config(management_arg(&args, "name")?)?;
             Ok(serde_json::json!({ "ok": true }))
         }
         "hypervisor_respond" => {
             respond_hypervisor_decision(
-                management_tui_arg(&args, "vm_name")?,
-                management_tui_arg(&args, "choice")?,
+                management_arg(&args, "vm_name")?,
+                management_arg(&args, "choice")?,
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
         "kitty_save" => {
-            save_kitty_settings(management_tui_arg(&args, "settings")?)?;
+            save_kitty_settings(management_arg(&args, "settings")?)?;
             Ok(serde_json::json!({ "ok": true }))
         }
         "gitrun_settings_save" => {
             save_gitrun_settings(
-                management_tui_arg(&args, "settings")?,
+                management_arg(&args, "settings")?,
                 args.get("confirm_socket_opt_out")
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
@@ -4131,29 +4131,29 @@ pub fn management_tui_write(
             Ok(serde_json::json!({ "ok": true }))
         }
         "config_save" => {
-            save_config(management_tui_arg(&args, "updated")?)?;
+            save_config(management_arg(&args, "updated")?)?;
             Ok(serde_json::json!({ "ok": true }))
         }
         "dashboard_settings_save" => {
             save_dashboard_settings(
-                management_tui_arg(&args, "updated")?,
-                management_tui_arg(&args, "settings")?,
+                management_arg(&args, "updated")?,
+                management_arg(&args, "settings")?,
                 args.get("confirm_socket_opt_out")
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
-                management_tui_arg(&args, "expected_config")?,
-                management_tui_arg(&args, "expected_settings")?,
+                management_arg(&args, "expected_config")?,
+                management_arg(&args, "expected_settings")?,
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
-        "service_control" => management_tui_value(control_gitrun_service(management_tui_arg(
+        "service_control" => management_value(control_gitrun_service(management_arg(
             &args, "action",
         )?)?),
         "json_recovery" => {
             let action = gitrun_recovery::JsonRecoveryAction::parse(
-                &management_tui_arg::<String>(&args, "action")?,
+                &management_arg::<String>(&args, "action")?,
             )?;
-            management_tui_value(gitrun_recovery::run_json_recovery_action(action)?)
+            management_value(gitrun_recovery::run_json_recovery_action(action)?)
         }
         other => Err(format!("unsupported management write action: {other}")),
     }
@@ -4162,73 +4162,20 @@ pub fn management_tui_write(
 /// Small bridge module: writing back to the same env-file format
 /// `gitrun-setup` without depending on any legacy dashboard crate. Mirrors the MANAGED_CONFIG_KEYS approach documented in that
 /// crate.
-#[cfg(feature = "desktop")]
-#[cfg_attr(all(feature = "desktop", mobile), tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![
-            is_first_run,
-            secure_private_key,
-            run_first_setup,
-            uninstall_gitrun,
-            reinstall_gitrun,
-            get_overview,
-            get_runner_snapshot,
-            fast_stop_workflow_run,
-            get_repository_activity,
-            get_host_resource_snapshot,
-            get_repo_detail,
-            get_repo_dashboard_bootstrap,
-            list_vault_secrets,
-            set_vault_secret,
-            delete_vault_secret,
-            get_gsr_status,
-            list_gsr_events,
-            list_service_logs,
-            get_zizmor_info,
-            accept_zizmor_license_and_install,
-            disable_zizmor,
-            list_logic_rules,
-            save_logic_rules,
-            list_vm_configs,
-            save_vm_config,
-            delete_vm_config,
-            list_pending_hypervisor_decisions,
-            respond_hypervisor_decision,
-            get_config,
-            get_security_runtime_summary,
-            get_dashboard_health,
-            get_kitty_dashboard_data,
-            save_kitty_settings,
-            control_gitrun_service,
-            check_gitrun_updates,
-            update_permanent_runners,
-            save_dashboard_settings,
-            save_config,
-            get_gitrun_settings,
-            save_gitrun_settings,
-            get_repo_api_policies,
-            get_dock_requirements,
-        ])
-        .run(tauri::generate_context!(
-            "../gitrun-dashboard-tauri/src-tauri/tauri.conf.json"
-        ))
-        .expect("error while running the GitRun dashboard");
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn dashboard_settings_write_guard_serializes_concurrent_writers() {
-        let guard = dashboard_settings_write_guard().unwrap();
+    fn management_settings_write_guard_serializes_concurrent_writers() {
+        let guard = management_settings_write_guard().unwrap();
         let (started_tx, started_rx) = mpsc::channel();
         let (finished_tx, finished_rx) = mpsc::channel();
 
         let worker = std::thread::spawn(move || {
             started_tx.send(()).unwrap();
-            let _worker_guard = dashboard_settings_write_guard().unwrap();
+            let _worker_guard = management_settings_write_guard().unwrap();
             finished_tx.send(()).unwrap();
         });
 
@@ -4245,12 +4192,12 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_build_version_matches_workspace_version_txt() {
+    fn management_build_version_matches_workspace_version_txt() {
         let expected = include_str!("../../../version.txt").trim();
         assert_eq!(
             option_env!("GITRUN_BUILD_VERSION"),
             Some(expected),
-            "Tauri build.rs must propagate version.txt into the dashboard binary"
+            "management build.rs must propagate version.txt into the backend binary"
         );
         assert!(!expected.is_empty());
     }
@@ -4328,7 +4275,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let directory = std::env::temp_dir().join(format!(
-            "gitrun-dashboard-privileged-path-{}-{nonce}",
+            "gitrun-management-privileged-path-{}-{nonce}",
             std::process::id()
         ));
         std::fs::create_dir_all(&directory).unwrap();

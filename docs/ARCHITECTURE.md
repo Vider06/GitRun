@@ -95,3 +95,7 @@ The PR #83 source-head checks are historical evidence for the 1.5.0 refactor com
 ## Future Mapping decision boundary
 
 Future Mapping projects the next hour into twelve five-minute buckets, with an operator-bounded resource envelope and a monotonic map revision. Think compares distinct lookback windows and blocks predictive growth when coverage is incomplete or demand estimates disagree. These features are advisory: the scheduler re-checks the exact current revision before accepting GSR authorization, and deterministic reconciliation, runner maxima, host budgets and resource-pressure backpressure still control the actual operation.
+
+## Shared management backend
+
+The management API, policy checks, persistence operations, typed command dispatcher and privileged Control Manager live in the `gitrun-management` crate. The crate's default feature set is headless: CLI, system services and the Control Manager do not link Tauri or require GTK/WebKit. The dashboard is a thin Tauri adapter that enables the optional `desktop` feature and re-exports the backend's UI commands. Both the terminal management console and the dashboard invoke the same management handlers; protected system operations are routed through the allowlisted Unix-domain-socket Control Manager.

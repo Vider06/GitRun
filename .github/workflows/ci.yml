@@ -2248,6 +2248,8 @@ jobs:
           ci_run "Android guard coverage at every executable entry point" check_android_entrypoint_guards || rc=1
           ci_run "Minimal runner bootstrap carries the platform crate" cargo test --locked -p gitrun-setup bootstrap_lock_matches_the_minimal_workspace || rc=1
           ci_run "Minimal runner Dockerfile includes all bootstrap crates" cargo test --locked -p gitrun-setup bootstrap_dockerfile_uses_minimal_gsr_build_context_and_original_bash || rc=1
+          ci_run "Headless management backend compiles without desktop features" cargo test --locked -p gitrun-management || rc=1
+          ci_run "CLI dependency graph excludes Tauri and WebKit" bash -c '! cargo tree --locked -p gitrun-cli -e normal | grep -Eiq "(^| )tauri v|webkit2gtk" ' || rc=1
           ci_run "Updater release-manifest target selection and signature contracts" cargo test --locked -p gitrun-updater || rc=1
           exit "$rc"
       - *rust_prune
@@ -2869,7 +2871,7 @@ jobs:
           runtime-contracts|Runtime contracts and configuration integration|rust|
           systemd-verify|systemd-analyze unit verification|rust|
           platform-compatibility|Linux platform and updater target contracts|rust|
-          platform-target-check|Linux target compile matrix|rust|
+          platform-target-check|Server and updater Linux target matrix|rust|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|

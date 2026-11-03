@@ -267,7 +267,7 @@ pub fn detect_service_manager() -> Option<ServiceManager> {
         Path::new("/run/systemd/system").is_dir()
             || Path::new("/usr/lib/systemd/systemd").is_file(),
         command_on_path("systemctl"),
-        Path::new("/run/openrc").is_dir() || Path::new("/run/ openrc").is_dir(),
+        Path::new("/run/openrc").is_dir(),
         command_on_path("rc-service"),
         Path::new("/run/runit/service").is_dir() || Path::new("/etc/runit/1").is_file(),
         command_on_path("sv"),

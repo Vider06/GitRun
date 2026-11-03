@@ -180,6 +180,13 @@ jobs:
           install -m 0644 LICENSE README.md config/config.example.env "$stage/usr/share/doc/gitrun/"
           install -m 0644 systemd/gitrun.service systemd/gitrun-gsr.service systemd/gitrun-control.service "$stage/usr/share/gitrun/"
           tar --zstd -C "$stage" -cf "$out/GitRun-$VERSION-$TARGET-server.tar.zst" .
+          update_root="$RUNNER_TEMP/update-root"
+          rm -rf "$update_root"
+          mkdir -p "$update_root"
+          install -m 0755 "$binary" "$update_root/gitrun"
+          install -m 0644 version.txt "$update_root/version.txt"
+          install -m 0644 LICENSE README.md config/config.example.env "$update_root/"
+          tar -C "$update_root" -czf "$out/GitRun-$VERSION-$TARGET-server.tar.gz" .
 
           case "$TARGET" in
             x86_64-unknown-linux-gnu) arch=amd64; formats="deb rpm archlinux"; xbps_arch=x86_64; xbps_dep=glibc ;;
@@ -421,6 +428,7 @@ jobs:
           set -euo pipefail
           root="$GITHUB_WORKSPACE/release-assets"
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            test -s "$root/GitRun-$VERSION-$target-server.tar.gz"
             test -s "$root/GitRun-$VERSION-$target-server.tar.zst"
           done
           for file in \
@@ -449,8 +457,14 @@ jobs:
           ! dpkg-deb -c "$gui" | grep -Eq '/usr/bin/gitrun$'
           ! dpkg-deb -c "$root/GitRun-$VERSION-linux-x86_64-deb.deb" | grep -Eq '/GitRun\.AppImage$'
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            archive="$root/GitRun-$VERSION-$target-server.tar.gz"
+            dir="$RUNNER_TEMP/update-check-$target"
+            rm -rf "$dir"; mkdir -p "$dir"
+            tar -xzf "$archive" -C "$dir"
+            test -x "$dir/gitrun"
+            test "$(cat "$dir/version.txt")" = "$VERSION_NUMBER"
             archive="$root/GitRun-$VERSION-$target-server.tar.zst"
-            dir="$RUNNER_TEMP/check-$target"
+            dir="$RUNNER_TEMP/package-check-$target"
             rm -rf "$dir"; mkdir -p "$dir"
             tar --zstd -xf "$archive" -C "$dir"
             test -x "$dir/usr/bin/gitrun"
@@ -480,7 +494,10 @@ jobs:
               elif name == "sbom.spdx.json": target = "sbom-spdx"
               elif name == "provenance.json": target = "provenance"
               elif name == "SHA256SUMS": target = "sha256sums"
-              elif "-server.tar.zst" in name: target = name[len(f"GitRun-{version}-"):-len("-server.tar.zst")]
+              elif "-server.tar.gz" in name: target = name[len(f"GitRun-{version}-"):-len("-server.tar.gz")]
+              elif "-server.tar.zst" in name:
+                  cpu = "aarch64" if "aarch64" in name else "x86_64"
+                  target = f"linux-{cpu}-tar-zst"
               elif name.endswith(".AppImage"): target = "linux-x86_64-dashboard-appimage"
               elif "Dashboard-" in name: target = "linux-x86_64-dashboard-deb"
               else: target = "linux-package-" + name[len(f"GitRun-{version}-"):].replace(".", "-")
@@ -493,7 +510,7 @@ jobs:
           }
           missing = required - {item["target"] for item in items}
           if missing: raise SystemExit(f"Missing manifest targets: {sorted(missing)}")
-          if len(items) != 22: raise SystemExit(f"Expected 22 release files, found {len(items)}")
+          if len(items) != 26: raise SystemExit(f"Expected 26 release files, found {len(items)}")
           manifest = {"name":"GitRun","version":version,"git_commit":commit,"repository":"Vider06/GitRun","artifacts":items}
           (root/"release-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
           PY
@@ -535,7 +552,7 @@ jobs:
             exit 1
           fi
           jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" \
-            '.name == "GitRun" and .version == $version and .git_commit == $commit and (.artifacts | length == 22) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' \
+            '.name == "GitRun" and .version == $version and .git_commit == $commit and (.artifacts | length == 26) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' \
             "$GITRUN_RELEASE_MANIFEST" >/dev/null
       - name: Generate release notes
         env:
@@ -566,7 +583,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -printf '%p\n' | sort)
-          (("${#assets[@]}" == 22))
+          (("${#assets[@]}" == 26))
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release edit "$VERSION" --title "GitRun $VERSION" --notes-file "$NOTES_FILE"
             gh release upload "$VERSION" "${assets[@]}" --clobber

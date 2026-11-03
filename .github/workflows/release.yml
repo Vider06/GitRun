@@ -613,7 +613,7 @@ jobs:
               exit 1
             }
           done
-          test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun
+          test "$(dpkg-deb -c "$deb" | grep -Ec '/usr/bin/gitrun$')" -eq 1
           dpkg-deb --contents "$deb" | grep -E '/usr/libexec/gitrun/reinstall-latest\.sh$'
           dpkg-deb --contents "$deb" | grep -E '/usr/libexec/gitrun/uninstall\.sh$'
           dpkg-deb --control "$deb" "$RUNNER_TEMP/gitrun-deb-control"

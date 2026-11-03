@@ -100,7 +100,7 @@ jobs:
             '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"GitRun",documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit),creationInfo:{created:$created,creators:["Tool: GitRun CI"]},packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
             "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
           jq -n --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
-            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"separate-tauri-dashboard",desktop_target:"x86_64-unknown-linux-gnu"}' \
+            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_target:"x86_64-unknown-linux-gnu"}' \
             > "$root/provenance.json"
       - name: Upload shared inputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -227,7 +227,7 @@ jobs:
           retention-days: 3
 
   build-dashboard:
-    name: Independent Tauri Dashboard
+    name: Independent GitRun Desktop
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -236,7 +236,6 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
-      MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -330,9 +329,9 @@ jobs:
           set -euo pipefail
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
             test -x "canonical-inputs/gitrun-$target"
-            test -s "canonical-inputs/GitRun-${{ needs.prepare.outputs.version }}-$target-server.tar.gz"
+            test -s "canonical-inputs/GitRun-Server-${{ needs.prepare.outputs.version }}-$target-server.tar.gz"
           done
-          test -s "canonical-inputs/GitRun-Dashboard-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
           test -s canonical-inputs/library.zip
           test -s canonical-inputs/cargo-metadata.json
           test -s canonical-inputs/sbom.spdx.json
@@ -515,7 +514,7 @@ jobs:
           retention-days: 3
 
   package-dashboard:
-    name: Package independent Dashboard
+    name: Package independent Desktop
     needs: [prepare, collect]
     runs-on: ubuntu-24.04
     timeout-minutes: 60

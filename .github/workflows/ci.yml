@@ -1442,7 +1442,7 @@ jobs:
               "Desktop payload excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,
               "migration fresh-install warning": "DO NOT USE FOR FRESH INSTALL!" in release,
               "standard release migration notice": "No migration needed, updater/release system has not been changed in a way that requires a migration package." in release,
-              "Server package target namespace": 'target = package_target + "-server-deb"' in release,
+              "Server package target namespace": 'target = package_target[:-4] + "-server-deb"' in release,
           }
           for label, passed in checks.items():
               print(("PASS" if passed else "FAIL") + ": " + label)

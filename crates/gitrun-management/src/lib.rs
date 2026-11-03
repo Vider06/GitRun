@@ -4210,7 +4210,9 @@ pub fn run() {
             get_repo_api_policies,
             get_dock_requirements,
         ])
-        .run(tauri::generate_context!("../gitrun-dashboard-tauri/src-tauri/tauri.conf.json"))
+        .run(tauri::generate_context!(
+            "../gitrun-dashboard-tauri/src-tauri/tauri.conf.json"
+        ))
         .expect("error while running the GitRun dashboard");
 }
 

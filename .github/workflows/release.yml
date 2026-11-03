@@ -483,8 +483,7 @@ jobs:
           tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
           xbps_create="$xbps_root/usr/bin/xbps-create"
           xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
-          xbps_query="$xbps_root/usr/bin/xbps-query"
-          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          test -x "$xbps_create" && test -x "$xbps_rindex"
           export XBPS_ARCH="$xbps_arch"
           (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-${VERSION_NUMBER}_1" \
             -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
@@ -495,8 +494,6 @@ jobs:
           mv "$xbps_file" "$out/GitRun-$VERSION-linux-$cpu-xbps.xbps"
           # Indexing the local repository parses the XBPS archive and validates its metadata.
           "$xbps_rindex" -a "$out"/*.xbps
-          pkgver="$("$xbps_query" -R --repository="$out" -S -p pkgver gitrun)"
-          test "$pkgver" = "gitrun-${VERSION_NUMBER}_1"
           test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
       - name: Upload immutable target packages

@@ -374,14 +374,14 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
             return Err("invalid control-manager action".into());
         }
 
+        let dispatch_started = std::time::Instant::now();
         let result = match request.operation.as_str() {
             #[cfg(test)]
             "read" if request.action == "ipc_ping" => {
-                let started = std::time::Instant::now();
                 Ok(serde_json::json!({
                     "channel": "unix-domain-socket",
                     "echo": request.args,
-                    "server_elapsed_us": started.elapsed().as_micros() as u64,
+                    "server_elapsed_us": dispatch_started.elapsed().as_micros() as u64,
                     "protocol": "newline-delimited-json"
                 }))
             }

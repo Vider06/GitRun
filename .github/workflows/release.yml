@@ -135,6 +135,11 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - name: Synchronize Markdown source-version markers
+        run: |
+          set -euo pipefail
+          python3 scripts/sync-markdown-version.py --version "$VERSION_NUMBER"
+          python3 scripts/sync-markdown-version.py --check --version "$VERSION_NUMBER"
       - name: Verify cross-build runtime
         run: |
           set -euo pipefail
@@ -359,6 +364,11 @@ jobs:
         with:
           name: canonical-release-inputs
           path: canonical
+      - name: Synchronize Markdown source-version markers
+        run: |
+          set -euo pipefail
+          python3 scripts/sync-markdown-version.py --version "$VERSION_NUMBER"
+          python3 scripts/sync-markdown-version.py --check --version "$VERSION_NUMBER"
       - name: Create TAR.ZST, DEB, RPM, APK, Arch and XBPS packages
         shell: bash
         run: |

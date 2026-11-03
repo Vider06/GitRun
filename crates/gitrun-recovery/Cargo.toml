@@ -1,12 +1,13 @@
 [package]
 name = "gitrun-recovery"
-version = "0.6.16"
+version = "0.6.17"
 edition = "2021"
 license = "Apache-2.0"
 description = "GitRun startup integrity checks, recovery orchestration and minimal repair UI"
 
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
+gitrun-platform = { path = "../gitrun-platform" }
 gitrun-scheduler = { path = "../gitrun-scheduler" }
 gitrun-updater = { path = "../gitrun-updater" }
 gitrun-setup = { path = "../gitrun-setup" }

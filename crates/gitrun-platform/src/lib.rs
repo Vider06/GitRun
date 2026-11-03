@@ -222,18 +222,6 @@ fn preferred_package_managers(distro_id: &str, id_like: &str) -> Vec<PackageMana
         }
     }
 
-    for manager in [
-        PackageManager::Apt,
-        PackageManager::Dnf,
-        PackageManager::Zypper,
-        PackageManager::Pacman,
-        PackageManager::Apk,
-        PackageManager::Xbps,
-        PackageManager::Emerge,
-        PackageManager::Rpm,
-    ] {
-        push_unique(&mut ordered, manager);
-    }
     ordered
 }
 
@@ -506,29 +494,11 @@ mod tests {
     fn distribution_preference_keeps_native_package_formats_first() {
         assert_eq!(
             preferred_package_managers("alpine", ""),
-            vec![
-                PackageManager::Apk,
-                PackageManager::Apt,
-                PackageManager::Dnf,
-                PackageManager::Zypper,
-                PackageManager::Pacman,
-                PackageManager::Xbps,
-                PackageManager::Emerge,
-                PackageManager::Rpm,
-            ]
+            vec![PackageManager::Apk]
         );
         assert_eq!(
             preferred_package_managers("void", ""),
-            vec![
-                PackageManager::Xbps,
-                PackageManager::Apt,
-                PackageManager::Dnf,
-                PackageManager::Zypper,
-                PackageManager::Pacman,
-                PackageManager::Apk,
-                PackageManager::Emerge,
-                PackageManager::Rpm,
-            ]
+            vec![PackageManager::Xbps]
         );
     }
 

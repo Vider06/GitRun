@@ -64,7 +64,7 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                 | "service_control"
                 | "maintenance_task"
                 | "json_recovery"
-        ),
+        ) || (cfg!(test) && action == "ipc_test_write"),
         _ => false,
     }
 }
@@ -386,6 +386,13 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
                 "protocol": "newline-delimited-json"
             })),
             "read" => super::management_read(&request.action, request.args),
+            #[cfg(test)]
+            "write" if request.action == "ipc_test_write" => Ok(serde_json::json!({
+                "channel": "unix-domain-socket",
+                "echo": request.args,
+                "server_elapsed_us": dispatch_started.elapsed().as_micros() as u64,
+                "protocol": "newline-delimited-json"
+            })),
             "write" => {
                 if needs_confirmation(&request.action, &request.args)
                     && !request
@@ -677,4 +684,68 @@ mod tests {
         server.join().expect("IPC denial server must finish");
         let _ = std::fs::remove_file(&socket_path);
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_ipc_dispatches_safe_test_write_in_both_directions() {
+        use std::os::unix::net::UnixListener;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "gitrun-control-ipc-write-test-{}-{nonce}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("bind isolated IPC test socket");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept IPC test client");
+            serve_client(stream);
+        });
+
+        let payload = serde_json::json!({
+            "origin": "dashboard-adapter",
+            "probe": "harmless-test-write",
+            "sequence": 2
+        });
+        let reply = request_at(&socket_path, "write", "ipc_test_write", payload.clone())
+            .expect("test-only write probe must complete");
+        server.join().expect("IPC write test server must finish");
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert_eq!(reply["channel"], "unix-domain-socket");
+        assert_eq!(reply["protocol"], "newline-delimited-json");
+        assert_eq!(reply["echo"], payload);
+        assert!(reply["server_elapsed_us"].as_u64().is_some());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_ipc_dispatches_a_real_read_through_shared_management_backend() {
+        use std::os::unix::net::UnixListener;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "gitrun-control-ipc-backend-test-{}-{nonce}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("bind isolated IPC test socket");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept IPC test client");
+            serve_client(stream);
+        });
+
+        let reply = request_at(&socket_path, "read", "first_run", serde_json::json!({}))
+            .expect("real read-only backend operation must complete");
+        server.join().expect("backend IPC server must finish");
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert!(reply.is_boolean(), "first_run must return a boolean result");
+    }
+
 }

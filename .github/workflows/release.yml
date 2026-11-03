@@ -394,6 +394,8 @@ jobs:
           rm -rf "$package_stage"
           cp -a "$stage" "$package_stage"
           unit_contents=""
+          # Only systemd package formats carry systemd units. APK and XBPS remain
+          # init-neutral until native OpenRC/runit service backends are implemented.
           if [[ "$TARGET" == *-gnu ]]; then
             mkdir -p "$package_stage/usr/lib/systemd/system"
             for unit in gitrun.service gitrun-gsr.service gitrun-control.service; do

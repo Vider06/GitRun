@@ -40,6 +40,8 @@ The 1.9.0 source foundation does **not** claim that all detected Linux distribut
 | Android / Termux / Android proot | Explicitly unsupported. |
 | NixOS | Deferred; its declarative package and service model needs a separate integration design. |
 
+The platform-detection crate is checked as a standalone Rust library for all four target triples above. This is a compile-compatibility check for the detection layer only; it is not a cross-build of the GitRun CLI, scheduler, desktop dashboard, runner image or distributable package.
+
 The current Docker runner profiles are Debian-based and x86_64-specific. A host ABI detector cannot make those images multi-architecture or make an image built for glibc work on musl.
 
 ## Release and package architecture

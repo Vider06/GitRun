@@ -641,6 +641,7 @@ jobs:
           for deb in "$root"/GitRun-"$VERSION"-linux-*-deb.deb; do
             test "$(dpkg-deb -f "$deb" Package)" = gitrun
             test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
+            dpkg-deb -c "$deb" | grep -Fq '/usr/lib/systemd/system/gitrun.service'
           done
           gui="$root/GitRun-Dashboard-$VERSION-linux-x86_64-deb.deb"
           test "$(dpkg-deb -f "$gui" Package)" = gitrun-dashboard
@@ -664,6 +665,7 @@ jobs:
           for rpm_file in "$root"/GitRun-"$VERSION"-linux-*-rpm.rpm; do
             rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun $VERSION_NUMBER"
             rpm -qpl "$rpm_file" | grep -Fxq /usr/bin/gitrun
+            rpm -qpl "$rpm_file" | grep -Fxq /usr/lib/systemd/system/gitrun.service
           done
           for apk_file in "$root"/GitRun-"$VERSION"-linux-*-apk.apk; do
             tar -tzf "$apk_file" | grep -Fxq .PKGINFO
@@ -671,6 +673,7 @@ jobs:
           arch_file="$root/GitRun-$VERSION-linux-x86_64-arch.pkg.tar.zst"
           tar --zstd -tf "$arch_file" | grep -Fxq .PKGINFO
           tar --zstd -tf "$arch_file" | grep -Fxq usr/bin/gitrun
+          tar --zstd -tf "$arch_file" | grep -Fxq usr/lib/systemd/system/gitrun.service
 
           mapfile -t library_members < <(unzip -Z1 "$root/library.zip")
           (("${#library_members[@]}" == 11))

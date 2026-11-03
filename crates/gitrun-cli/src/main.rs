@@ -3162,8 +3162,9 @@ fn doctor_load_config() -> Result<Config, String> {
         match control_manager_config_read(|operation, action, args| {
             gitrun_dashboard_tauri_lib::control_manager_request(operation, action, args)
         }) {
-            Ok(value) => serde_json::from_value(value)
-                .map_err(|error| format!("Control Manager returned invalid configuration: {error}")),
+            Ok(value) => serde_json::from_value(value).map_err(|error| {
+                format!("Control Manager returned invalid configuration: {error}")
+            }),
             Err(ipc_error) => Err(format!(
                 "Control Manager config read failed; refusing an in-process fallback: {ipc_error}"
             )),

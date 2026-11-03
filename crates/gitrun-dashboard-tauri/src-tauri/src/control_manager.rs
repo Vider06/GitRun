@@ -379,14 +379,12 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
         let dispatch_started = std::time::Instant::now();
         let result = match request.operation.as_str() {
             #[cfg(test)]
-            "read" if request.action == "ipc_ping" => {
-                Ok(serde_json::json!({
-                    "channel": "unix-domain-socket",
-                    "echo": request.args,
-                    "server_elapsed_us": dispatch_started.elapsed().as_micros() as u64,
-                    "protocol": "newline-delimited-json"
-                }))
-            }
+            "read" if request.action == "ipc_ping" => Ok(serde_json::json!({
+                "channel": "unix-domain-socket",
+                "echo": request.args,
+                "server_elapsed_us": dispatch_started.elapsed().as_micros() as u64,
+                "protocol": "newline-delimited-json"
+            })),
             "read" => super::management_tui_read(&request.action, request.args),
             "write" => {
                 if needs_confirmation(&request.action, &request.args)
@@ -679,5 +677,4 @@ mod tests {
         server.join().expect("IPC denial server must finish");
         let _ = std::fs::remove_file(&socket_path);
     }
-
 }

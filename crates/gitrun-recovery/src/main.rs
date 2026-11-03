@@ -1,6 +1,11 @@
 use std::process::Command;
 
 fn main() {
+    if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
+        eprintln!("GitRun Recovery: {reason}");
+        std::process::exit(2);
+    }
+
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "start".into());
     let target = args.next().unwrap_or_else(|| "dashboard".into());

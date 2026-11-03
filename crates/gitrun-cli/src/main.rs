@@ -159,8 +159,9 @@ fn current_version() -> String {
 
 fn target_triple() -> Result<String, Box<dyn std::error::Error>> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu".into()),
-        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu".into()),
+        ("linux", _) => Ok(gitrun_platform::linux_target_triple().map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::Unsupported, error)
+        })?),
         ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc".into()),
         ("macos", "x86_64") => Ok("x86_64-apple-darwin".into()),
         ("macos", "aarch64") => Ok("aarch64-apple-darwin".into()),
@@ -1643,6 +1644,13 @@ fn is_interactive_terminal_setup(command: &Command) -> bool {
 }
 
 fn main() {
+    // This guard runs before internal subcommand dispatch so Android cannot
+    // enter watchdog, privileged-control or normal CLI code paths.
+    if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
+        std::eprintln!("GitRun: {reason}");
+        std::process::exit(2);
+    }
+
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("gsr-watchdog")) {
         std::process::exit(run_gsr_watchdog());
     }
@@ -1717,6 +1725,7 @@ fn main() {
 
     let exit_code = match command {
         Command::Config => run_config(),
+        Command::Platform => run_platform(),
         Command::Desired {
             min,
             max,
@@ -1980,6 +1989,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
 
     match command {
         Command::Config | Command::Settings => ValidationState::Reading,
+        Command::Platform => ValidationState::Ready,
         Command::Desired { .. } => ValidationState::Working,
         Command::FastStop { .. } => ValidationState::Working,
         Command::Setup { .. } | Command::InstallRoot { .. } => ValidationState::Setup,
@@ -2060,6 +2070,8 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Command {
+    /// Print the detected Linux distribution, libc ABI and native integration tools.
+    Platform,
     /// Print the active configuration as JSON.
     Config,
     /// Compute the desired runner count for given inputs (used by tests/tooling).
@@ -3158,6 +3170,44 @@ fn doctor_load_config() -> Result<Config, String> {
     } else {
         load_config().map_err(|error| error.to_string())
     }
+}
+
+fn run_platform() -> i32 {
+    println!("GitRun platform compatibility report");
+    println!("Operating system: {}", std::env::consts::OS);
+    println!("Architecture: {}", std::env::consts::ARCH);
+
+    if let Some(info) = gitrun_platform::inspect_linux() {
+        println!(
+            "Distribution: {}",
+            info.distribution.as_deref().unwrap_or("unknown")
+        );
+        println!(
+            "Libc ABI: {}",
+            info.abi.map(gitrun_platform::LinuxAbi::as_str).unwrap_or("unknown")
+        );
+        println!(
+            "Rust target identity: {}",
+            info.target_triple.as_deref().unwrap_or("unknown / unsupported")
+        );
+        println!(
+            "Package manager: {}",
+            info.package_manager
+                .map(gitrun_platform::PackageManager::as_str)
+                .unwrap_or("unknown")
+        );
+        println!(
+            "Service manager: {}",
+            info.service_manager
+                .map(gitrun_platform::ServiceManager::as_str)
+                .unwrap_or("unknown")
+        );
+    }
+
+    println!(
+        "Note: host detection does not certify that a GitRun package or service integration is available for this target."
+    );
+    0
 }
 
 fn run_doctor() -> i32 {
@@ -5270,6 +5320,14 @@ mod internal_lifecycle_command_tests {
             terminal: false
         }));
         assert!(!super::is_interactive_terminal_setup(&Command::Doctor));
+    }
+
+    #[test]
+    fn platform_command_is_registered() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "platform"]).map(|cli| cli.command),
+            Ok(Some(Command::Platform))
+        ));
     }
 
     #[test]

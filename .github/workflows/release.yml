@@ -1097,19 +1097,10 @@ jobs:
           if [ "$MIGRATION_RELEASE" = true ]; then title="GitRun $VERSION — Migration Release"; else title="GitRun $VERSION"; fi
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release edit "$VERSION" --title "$title" --notes-file "$NOTES_FILE"
-            if [ "$MIGRATION_RELEASE" = true ]; then
-              release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq .id)"
-              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F prerelease=true >/dev/null
-            fi
             gh release upload "$VERSION" "${assets[@]}" --clobber
           else
-            if [ "$MIGRATION_RELEASE" = true ]; then
-              gh release create "$VERSION" "${assets[@]}" --target "$GITHUB_SHA" \
-                --title "$title" --notes-file "$NOTES_FILE" --prerelease
-            else
-              gh release create "$VERSION" "${assets[@]}" --target "$GITHUB_SHA" \
-                --title "$title" --notes-file "$NOTES_FILE"
-            fi
+            gh release create "$VERSION" "${assets[@]}" --target "$GITHUB_SHA" \
+              --title "$title" --notes-file "$NOTES_FILE"
           fi
       - name: Install Rust toolchain for legacy updater verification
         if: env.MIGRATION_RELEASE == 'true'

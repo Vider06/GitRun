@@ -2623,7 +2623,7 @@ jobs:
           grep -Fq 'COPY Cargo.toml Cargo.lock ./' "$premade"
           grep -Fq 'COPY crates ./crates' "$premade"
           grep -Fq 'ENTRYPOINT ["/entrypoint.sh"]' "$premade"
-          sed '/^COPY Cargo.toml Cargo.lock \.\/$/ { N; s|COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates|COPY Cargo.toml Cargo.lock ./\nCOPY crates/gitrun-core ./crates/gitrun-core\nCOPY crates/gitrun-exe ./crates/gitrun-exe\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr|; }' "$premade" > "$adapted"
+          sed '/^COPY Cargo.toml Cargo.lock \.\/$/ { N; s|COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates|COPY Cargo.toml Cargo.lock ./\nCOPY crates/gitrun-core ./crates/gitrun-core\nCOPY crates/gitrun-exe ./crates/gitrun-exe\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr\nCOPY crates/gitrun-platform ./crates/gitrun-platform|; }' "$premade" > "$adapted"
           if grep -Fq 'COPY crates ./crates' "$adapted"; then
             echo "ERROR: adapted Dockerfile still copies the full crates workspace" >&2
             exit 1
@@ -2631,6 +2631,7 @@ jobs:
           grep -Fq 'COPY crates/gitrun-core ./crates/gitrun-core' "$adapted"
           grep -Fq 'COPY crates/gitrun-exe ./crates/gitrun-exe' "$adapted"
           grep -Fq 'COPY crates/gitrun-gsr ./crates/gitrun-gsr' "$adapted"
+          grep -Fq 'COPY crates/gitrun-platform ./crates/gitrun-platform' "$adapted"
           echo "Linting immutable installer-pinned Dockerfile: $premade_path@$premade_ref"
           # This upstream Dockerfile intentionally keeps root as the entrypoint
           # bootstrap user and follows Debian's pinned-bookworm security stream.
@@ -2645,7 +2646,7 @@ jobs:
           while IFS= read -r target; do
             case "$target" in
               Cargo.toml)
-                printf '%s\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]' > "$context/Cargo.toml"
+                printf '%s\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr", "crates/gitrun-platform"]' > "$context/Cargo.toml"
                 ;;
               Cargo.lock)
                 cp crates/gitrun-setup/src/runner-bootstrap.lock "$context/Cargo.lock"
@@ -2665,6 +2666,8 @@ jobs:
             crates/gitrun-exe/src/lib.rs \
             crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs \
             crates/gitrun-gsr/src/bin/gitrun-api.rs \
+            crates/gitrun-platform/Cargo.toml \
+            crates/gitrun-platform/src/lib.rs \
             docker/runner/entrypoint.sh
           do
             if [ ! -s "$context/$required" ]; then
@@ -2677,7 +2680,7 @@ jobs:
             echo
             echo "- Fetched the exact immutable Premade Dockerfile pinned by gitrun-updater."
             echo "- Applied the same workspace-copy adaptation as gitrun-setup."
-            echo "- Prepared the minimal three-crate workspace and pinned bootstrap lockfile for the actual image build below."
+            echo "- Prepared the minimal four-crate workspace and pinned bootstrap lockfile for the actual image build below."
             echo
           } | ci_sum
       - name: Validate Compose and lint Dockerfiles

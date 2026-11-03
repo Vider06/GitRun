@@ -2154,9 +2154,9 @@ jobs:
       - *report
       - *logs
 
-  # ───────────────────────────────────────── Linux target compile matrix ──
+  # ─────────────────────────────── Linux product target build matrix ──
   platform-target-check:
-    name: Platform crate · ${{ matrix.target }}
+    name: Server + updater · ${{ matrix.target }}
     needs: cargo-lock
     if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
@@ -2176,15 +2176,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Install pinned Rust toolchain and target
+      - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          targets: ${{ matrix.target }}
-      - name: Compile platform crate for target
+      - name: Verify cross-build runtime
+        run: |
+          set -euo pipefail
+          command -v docker >/dev/null 2>&1
+          docker info >/dev/null
+      - name: Install pinned cross compiler
+        run: |
+          set -euo pipefail
+          cargo install cross --locked --version 0.2.5
+      - name: Build the complete headless server and updater for target
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo check --locked -p gitrun-platform --target "$TARGET"
+          CARGO_TERM_COLOR: always
+        run: |
+          set -euo pipefail
+          cross build --locked --release -p gitrun-cli --bin gitrun --target "$TARGET"
+          cross test --locked -p gitrun-updater --no-run --target "$TARGET"
+          cross check --locked -p gitrun-management --target "$TARGET"
 
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:

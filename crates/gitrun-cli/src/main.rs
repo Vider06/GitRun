@@ -3146,18 +3146,22 @@ fn doctor_json_file_check(
     Ok("valid JSON syntax and top-level structure".into())
 }
 
+fn control_manager_config_read(
+    request: impl FnOnce(&str, &str, serde_json::Value) -> Result<serde_json::Value, String>,
+) -> Result<serde_json::Value, String> {
+    request("read", "config", serde_json::json!({}))
+}
+
 fn doctor_load_config() -> Result<Config, String> {
     let system_install = system_install_paths().is_some();
     if system_install && !running_as_root() && gitrun_dashboard_tauri_lib::control_manager_enabled()
     {
         // The system env file may be root-owned and intentionally unreadable
-        // to the desktop account. Reuse the same allowlisted Control Manager
-        // read used by the dashboard instead of mistaking that ACL for broken
-        // configuration. A direct read remains the explicit fallback.
-        match gitrun_dashboard_tauri_lib::management_tui_read(
-            "config",
-            serde_json::json!({}),
-        ) {
+        // to the desktop account. Read it through the persistent Control
+        // Manager socket; do not call the dashboard backend in-process here.
+        match control_manager_config_read(|operation, action, args| {
+            gitrun_dashboard_tauri_lib::control_manager_request(operation, action, args)
+        }) {
             Ok(value) => serde_json::from_value(value)
                 .map_err(|error| format!("Control Manager returned invalid configuration: {error}")),
             Err(ipc_error) => load_config().map_err(|error| {
@@ -5742,5 +5746,35 @@ mod doctor_json_validation_tests {
             .unwrap_err()
             .contains("16 MiB JSON safety limit"));
         std::fs::remove_file(large).unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod control_manager_cli_routing_tests {
+    use super::control_manager_config_read;
+
+    #[test]
+    fn doctor_reads_protected_config_over_control_manager_ipc() {
+        let expected = serde_json::json!({"config_source":"manager"});
+        let actual = control_manager_config_read(|operation, action, args| {
+            assert_eq!(operation, "read");
+            assert_eq!(action, "config");
+            assert_eq!(args, serde_json::json!({}));
+            Ok(expected.clone())
+        })
+        .expect("manager config read should succeed");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn doctor_propagates_control_manager_transport_failures() {
+        let error = control_manager_config_read(|operation, action, _| {
+            assert_eq!(operation, "read");
+            assert_eq!(action, "config");
+            Err("manager socket unavailable".into())
+        })
+        .expect_err("IPC failure must remain visible to the caller");
+        assert_eq!(error, "manager socket unavailable");
     }
 }

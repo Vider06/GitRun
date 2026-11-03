@@ -389,13 +389,29 @@ jobs:
           install -m 0755 "$binary" "$stage/usr/bin/gitrun"
           install -m 0644 version.txt "$stage/usr/share/gitrun/version.txt"
           install -m 0644 LICENSE README.md config/config.example.env "$stage/usr/share/doc/gitrun/"
-          for unit in gitrun.service gitrun-gsr.service gitrun-control.service; do
-            sed 's#/usr/local/bin/gitrun#/usr/bin/gitrun#g' "systemd/$unit" > "$stage/usr/share/gitrun/$unit"
-          done
-          grep -Fq 'ExecStart=/usr/bin/gitrun scheduler' "$stage/usr/share/gitrun/gitrun.service"
-          grep -Fq 'ExecStart=/usr/bin/gitrun gsr-watchdog' "$stage/usr/share/gitrun/gitrun-gsr.service"
-          grep -Fq 'ExecStart=/usr/bin/gitrun control-manager' "$stage/usr/share/gitrun/gitrun-control.service"
           tar --zstd -C "$stage" -cf "$out/GitRun-$VERSION-$TARGET-server.tar.zst" .
+          package_stage="$RUNNER_TEMP/package-stage"
+          rm -rf "$package_stage"
+          cp -a "$stage" "$package_stage"
+          unit_contents=""
+          if [[ "$TARGET" == *-gnu ]]; then
+            mkdir -p "$package_stage/usr/lib/systemd/system"
+            for unit in gitrun.service gitrun-gsr.service gitrun-control.service; do
+              sed 's#/usr/local/bin/gitrun#/usr/bin/gitrun#g' "systemd/$unit" > "$package_stage/usr/lib/systemd/system/$unit"
+            done
+            grep -Fq 'ExecStart=/usr/bin/gitrun scheduler' "$package_stage/usr/lib/systemd/system/gitrun.service"
+            grep -Fq 'ExecStart=/usr/bin/gitrun gsr-watchdog' "$package_stage/usr/lib/systemd/system/gitrun-gsr.service"
+            grep -Fq 'ExecStart=/usr/bin/gitrun control-manager' "$package_stage/usr/lib/systemd/system/gitrun-control.service"
+            unit_contents="$(cat <<YAML
+            - src: $package_stage/usr/lib/systemd/system/gitrun.service
+              dst: /usr/lib/systemd/system/gitrun.service
+            - src: $package_stage/usr/lib/systemd/system/gitrun-gsr.service
+              dst: /usr/lib/systemd/system/gitrun-gsr.service
+            - src: $package_stage/usr/lib/systemd/system/gitrun-control.service
+              dst: /usr/lib/systemd/system/gitrun-control.service
+          YAML
+          )"
+          fi
 
           case "$TARGET" in
             x86_64-unknown-linux-gnu) arch=amd64; formats="deb rpm archlinux"; xbps_arch=x86_64; xbps_dep=glibc; cpu=x86_64 ;;
@@ -418,22 +434,17 @@ jobs:
           description: GitRun headless server, scheduler, runner manager and recovery CLI
           license: Apache-2.0
           contents:
-            - src: $stage/usr/bin/gitrun
+            - src: $package_stage/usr/bin/gitrun
               dst: /usr/bin/gitrun
-            - src: $stage/usr/share/gitrun/version.txt
+            - src: $package_stage/usr/share/gitrun/version.txt
               dst: /usr/share/gitrun/version.txt
-            - src: $stage/usr/share/doc/gitrun/LICENSE
+            - src: $package_stage/usr/share/doc/gitrun/LICENSE
               dst: /usr/share/doc/gitrun/LICENSE
-            - src: $stage/usr/share/doc/gitrun/README.md
+            - src: $package_stage/usr/share/doc/gitrun/README.md
               dst: /usr/share/doc/gitrun/README.md
-            - src: $stage/usr/share/doc/gitrun/config.example.env
+            - src: $package_stage/usr/share/doc/gitrun/config.example.env
               dst: /usr/share/doc/gitrun/config.example.env
-            - src: $stage/usr/share/gitrun/gitrun.service
-              dst: /usr/lib/systemd/system/gitrun.service
-            - src: $stage/usr/share/gitrun/gitrun-gsr.service
-              dst: /usr/lib/systemd/system/gitrun-gsr.service
-            - src: $stage/usr/share/gitrun/gitrun-control.service
-              dst: /usr/lib/systemd/system/gitrun-control.service
+          $unit_contents
           deb:
             depends: [libc6, policykit-1]
             scripts:

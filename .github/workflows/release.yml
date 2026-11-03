@@ -571,7 +571,7 @@ jobs:
           test -n "$GITRUN_UPDATE_PUBLIC_KEY_HEX"
           test -n "$GITRUN_UPDATE_PUBLIC_KEY_ID"
           test -f "$GITRUN_RELEASE_MANIFEST"
-          cargo test --locked -p gitrun-updater --test release_manifest_signature
+          cargo test --locked -p gitrun-updater
 
           tampered="$RUNNER_TEMP/gitrun-release-manifest-tampered.json"
           jq '.version = (.version + "-tampered")' "$GITRUN_RELEASE_MANIFEST" > "$tampered"

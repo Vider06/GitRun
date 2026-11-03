@@ -2268,7 +2268,7 @@ jobs:
           rc=0
           ci_run "cargo test" test_run || rc=1
           ci_run "Shared management backend tests (headless)" cargo test --locked -p gitrun-management --no-default-features --all-targets || rc=1
-          ci_run "CLI has no Tauri runtime dependency" bash -c '! cargo tree --locked -e normal -p gitrun-cli | grep -qE "(^|[[:space:]])tauri v|(^|[[:space:]])tauri-build v"'
+          ci_run "CLI has no Dashboard or Tauri runtime dependency" bash -c '! cargo tree --locked -e normal -p gitrun-cli | grep -qE "(^|[[:space:]])gitrun-dashboard-tauri v|(^|[[:space:]])tauri v|(^|[[:space:]])tauri-build v"'
           if [ -s "$CI_DIR/test-totals.txt" ]; then
             read -r totals < "$CI_DIR/test-totals.txt"
             { echo "### 🧪 Tests"; echo; echo "\`$totals\`"; echo; } | ci_sum

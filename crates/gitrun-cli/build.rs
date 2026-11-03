@@ -13,6 +13,7 @@ const WORKSPACE_CRATES: &[&str] = &[
     "gitrun-updater",
     "gitrun-vault",
     "gitrun-exe",
+    "gitrun-platform",
     "gitrun-dashboard-tauri",
 ];
 

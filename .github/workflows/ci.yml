@@ -4,7 +4,7 @@ name: GitRun CI
 #  Pipeline map (needs):
 #    variables-verification ─┬─► environment
 #                            └─► detect ─► cargo-lock ─┬─ rust-lint · rust-test · rust-build · audit-rust
-#                                                       ├─ security-hardening · gsr-watchdog · runtime-contracts · systemd-verify · platform-compatibility
+#                                                       ├─ security-hardening · gsr-watchdog · runtime-contracts · systemd-verify · platform-compatibility · platform-target-check
 #                                                       ├─ ci-selftest · repository · workflows · shell · powershell
 #                                                       ├─ frontend ─► audit-node
 #                                                       └─ docker
@@ -2150,6 +2150,37 @@ jobs:
       - *report
       - *logs
 
+  # ───────────────────────────────────────── Linux target compile matrix ──
+  platform-target-check:
+    name: Platform crate · ${{ matrix.target }}
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain and target
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.target }}
+      - name: Compile platform crate for target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo check --locked -p gitrun-platform --target "$TARGET"
+
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:
     name: Linux platform and updater target contracts
@@ -2728,6 +2759,7 @@ jobs:
       - runtime-contracts
       - systemd-verify
       - platform-compatibility
+      - platform-target-check
       - tauri
       - tauri-recovery
       - docker
@@ -2777,6 +2809,7 @@ jobs:
           runtime-contracts|Runtime contracts and configuration integration|rust|
           systemd-verify|systemd-analyze unit verification|rust|
           platform-compatibility|Linux platform and updater target contracts|rust|
+          platform-target-check|Linux target compile matrix|rust|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|

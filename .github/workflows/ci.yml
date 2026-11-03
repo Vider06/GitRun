@@ -1099,12 +1099,13 @@ jobs:
                 cat > "$tmp/Cargo.toml" <<'BOOTSTRAP_MANIFEST'
           [workspace]
           resolver = "2"
-          members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]
+          members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr", "crates/gitrun-platform"]
           BOOTSTRAP_MANIFEST
                 cp "$ws/$lock" "$tmp/Cargo.lock"
                 cp -a "$ws/crates/gitrun-core" "$tmp/crates/"
                 cp -a "$ws/crates/gitrun-exe" "$tmp/crates/"
                 cp -a "$ws/crates/gitrun-gsr" "$tmp/crates/"
+                cp -a "$ws/crates/gitrun-platform" "$tmp/crates/"
                 ci_run "runner-bootstrap.lock: cargo tree --workspace --locked"                   cargo tree --manifest-path "$tmp/Cargo.toml" --workspace --locked --depth 0 || fail=1
                 rm -rf "$tmp"
                 ;;

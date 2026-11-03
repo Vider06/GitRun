@@ -2177,6 +2177,8 @@ jobs:
           rc=0
           ci_run "Linux ABI, distro, package manager and init-system detection" cargo test --locked -p gitrun-platform || rc=1
           ci_run "Android guard coverage at every executable entry point" bash scripts/test-platform-entrypoints.sh || rc=1
+          ci_run "Minimal runner bootstrap carries the platform crate" cargo test --locked -p gitrun-setup bootstrap_lock_matches_the_minimal_workspace || rc=1
+          ci_run "Minimal runner Dockerfile includes all bootstrap crates" cargo test --locked -p gitrun-setup bootstrap_dockerfile_uses_minimal_gsr_build_context_and_original_bash || rc=1
           ci_run "Updater release-manifest target selection and signature contracts" cargo test --locked -p gitrun-updater || rc=1
           exit "$rc"
       - *rust_prune

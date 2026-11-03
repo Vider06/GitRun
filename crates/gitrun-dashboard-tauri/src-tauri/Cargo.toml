@@ -14,3 +14,4 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 gitrun-management = { path = "../../gitrun-management", features = ["desktop"] }
+gitrun-platform = { path = "../../gitrun-platform" }

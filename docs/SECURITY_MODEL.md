@@ -207,3 +207,5 @@ See the [release history](RELEASE_HISTORY.md) for the historical audit and migra
 ### Future Mapping and Think
 
 Future Mapping is a private one-hour forecast map with twelve five-minute buckets. Think compares distinct history windows. These optional features are not execution authorities, do not imply host capacity is available, and cannot replace the deterministic scheduler or its resource gates. The scheduler verifies that the same map revision remains current and unexpired after GSR grants a predictive permit; a mismatch fails closed. Both features default to off. See [Kitty Smart Scheduler](SMART_SCHEDULER.md).
+
+The privileged Control Manager and management authorization handlers are owned by `gitrun-management`. Its default feature set is headless, so the system service and CLI do not rely on the dashboard crate or Tauri runtime. The desktop UI is an unprivileged adapter and uses the same validated management handlers through the fixed IPC allowlist.

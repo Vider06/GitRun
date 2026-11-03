@@ -4247,7 +4247,7 @@ mod tests {
 
     #[test]
     fn dashboard_build_version_matches_workspace_version_txt() {
-        let expected = include_str!("../../../../version.txt").trim();
+        let expected = include_str!("../../../version.txt").trim();
         assert_eq!(
             option_env!("GITRUN_BUILD_VERSION"),
             Some(expected),

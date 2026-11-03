@@ -102,7 +102,7 @@ The GUI lifecycle must be exercised on install, repeated uninstall, reinstall, p
 
 The earlier packaging/runtime audit identified these concrete follow-ups:
 
-- Generalize APT/dpkg assumptions in setup, updater, CLI package installation and release code; ensure every supported package manager uses its native metadata and safe invocation.
+- Generalize APT/dpkg assumptions in setup, updater and CLI package installation; ensure every declared package manager uses its native metadata and safe invocation. The official Debian release control file now declares its baseline runtime dependencies, while other package formats remain future work.
 - Add correct `Depends`/runtime dependency metadata to the Debian package build paths and ensure the release workflow and local package script do not diverge.
 - Replace hard-coded systemd-only setup, recovery, doctor, dashboard controls and lifecycle hooks with explicit systemd/OpenRC/runit backends. Ship and validate native service definitions for each supported init system.
 - Split the Debian x86_64 runner profiles and Docker build from architecture-specific assumptions; validate Actions runner and PowerShell toolchains per architecture and ABI.

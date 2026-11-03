@@ -423,7 +423,7 @@ jobs:
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
           command -v go >/dev/null
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
           export PATH="$RUNNER_TEMP/bin:$PATH"
           cat > "$RUNNER_TEMP/nfpm.yaml" <<NFPM
           name: gitrun
@@ -543,7 +543,7 @@ jobs:
           Categories=Development;System;
           DESKTOP
           command -v go >/dev/null
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
           export PATH="$RUNNER_TEMP/bin:$PATH"
           cat > "$RUNNER_TEMP/dashboard-nfpm.yaml" <<NFPM
           name: gitrun-dashboard

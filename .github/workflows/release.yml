@@ -147,7 +147,10 @@ jobs:
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-release-${{ matrix.target }}-${{ env.RUST_VERSION }}-
       - name: Install pinned cross compiler
-        run: cargo install cross --locked --version 0.2.5
+        run: |
+          set -euo pipefail
+          cargo install cross --locked --version 0.2.5
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
       - name: Build Server and compile updater tests for this target
         run: |
           set -euo pipefail
@@ -156,7 +159,24 @@ jobs:
           cross check --locked -p gitrun-management --target "$TARGET"
           binary="target/$TARGET/release/gitrun"
           test -x "$binary"
-          test "$("$binary" --version --gitrun)" = "GitRun $VERSION_NUMBER"
+          file "$binary"
+          case "$TARGET" in
+            x86_64-unknown-linux-gnu)
+              test "$("$binary" --version --gitrun)" = "GitRun $VERSION_NUMBER"
+              ;;
+            aarch64-unknown-linux-gnu)
+              readelf -h "$binary" | grep -Fq 'AArch64'
+              readelf -l "$binary" | grep -Fq 'ld-linux-aarch64.so.1'
+              ;;
+            x86_64-unknown-linux-musl)
+              readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
+              readelf -l "$binary" | grep -Fq 'ld-musl-x86_64.so.1'
+              ;;
+            aarch64-unknown-linux-musl)
+              readelf -h "$binary" | grep -Fq 'AArch64'
+              readelf -l "$binary" | grep -Fq 'ld-musl-aarch64.so.1'
+              ;;
+          esac
       - name: Save target-specific Cargo cache
         if: success() && steps.cargo-cache.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -232,9 +252,6 @@ jobs:
               preremove: packaging/gitrun-prerm
           rpm:
             depends: [glibc, polkit]
-            scripts:
-              postinstall: packaging/gitrun-postinst
-              preremove: packaging/gitrun-prerm
           apk:
             depends: [musl]
           archlinux:
@@ -496,15 +513,24 @@ jobs:
               elif name == "SHA256SUMS": target = "sha256sums"
               elif "-server.tar.gz" in name: target = name[len(f"GitRun-{version}-"):-len("-server.tar.gz")]
               elif "-server.tar.zst" in name:
-                  cpu = "aarch64" if "aarch64" in name else "x86_64"
-                  target = f"linux-{cpu}-tar-zst"
+                  triple = name[len(f"GitRun-{version}-"):-len("-server.tar.zst")]
+                  cpu, abi = triple.split("-unknown-linux-")
+                  target = f"linux-{cpu}-{abi}-tar-zst"
               elif name.endswith(".AppImage"): target = "linux-x86_64-dashboard-appimage"
               elif "Dashboard-" in name: target = "linux-x86_64-dashboard-deb"
-              else: target = "linux-package-" + name[len(f"GitRun-{version}-"):].replace(".", "-")
+              elif name.startswith(f"GitRun-{version}-linux-"):
+                  package_target = name[len(f"GitRun-{version}-"):]
+                  if package_target.endswith(".pkg.tar.zst"):
+                      package_target = package_target[:-len(".pkg.tar.zst")]
+                  else:
+                      package_target = package_target.rsplit(".", 1)[0]
+                  target = package_target
               items.append({"target":target,"file":name,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
           required = {
               "x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu",
               "x86_64-unknown-linux-musl","aarch64-unknown-linux-musl",
+              "linux-x86_64-gnu-tar-zst","linux-aarch64-gnu-tar-zst",
+              "linux-x86_64-musl-tar-zst","linux-aarch64-musl-tar-zst",
               "linux-x86_64-dashboard-appimage","linux-x86_64-dashboard-deb",
               "library-json-backup","cargo-metadata","sbom-spdx","provenance","sha256sums"
           }
@@ -533,6 +559,7 @@ jobs:
           echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$GITRUN_UPDATE_SIGNING_KEY_ID" >> "$GITHUB_ENV"
           jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\n' > "$payload"
           openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$sigfile"
+          openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$payload" -sigfile "$sigfile"
           signature="$(od -An -v -tx1 "$sigfile" | tr -d '[:space:]')"
           test "${#signature}" -eq 128
           jq --arg sig "$signature" --arg key_id "$GITRUN_UPDATE_SIGNING_KEY_ID" \

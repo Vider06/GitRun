@@ -2198,6 +2198,26 @@ jobs:
           cross build --locked --release -p gitrun-cli --bin gitrun --target "$TARGET"
           cross test --locked -p gitrun-updater --no-run --target "$TARGET"
           cross check --locked -p gitrun-management --target "$TARGET"
+          binary="target/$TARGET/release/gitrun"
+          test -x "$binary"
+          file "$binary"
+          case "$TARGET" in
+            x86_64-unknown-linux-gnu)
+              test "$("$binary" --version --gitrun)" = "GitRun $(tr -d '[:space:]' < version.txt)"
+              ;;
+            aarch64-unknown-linux-gnu)
+              readelf -h "$binary" | grep -Fq 'AArch64'
+              readelf -l "$binary" | grep -Fq 'ld-linux-aarch64.so.1'
+              ;;
+            x86_64-unknown-linux-musl)
+              readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
+              file "$binary" | grep -Fq 'statically linked'
+              ;;
+            aarch64-unknown-linux-musl)
+              readelf -h "$binary" | grep -Fq 'AArch64'
+              file "$binary" | grep -Fq 'statically linked'
+              ;;
+          esac
 
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:

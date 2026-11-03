@@ -4036,7 +4036,6 @@ fn report_critical_startup(report: &gitrun_recovery::RecoveryReport) {
     }
 }
 
-
 /// Launch the separately packaged Tauri dashboard without linking the CLI to
 /// the desktop runtime. The CLI and dashboard share gitrun-management, but
 /// only the dashboard executable enables the optional desktop integration.

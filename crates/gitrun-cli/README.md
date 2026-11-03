@@ -10,6 +10,7 @@ gitrun setup --terminal
 gitrun connect OWNER/REPOSITORY
 gitrun config
 gitrun doctor
+gitrun platform
 gitrun update --check
 gitrun update --force
 gitrun manage
@@ -17,6 +18,14 @@ gitrun dashboard
 gitrun rollback BACKUP_PATH
 gitrun cat
 ```
+
+## Host platform report
+
+```text
+gitrun platform
+```
+
+Prints the detected Linux distribution, architecture, libc ABI, recognized package manager and active init system. GNU and musl target identities are kept separate, and an unknown ABI or unsupported architecture is not guessed. This is a host-detection report, not a promise that a native GitRun package, service integration or runner image is available for that distribution. Android, Termux and Android-based proot environments are explicitly unsupported and are rejected before GitRun entry-point dispatch.
 
 ## Update safeguards
 

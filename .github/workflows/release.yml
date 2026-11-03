@@ -97,7 +97,7 @@ jobs:
             '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"GitRun",documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit),creationInfo:{created:$created,creators:["Tool: GitRun CI"]},packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
             "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
           jq -n --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
-            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"separate-tauri-dashboard"}' \
+            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"separate-tauri-dashboard",desktop_target:"x86_64-unknown-linux-gnu"}' \
             > "$root/provenance.json"
       - name: Upload shared inputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -857,7 +857,8 @@ jobs:
           {
             echo "# GitRun $VERSION"; echo
             echo "Server builds: x86_64/aarch64 with GNU and musl."
-            echo "Server package formats: DEB, RPM, APK, Arch Linux, XBPS and TAR.ZST."
+            echo "Updater-compatible server archives: one TAR.GZ per target triple."
+            echo "Distro packages: DEB, RPM, APK, Arch Linux and XBPS; TAR.ZST archives are also provided."
             echo
             echo "The Tauri Dashboard is published as a separate AppImage and independently installable DEB package."
             echo

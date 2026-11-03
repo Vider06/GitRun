@@ -1840,12 +1840,14 @@ jobs:
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           fmt_run() { cargo fmt --all -- --check 2>&1 | ci_awk_fmt; }
-          clippy_run() { cargo clippy --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-targets --all-features --locked --message-format=json-diagnostic-rendered-ansi -- -D warnings | ci_cargo_json; }
-          doc_run() { cargo doc --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --no-deps --locked --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
+          clippy_run() { cargo clippy --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-targets --all-features --locked --message-format=json-diagnostic-rendered-ansi -- -D warnings | ci_cargo_json; }
+          doc_run() { cargo doc --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-features --no-deps --locked --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
           rc=0
           ci_run "cargo fmt --check" fmt_run || rc=1
           ci_run "cargo clippy (-D warnings)" clippy_run || rc=1
           ci_run "cargo doc --no-deps" doc_run || rc=1
+          ci_run "cargo clippy shared management backend (headless)" cargo clippy --locked -p gitrun-management --no-default-features --all-targets -- -D warnings || rc=1
+          ci_run "cargo doc shared management backend (headless)" cargo doc --locked -p gitrun-management --no-default-features --no-deps || rc=1
           exit "$rc"
       - &rust_prune
         name: Prune target cache
@@ -2019,8 +2021,8 @@ jobs:
           ci_run "Setup-generated environment and service contracts" cargo test --locked -p gitrun-setup generated_bootstrap_env_parses_and_validates_with_runtime_loader || rc=1
           ci_run "Setup installs the shared CLI, watchdog and Control Manager" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
           ci_run "Partial dashboard repository settings use safe defaults" cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults || rc=1
-          ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt || rc=1
-          ci_run "Control Manager IPC validates requests and enforces confirmations" cargo test --locked -p gitrun-dashboard-tauri control_manager::tests -- --nocapture || rc=1
+          ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-management --no-default-features dashboard_build_version_matches_workspace_version_txt || rc=1
+          ci_run "Control Manager IPC validates requests and enforces confirmations" cargo test --locked -p gitrun-management --no-default-features control_manager::tests -- --nocapture || rc=1
           ci_run "Manage routes reads and writes through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_routing_tests -- --nocapture || rc=1
           ci_run "CLI doctor reads protected configuration through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_cli_routing_tests -- --nocapture || rc=1
 
@@ -2262,9 +2264,11 @@ jobs:
       - name: Test
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          test_run() { cargo test --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --locked --no-fail-fast 2>&1 | ci_awk_tests; }
+          test_run() { cargo test --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-features --locked --no-fail-fast 2>&1 | ci_awk_tests; }
           rc=0
           ci_run "cargo test" test_run || rc=1
+          ci_run "Shared management backend tests (headless)" cargo test --locked -p gitrun-management --no-default-features --all-targets || rc=1
+          ci_run "CLI has no Tauri runtime dependency" bash -c '! cargo tree --locked -e normal -p gitrun-cli | grep -E "^[[:space:]]*(\\+--- )?tauri v|^[[:space:]]*\\+--- tauri-build v"'
           if [ -s "$CI_DIR/test-totals.txt" ]; then
             read -r totals < "$CI_DIR/test-totals.txt"
             { echo "### 🧪 Tests"; echo; echo "\`$totals\`"; echo; } | ci_sum
@@ -2297,7 +2301,7 @@ jobs:
       - name: Build (release)
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          build_run() { cargo build --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --release --locked --timings --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
+          build_run() { cargo build --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-features --release --locked --timings --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
           ci_run "cargo build --release" build_run
           {
             echo "### 📦 Release binaries"; echo; echo "| Binary | Size |"; echo "|---|---|"
@@ -2408,7 +2412,7 @@ jobs:
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           dashboard_security_test() {
-            cargo test --locked -p gitrun-dashboard-tauri --lib trusted_privileged_binary_accepts_system_cli_and_rejects_symlinks
+            cargo test --locked -p gitrun-management --no-default-features trusted_privileged_binary_accepts_system_cli_and_rejects_symlinks
           }
           ci_run "Trusted system CLI and symlink rejection" dashboard_security_test
       - name: Build Tauri application
@@ -2476,7 +2480,7 @@ jobs:
       - name: Test GitRun Recovery GUI
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          recovery_gui() { cargo check -p gitrun-recovery --locked 2>&1 | ci_cargo_json; }
+          recovery_gui() { cargo check -p gitrun-recovery --features desktop --locked 2>&1 | ci_cargo_json; }
           ci_run "GitRun Recovery GUI smoke check" recovery_gui
       - name: Build GitRun Recovery Tauri application
         run: |

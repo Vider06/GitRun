@@ -608,7 +608,7 @@ jobs:
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION#v}"
           deb_depends="$(dpkg-deb -f "$deb" Depends)"
           for dependency in libc6 policykit-1 libwebkit2gtk-4.1-0 libgtk-3-0; do
-            printf '%s\\n' "$deb_depends" | tr ',' '\\n' | sed 's/^[[:space:]]*//' | grep -Fxq "$dependency" || {
+            printf '%s\n' "$deb_depends" | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -Fxq "$dependency" || {
               echo "release .deb is missing required Depends entry: $dependency" >&2
               exit 1
             }

@@ -5,6 +5,7 @@ Use this index to find the maintained technical guide for a GitRun subsystem. St
 ## Operator guides
 
 - [Architecture](ARCHITECTURE.md) — runtime components, request flow, state ownership and trust boundaries.
+- [Shared management backend](../crates/gitrun-management/README.md) — dashboard-independent management API, authorization and Control Manager.
 - [Terminal management console](../crates/gitrun-cli/README.md#terminal-management-console) — keyboard navigation and headless administration.
 - [JSON integrity and recovery](../crates/gitrun-cli/README.md#json-integrity-and-recovery) — Doctor diagnostics, conservative repair, local backups and signed Main Library restoration.
 - [Recovery component](../crates/gitrun-recovery/README.md) — protected state and recovery boundaries.

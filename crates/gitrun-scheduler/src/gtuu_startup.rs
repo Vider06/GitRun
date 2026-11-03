@@ -289,9 +289,8 @@ fn current_gitrun_version() -> Result<String, Box<dyn std::error::Error>> {
 
 fn target_triple_for_gitrun() -> Result<String, Box<dyn std::error::Error>> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", _) => Ok(gitrun_platform::linux_target_triple().map_err(|error| {
-            std::io::Error::new(std::io::ErrorKind::Unsupported, error)
-        })?),
+        ("linux", _) => Ok(gitrun_platform::linux_target_triple()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Unsupported, error))?),
         (os, arch) => Err(format!("unsupported GitRun self-update target: {os}-{arch}").into()),
     }
 }

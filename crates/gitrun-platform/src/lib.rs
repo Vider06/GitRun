@@ -117,8 +117,7 @@ pub fn is_android_runtime(signals: &AndroidRuntimeSignals) -> bool {
         return true;
     }
 
-    let android_system_files =
-        signals.system_getprop_present || signals.system_build_prop_present;
+    let android_system_files = signals.system_getprop_present || signals.system_build_prop_present;
     let android_root = signals.android_root.as_deref() == Some("/system");
     let android_data = signals.android_data.as_deref() == Some("/data");
 
@@ -142,8 +141,7 @@ fn current_android_signals() -> AndroidRuntimeSignals {
         prefix: value("PREFIX"),
         android_root: value("ANDROID_ROOT"),
         android_data: value("ANDROID_DATA"),
-        proot_marker_present: value("PROOT_TMP_DIR").is_some()
-            || value("PROOT_LOADER").is_some(),
+        proot_marker_present: value("PROOT_TMP_DIR").is_some() || value("PROOT_LOADER").is_some(),
         system_getprop_present: Path::new("/system/bin/getprop").is_file(),
         system_build_prop_present: Path::new("/system/build.prop").is_file(),
     }
@@ -256,13 +254,10 @@ pub fn detect_service_manager() -> Option<ServiceManager> {
         .trim()
         .to_ascii_lowercase();
 
-    let systemd_runtime =
-        Path::new("/run/systemd/system").is_dir() || init_name == "systemd";
-    let openrc_runtime =
-        Path::new("/run/openrc/softlevel").is_file() || init_name == "openrc-init";
-    let runit_runtime = Path::new("/run/runit/service").is_dir()
-        || init_name == "runsvdir"
-        || init_name == "runit";
+    let systemd_runtime = Path::new("/run/systemd/system").is_dir() || init_name == "systemd";
+    let openrc_runtime = Path::new("/run/openrc/softlevel").is_file() || init_name == "openrc-init";
+    let runit_runtime =
+        Path::new("/run/runit/service").is_dir() || init_name == "runsvdir" || init_name == "runit";
 
     detect_service_manager_from_signals(systemd_runtime, openrc_runtime, runit_runtime)
 }
@@ -273,12 +268,7 @@ fn contains_musl_loader(directory: &Path) -> bool {
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .any(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("ld-musl-")
-        })
+        .any(|entry| entry.file_name().to_string_lossy().starts_with("ld-musl-"))
 }
 
 fn has_glibc_loader() -> bool {
@@ -328,10 +318,7 @@ pub fn detect_linux_abi() -> Result<LinuxAbi, String> {
         }
     }
 
-    if let Ok(output) = Command::new("getconf")
-        .arg("GNU_LIBC_VERSION")
-        .output()
-    {
+    if let Ok(output) = Command::new("getconf").arg("GNU_LIBC_VERSION").output() {
         if output.status.success()
             && String::from_utf8_lossy(&output.stdout)
                 .trim()
@@ -399,9 +386,7 @@ pub fn inspect_linux() -> Option<LinuxPlatformInfo> {
         },
         architecture: env::consts::ARCH.to_owned(),
         abi,
-        target_triple: abi.and_then(|abi| {
-            linux_target_triple_for(env::consts::ARCH, abi).ok()
-        }),
+        target_triple: abi.and_then(|abi| linux_target_triple_for(env::consts::ARCH, abi).ok()),
         package_manager: detect_package_manager(&distro_id, &id_like),
         service_manager: detect_service_manager(),
     })
@@ -477,7 +462,10 @@ mod tests {
     fn os_release_values_support_single_and_double_quotes() {
         let release = "ID=alpine\nID_LIKE='debian'\nNAME=\"Alpine Linux\"";
         assert_eq!(parse_os_release(release, "ID").as_deref(), Some("alpine"));
-        assert_eq!(parse_os_release(release, "ID_LIKE").as_deref(), Some("debian"));
+        assert_eq!(
+            parse_os_release(release, "ID_LIKE").as_deref(),
+            Some("debian")
+        );
         assert_eq!(
             parse_os_release(release, "NAME").as_deref(),
             Some("Alpine Linux")
@@ -518,7 +506,10 @@ mod tests {
             detect_service_manager_from_signals(true, false, false),
             Some(ServiceManager::Systemd)
         );
-        assert_eq!(detect_service_manager_from_signals(false, false, false), None);
+        assert_eq!(
+            detect_service_manager_from_signals(false, false, false),
+            None
+        );
     }
 
     #[test]

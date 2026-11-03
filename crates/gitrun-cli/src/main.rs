@@ -159,9 +159,8 @@ fn current_version() -> String {
 
 fn target_triple() -> Result<String, Box<dyn std::error::Error>> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", _) => Ok(gitrun_platform::linux_target_triple().map_err(|error| {
-            std::io::Error::new(std::io::ErrorKind::Unsupported, error)
-        })?),
+        ("linux", _) => Ok(gitrun_platform::linux_target_triple()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Unsupported, error))?),
         ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc".into()),
         ("macos", "x86_64") => Ok("x86_64-apple-darwin".into()),
         ("macos", "aarch64") => Ok("aarch64-apple-darwin".into()),
@@ -3184,11 +3183,15 @@ fn run_platform() -> i32 {
         );
         println!(
             "Libc ABI: {}",
-            info.abi.map(gitrun_platform::LinuxAbi::as_str).unwrap_or("unknown")
+            info.abi
+                .map(gitrun_platform::LinuxAbi::as_str)
+                .unwrap_or("unknown")
         );
         println!(
             "Rust target identity: {}",
-            info.target_triple.as_deref().unwrap_or("unknown / unsupported")
+            info.target_triple
+                .as_deref()
+                .unwrap_or("unknown / unsupported")
         );
         println!(
             "Package manager: {}",

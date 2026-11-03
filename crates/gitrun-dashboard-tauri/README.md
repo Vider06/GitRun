@@ -1,6 +1,6 @@
 # GitRun Tauri dashboard
 
-This crate contains the native Tauri 2 operator dashboard.
+This package is a thin desktop adapter. Management policy, command handlers, persistence and the privileged Control Manager are implemented in [gitrun-management](../gitrun-management/README.md). The dashboard enables that crate's optional `desktop` feature and owns the Tauri window, frontend assets and event integration. The CLI and system service use the same backend without depending on this package or the Tauri runtime.
 
 ## Responsibilities
 

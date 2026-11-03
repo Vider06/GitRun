@@ -1,15 +1,12 @@
 //! GitRun shared management backend.
 //! This crate owns management policy, operations, persistence and the Control Manager.
 //! Tauri is an optional desktop adapter; server and CLI builds do not enable it.
-//! with a native Rust Tauri application. The backend exposes `#[tauri::command]`s that a web frontend (`../dist`)
-//! calls via `invoke(...)`. No HTTP server involved — Tauri's IPC bridges
-//! JS calls directly into these Rust functions in the same process.
+//! The dashboard enables the optional `desktop` feature and registers these
+//! functions as Tauri commands. Headless consumers call the same validated
+//! dispatcher directly or through the Control Manager Unix socket.
 //!
-//! Every command here reads live data from GitRun's real crates
-//! (`gitrun-core::Config`, `gitrun-vault::Vault`, `gitrun-gsr::events`) —
-//! nothing in this file is mocked or hardcoded sample data, by design: a
-//! dashboard showing fake data would be actively misleading for an
-//! infrastructure tool.
+//! Management operations use GitRun runtime crates and real host state; this
+//! crate contains no dashboard frontend or window lifecycle ownership.
 
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
 use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
@@ -4213,7 +4210,7 @@ pub fn run() {
             get_repo_api_policies,
             get_dock_requirements,
         ])
-        .run(tauri::generate_context!())
+        .run(tauri::generate_context!("../gitrun-dashboard-tauri/src-tauri/tauri.conf.json"))
         .expect("error while running the GitRun dashboard");
 }
 

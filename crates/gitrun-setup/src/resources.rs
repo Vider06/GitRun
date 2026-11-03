@@ -12,7 +12,8 @@ fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
         "COPY Cargo.toml Cargo.lock ./\n",
         "COPY crates/gitrun-core ./crates/gitrun-core\n",
         "COPY crates/gitrun-exe ./crates/gitrun-exe\n",
-        "COPY crates/gitrun-gsr ./crates/gitrun-gsr"
+        "COPY crates/gitrun-gsr ./crates/gitrun-gsr\n",
+        "COPY crates/gitrun-platform ./crates/gitrun-platform"
     );
 
     if !source.contains(FULL_WORKSPACE_COPY) {
@@ -101,11 +102,21 @@ WantedBy=multi-user.target
 /// application's main workspace manifest.
 pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
 resolver = "2"
-members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]
+members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr", "crates/gitrun-platform"]
 
 "#;
 
 pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
+    (
+        "crates/gitrun-platform/Cargo.toml",
+        include_str!("../../../crates/gitrun-platform/Cargo.toml"),
+        0o644,
+    ),
+    (
+        "crates/gitrun-platform/src/lib.rs",
+        include_str!("../../../crates/gitrun-platform/src/lib.rs"),
+        0o644,
+    ),
     ("Cargo.toml", RUNNER_BUILD_CARGO_MANIFEST, 0o644),
     ("Cargo.lock", include_str!("runner-bootstrap.lock"), 0o644),
     (
@@ -320,6 +331,7 @@ mod tests {
         assert!(dockerfile.contains("COPY crates/gitrun-core ./crates/gitrun-core"));
         assert!(dockerfile.contains("COPY crates/gitrun-exe ./crates/gitrun-exe"));
         assert!(dockerfile.contains("COPY crates/gitrun-gsr ./crates/gitrun-gsr"));
+        assert!(dockerfile.contains("COPY crates/gitrun-platform ./crates/gitrun-platform"));
         assert!(!dockerfile.contains("COPY crates ./crates"));
         assert!(dockerfile.contains("cargo build --locked --release -p gitrun-gsr"));
         assert!(dockerfile.contains(r#"ENTRYPOINT ["/bin/bash.gitrun-real", "/entrypoint.sh"]"#));
@@ -346,6 +358,7 @@ mod tests {
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-core"));
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-exe"));
         assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-gsr"));
+        assert!(RUNNER_BUILD_CARGO_MANIFEST.contains("gitrun-platform"));
         assert!(!RUNNER_BUILD_CARGO_MANIFEST.contains("[patch.crates-io]"));
         assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-core\""));
         assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-gsr\""));
@@ -386,6 +399,8 @@ mod tests {
         assert!(paths.contains(&"crates/gitrun-exe/src/lib.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/ipc.rs"));
         assert!(paths.contains(&"crates/gitrun-exe/src/protocol.rs"));
+        assert!(paths.contains(&"crates/gitrun-platform/src/lib.rs"));
+        assert!(paths.contains(&"crates/gitrun-platform/Cargo.toml"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/api_gate.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs"));
         assert!(paths.contains(&"crates/gitrun-gsr/src/bin/gitrun-api.rs"));

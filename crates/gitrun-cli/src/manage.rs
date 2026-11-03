@@ -500,15 +500,40 @@ impl State {
     }
 }
 
-fn app_read(action: &str, args: Value) -> Result<Value, String> {
-    if gitrun_dashboard_tauri_lib::control_manager_enabled() {
-        return gitrun_dashboard_tauri_lib::control_manager_request("read", action, args);
+fn app_read_with(
+    action: &str,
+    args: Value,
+    manager_enabled: bool,
+    ipc: impl FnOnce(&str, &str, Value) -> Result<Value, String>,
+    local: impl FnOnce(&str, Value) -> Result<Value, String>,
+) -> Result<Value, String> {
+    if manager_enabled {
+        ipc("read", action, args)
+    } else {
+        local(action, args)
     }
-    gitrun_dashboard_tauri_lib::management_tui_read(action, args)
 }
 
-fn app_write(action: &str, mut args: Value) -> Result<Value, String> {
-    if gitrun_dashboard_tauri_lib::control_manager_enabled() {
+fn app_read(action: &str, args: Value) -> Result<Value, String> {
+    app_read_with(
+        action,
+        args,
+        gitrun_dashboard_tauri_lib::control_manager_enabled(),
+        |operation, action, args| {
+            gitrun_dashboard_tauri_lib::control_manager_request(operation, action, args)
+        },
+        |action, args| gitrun_dashboard_tauri_lib::management_tui_read(action, args),
+    )
+}
+
+fn app_write_with(
+    action: &str,
+    mut args: Value,
+    manager_enabled: bool,
+    ipc: impl FnOnce(&str, &str, Value) -> Result<Value, String>,
+    local: impl FnOnce(&str, Value) -> Result<Value, String>,
+) -> Result<Value, String> {
+    if manager_enabled {
         // The TUI asks for confirmation before invoking these operations. Carry
         // that explicit acknowledgement over IPC so the service enforces it too.
         if matches!(
@@ -528,9 +553,22 @@ fn app_write(action: &str, mut args: Value) -> Result<Value, String> {
                 object.insert("confirmed".into(), Value::Bool(true));
             }
         }
-        return gitrun_dashboard_tauri_lib::control_manager_request("write", action, args);
+        ipc("write", action, args)
+    } else {
+        local(action, args)
     }
-    gitrun_dashboard_tauri_lib::management_tui_write(action, args)
+}
+
+fn app_write(action: &str, args: Value) -> Result<Value, String> {
+    app_write_with(
+        action,
+        args,
+        gitrun_dashboard_tauri_lib::control_manager_enabled(),
+        |operation, action, args| {
+            gitrun_dashboard_tauri_lib::control_manager_request(operation, action, args)
+        },
+        |action, args| gitrun_dashboard_tauri_lib::management_tui_write(action, args),
+    )
 }
 
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {

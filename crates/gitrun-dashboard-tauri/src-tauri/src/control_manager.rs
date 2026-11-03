@@ -120,12 +120,28 @@ pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, Stri
 
 /// Internal transport seam used by IPC contract tests. Production callers
 /// always use the fixed system socket through `request`.
+#[derive(Debug, Default)]
+struct IpcTiming {
+    connect: std::time::Duration,
+    forward: std::time::Duration,
+    backward: std::time::Duration,
+}
+
 fn request_at(
     socket_path: &Path,
     operation: &str,
     action: &str,
     args: Value,
 ) -> Result<Value, String> {
+    request_at_timed(socket_path, operation, action, args).map(|(reply, _)| reply)
+}
+
+fn request_at_timed(
+    socket_path: &Path,
+    operation: &str,
+    action: &str,
+    args: Value,
+) -> Result<(Value, IpcTiming), String> {
     if !matches!(operation, "read" | "write") {
         return Err("unsupported control-manager operation".into());
     }
@@ -138,12 +154,14 @@ fn request_at(
         use std::os::unix::net::UnixStream;
         use std::time::Duration;
 
+        let connect_started = std::time::Instant::now();
         let mut stream = UnixStream::connect(socket_path).map_err(|error| {
             format!(
                 "GitRun Control Manager is unavailable at {}: {error}. Check that gitrun-control.service is installed and active.",
                 socket_path.display()
             )
         })?;
+        let connect_elapsed = connect_started.elapsed();
         stream
             .set_read_timeout(Some(Duration::from_secs(180)))
             .map_err(|error| format!("unable to set control-manager read timeout: {error}"))?;
@@ -162,31 +180,43 @@ fn request_at(
             return Err("control-manager request exceeds the 1 MiB limit".into());
         }
         bytes.push(b'\n');
+        let forward_started = std::time::Instant::now();
         stream
             .write_all(&bytes)
             .map_err(|error| format!("send control-manager request: {error}"))?;
+        let forward_elapsed = forward_started.elapsed();
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
+        let backward_started = std::time::Instant::now();
         let read = reader
             .by_ref()
             .take((MAX_MESSAGE_BYTES + 1) as u64)
             .read_line(&mut line)
             .map_err(|error| format!("read control-manager response: {error}"))?;
+        let backward_elapsed = backward_started.elapsed();
         if read == 0 || read > MAX_MESSAGE_BYTES {
             return Err("invalid or oversized control-manager response".into());
         }
         let reply: Reply = serde_json::from_str(&line)
             .map_err(|error| format!("decode control-manager response: {error}"))?;
-        if reply.ok {
+        let value = if reply.ok {
             reply
                 .result
-                .ok_or_else(|| "control-manager returned no result".to_owned())
+                .ok_or_else(|| "control-manager returned no result".to_owned())?
         } else {
-            Err(reply
+            return Err(reply
                 .error
-                .unwrap_or_else(|| "control-manager operation failed".into()))
-        }
+                .unwrap_or_else(|| "control-manager operation failed".into()));
+        };
+        Ok((
+            value,
+            IpcTiming {
+                connect: connect_elapsed,
+                forward: forward_elapsed,
+                backward: backward_elapsed,
+            },
+        ))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -583,7 +613,7 @@ mod tests {
             "sequence": 1
         });
         let started = Instant::now();
-        let reply = request_at(&socket_path, "read", "ipc_ping", payload.clone())
+        let (reply, timing) = request_at_timed(&socket_path, "read", "ipc_ping", payload.clone())
             .expect("IPC ping must complete");
         let round_trip = started.elapsed();
         server.join().expect("IPC test server must finish");
@@ -596,7 +626,10 @@ mod tests {
         assert!(round_trip < std::time::Duration::from_secs(5));
 
         eprintln!(
-            "IPC contract: channel=unix-domain-socket protocol=newline-delimited-json round_trip_ms={:.3} server_elapsed_us={}",
+            "IPC contract: channel=unix-domain-socket protocol=newline-delimited-json connect_ms={:.3} forward_ms={:.3} backward_ms={:.3} round_trip_ms={:.3} server_elapsed_us={}",
+            timing.connect.as_secs_f64() * 1_000.0,
+            timing.forward.as_secs_f64() * 1_000.0,
+            timing.backward.as_secs_f64() * 1_000.0,
             round_trip.as_secs_f64() * 1_000.0,
             reply["server_elapsed_us"].as_u64().unwrap_or_default()
         );

@@ -387,6 +387,7 @@ pub fn inspect_linux() -> Option<LinuxPlatformInfo> {
     let distro_id = os_release_value("ID").unwrap_or_default();
     let id_like = os_release_value("ID_LIKE").unwrap_or_default();
     let abi = detect_linux_abi().ok();
+    let package_manager = detect_package_manager(&distro_id, &id_like);
 
     Some(LinuxPlatformInfo {
         distribution: if distro_id.is_empty() {
@@ -397,7 +398,7 @@ pub fn inspect_linux() -> Option<LinuxPlatformInfo> {
         architecture: env::consts::ARCH.to_owned(),
         abi,
         target_triple: abi.and_then(|abi| linux_target_triple_for(env::consts::ARCH, abi).ok()),
-        package_manager: detect_package_manager(&distro_id, &id_like),
+        package_manager,
         service_manager: detect_service_manager(),
     })
 }

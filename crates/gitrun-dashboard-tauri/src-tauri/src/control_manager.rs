@@ -120,6 +120,7 @@ pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, Stri
 
 /// Internal transport seam used by IPC contract tests. Production callers
 /// always use the fixed system socket through `request`.
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 struct IpcTiming {
     connect: std::time::Duration,
@@ -374,6 +375,7 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
             return Err("invalid control-manager action".into());
         }
 
+        #[cfg(test)]
         let dispatch_started = std::time::Instant::now();
         let result = match request.operation.as_str() {
             #[cfg(test)]

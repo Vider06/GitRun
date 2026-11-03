@@ -3164,11 +3164,9 @@ fn doctor_load_config() -> Result<Config, String> {
         }) {
             Ok(value) => serde_json::from_value(value)
                 .map_err(|error| format!("Control Manager returned invalid configuration: {error}")),
-            Err(ipc_error) => load_config().map_err(|error| {
-                format!(
-                    "configuration could not be read directly ({error}); Control Manager read failed ({ipc_error})"
-                )
-            }),
+            Err(ipc_error) => Err(format!(
+                "Control Manager config read failed; refusing an in-process fallback: {ipc_error}"
+            )),
         }
     } else {
         load_config().map_err(|error| error.to_string())

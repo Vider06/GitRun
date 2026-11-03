@@ -425,7 +425,7 @@ jobs:
           Priority: optional
           Architecture: amd64
           Maintainer: Vider06
-          Depends: libc6, policykit-1, libwebkit2gtk-4.1-0, libgtk-3-0
+          Depends: libc6, policykit-1, libwebkit2gtk-4.1-0
           Description: GitRun self-hosted GitHub Actions runner manager
            Rust-native GitRun manager with CLI, scheduler, recovery and Tauri dashboard.
           CONTROL

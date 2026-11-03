@@ -8,6 +8,7 @@ Current source target: GitRun <!-- gitrun-version:start -->1.9.0<!-- gitrun-vers
 - Add the shared `gitrun-platform` crate for conservative Linux distribution, libc ABI, package-manager and service-manager detection.
 - Keep GNU and musl Linux target identities distinct in CLI and scheduler update planning; unknown libc ABIs and unsupported architectures fail closed instead of being mislabeled as GNU.
 - Add `gitrun platform` to report host detection without implying that package installation, service integration or runner images are already supported on that host.
+- Restore native Debian runtime dependency metadata in the release package control file and validate each required dependency before including the package in release assets.
 - Reject Android, Termux and Android-based proot runtimes before CLI internal dispatch, scheduler, GSR, API, recovery and dashboard startup.
 - Bump only crates that consume the new platform library, keeping `Cargo.lock`, frontend bundle metadata and current-source Markdown markers aligned.
 

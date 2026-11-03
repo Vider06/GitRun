@@ -16,32 +16,34 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// dispatcher for arbitrary backend strings.
 fn action_is_allowed(operation: &str, action: &str) -> bool {
     match operation {
-        "read" => matches!(
-            action,
-            "first_run"
-                | "overview"
-                | "health"
-                | "runners"
-                | "host_resources"
-                | "repository_activity"
-                | "repo_detail"
-                | "repo_bootstrap"
-                | "config"
-                | "gitrun_settings"
-                | "security_summary"
-                | "vault_secrets"
-                | "gsr_status"
-                | "gsr_events"
-                | "service_logs"
-                | "zizmor"
-                | "logic_rules"
-                | "vm_configs"
-                | "hypervisor_decisions"
-                | "kitty"
-                | "repo_api_policies"
-                | "dock_requirements"
-                | "updates"
-        ) || (cfg!(test) && action == "ipc_ping"),
+        "read" => {
+            matches!(
+                action,
+                "first_run"
+                    | "overview"
+                    | "health"
+                    | "runners"
+                    | "host_resources"
+                    | "repository_activity"
+                    | "repo_detail"
+                    | "repo_bootstrap"
+                    | "config"
+                    | "gitrun_settings"
+                    | "security_summary"
+                    | "vault_secrets"
+                    | "gsr_status"
+                    | "gsr_events"
+                    | "service_logs"
+                    | "zizmor"
+                    | "logic_rules"
+                    | "vm_configs"
+                    | "hypervisor_decisions"
+                    | "kitty"
+                    | "repo_api_policies"
+                    | "dock_requirements"
+                    | "updates"
+            ) || (cfg!(test) && action == "ipc_ping")
+        }
         "write" => matches!(
             action,
             "connect_repository"
@@ -599,5 +601,4 @@ mod tests {
             reply["server_elapsed_us"].as_u64().unwrap_or_default()
         );
     }
-
 }

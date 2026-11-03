@@ -5749,7 +5749,6 @@ mod doctor_json_validation_tests {
     }
 }
 
-
 #[cfg(test)]
 mod control_manager_cli_routing_tests {
     use super::control_manager_config_read;

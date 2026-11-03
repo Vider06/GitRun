@@ -4168,7 +4168,6 @@ mod visual_design_tests {
     }
 }
 
-
 #[cfg(test)]
 mod control_manager_routing_tests {
     use super::*;

@@ -495,7 +495,7 @@ jobs:
           xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
           test -x "$xbps_create" && test -x "$xbps_rindex"
           export XBPS_ARCH="$xbps_arch"
-          (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-${VERSION_NUMBER}_1" \
+          (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
             -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
             -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$stage")
           xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
@@ -618,6 +618,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
           test "$VERSION" = v1.9.0
           binary="$GITHUB_WORKSPACE/canonical/gitrun-x86_64-unknown-linux-gnu"
           test -x "$binary"
@@ -717,7 +719,8 @@ jobs:
           mkdir -p release-assets
           cp all-assets/GitRun-* release-assets/
           cp all-assets/library.zip all-assets/cargo-metadata.json all-assets/sbom.spdx.json all-assets/provenance.json release-assets/
-          expected=$((25 + (MIGRATION_RELEASE == true ? 1 : 0)))
+          migration_extra=0; [ "$MIGRATION_RELEASE" = true ] && migration_extra=1
+          expected=$((25 + migration_extra))
           actual="$(find release-assets -maxdepth 1 -type f | wc -l)"
           test "$actual" -eq "$expected"
       - name: Install release verification tools
@@ -751,8 +754,8 @@ jobs:
             library.zip cargo-metadata.json sbom.spdx.json provenance.json; do
             test -s "$root/$file" || { echo "Missing required artifact: $file" >&2; exit 1; }
           done
-          for deb in "$root"/GitRun-"$VERSION"-linux-*-deb.deb; do
-            test "$(dpkg-deb -f "$deb" Package)" = gitrun
+          for deb in "$root"/GitRun-Server-"$VERSION"-linux-*-deb.deb; do
+            test "$(dpkg-deb -f "$deb" Package)" = gitrun-server
             test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
             dpkg-deb -c "$deb" | grep -Fq '/usr/lib/systemd/system/gitrun.service'
           done
@@ -786,12 +789,12 @@ jobs:
             test "$(cat "$dir/usr/share/gitrun/version.txt")" = "$VERSION_NUMBER"
           done
           # Inspect the native package metadata and payloads without executing foreign-architecture binaries.
-          for rpm_file in "$root"/GitRun-"$VERSION"-linux-*-rpm.rpm; do
-            rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun $VERSION_NUMBER"
+          for rpm_file in "$root"/GitRun-Server-"$VERSION"-linux-*-rpm.rpm; do
+            rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
             rpm -qpl "$rpm_file" | grep -Fxq /usr/bin/gitrun
             rpm -qpl "$rpm_file" | grep -Fxq /usr/lib/systemd/system/gitrun.service
           done
-          for apk_file in "$root"/GitRun-"$VERSION"-linux-*-apk.apk; do
+          for apk_file in "$root"/GitRun-Server-"$VERSION"-linux-*-apk.apk; do
             tar -tzf "$apk_file" | grep -Fxq .PKGINFO
           done
           arch_file="$root/GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst"
@@ -879,7 +882,12 @@ jobs:
                       package_target = package_target[:-len(".pkg.tar.zst")]
                   else:
                       package_target = package_target.rsplit(".", 1)[0]
-                  target = package_target
+                  if package_target.endswith("-deb"): target = package_target + "-server-deb"
+                  elif package_target.endswith("-rpm"): target = package_target + "-server-rpm"
+                  elif package_target.endswith("-apk"): target = package_target + "-server-apk"
+                  elif package_target.endswith("-arch"): target = package_target + "-server-arch"
+                  elif package_target.endswith("-xbps"): target = package_target + "-server-xbps"
+                  else: raise SystemExit(f"Unknown Server package suffix: {name}")
               items.append({"target":target,"file":name,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
           required = {
               "x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu",
@@ -961,7 +969,8 @@ jobs:
             echo "Updater accepted a tampered manifest" >&2
             exit 1
           fi
-          expected_count=$((26 + (MIGRATION_RELEASE == true ? 1 : 0)))
+          migration_extra=0; [ "$MIGRATION_RELEASE" = true ] && migration_extra=1
+          expected_count=$((26 + migration_extra))
           jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" --argjson count "$expected_count" \
             '.name == "GitRun" and .version == $version and .git_commit == $commit and (.artifacts | length == $count) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' \
             "$GITRUN_RELEASE_MANIFEST" >/dev/null
@@ -1039,6 +1048,25 @@ jobs:
             if [ -s "$generated" ]; then cat "$generated"; else echo "See the commits and pull requests associated with this release."; fi
           } > "$notes"
           echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
+      - name: Publish all release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -printf '%p\n' | sort)
+          migration_extra=0; [ "$MIGRATION_RELEASE" = true ] && migration_extra=1
+          expected=$((27 + migration_extra))
+          (("${#assets[@]}" == expected))
+          if [ "$MIGRATION_RELEASE" = true ]; then title="GitRun $VERSION — Migration Release"; else title="GitRun $VERSION"; fi
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release edit "$VERSION" --title "$title" --notes-file "$NOTES_FILE"
+            gh release upload "$VERSION" "${assets[@]}" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" --target "$GITHUB_SHA" \
+              --title "$title" --notes-file "$NOTES_FILE"
+          fi
       - name: Verify migration with the actual 1.8.23 updater
         if: env.MIGRATION_RELEASE == 'true'
         env:
@@ -1098,21 +1126,3 @@ jobs:
           test -x "$RUNNER_TEMP/legacy-updater-package/usr/bin/gitrun"
           test -x "$RUNNER_TEMP/legacy-updater-package/usr/libexec/gitrun/reinstall-latest.sh"
           test "$(cat "$RUNNER_TEMP/legacy-updater-package/usr/share/gitrun/version.txt")" = 1.9.0
-      - name: Publish all release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          ROOT: ${{ github.workspace }}/release-assets
-        run: |
-          set -euo pipefail
-          mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -printf '%p\n' | sort)
-          expected=$((27 + (MIGRATION_RELEASE == true ? 1 : 0)))
-          (("${#assets[@]}" == expected))
-          if [ "$MIGRATION_RELEASE" = true ]; then title="GitRun $VERSION — Migration Release"; else title="GitRun $VERSION"; fi
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release edit "$VERSION" --title "$title" --notes-file "$NOTES_FILE"
-            gh release upload "$VERSION" "${assets[@]}" --clobber
-          else
-            gh release create "$VERSION" "${assets[@]}" --target "$GITHUB_SHA" \
-              --title "$title" --notes-file "$NOTES_FILE"
-          fi

@@ -41,9 +41,7 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                 | "repo_api_policies"
                 | "dock_requirements"
                 | "updates"
-                #[cfg(test)]
-                | "ipc_ping"
-        ),
+        ) || (cfg!(test) && action == "ipc_ping"),
         "write" => matches!(
             action,
             "connect_repository"

@@ -2429,6 +2429,7 @@ jobs:
             cargo test --locked -p gitrun-management --no-default-features trusted_privileged_binary_accepts_system_cli_and_rejects_symlinks
           }
           ci_run "Trusted system CLI and symlink rejection" dashboard_security_test
+          ci_run "Dashboard command registry delegates to shared backend" cargo test --locked -p gitrun-dashboard-tauri --lib dashboard_uses_the_shared_management_command_registry || rc=1
       - name: Build Tauri application
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

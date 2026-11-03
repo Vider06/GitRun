@@ -15,7 +15,7 @@ The dashboard is the operator-facing control surface for:
 - service/container lifecycle controls;
 - recovery and state diagnostics.
 
-The Tauri backend shares persistent VM and Logic Containers formats with the scheduler. In particular, VM definitions are stored in `{GITRUN_STATE_DIR}/vm-configs.json`.
+The shared management backend uses the same persistent VM and Logic Containers formats as the scheduler. In particular, VM definitions are stored in `{GITRUN_STATE_DIR}/vm-configs.json`.
 
 ## Data freshness and protected state
 

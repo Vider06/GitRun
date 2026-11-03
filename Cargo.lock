@@ -1591,8 +1591,8 @@ dependencies = [
  "clap",
  "crossterm",
  "gitrun-core",
- "gitrun-dashboard-tauri",
  "gitrun-gsr",
+ "gitrun-management",
  "gitrun-platform",
  "gitrun-recovery",
  "gitrun-scheduler",
@@ -1623,18 +1623,7 @@ dependencies = [
 name = "gitrun-dashboard-tauri"
 version = "0.11.9"
 dependencies = [
- "gitrun-core",
- "gitrun-gsr",
- "gitrun-platform",
- "gitrun-recovery",
- "gitrun-scheduler",
- "gitrun-setup",
- "gitrun-smart-scheduler",
- "gitrun-vault",
- "libc",
- "serde",
- "serde_json",
- "tauri",
+ "gitrun-management",
  "tauri-build",
 ]
 
@@ -1664,6 +1653,24 @@ dependencies = [
  "serde_json",
  "signal-hook 0.4.5",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "gitrun-management"
+version = "0.1.0"
+dependencies = [
+ "gitrun-core",
+ "gitrun-gsr",
+ "gitrun-platform",
+ "gitrun-recovery",
+ "gitrun-scheduler",
+ "gitrun-setup",
+ "gitrun-smart-scheduler",
+ "gitrun-vault",
+ "libc",
+ "serde",
+ "serde_json",
+ "tauri",
 ]
 
 [[package]]

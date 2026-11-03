@@ -14,7 +14,7 @@ const WORKSPACE_CRATES: &[&str] = &[
     "gitrun-vault",
     "gitrun-exe",
     "gitrun-platform",
-    "gitrun-dashboard-tauri",
+    "gitrun-management",
 ];
 
 fn package_metadata(path: &PathBuf) -> Result<(String, String), String> {
@@ -65,11 +65,7 @@ fn main() {
 
     let mut versions = Vec::with_capacity(WORKSPACE_CRATES.len());
     for crate_name in WORKSPACE_CRATES {
-        let manifest = if *crate_name == "gitrun-dashboard-tauri" {
-            workspace_root.join("crates/gitrun-dashboard-tauri/src-tauri/Cargo.toml")
-        } else {
-            workspace_root.join(format!("crates/{crate_name}/Cargo.toml"))
-        };
+        let manifest = workspace_root.join(format!("crates/{crate_name}/Cargo.toml"));
 
         println!("cargo:rerun-if-changed={}", manifest.display());
 

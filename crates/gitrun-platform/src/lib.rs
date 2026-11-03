@@ -233,17 +233,14 @@ pub fn detect_package_manager(distro_id: &str, id_like: &str) -> Option<PackageM
 
 fn detect_service_manager_from_signals(
     systemd_runtime: bool,
-    systemd_command: bool,
     openrc_runtime: bool,
-    openrc_command: bool,
     runit_runtime: bool,
-    runit_command: bool,
 ) -> Option<ServiceManager> {
-    if openrc_runtime || openrc_command {
+    if openrc_runtime {
         Some(ServiceManager::OpenRc)
-    } else if runit_runtime || runit_command {
+    } else if runit_runtime {
         Some(ServiceManager::Runit)
-    } else if systemd_runtime || systemd_command {
+    } else if systemd_runtime {
         Some(ServiceManager::Systemd)
     } else {
         None
@@ -267,14 +264,7 @@ pub fn detect_service_manager() -> Option<ServiceManager> {
         || init_name == "runsvdir"
         || init_name == "runit";
 
-    detect_service_manager_from_signals(
-        systemd_runtime,
-        false,
-        openrc_runtime,
-        false,
-        runit_runtime,
-        false,
-    )
+    detect_service_manager_from_signals(systemd_runtime, openrc_runtime, runit_runtime)
 }
 
 fn contains_musl_loader(directory: &Path) -> bool {
@@ -505,15 +495,15 @@ mod tests {
     #[test]
     fn openrc_and_runit_are_not_misidentified_as_systemd() {
         assert_eq!(
-            detect_service_manager_from_signals(false, true, true, false, false, false),
+            detect_service_manager_from_signals(false, true, false),
             Some(ServiceManager::OpenRc)
         );
         assert_eq!(
-            detect_service_manager_from_signals(false, true, false, false, true, false),
+            detect_service_manager_from_signals(false, false, true),
             Some(ServiceManager::Runit)
         );
         assert_eq!(
-            detect_service_manager_from_signals(true, true, false, false, false, false),
+            detect_service_manager_from_signals(true, false, false),
             Some(ServiceManager::Systemd)
         );
     }

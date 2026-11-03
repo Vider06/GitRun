@@ -2021,7 +2021,7 @@ jobs:
           ci_run "Setup-generated environment and service contracts" cargo test --locked -p gitrun-setup generated_bootstrap_env_parses_and_validates_with_runtime_loader || rc=1
           ci_run "Setup installs the shared CLI, watchdog and Control Manager" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
           ci_run "Partial dashboard repository settings use safe defaults" cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults || rc=1
-          ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-management --no-default-features dashboard_build_version_matches_workspace_version_txt || rc=1
+          ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-management --no-default-features management_build_version_matches_workspace_version_txt || rc=1
           ci_run "Control Manager IPC validates requests and enforces confirmations" cargo test --locked -p gitrun-management --no-default-features control_manager::tests -- --nocapture || rc=1
           ci_run "Manage routes reads and writes through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_routing_tests -- --nocapture || rc=1
           ci_run "CLI doctor reads protected configuration through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_cli_routing_tests -- --nocapture || rc=1

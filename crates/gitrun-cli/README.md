@@ -87,3 +87,5 @@ Setup and updater create missing local `.json.Back` snapshots without replacing 
 ## CPU history
 
 The Overview now draws a host CPU utilization trend from real Linux resource samples, refreshed periodically and bounded to the latest 60 samples in memory. The Management TUI can display a CPU sparkline when the backend returns that history. The graph is host-wide utilization, not per-job CPU usage; the history is currently process-local and resets when GitRun restarts.
+
+The CLI and terminal management console use the shared `gitrun-management` crate directly. They do not link the dashboard package or enable its Tauri feature. See the [management backend guide](../gitrun-management/README.md) for the shared action API and Control Manager boundary.

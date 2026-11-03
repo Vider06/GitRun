@@ -269,12 +269,7 @@ pub fn detect_service_manager() -> Option<ServiceManager> {
     let runit_runtime =
         Path::new("/run/runit/service").is_dir() || init_name == "runsvdir" || init_name == "runit";
 
-    detect_service_manager_from_signals(
-        &init_name,
-        systemd_runtime,
-        openrc_runtime,
-        runit_runtime,
-    )
+    detect_service_manager_from_signals(&init_name, systemd_runtime, openrc_runtime, runit_runtime)
 }
 
 fn contains_musl_loader(directory: &Path) -> bool {

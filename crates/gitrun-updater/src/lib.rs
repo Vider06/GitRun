@@ -3391,7 +3391,10 @@ mod tests {
             let plan = build_plan(&multi_target, "1.8.23", target, &[])
                 .unwrap_or_else(|error| panic!("updater rejected {target}: {error}"));
             assert_eq!(plan.target, target);
-            assert_eq!(plan.artifact, format!("GitRun-1.9.0-{target}-server.tar.gz"));
+            assert_eq!(
+                plan.artifact,
+                format!("GitRun-1.9.0-{target}-server.tar.gz")
+            );
             assert_eq!(
                 plan.artifact_url,
                 format!("https://example.invalid/{target}.tar.gz")

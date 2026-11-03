@@ -503,6 +503,33 @@ mod tests {
     }
 
     #[test]
+    fn known_distributions_prefer_their_native_package_manager() {
+        let cases = [
+            ("debian", "", vec![PackageManager::Apt]),
+            ("ubuntu", "debian", vec![PackageManager::Apt]),
+            ("alpine", "", vec![PackageManager::Apk]),
+            ("void", "", vec![PackageManager::Xbps]),
+            ("arch", "", vec![PackageManager::Pacman]),
+            ("manjaro", "arch", vec![PackageManager::Pacman]),
+            ("fedora", "", vec![PackageManager::Dnf, PackageManager::Rpm]),
+            (
+                "opensuse-tumbleweed",
+                "",
+                vec![PackageManager::Zypper, PackageManager::Rpm],
+            ),
+            ("gentoo", "", vec![PackageManager::Emerge]),
+        ];
+
+        for (distribution, id_like, expected) in cases {
+            assert_eq!(
+                preferred_package_managers(distribution, id_like),
+                expected,
+                "unexpected package-manager preference for {distribution}"
+            );
+        }
+    }
+
+    #[test]
     fn systemd_openrc_and_runit_pid1_names_are_detected_independently() {
         assert_eq!(
             detect_service_manager_from_signals("systemd", false, false, false),

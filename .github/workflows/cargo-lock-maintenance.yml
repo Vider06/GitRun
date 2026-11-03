@@ -113,12 +113,14 @@ jobs:
             "crates/gitrun-core",
             "crates/gitrun-exe",
             "crates/gitrun-gsr",
+            "crates/gitrun-platform",
           ]
           EOF
 
                 cp -a crates/gitrun-core "$bootstrap/crates/"
                 cp -a crates/gitrun-exe "$bootstrap/crates/"
                 cp -a crates/gitrun-gsr "$bootstrap/crates/"
+                cp -a crates/gitrun-platform "$bootstrap/crates/"
                 cp "$lock" "$bootstrap/Cargo.lock"
 
                 if ! cargo generate-lockfile --manifest-path "$bootstrap/Cargo.toml"; then

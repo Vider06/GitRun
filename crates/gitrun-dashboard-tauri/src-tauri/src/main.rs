@@ -1,6 +1,8 @@
-// Desktop entry point. Per Tauri 2 convention, actual app logic lives in
-// lib.rs (shared with mobile builds, which GitRun doesn't target today but
-// keeping the split costs nothing and matches the ecosystem's expectations).
+// Desktop entry point. GitRun intentionally does not target Android builds.
 fn main() {
+    if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
+        eprintln!("GitRun Dashboard: {reason}");
+        std::process::exit(2);
+    }
     gitrun_dashboard_tauri_lib::run()
 }

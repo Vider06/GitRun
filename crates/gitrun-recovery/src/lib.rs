@@ -1,4 +1,5 @@
 pub mod json_recovery;
+#[cfg(feature = "desktop")]
 pub mod ui;
 pub use json_recovery::{
     run_json_recovery_action, run_json_recovery_root_action, JsonRecoveryAction, JsonRecoveryReport,

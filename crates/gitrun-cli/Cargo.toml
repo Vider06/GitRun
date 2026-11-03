@@ -19,7 +19,7 @@ gitrun-gsr = { path = "../gitrun-gsr" }
 gitrun-setup = { path = "../gitrun-setup" }
 gitrun-updater = { path = "../gitrun-updater" }
 gitrun-recovery = { path = "../gitrun-recovery" }
-gitrun-dashboard-tauri = { path = "../gitrun-dashboard-tauri/src-tauri" }
+gitrun-management = { path = "../gitrun-management" }
 clap = { version = "4", features = ["derive"] }
 crossterm = { version = "0.29", default-features = false, features = ["windows"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "crossterm_0_29", "scrolling-regions", "unstable-rendered-line-info"] }

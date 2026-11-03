@@ -1119,7 +1119,7 @@ jobs:
           test "$VERSION" = v1.9.0
           old="$RUNNER_TEMP/gitrun-v1.8.23"
           git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$old"
-          (cd "$old" && cargo build --locked --release -p gitrun-cli --bin gitrun && test -x target/release/gitrun && test "$(target/release/gitrun --version --gitrun)" = "GitRun 1.8.23")
+          (cd "$old" && cargo build --locked --release -p gitrun-cli --bin gitrun && test -x target/release/gitrun && test "$(GITRUN_NO_CAT=1 target/release/gitrun --version --gitrun)" = "GitRun 1.8.23")
           key="$RUNNER_TEMP/migration-key.der"; public="$RUNNER_TEMP/migration-public.der"
           trap 'rm -f "$key" "$public"' EXIT
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"

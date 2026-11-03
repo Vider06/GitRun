@@ -76,10 +76,10 @@ jobs:
             "Core/Dockers/runners/linux-x86_64/profiles.json"
             "crates/gitrun-cli/src/cat/cat_states.json"
             "crates/gitrun-cli/src/cat/gitrun.json"
-            "crates/gitrun-desktop-tauri/package.json"
-            "crates/gitrun-desktop-tauri/package-lock.json"
-            "crates/gitrun-desktop-tauri/src-tauri/capabilities/default.json"
-            "crates/gitrun-desktop-tauri/src-tauri/tauri.conf.json"
+            "crates/gitrun-dashboard-tauri/package.json"
+            "crates/gitrun-dashboard-tauri/package-lock.json"
+            "crates/gitrun-dashboard-tauri/src-tauri/capabilities/default.json"
+            "crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json"
             "crates/gitrun-recovery/capabilities/default.json"
             "crates/gitrun-recovery/tauri.conf.json"
             "release/release-manifest.example.json"
@@ -258,9 +258,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: crates/gitrun-desktop-tauri/package-lock.json
+          cache-dependency-path: crates/gitrun-dashboard-tauri/package-lock.json
       - name: Synchronize Dashboard package version
-        working-directory: crates/gitrun-desktop-tauri
+        working-directory: crates/gitrun-dashboard-tauri
         run: |
           set -euo pipefail
           node --input-type=module - "$VERSION_NUMBER" <<'NODE'
@@ -282,7 +282,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          icons=(crates/gitrun-desktop-tauri/src-tauri/icons/*.png)
+          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
           (("${#icons[@]}" > 0))
           for icon in "${icons[@]}"; do
             tmp="$(mktemp --suffix=.png)"
@@ -290,7 +290,7 @@ jobs:
             mv "$tmp" "$icon"
           done
       - name: Build standalone Dashboard AppImage
-        working-directory: crates/gitrun-desktop-tauri
+        working-directory: crates/gitrun-dashboard-tauri
         run: |
           set -euo pipefail
           export TMPDIR="$RUNNER_TEMP/tauri-tmp" XDG_CACHE_HOME="$RUNNER_TEMP/tauri-cache"
@@ -882,11 +882,11 @@ jobs:
                       package_target = package_target[:-len(".pkg.tar.zst")]
                   else:
                       package_target = package_target.rsplit(".", 1)[0]
-                  if package_target.endswith("-deb"): target = package_target + "-server-deb"
-                  elif package_target.endswith("-rpm"): target = package_target + "-server-rpm"
-                  elif package_target.endswith("-apk"): target = package_target + "-server-apk"
-                  elif package_target.endswith("-arch"): target = package_target + "-server-arch"
-                  elif package_target.endswith("-xbps"): target = package_target + "-server-xbps"
+                  if package_target.endswith("-deb"): target = package_target[:-4] + "-server-deb"
+                  elif package_target.endswith("-rpm"): target = package_target[:-4] + "-server-rpm"
+                  elif package_target.endswith("-apk"): target = package_target[:-4] + "-server-apk"
+                  elif package_target.endswith("-arch"): target = package_target[:-5] + "-server-arch"
+                  elif package_target.endswith("-xbps"): target = package_target[:-5] + "-server-xbps"
                   else: raise SystemExit(f"Unknown Server package suffix: {name}")
               items.append({"target":target,"file":name,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
           required = {
@@ -895,6 +895,12 @@ jobs:
               "linux-x86_64-gnu-tar-zst","linux-aarch64-gnu-tar-zst",
               "linux-x86_64-musl-tar-zst","linux-aarch64-musl-tar-zst",
               "linux-x86_64-desktop-appimage","linux-x86_64-desktop-deb",
+              "linux-x86_64-server-deb","linux-aarch64-server-deb",
+              "linux-x86_64-server-rpm","linux-aarch64-server-rpm",
+              "linux-x86_64-server-apk","linux-aarch64-server-apk",
+              "linux-x86_64-server-arch","linux-x86_64-server-xbps",
+              "linux-aarch64-server-xbps","linux-x86_64-musl-server-xbps",
+              "linux-aarch64-musl-server-xbps",
               "library-json-backup","cargo-metadata","sbom-spdx","provenance","sha256sums"
           }
           if os.environ.get("MIGRATION_RELEASE") == "true": required.add("linux-x86_64-deb")
@@ -1043,9 +1049,6 @@ jobs:
               echo
               echo "No migration needed, updater/release system has not been changed in a way that requires a migration package."
             fi
-            echo
-            echo "## Changes"; echo
-            if [ -s "$generated" ]; then cat "$generated"; else echo "See the commits and pull requests associated with this release."; fi
           } > "$notes"
           echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
       - name: Publish all release assets

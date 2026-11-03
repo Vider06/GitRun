@@ -37,6 +37,11 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - name: Install metadata tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zip
       - name: Resolve version and synchronize Markdown markers
         id: version
         env:
@@ -144,7 +149,9 @@ jobs:
         run: |
           set -euo pipefail
           docker info >/dev/null
-          command -v zstd
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends file binutils
+          command -v readelf
       - name: Restore target-specific Cargo cache
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -398,7 +405,7 @@ jobs:
             *) echo "Unsupported package target: $TARGET" >&2; exit 1 ;;
           esac
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
           command -v go >/dev/null
           GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
           export PATH="$RUNNER_TEMP/bin:$PATH"
@@ -691,6 +698,11 @@ jobs:
         with:
           name: validated-release-assets
           path: release-assets
+      - name: Install release manifest tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq
       - name: Install Rust toolchain for updater verification
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:

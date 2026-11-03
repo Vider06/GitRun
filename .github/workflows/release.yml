@@ -174,11 +174,11 @@ jobs:
               ;;
             x86_64-unknown-linux-musl)
               readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
-              readelf -l "$binary" | grep -Fq 'ld-musl-x86_64.so.1'
+              file "$binary" | grep -Fq 'statically linked'
               ;;
             aarch64-unknown-linux-musl)
               readelf -h "$binary" | grep -Fq 'AArch64'
-              readelf -l "$binary" | grep -Fq 'ld-musl-aarch64.so.1'
+              file "$binary" | grep -Fq 'statically linked'
               ;;
           esac
       - name: Save target-specific Cargo cache

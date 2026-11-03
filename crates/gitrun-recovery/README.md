@@ -1,5 +1,7 @@
 # `gitrun-recovery`
 
+The recovery engine and JSON repair operations are available without Tauri by default. The recovery GUI and executable are enabled only with the optional `desktop` feature (`--features desktop`); headless management and CLI consumers do not pull in the Tauri runtime.
+
 Recovery and health-diagnostic component for detecting broken GitRun installations and preparing safe repair/startup actions. It also contains the recovery Tauri UI.
 
 ## Protected state and repair

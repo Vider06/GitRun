@@ -230,10 +230,20 @@ pub fn detect_package_manager(distro_id: &str, id_like: &str) -> Option<PackageM
 }
 
 fn detect_service_manager_from_signals(
+    init_name: &str,
     systemd_runtime: bool,
     openrc_runtime: bool,
     runit_runtime: bool,
 ) -> Option<ServiceManager> {
+    // An identified PID 1 is stronger evidence than leftover runtime mounts
+    // exposed by a container or compatibility layer.
+    match init_name {
+        "systemd" => return Some(ServiceManager::Systemd),
+        "openrc-init" => return Some(ServiceManager::OpenRc),
+        "runsvdir" | "runit" => return Some(ServiceManager::Runit),
+        _ => {}
+    }
+
     if openrc_runtime {
         Some(ServiceManager::OpenRc)
     } else if runit_runtime {
@@ -259,7 +269,12 @@ pub fn detect_service_manager() -> Option<ServiceManager> {
     let runit_runtime =
         Path::new("/run/runit/service").is_dir() || init_name == "runsvdir" || init_name == "runit";
 
-    detect_service_manager_from_signals(systemd_runtime, openrc_runtime, runit_runtime)
+    detect_service_manager_from_signals(
+        &init_name,
+        systemd_runtime,
+        openrc_runtime,
+        runit_runtime,
+    )
 }
 
 fn contains_musl_loader(directory: &Path) -> bool {
@@ -493,22 +508,50 @@ mod tests {
     }
 
     #[test]
-    fn openrc_and_runit_are_not_misidentified_as_systemd() {
+    fn systemd_openrc_and_runit_pid1_names_are_detected_independently() {
         assert_eq!(
-            detect_service_manager_from_signals(false, true, false),
-            Some(ServiceManager::OpenRc)
-        );
-        assert_eq!(
-            detect_service_manager_from_signals(false, false, true),
-            Some(ServiceManager::Runit)
-        );
-        assert_eq!(
-            detect_service_manager_from_signals(true, false, false),
+            detect_service_manager_from_signals("systemd", false, false, false),
             Some(ServiceManager::Systemd)
         );
         assert_eq!(
-            detect_service_manager_from_signals(false, false, false),
+            detect_service_manager_from_signals("openrc-init", false, false, false),
+            Some(ServiceManager::OpenRc)
+        );
+        assert_eq!(
+            detect_service_manager_from_signals("runsvdir", false, false, false),
+            Some(ServiceManager::Runit)
+        );
+        assert_eq!(
+            detect_service_manager_from_signals("runit", false, false, false),
+            Some(ServiceManager::Runit)
+        );
+    }
+
+    #[test]
+    fn service_manager_runtime_markers_are_fallbacks_not_command_presence() {
+        assert_eq!(
+            detect_service_manager_from_signals("init", false, true, false),
+            Some(ServiceManager::OpenRc)
+        );
+        assert_eq!(
+            detect_service_manager_from_signals("init", false, false, true),
+            Some(ServiceManager::Runit)
+        );
+        assert_eq!(
+            detect_service_manager_from_signals("init", true, false, false),
+            Some(ServiceManager::Systemd)
+        );
+        assert_eq!(
+            detect_service_manager_from_signals("init", false, false, false),
             None
+        );
+    }
+
+    #[test]
+    fn active_pid1_wins_over_stale_service_manager_runtime_markers() {
+        assert_eq!(
+            detect_service_manager_from_signals("runsvdir", true, true, false),
+            Some(ServiceManager::Runit)
         );
     }
 

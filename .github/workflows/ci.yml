@@ -2489,7 +2489,7 @@ jobs:
           mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
           build() {
             cd crates/gitrun-recovery
-            npm exec --yes --package "@tauri-apps/cli@2.12.1" -- tauri build --ci --no-bundle
+            npm exec --yes --package "@tauri-apps/cli@2.12.1" -- tauri build --ci --no-bundle --features desktop
           }
           ci_run "tauri recovery build --no-bundle" build
       - *rust_prune

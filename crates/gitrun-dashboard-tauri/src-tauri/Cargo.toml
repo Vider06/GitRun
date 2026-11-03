@@ -1,6 +1,6 @@
 [package]
 name = "gitrun-dashboard-tauri"
-version = "0.11.8"
+version = "0.11.9"
 edition = "2021"
 rust-version = "1.99.0"
 description = "GitRun dashboard: Tauri-based operator UI"
@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 gitrun-core = { path = "../../gitrun-core" }
+gitrun-platform = { path = "../../gitrun-platform" }
 gitrun-scheduler = { path = "../../gitrun-scheduler" }
 gitrun-smart-scheduler = { path = "../../gitrun-smart-scheduler" }
 gitrun-vault = { path = "../../gitrun-vault" }

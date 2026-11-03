@@ -1445,6 +1445,8 @@ jobs:
               "migration fresh-install warning": "DO NOT USE FOR FRESH INSTALL!" in release,
               "standard release migration notice": "No migration needed, updater/release system has not been changed in a way that requires a migration package." in release,
               "Server package target namespace": 'target = package_target[:-4] + "-server-deb"' in release,
+              "release asset inventory rejects unexpected files": "diff -u <(printf" in release,
+              "manifest requires the exact target set": "actual_targets != required" in release and "len(items) != len(required)" in release,
           }
           for label, passed in checks.items():
               print(("PASS" if passed else "FAIL") + ": " + label)

@@ -1466,8 +1466,8 @@ fn connect_command(
     // On a protected system install, repository connection is routed through
     // the persistent Control Manager. This keeps the credential-bearing config
     // root-only and avoids a per-connect sudo/pkexec prompt.
-    if gitrun_dashboard_tauri_lib::control_manager_enabled() && !running_as_root() {
-        let result = gitrun_dashboard_tauri_lib::control_manager_request(
+    if gitrun_management::control_manager_enabled() && !running_as_root() {
+        let result = gitrun_management::control_manager_request(
             "write",
             "connect_repository",
             serde_json::json!({ "repository": repository }),
@@ -1656,7 +1656,7 @@ fn main() {
     // The persistent Control Manager is a systemd-only internal entry point. It
     // bypasses the interactive presenter and refuses to run without root.
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("control-manager")) {
-        std::process::exit(gitrun_dashboard_tauri_lib::run_control_manager());
+        std::process::exit(gitrun_management::run_control_manager());
     }
     // Initialize the shared presenter before Clap so help and argument errors
     // follow the same mascot policy as normal commands. Internal callers can
@@ -2922,7 +2922,7 @@ fn doctor_service_check(service: &str) -> Result<String, String> {
 fn doctor_expected_protected_json_permissions() -> bool {
     system_install_paths().is_some()
         && !running_as_root()
-        && gitrun_dashboard_tauri_lib::control_manager_enabled()
+        && gitrun_management::control_manager_enabled()
 }
 
 fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usize) {
@@ -3154,13 +3154,13 @@ fn control_manager_config_read(
 
 fn doctor_load_config() -> Result<Config, String> {
     let system_install = system_install_paths().is_some();
-    if system_install && !running_as_root() && gitrun_dashboard_tauri_lib::control_manager_enabled()
+    if system_install && !running_as_root() && gitrun_management::control_manager_enabled()
     {
         // The system env file may be root-owned and intentionally unreadable
         // to the desktop account. Read it through the persistent Control
         // Manager socket; do not call the dashboard backend in-process here.
         match control_manager_config_read(|operation, action, args| {
-            gitrun_dashboard_tauri_lib::control_manager_request(operation, action, args)
+            gitrun_management::control_manager_request(operation, action, args)
         }) {
             Ok(value) => serde_json::from_value(value).map_err(|error| {
                 format!("Control Manager returned invalid configuration: {error}")
@@ -4067,7 +4067,7 @@ fn run_dashboard() -> i32 {
                     eprintln!("GitRun: unable to persist startup health: {error}");
                 }
             }
-            gitrun_dashboard_tauri_lib::run();
+            gitrun_management::run();
             0
         }
         Err(error) => {

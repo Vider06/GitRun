@@ -362,6 +362,7 @@ mod tests {
         assert!(!RUNNER_BUILD_CARGO_MANIFEST.contains("[patch.crates-io]"));
         assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-core\""));
         assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-gsr\""));
+        assert!(include_str!("runner-bootstrap.lock").contains("name = \"gitrun-platform\""));
         assert!(
             !include_str!("runner-bootstrap.lock").contains("name = \"gitrun-dashboard-tauri\"")
         );

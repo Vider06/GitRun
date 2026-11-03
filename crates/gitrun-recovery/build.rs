@@ -1,5 +1,7 @@
+#[cfg(feature = "desktop")]
 fn main() {
-    if std::env::var_os("CARGO_FEATURE_DESKTOP").is_some() {
-        tauri_build::build();
-    }
+    tauri_build::build();
 }
+
+#[cfg(not(feature = "desktop"))]
+fn main() {}

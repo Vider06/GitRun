@@ -263,14 +263,29 @@ fn detect_service_manager_from_signals(
 }
 
 pub fn detect_service_manager() -> Option<ServiceManager> {
+    // Prefer the active PID 1/init runtime over installed management commands.
+    // A host may have systemctl, rc-service or sv installed without running
+    // the corresponding init system.
+    let init_name = fs::read_to_string("/proc/1/comm")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+
+    let systemd_runtime =
+        Path::new("/run/systemd/system").is_dir() || init_name == "systemd";
+    let openrc_runtime =
+        Path::new("/run/openrc/softlevel").is_file() || init_name == "openrc-init";
+    let runit_runtime = Path::new("/run/runit/service").is_dir()
+        || init_name == "runsvdir"
+        || init_name == "runit";
+
     detect_service_manager_from_signals(
-        Path::new("/run/systemd/system").is_dir()
-            || Path::new("/usr/lib/systemd/systemd").is_file(),
-        command_on_path("systemctl"),
-        Path::new("/run/openrc").is_dir(),
-        command_on_path("rc-service"),
-        Path::new("/run/runit/service").is_dir() || Path::new("/etc/runit/1").is_file(),
-        command_on_path("sv"),
+        systemd_runtime,
+        false,
+        openrc_runtime,
+        false,
+        runit_runtime,
+        false,
     )
 }
 

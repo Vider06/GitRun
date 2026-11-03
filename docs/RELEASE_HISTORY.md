@@ -2,6 +2,15 @@
 
 Current source target: GitRun <!-- gitrun-version:start -->1.9.0<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
 
+## GitRun 1.9.0 — Linux platform detection and Android runtime guard
+
+- **Source/product target:** `1.9.0`, recorded in `version.txt`. This entry describes source changes and does not assert that a signed multi-distribution release is published.
+- Add the shared `gitrun-platform` crate for conservative Linux distribution, libc ABI, package-manager and service-manager detection.
+- Keep GNU and musl Linux target identities distinct in CLI and scheduler update planning; unknown libc ABIs and unsupported architectures fail closed instead of being mislabeled as GNU.
+- Add `gitrun platform` to report host detection without implying that package installation, service integration or runner images are already supported on that host.
+- Reject Android, Termux and Android-based proot runtimes before CLI internal dispatch, scheduler, GSR, API, recovery and dashboard startup.
+- Bump only crates that consume the new platform library, keeping `Cargo.lock`, frontend bundle metadata and current-source Markdown markers aligned.
+
 ## GitRun 1.8.21 — system binary alias reconciliation
 
 - **Source/product target:** `1.8.21`, published as a signed release from commit [`ef4d909`](https://github.com/Vider06/GitRun/commit/ef4d9093bd8c0140579952be0146da92d3193ead).

@@ -490,6 +490,14 @@ mod tests {
             preferred_package_managers("void", ""),
             vec![PackageManager::Xbps]
         );
+        assert_eq!(
+            preferred_package_managers("unknown-linux", ""),
+            Vec::<PackageManager>::new()
+        );
+        assert_eq!(
+            preferred_package_managers("unknown", "fedora"),
+            vec![PackageManager::Dnf, PackageManager::Rpm]
+        );
     }
 
     #[test]
@@ -506,6 +514,7 @@ mod tests {
             detect_service_manager_from_signals(true, false, false),
             Some(ServiceManager::Systemd)
         );
+        assert_eq!(detect_service_manager_from_signals(false, false, false), None);
     }
 
     #[test]

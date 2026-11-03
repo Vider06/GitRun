@@ -4167,3 +4167,83 @@ mod visual_design_tests {
         assert!(parse_json_editor_input(JsonEditorInputKind::Float, "NaN").is_err());
     }
 }
+
+
+#[cfg(test)]
+mod control_manager_routing_tests {
+    use super::*;
+
+    #[test]
+    fn manage_read_uses_control_manager_when_service_is_enabled() {
+        let args = json!({"scope":"read-only-probe"});
+        let result = app_read_with(
+            "overview",
+            args.clone(),
+            true,
+            |operation, action, forwarded| {
+                assert_eq!(operation, "read");
+                assert_eq!(action, "overview");
+                assert_eq!(forwarded, args);
+                Ok(json!({"transport":"control-manager-ipc","ok":true}))
+            },
+            |_, _| panic!("local dashboard backend must not bypass the enabled manager"),
+        )
+        .expect("manager read should succeed");
+        assert_eq!(result["transport"], "control-manager-ipc");
+    }
+
+    #[test]
+    fn manage_read_uses_local_backend_only_without_system_manager() {
+        let args = json!({"scope":"developer-install"});
+        let result = app_read_with(
+            "overview",
+            args.clone(),
+            false,
+            |_, _, _| panic!("IPC must not be used when no system manager is enabled"),
+            |action, forwarded| {
+                assert_eq!(action, "overview");
+                assert_eq!(forwarded, args);
+                Ok(json!({"transport":"local-dashboard-backend","ok":true}))
+            },
+        )
+        .expect("local read should succeed");
+        assert_eq!(result["transport"], "local-dashboard-backend");
+    }
+
+    #[test]
+    fn manage_write_forwards_confirmation_to_control_manager() {
+        let result = app_write_with(
+            "maintenance_task",
+            json!({"task":"update"}),
+            true,
+            |operation, action, forwarded| {
+                assert_eq!(operation, "write");
+                assert_eq!(action, "maintenance_task");
+                assert_eq!(forwarded["task"], "update");
+                assert_eq!(forwarded["confirmed"], true);
+                Ok(json!({"transport":"control-manager-ipc","accepted":true}))
+            },
+            |_, _| panic!("privileged write must not fall back to the dashboard process"),
+        )
+        .expect("confirmed write should be transported");
+        assert_eq!(result["accepted"], true);
+    }
+
+    #[test]
+    fn non_destructive_manage_write_does_not_gain_confirmation() {
+        let result = app_write_with(
+            "service_control",
+            json!({"action":"start","service":"gitrun.service"}),
+            true,
+            |operation, action, forwarded| {
+                assert_eq!(operation, "write");
+                assert_eq!(action, "service_control");
+                assert!(forwarded.get("confirmed").is_none());
+                Ok(json!({"accepted":true}))
+            },
+            |_, _| panic!("enabled manager must own service writes"),
+        )
+        .expect("safe service start should be transported");
+        assert_eq!(result["accepted"], true);
+    }
+}

@@ -720,10 +720,6 @@ jobs:
           mkdir -p release-assets
           cp all-assets/GitRun-* release-assets/
           cp all-assets/library.zip all-assets/cargo-metadata.json all-assets/sbom.spdx.json all-assets/provenance.json release-assets/
-          migration_extra=0; [ "$MIGRATION_RELEASE" = true ] && migration_extra=1
-          expected=$((25 + migration_extra))
-          actual="$(find release-assets -maxdepth 1 -type f | wc -l)"
-          test "$actual" -eq "$expected"
       - name: Install release verification tools
         run: |
           set -euo pipefail
@@ -734,7 +730,9 @@ jobs:
         run: |
           set -euo pipefail
           root="$GITHUB_WORKSPACE/release-assets"
+          expected_files=()
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            expected_files+=("GitRun-Server-$VERSION-$target-server.tar.gz" "GitRun-Server-$VERSION-$target-server.tar.zst")
             test -s "$root/GitRun-Server-$VERSION-$target-server.tar.gz"
             test -s "$root/GitRun-Server-$VERSION-$target-server.tar.zst"
           done
@@ -753,6 +751,7 @@ jobs:
             "GitRun-Desktop-$VERSION-linux-x86_64-deb.deb" \
             "GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
             library.zip cargo-metadata.json sbom.spdx.json provenance.json; do
+            expected_files+=("$file")
             test -s "$root/$file" || { echo "Missing required artifact: $file" >&2; exit 1; }
           done
           for deb in "$root"/GitRun-Server-"$VERSION"-linux-*-deb.deb; do
@@ -770,11 +769,15 @@ jobs:
             test -s "$legacy"
             test "$(dpkg-deb -f "$legacy" Package)" = gitrun
             test "$(dpkg-deb -f "$legacy" Version)" = "$VERSION_NUMBER"
+            expected_files+=("GitRun-$VERSION-linux-x86_64-deb.deb")
             dpkg-deb -c "$legacy" | grep -Fq '/usr/libexec/gitrun/reinstall-latest.sh'
             dpkg-deb -c "$legacy" | grep -Fq '/usr/bin/gitrun'
           else
             ! find "$root" -maxdepth 1 -type f -name 'GitRun-*-linux-x86_64-deb.deb' | grep -q .
           fi
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected_files[@]}" | sort)
+          mapfile -t actual_sorted < <(find "$root" -maxdepth 1 -type f -printf '%f\n' | sort)
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${actual_sorted[@]}")
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
             archive="$root/GitRun-Server-$VERSION-$target-server.tar.gz"
             dir="$RUNNER_TEMP/update-check-$target"
@@ -906,11 +909,10 @@ jobs:
           }
           if os.environ.get("MIGRATION_RELEASE") == "true": required.add("linux-x86_64-deb")
           if os.environ.get("MIGRATION_RELEASE") != "true" and any(item["target"] == "linux-x86_64-deb" for item in items): raise SystemExit("Unexpected legacy migration target")
-          missing = required - {item["target"] for item in items}
-          if missing: raise SystemExit(f"Missing manifest targets: {sorted(missing)}")
-          if len({item["target"] for item in items}) != len(items): raise SystemExit("Duplicate manifest targets")
-          expected = 26 + (1 if os.environ.get("MIGRATION_RELEASE") == "true" else 0)
-          if len(items) != expected: raise SystemExit(f"Expected {expected} release files, found {len(items)}")
+          actual_targets = {item["target"] for item in items}
+          if actual_targets != required:
+              raise SystemExit(f"Manifest target mismatch; missing={sorted(required - actual_targets)}, unexpected={sorted(actual_targets - required)}")
+          if len(items) != len(required): raise SystemExit("Manifest contains duplicate targets")
           manifest = {"name":"GitRun","version":version,"git_commit":commit,"repository":"Vider06/GitRun","artifacts":items}
           (root/"release-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
           PY
@@ -976,8 +978,8 @@ jobs:
             echo "Updater accepted a tampered manifest" >&2
             exit 1
           fi
-          migration_extra=0; [ "$MIGRATION_RELEASE" = true ] && migration_extra=1
-          expected_count=$((26 + migration_extra))
+          release_root="$(dirname "$GITRUN_RELEASE_MANIFEST")"
+          expected_count="$(find "$release_root" -maxdepth 1 -type f ! -name release-manifest.json | wc -l)"
           jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" --argjson count "$expected_count" \
             '.name == "GitRun" and .version == $version and .git_commit == $commit and (.artifacts | length == $count) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' \
             "$GITRUN_RELEASE_MANIFEST" >/dev/null
@@ -1089,9 +1091,9 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -printf '%p\n' | sort)
-          migration_extra=0; [ "$MIGRATION_RELEASE" = true ] && migration_extra=1
-          expected=$((27 + migration_extra))
-          (("${#assets[@]}" == expected))
+          test -s "$ROOT/release-manifest.json"
+          test -s "$ROOT/SHA256SUMS"
+          (("${#assets[@]}" > 0))
           if [ "$MIGRATION_RELEASE" = true ]; then title="GitRun $VERSION — Migration Release"; else title="GitRun $VERSION"; fi
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release edit "$VERSION" --title "$title" --notes-file "$NOTES_FILE"

@@ -4036,6 +4036,49 @@ fn report_critical_startup(report: &gitrun_recovery::RecoveryReport) {
     }
 }
 
+
+/// Launch the separately packaged Tauri dashboard without linking the CLI to
+/// the desktop runtime. The CLI and dashboard share gitrun-management, but
+/// only the dashboard executable enables the optional desktop integration.
+fn launch_dashboard_binary() -> i32 {
+    let mut candidates = Vec::new();
+    #[cfg(unix)]
+    {
+        candidates.push(PathBuf::from("/usr/bin/gitrun-dashboard-tauri"));
+        candidates.push(PathBuf::from("/usr/local/bin/gitrun-dashboard-tauri"));
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            candidates.push(parent.join(if cfg!(windows) {
+                "gitrun-dashboard-tauri.exe"
+            } else {
+                "gitrun-dashboard-tauri"
+            }));
+        }
+    }
+
+    for candidate in candidates {
+        if !candidate.is_file() {
+            continue;
+        }
+        return match std::process::Command::new(&candidate).status() {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(error) => {
+                eprintln!(
+                    "GitRun dashboard: unable to launch {}: {error}",
+                    candidate.display()
+                );
+                1
+            }
+        };
+    }
+
+    eprintln!(
+        "GitRun dashboard: the separate gitrun-dashboard-tauri executable was not found. Install the Dashboard package or place it beside the GitRun CLI."
+    );
+    1
+}
+
 fn run_dashboard() -> i32 {
     match gitrun_recovery::startup(gitrun_recovery::StartupTarget::Dashboard) {
         Ok(report) if report.update.applied => match reexec_self(&["dashboard"]) {
@@ -4066,8 +4109,7 @@ fn run_dashboard() -> i32 {
                     eprintln!("GitRun: unable to persist startup health: {error}");
                 }
             }
-            gitrun_management::run();
-            0
+            launch_dashboard_binary()
         }
         Err(error) => {
             eprintln!("GitRun dashboard: recovery preflight failed: {error}");

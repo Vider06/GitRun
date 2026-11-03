@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-cli"
-version = "0.13.24"
+version = "0.13.25"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -1604,6 +1604,7 @@ dependencies = [
  "serde",
  "serde_json",
  "signal-hook 0.4.5",
+ "gitrun-platform",
 ]
 
 [[package]]
@@ -1620,7 +1621,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-dashboard-tauri"
-version = "0.11.8"
+version = "0.11.9"
 dependencies = [
  "gitrun-core",
  "gitrun-gsr",
@@ -1634,6 +1635,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "gitrun-platform",
 ]
 
 [[package]]
@@ -1652,7 +1654,7 @@ dependencies = [
 
 [[package]]
 name = "gitrun-gsr"
-version = "0.6.7"
+version = "0.6.8"
 dependencies = [
  "gitrun-core",
  "gitrun-exe",
@@ -1661,11 +1663,16 @@ dependencies = [
  "serde_json",
  "signal-hook 0.4.5",
  "thiserror 2.0.21",
+ "gitrun-platform",
 ]
 
 [[package]]
+name = "gitrun-platform"
+version = "0.1.0"
+
+[[package]]
 name = "gitrun-recovery"
-version = "0.6.16"
+version = "0.6.17"
 dependencies = [
  "gitrun-core",
  "gitrun-scheduler",
@@ -1675,11 +1682,12 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "gitrun-platform",
 ]
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.11.15"
+version = "0.11.16"
 dependencies = [
  "base64 0.23.1",
  "filetime",
@@ -1696,6 +1704,7 @@ dependencies = [
  "serde_json",
  "signal-hook 0.4.5",
  "thiserror 2.0.21",
+ "gitrun-platform",
 ]
 
 [[package]]

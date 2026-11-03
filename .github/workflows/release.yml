@@ -382,7 +382,12 @@ jobs:
           install -m 0755 "$binary" "$stage/usr/bin/gitrun"
           install -m 0644 version.txt "$stage/usr/share/gitrun/version.txt"
           install -m 0644 LICENSE README.md config/config.example.env "$stage/usr/share/doc/gitrun/"
-          install -m 0644 systemd/gitrun.service systemd/gitrun-gsr.service systemd/gitrun-control.service "$stage/usr/share/gitrun/"
+          for unit in gitrun.service gitrun-gsr.service gitrun-control.service; do
+            sed 's#/usr/local/bin/gitrun#/usr/bin/gitrun#g' "systemd/$unit" > "$stage/usr/share/gitrun/$unit"
+          done
+          grep -Fq 'ExecStart=/usr/bin/gitrun scheduler' "$stage/usr/share/gitrun/gitrun.service"
+          grep -Fq 'ExecStart=/usr/bin/gitrun gsr-watchdog' "$stage/usr/share/gitrun/gitrun-gsr.service"
+          grep -Fq 'ExecStart=/usr/bin/gitrun control-manager' "$stage/usr/share/gitrun/gitrun-control.service"
           tar --zstd -C "$stage" -cf "$out/GitRun-$VERSION-$TARGET-server.tar.zst" .
 
           case "$TARGET" in

@@ -44,27 +44,29 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                     | "updates"
             ) || (cfg!(test) && action == "ipc_ping")
         }
-        "write" => matches!(
-            action,
-            "connect_repository"
-                | "vm_configs_replace"
-                | "fast_stop"
-                | "vault_set"
-                | "vault_delete"
-                | "zizmor_install"
-                | "zizmor_disable"
-                | "logic_rules_save"
-                | "vm_save"
-                | "vm_delete"
-                | "hypervisor_respond"
-                | "kitty_save"
-                | "gitrun_settings_save"
-                | "config_save"
-                | "dashboard_settings_save"
-                | "service_control"
-                | "maintenance_task"
-                | "json_recovery"
-        ) || (cfg!(test) && action == "ipc_test_write"),
+        "write" => {
+            matches!(
+                action,
+                "connect_repository"
+                    | "vm_configs_replace"
+                    | "fast_stop"
+                    | "vault_set"
+                    | "vault_delete"
+                    | "zizmor_install"
+                    | "zizmor_disable"
+                    | "logic_rules_save"
+                    | "vm_save"
+                    | "vm_delete"
+                    | "hypervisor_respond"
+                    | "kitty_save"
+                    | "gitrun_settings_save"
+                    | "config_save"
+                    | "dashboard_settings_save"
+                    | "service_control"
+                    | "maintenance_task"
+                    | "json_recovery"
+            ) || (cfg!(test) && action == "ipc_test_write")
+        }
         _ => false,
     }
 }
@@ -747,5 +749,4 @@ mod tests {
 
         assert!(reply.is_boolean(), "first_run must return a boolean result");
     }
-
 }

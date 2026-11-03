@@ -518,11 +518,11 @@ fn app_read(action: &str, args: Value) -> Result<Value, String> {
     app_read_with(
         action,
         args,
-        gitrun_dashboard_tauri_lib::control_manager_enabled(),
+        gitrun_management::control_manager_enabled(),
         |operation, action, args| {
-            gitrun_dashboard_tauri_lib::control_manager_request(operation, action, args)
+            gitrun_management::control_manager_request(operation, action, args)
         },
-        |action, args| gitrun_dashboard_tauri_lib::management_tui_read(action, args),
+        |action, args| gitrun_management::management_tui_read(action, args),
     )
 }
 
@@ -563,11 +563,11 @@ fn app_write(action: &str, args: Value) -> Result<Value, String> {
     app_write_with(
         action,
         args,
-        gitrun_dashboard_tauri_lib::control_manager_enabled(),
+        gitrun_management::control_manager_enabled(),
         |operation, action, args| {
-            gitrun_dashboard_tauri_lib::control_manager_request(operation, action, args)
+            gitrun_management::control_manager_request(operation, action, args)
         },
-        |action, args| gitrun_dashboard_tauri_lib::management_tui_write(action, args),
+        |action, args| gitrun_management::management_tui_write(action, args),
     )
 }
 
@@ -2861,7 +2861,7 @@ fn maintenance_task_with_confirmation(
         return Ok((format!("{title} cancelled"), json!({"cancelled": true})));
     }
 
-    if gitrun_dashboard_tauri_lib::control_manager_enabled() {
+    if gitrun_management::control_manager_enabled() {
         return app_write("maintenance_task", json!({"task": task, "confirmed": true}))
             .map(|value| (title.to_owned(), value));
     }

@@ -1436,7 +1436,7 @@ jobs:
               "legacy Debian package identity": "Package: gitrun" in release and 'artifact="GitRun-$VERSION-linux-x86_64-deb.deb"' in release,
               "legacy updater target": 'artifact_for("linux-x86_64-deb")' in release,
               "legacy updater source tag": "--branch v1.8.23" in release,
-              "legacy updater SHA verification": "download_and_verify(&plan.artifact_url, &artifact.sha256" in release,
+              "legacy updater SHA verification": "download_and_verify(&download_url, &artifact.sha256" in release,
               "separate Server package identity": "name: gitrun-server" in release,
               "separate Desktop package identity": "name: gitrun-desktop" in release,
               "Desktop payload excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,

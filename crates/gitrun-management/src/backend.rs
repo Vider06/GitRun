@@ -585,7 +585,7 @@ fn persist_dashboard_config(config: &Config) -> Result<(), String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn is_first_run() -> bool {
+fn is_first_run() -> bool {
     matches!(
         gitrun_setup::installation_state(),
         gitrun_setup::InstallationState::FirstRun
@@ -883,7 +883,7 @@ fn trusted_executable_mode(mode: u32) -> bool {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn secure_private_key(private_key_path: String) -> Result<String, String> {
+fn secure_private_key(private_key_path: String) -> Result<String, String> {
     let path = validate_setup_value(&private_key_path, "private key path")?;
     let path_buf = PathBuf::from(&path);
     secure_private_key_file(&path_buf)?;
@@ -1128,7 +1128,7 @@ fn stream_privileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-pub async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
+async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical uninstall currently targets Linux x86_64".into());
     }
@@ -1274,7 +1274,7 @@ fn stream_unprivileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-pub async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
+async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical reinstall currently targets Linux x86_64".into());
     }
@@ -1361,7 +1361,7 @@ struct FirstSetupRequest {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-pub async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
+async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
     let FirstSetupRequest {
         auth_mode,
         token,
@@ -1629,7 +1629,7 @@ pub struct OverviewData {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_overview() -> Result<OverviewData, String> {
+fn get_overview() -> Result<OverviewData, String> {
     let config = load_config()?;
     let cutoff = recent_event_cutoff();
     let mut warnings = Vec::new();
@@ -1797,7 +1797,7 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
 /// Force-cancel a configured repository's workflow run using GitHub's run-level API.
 /// This intentionally affects every job in that workflow run, not one individual job.
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, String> {
+fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, String> {
     if run_id == 0 {
         return Err("workflow run ID must be greater than zero".into());
     }
@@ -1843,7 +1843,7 @@ pub fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String,
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
+fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request(
             "read",
@@ -2131,7 +2131,7 @@ fn append_dashboard_cpu_sample(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_host_resource_snapshot(
+fn get_host_resource_snapshot(
     force_refresh: Option<bool>,
 ) -> Result<DashboardHostResourceSnapshot, String> {
     const CACHE_TTL: Duration = Duration::from_secs(15);
@@ -2238,7 +2238,7 @@ static DASHBOARD_REPOSITORY_ACTIVITY_CACHE: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_repository_activity(
+fn get_repository_activity(
     force_refresh: Option<bool>,
 ) -> Result<DashboardRepositoryActivitySnapshot, String> {
     if control_manager_enabled() && !current_process_is_root() {
@@ -2382,7 +2382,7 @@ pub struct RepoDetail {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
+fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     let config = load_config()?;
     if !config
         .repositories
@@ -2454,7 +2454,7 @@ fn open_vault(config: &Config) -> Result<Vault, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
+fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request("read", "vault_secrets", serde_json::json!({}))?;
         return serde_json::from_value(value)
@@ -2481,7 +2481,7 @@ pub fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
 /// who needs to verify a value should re-enter it (overwriting is always
 /// available) rather than the dashboard round-tripping it back to them.
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), String> {
+fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), String> {
     const MAX_VAULT_SECRET_BYTES: usize = 1024 * 1024;
     if value.len() > MAX_VAULT_SECRET_BYTES {
         return Err("GitVault secret exceeds the 1 MiB safety limit".into());
@@ -2502,7 +2502,7 @@ pub fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
+fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
             "write",
@@ -2529,7 +2529,7 @@ pub struct GsrStatus {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_gsr_status() -> Result<GsrStatus, String> {
+fn get_gsr_status() -> Result<GsrStatus, String> {
     let config = load_config()?;
     #[cfg(target_os = "linux")]
     let watched_pid =
@@ -2558,7 +2558,7 @@ pub fn get_gsr_status() -> Result<GsrStatus, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
+fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
     let config = load_config()?;
     let limit = limit.unwrap_or(500).clamp(1, 500);
     let mut events = list_gsr_events_for_dashboard(&config, limit)?;
@@ -2576,7 +2576,7 @@ fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
+fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request(
             "read",
@@ -2655,7 +2655,7 @@ pub struct ZizmorDashboardInfo {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
+fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
     let config = load_config()?;
     let already_installed = gitrun_core::zizmor_is_installed();
     Ok(ZizmorDashboardInfo {
@@ -2677,7 +2677,7 @@ pub fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
 /// validation, then attempts the install so a failed download surfaces to
 /// the operator immediately rather than silently at the next job.
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, String> {
+fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request("write", "zizmor_install", serde_json::json!({}))?;
         return match value.get("status").and_then(serde_json::Value::as_str) {
@@ -2723,7 +2723,7 @@ fn persist_zizmor_config(config: &Config) -> Result<(), String> {
 /// the binary either: leaving it on disk is harmless and re-enabling
 /// later should not require a second download.
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn disable_zizmor() -> Result<(), String> {
+fn disable_zizmor() -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request("write", "zizmor_disable", serde_json::json!({}))?;
         return Ok(());
@@ -2738,13 +2738,13 @@ pub fn disable_zizmor() -> Result<(), String> {
 // ---------------------------------------------------------------------
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn list_logic_rules() -> Result<Vec<gitrun_scheduler::logic_containers::LogicRule>, String> {
+fn list_logic_rules() -> Result<Vec<gitrun_scheduler::logic_containers::LogicRule>, String> {
     let config = load_config()?;
     logic_rules_for_dashboard(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_logic_rules(
+fn save_logic_rules(
     rules: Vec<gitrun_scheduler::logic_containers::LogicRule>,
 ) -> Result<(), String> {
     let config = load_config()?;
@@ -2787,13 +2787,13 @@ fn persist_vm_configs_for_dashboard(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn list_vm_configs() -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
+fn list_vm_configs() -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
     let config = load_config()?;
     system_vm_configs(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), String> {
+fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), String> {
     let config = load_config()?;
     let mut all = system_vm_configs(&config)?;
     all.retain(|vm| !vm.name.eq_ignore_ascii_case(&config_entry.name));
@@ -2802,7 +2802,7 @@ pub fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<()
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn delete_vm_config(name: String) -> Result<(), String> {
+fn delete_vm_config(name: String) -> Result<(), String> {
     let config = load_config()?;
     let mut all = system_vm_configs(&config)?;
     let original_len = all.len();
@@ -2823,7 +2823,7 @@ pub fn delete_vm_config(name: String) -> Result<(), String> {
 // ---------------------------------------------------------------------
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn list_pending_hypervisor_decisions(
+fn list_pending_hypervisor_decisions(
 ) -> Result<Vec<gitrun_core::hypervisor_decision::PendingDecision>, String> {
     let config = load_config()?;
     #[cfg(target_os = "linux")]
@@ -2846,7 +2846,7 @@ pub fn list_pending_hypervisor_decisions(
 /// abandoned; it'll be retried automatically next time it's needed" rather
 /// than a generic failure.
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn respond_hypervisor_decision(
+fn respond_hypervisor_decision(
     vm_name: String,
     choice: gitrun_core::hypervisor_decision::DecisionChoice,
 ) -> Result<(), String> {
@@ -2887,7 +2887,7 @@ struct KittyDashboardData {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
+fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
     let config = load_config()?;
     let state_dir = Path::new(&config.state_dir);
     #[cfg(target_os = "linux")]
@@ -2928,7 +2928,7 @@ pub fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_kitty_settings(settings: KittySettings) -> Result<(), String> {
+fn save_kitty_settings(settings: KittySettings) -> Result<(), String> {
     let _write_guard = management_settings_write_guard()?;
     settings.validate().map_err(|error| error.to_string())?;
     let config = load_config()?;
@@ -2979,13 +2979,13 @@ fn gitrun_settings_for_dashboard(config: &Config) -> Result<GitRunSettings, Stri
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_gitrun_settings() -> Result<GitRunSettings, String> {
+fn get_gitrun_settings() -> Result<GitRunSettings, String> {
     let config = load_config()?;
     gitrun_settings_for_dashboard(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_gitrun_settings(
+fn save_gitrun_settings(
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
 ) -> Result<(), String> {
@@ -3028,7 +3028,7 @@ pub fn save_gitrun_settings(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> {
+fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> {
     let config = load_config()?;
     let settings = gitrun_settings_for_dashboard(&config)?;
     if !config
@@ -3113,7 +3113,7 @@ fn read_dock_requirements_local(
         .map_err(|error| format!("decode Dock requirements: {error}"))
 }
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
+fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
     let config = load_config()?;
     load_dock_requirements_for_repo(&config, &repo)
 }
@@ -3130,7 +3130,7 @@ struct RepoDashboardBootstrap {
 /// snapshot. The frontend previously issued four IPC calls that independently
 /// reloaded config and settings before it could render the policy form.
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, String> {
+fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, String> {
     let config = load_config()?;
     if !config
         .repositories
@@ -3179,7 +3179,7 @@ pub struct SecurityRuntimeSummary {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
+fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
     let config = load_config()?;
     let network = config.runner_network.trim().to_owned();
     let network_lower = network.to_ascii_lowercase();
@@ -3208,7 +3208,7 @@ pub fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> 
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_config() -> Result<Config, String> {
+fn get_config() -> Result<Config, String> {
     load_config()
 }
 
@@ -3297,7 +3297,7 @@ fn trusted_systemctl_path() -> Option<PathBuf> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
+fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
         return Err("GitRun system service controls currently target Linux".into());
     }
@@ -3501,7 +3501,7 @@ fn connect_repository_through_manager(repository: String) -> Result<serde_json::
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, String> {
+fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, String> {
     const CACHE_TTL: Duration = Duration::from_secs(10);
     let config_key = dashboard_config_cache_key();
     let cache = DASHBOARD_HEALTH_CACHE.get_or_init(|| std::sync::Mutex::new(None));
@@ -3676,7 +3676,7 @@ struct UpdateCheckResult {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn check_gitrun_updates() -> UpdateCheckResult {
+fn check_gitrun_updates() -> UpdateCheckResult {
     let mut candidates = Vec::new();
     if let Ok(path) = std::env::var("GITRUN_BINARY_PATH") {
         candidates.push(PathBuf::from(path));
@@ -3786,7 +3786,7 @@ pub fn check_gitrun_updates() -> UpdateCheckResult {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-pub async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
+async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("privileged runner-image update currently targets Linux x86_64".into());
     }
@@ -3851,7 +3851,7 @@ pub async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_dashboard_settings(
+fn save_dashboard_settings(
     updated: Config,
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
@@ -3953,7 +3953,7 @@ pub fn save_dashboard_settings(
 /// file, leaving unmanaged keys (including ones this Tauri build doesn't
 /// know about yet) untouched on disk.
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_config(updated: Config) -> Result<(), String> {
+fn save_config(updated: Config) -> Result<(), String> {
     persist_dashboard_config(&updated)
 }
 
@@ -4163,6 +4163,58 @@ pub fn management_write(
 /// Small bridge module: writing back to the same env-file format
 /// `gitrun-setup` without depending on any legacy dashboard crate. Mirrors the MANAGED_CONFIG_KEYS approach documented in that
 /// crate.
+
+/// Build the single Tauri invoke handler from the backend-owned command registry.
+/// Keeping the command macro expansion in this module avoids leaking Tauri's
+/// generated command glue into the dashboard facade.
+#[cfg(feature = "desktop")]
+pub fn invoke_handler(
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        is_first_run,
+        secure_private_key,
+        run_first_setup,
+        uninstall_gitrun,
+        reinstall_gitrun,
+        get_overview,
+        get_runner_snapshot,
+        fast_stop_workflow_run,
+        get_repository_activity,
+        get_host_resource_snapshot,
+        get_repo_detail,
+        get_repo_dashboard_bootstrap,
+        list_vault_secrets,
+        set_vault_secret,
+        delete_vault_secret,
+        get_gsr_status,
+        list_gsr_events,
+        list_service_logs,
+        get_zizmor_info,
+        accept_zizmor_license_and_install,
+        disable_zizmor,
+        list_logic_rules,
+        save_logic_rules,
+        list_vm_configs,
+        save_vm_config,
+        delete_vm_config,
+        list_pending_hypervisor_decisions,
+        respond_hypervisor_decision,
+        get_config,
+        get_security_runtime_summary,
+        get_dashboard_health,
+        get_kitty_dashboard_data,
+        save_kitty_settings,
+        control_gitrun_service,
+        check_gitrun_updates,
+        update_permanent_runners,
+        save_dashboard_settings,
+        save_config,
+        get_gitrun_settings,
+        save_gitrun_settings,
+        get_repo_api_policies,
+        get_dock_requirements,
+    ]
+}
 
 #[cfg(test)]
 mod tests {

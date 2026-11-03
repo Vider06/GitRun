@@ -554,7 +554,7 @@ jobs:
           cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
           [Desktop Entry]
           Type=Application
-          Name=GitRun Dashboard
+          Name=GitRun Desktop
           Comment=GitRun desktop management interface
           Exec=/opt/gitrun-desktop/GitRun.AppImage
           Terminal=false
@@ -742,8 +742,8 @@ jobs:
             "GitRun-Server-$VERSION-linux-aarch64-deb.deb" \
             "GitRun-Server-$VERSION-linux-x86_64-rpm.rpm" \
             "GitRun-Server-$VERSION-linux-aarch64-rpm.rpm" \
-            "GitRun-Server-$VERSION-linux-x86_64-apk.apk" \
-            "GitRun-Server-$VERSION-linux-aarch64-apk.apk" \
+            "GitRun-Server-$VERSION-linux-x86_64-musl-apk.apk" \
+            "GitRun-Server-$VERSION-linux-aarch64-musl-apk.apk" \
             "GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst" \
             "GitRun-Server-$VERSION-linux-x86_64-xbps.xbps" \
             "GitRun-Server-$VERSION-linux-aarch64-xbps.xbps" \
@@ -897,7 +897,7 @@ jobs:
               "linux-x86_64-desktop-appimage","linux-x86_64-desktop-deb",
               "linux-x86_64-server-deb","linux-aarch64-server-deb",
               "linux-x86_64-server-rpm","linux-aarch64-server-rpm",
-              "linux-x86_64-server-apk","linux-aarch64-server-apk",
+              "linux-x86_64-musl-server-apk","linux-aarch64-musl-server-apk",
               "linux-x86_64-server-arch","linux-x86_64-server-xbps",
               "linux-aarch64-server-xbps","linux-x86_64-musl-server-xbps",
               "linux-aarch64-musl-server-xbps",
@@ -1027,13 +1027,27 @@ jobs:
             echo "## Downloads"
             for arch in x86_64 aarch64; do
               echo "### $arch"
-              for abi in gnu musl; do
-                echo "#### $abi"
-                for file in release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-$abi-server.tar.gz release-assets/GitRun-Server-$VERSION-linux-$arch-*; do
-                  [ -f "$file" ] || continue
-                  name="${file##*/}"
-                  echo "- [$name](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$name)"
-                done
+              echo "#### GNU"
+              for file in \
+                "release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-gnu-server.tar.gz" \
+                "release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-gnu-server.tar.zst" \
+                "release-assets/GitRun-Server-$VERSION-linux-$arch-deb.deb" \
+                "release-assets/GitRun-Server-$VERSION-linux-$arch-rpm.rpm" \
+                "release-assets/GitRun-Server-$VERSION-linux-$arch-arch.pkg.tar.zst" \
+                "release-assets/GitRun-Server-$VERSION-linux-$arch-xbps.xbps"; do
+                [ -f "$file" ] || continue
+                name="${file##*/}"
+                echo "- [$name](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$name)"
+              done
+              echo "#### musl"
+              for file in \
+                "release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-musl-server.tar.gz" \
+                "release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-musl-server.tar.zst" \
+                "release-assets/GitRun-Server-$VERSION-linux-$arch-musl-apk.apk" \
+                "release-assets/GitRun-Server-$VERSION-linux-$arch-musl-xbps.xbps"; do
+                [ -f "$file" ] || continue
+                name="${file##*/}"
+                echo "- [$name](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$name)"
               done
             done
             echo "### Desktop"

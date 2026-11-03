@@ -414,10 +414,10 @@ jobs:
           fi
 
           case "$TARGET" in
-            x86_64-unknown-linux-gnu) arch=amd64; formats="deb rpm archlinux"; xbps_arch=x86_64; xbps_dep=glibc; cpu=x86_64 ;;
-            aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm"; xbps_arch=aarch64; xbps_dep=glibc; cpu=aarch64 ;;
-            x86_64-unknown-linux-musl) arch=amd64; formats="apk"; xbps_arch=x86_64-musl; xbps_dep=musl; cpu=x86_64-musl ;;
-            aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl; cpu=aarch64-musl ;;
+            x86_64-unknown-linux-gnu) arch=amd64; formats="deb rpm archlinux"; xbps_arch=x86_64; xbps_dep=glibc; base_dep=libc6; cpu=x86_64 ;;
+            aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm"; xbps_arch=aarch64; xbps_dep=glibc; base_dep=libc6; cpu=aarch64 ;;
+            x86_64-unknown-linux-musl) arch=amd64; formats="apk"; xbps_arch=x86_64-musl; xbps_dep=musl; base_dep=musl; cpu=x86_64-musl ;;
+            aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl; base_dep=musl; cpu=aarch64-musl ;;
             *) echo "Unsupported package target: $TARGET" >&2; exit 1 ;;
           esac
           sudo apt-get update -qq
@@ -445,17 +445,20 @@ jobs:
             - src: $package_stage/usr/share/doc/gitrun/config.example.env
               dst: /usr/share/doc/gitrun/config.example.env
           $unit_contents
+          depends: [$base_dep]
+          overrides:
+            deb:
+              depends: [libc6, policykit-1]
+            rpm:
+              depends: [glibc, polkit]
+            apk:
+              depends: [musl]
+            archlinux:
+              depends: [glibc]
           deb:
-            depends: [libc6, policykit-1]
             scripts:
               postinstall: packaging/gitrun-postinst
               preremove: packaging/gitrun-prerm
-          rpm:
-            depends: [glibc, polkit]
-          apk:
-            depends: [musl]
-          archlinux:
-            depends: [glibc]
           NFPM
           for format in $formats; do
             nfpm package --config "$RUNNER_TEMP/nfpm.yaml" --packager "$format" --target "$out"

@@ -41,6 +41,8 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                 | "repo_api_policies"
                 | "dock_requirements"
                 | "updates"
+                #[cfg(test)]
+                | "ipc_ping"
         ),
         "write" => matches!(
             action,
@@ -113,6 +115,17 @@ pub fn enabled() -> bool {
 
 /// Send one bounded, structured request to the system control service.
 pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, String> {
+    request_at(Path::new(SOCKET_PATH), operation, action, args)
+}
+
+/// Internal transport seam used by IPC contract tests. Production callers
+/// always use the fixed system socket through `request`.
+fn request_at(
+    socket_path: &Path,
+    operation: &str,
+    action: &str,
+    args: Value,
+) -> Result<Value, String> {
     if !matches!(operation, "read" | "write") {
         return Err("unsupported control-manager operation".into());
     }
@@ -125,7 +138,7 @@ pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, Stri
         use std::os::unix::net::UnixStream;
         use std::time::Duration;
 
-        let mut stream = UnixStream::connect(SOCKET_PATH).map_err(|error| {
+        let mut stream = UnixStream::connect(socket_path).map_err(|error| {
             format!(
                 "GitRun Control Manager is unavailable at {SOCKET_PATH}: {error}. Check that gitrun-control.service is installed and active."
             )
@@ -331,6 +344,16 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
         }
 
         let result = match request.operation.as_str() {
+            #[cfg(test)]
+            "read" if request.action == "ipc_ping" => {
+                let started = std::time::Instant::now();
+                Ok(serde_json::json!({
+                    "channel": "unix-domain-socket",
+                    "echo": request.args,
+                    "server_elapsed_us": started.elapsed().as_micros() as u64,
+                    "protocol": "newline-delimited-json"
+                }))
+            }
             "read" => super::management_tui_read(&request.action, request.args),
             "write" => {
                 if needs_confirmation(&request.action, &request.args)
@@ -533,4 +556,49 @@ mod tests {
             &serde_json::json!({"confirm_socket_opt_out":false})
         ));
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_ipc_round_trip_reports_channel_echo_and_latency() {
+        use std::os::unix::net::UnixListener;
+        use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "gitrun-control-ipc-test-{}-{nonce}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("bind isolated IPC test socket");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept IPC test client");
+            serve_client(stream);
+        });
+
+        let payload = serde_json::json!({
+            "origin": "gitrun-manage",
+            "probe": "read-only-ipc-contract",
+            "sequence": 1
+        });
+        let started = Instant::now();
+        let reply = request_at(&socket_path, "read", "ipc_ping", payload.clone())
+            .expect("IPC ping must complete");
+        let round_trip = started.elapsed();
+        server.join().expect("IPC test server must finish");
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert_eq!(reply["channel"], "unix-domain-socket");
+        assert_eq!(reply["protocol"], "newline-delimited-json");
+        assert_eq!(reply["echo"], payload);
+        assert!(reply["server_elapsed_us"].as_u64().is_some());
+        assert!(round_trip < std::time::Duration::from_secs(5));
+
+        eprintln!(
+            "IPC contract: channel=unix-domain-socket protocol=newline-delimited-json round_trip_ms={:.3} server_elapsed_us={}",
+            round_trip.as_secs_f64() * 1_000.0,
+            reply["server_elapsed_us"].as_u64().unwrap_or_default()
+        );
+    }
+
 }

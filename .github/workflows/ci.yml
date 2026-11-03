@@ -2208,7 +2208,27 @@ jobs:
           source "$RUNNER_TEMP/ci-lib.sh"
           rc=0
           ci_run "Linux ABI, distro, package manager and init-system detection" cargo test --locked -p gitrun-platform || rc=1
-          ci_run "Android guard coverage at every executable entry point" bash scripts/test-platform-entrypoints.sh || rc=1
+          check_android_entrypoint_guards() {
+            local file
+            local entrypoints=(
+              crates/gitrun-cli/src/main.rs
+              crates/gitrun-scheduler/src/main.rs
+              crates/gitrun-gsr/src/main.rs
+              crates/gitrun-gsr/src/bin/gitrun-api.rs
+              crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs
+              crates/gitrun-recovery/src/main.rs
+              crates/gitrun-dashboard-tauri/src-tauri/src/main.rs
+            )
+            for file in "${entrypoints[@]}"; do
+              test -f "$file" || { ci_err "missing executable entry point: $file"; return 1; }
+              awk '
+                /^fn main\(\)/ { main_line = NR; in_main = 1; next }
+                in_main && /ensure_supported_runtime\(\)/ { guard_line = NR; exit }
+                END { if (!main_line || !guard_line || guard_line - main_line > 6) exit 1 }
+              ' "$file" || { ci_err "Android runtime guard missing or too late in $file"; return 1; }
+            done
+          }
+          ci_run "Android guard coverage at every executable entry point" check_android_entrypoint_guards || rc=1
           ci_run "Minimal runner bootstrap carries the platform crate" cargo test --locked -p gitrun-setup bootstrap_lock_matches_the_minimal_workspace || rc=1
           ci_run "Minimal runner Dockerfile includes all bootstrap crates" cargo test --locked -p gitrun-setup bootstrap_dockerfile_uses_minimal_gsr_build_context_and_original_bash || rc=1
           ci_run "Updater release-manifest target selection and signature contracts" cargo test --locked -p gitrun-updater || rc=1

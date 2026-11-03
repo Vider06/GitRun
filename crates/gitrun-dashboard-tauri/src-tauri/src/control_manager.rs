@@ -138,7 +138,8 @@ fn request_at(
 
         let mut stream = UnixStream::connect(socket_path).map_err(|error| {
             format!(
-                "GitRun Control Manager is unavailable at {SOCKET_PATH}: {error}. Check that gitrun-control.service is installed and active."
+                "GitRun Control Manager is unavailable at {}: {error}. Check that gitrun-control.service is installed and active.",
+                socket_path.display()
             )
         })?;
         stream
@@ -188,7 +189,7 @@ fn request_at(
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (operation, action, args);
+        let _ = (socket_path, operation, action, args);
         Err("the persistent GitRun Control Manager is currently Linux-only".into())
     }
 }

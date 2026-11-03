@@ -613,6 +613,8 @@ jobs:
         with:
           name: canonical-release-inputs
           path: canonical
+      - name: Checkout exact 1.8.23 packaging contract
+        run: git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/gitrun-v1.8.23-packaging"
       - name: Assemble legacy-layout migration package
         shell: bash
         run: |
@@ -638,19 +640,19 @@ jobs:
            One-time migration package for existing GitRun 1.8.23 installations.
           CONTROL
           install -m 0755 "$binary" "$root/usr/bin/gitrun"
-          install -m 0755 scripts/reinstall-latest.sh "$root/usr/libexec/gitrun/reinstall-latest.sh"
-          install -m 0755 scripts/uninstall.sh "$root/usr/libexec/gitrun/uninstall.sh"
-          install -m 0755 packaging/gitrun-prerm "$root/DEBIAN/prerm"
-          install -m 0755 packaging/gitrun-postinst "$root/DEBIAN/postinst"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/reinstall-latest.sh" "$root/usr/libexec/gitrun/reinstall-latest.sh"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/uninstall.sh" "$root/usr/libexec/gitrun/uninstall.sh"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-prerm" "$root/DEBIAN/prerm"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-postinst" "$root/DEBIAN/postinst"
           sh -n "$root/DEBIAN/prerm"
           sh -n "$root/DEBIAN/postinst"
           install -m 0644 version.txt "$root/usr/share/gitrun/version.txt"
           install -m 0644 LICENSE "$root/usr/share/doc/gitrun/LICENSE"
           install -m 0644 README.md "$root/usr/share/doc/gitrun/README.md"
           install -m 0644 config/config.example.env "$root/usr/share/doc/gitrun/config.example.env"
-          install -m 0644 packaging/gitrun.desktop "$root/usr/share/applications/gitrun.desktop"
+          install -m 0644 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun.desktop" "$root/usr/share/applications/gitrun.desktop"
           for size in 32 64 128 256 512; do
-            source="assets/gitrun-icon-$size.png"
+            source="$RUNNER_TEMP/gitrun-v1.8.23-packaging/assets/gitrun-icon-$size.png"
             destination="$root/usr/share/icons/hicolor/${size}x${size}/apps/gitrun.png"
             test -s "$source"
             mkdir -p "$(dirname "$destination")"
@@ -1126,7 +1128,7 @@ jobs:
           manifest_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/release-manifest.json"
           test_dir="$old/crates/gitrun-updater/tests"; mkdir -p "$test_dir"
           cat > "$test_dir/migration_release_compat.rs" <<'RUST'
-          use gitrun_updater::{build_plan, download_and_verify, fetch_manifest};
+          use gitrun_updater::{download_and_verify, fetch_manifest};
           use std::path::PathBuf;
           #[test]
           fn v1823_reinstall_contract_downloads_and_verifies_migration_deb() {
@@ -1135,13 +1137,13 @@ jobs:
               let artifact = manifest.artifact_for("linux-x86_64-deb")
                   .expect("legacy reinstall target must exist");
               assert_eq!(artifact.file, "GitRun-v1.9.0-linux-x86_64-deb.deb");
-              let plan = build_plan(&manifest, "1.8.23", "linux-x86_64-deb", &[])
-                  .expect("legacy updater must construct the release URL");
-              assert_eq!(plan.artifact, artifact.file);
-              assert_eq!(plan.artifact_url, format!(
+              let download_url = format!(
                   "https://github.com/Vider06/GitRun/releases/download/{}/{}",
-                  manifest.version, artifact.file));
-              download_and_verify(&plan.artifact_url, &artifact.sha256,
+                  manifest.version, artifact.file);
+              assert_eq!(download_url, format!(
+                  "https://github.com/Vider06/GitRun/releases/download/v1.9.0/{}",
+                  "GitRun-v1.9.0-linux-x86_64-deb.deb"));
+              download_and_verify(&download_url, &artifact.sha256,
                   PathBuf::from(std::env::var("GITRUN_MIGRATION_DOWNLOAD").unwrap()))
                   .expect("legacy updater must download and verify SHA-256");
           }

@@ -385,7 +385,7 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
                 "server_elapsed_us": dispatch_started.elapsed().as_micros() as u64,
                 "protocol": "newline-delimited-json"
             })),
-            "read" => super::management_tui_read(&request.action, request.args),
+            "read" => super::management_read(&request.action, request.args),
             "write" => {
                 if needs_confirmation(&request.action, &request.args)
                     && !request
@@ -408,7 +408,7 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
                             .ok_or("maintenance task name is required")?,
                     )
                 } else {
-                    super::management_tui_write(&request.action, request.args)
+                    super::management_write(&request.action, request.args)
                 }
             }
             _ => unreachable!("operation was validated above"),

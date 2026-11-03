@@ -634,4 +634,48 @@ mod tests {
             reply["server_elapsed_us"].as_u64().unwrap_or_default()
         );
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_ipc_rejects_unallowlisted_and_unconfirmed_commands() {
+        use std::os::unix::net::UnixListener;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "gitrun-control-ipc-deny-test-{}-{nonce}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("bind isolated IPC test socket");
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().expect("accept IPC test client");
+                serve_client(stream);
+            }
+        });
+
+        let denied = request_at(
+            &socket_path,
+            "write",
+            "run_shell",
+            serde_json::json!({"command":"true"}),
+        )
+        .expect_err("arbitrary shell actions must be rejected");
+        assert!(denied.contains("unsupported control-manager action"));
+
+        let unconfirmed = request_at(
+            &socket_path,
+            "write",
+            "maintenance_task",
+            serde_json::json!({"task":"update"}),
+        )
+        .expect_err("maintenance actions must require explicit confirmation");
+        assert!(unconfirmed.contains("requires explicit confirmation"));
+
+        server.join().expect("IPC denial server must finish");
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
 }

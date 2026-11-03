@@ -286,7 +286,7 @@ jobs:
 
   collect:
     name: Collect canonical target builds
-    needs: [prepare, collect, package-server, package-dashboard]
+    needs: [prepare, build-server, build-dashboard]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

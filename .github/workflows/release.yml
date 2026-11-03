@@ -644,7 +644,7 @@ jobs:
           done
           # Inspect the native package metadata and payloads without executing foreign-architecture binaries.
           for rpm_file in "$root"/GitRun-"$VERSION"-linux-*-rpm.rpm; do
-            rpm -qp --qf '%{NAME} %{VERSION}\\n' "$rpm_file" | grep -Fx "gitrun $VERSION_NUMBER"
+            rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun $VERSION_NUMBER"
             rpm -qpl "$rpm_file" | grep -Fxq /usr/bin/gitrun
           done
           for apk_file in "$root"/GitRun-"$VERSION"-linux-*-apk.apk; do
@@ -661,7 +661,7 @@ jobs:
             unzip -p "$root/library.zip" "$member" | jq -e 'type == "object" or type == "array"' >/dev/null
           done
 
-          (cd "$root" && sha256sum * > SHA256SUMS)
+          (cd "$root" && sha256sum * > SHA256SUMS && sha256sum -c SHA256SUMS)
       - name: Upload validated release payload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

@@ -3979,10 +3979,7 @@ fn management_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, 
 
 /// Read live dashboard data from its existing command handlers. Args use
 /// snake_case field names and JSON so callers do not need private response DTOs.
-pub fn management_read(
-    action: &str,
-    args: serde_json::Value,
-) -> Result<serde_json::Value, String> {
+pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
     match action {
         "first_run" => Ok(serde_json::Value::Bool(is_first_run())),
         "overview" => management_value(get_overview()?),
@@ -4007,9 +4004,9 @@ pub fn management_read(
                 .unwrap_or(false),
         ))?),
         "repo_detail" => management_value(get_repo_detail(management_arg(&args, "repo")?)?),
-        "repo_bootstrap" => management_value(get_repo_dashboard_bootstrap(
-            management_arg(&args, "repo")?,
-        )?),
+        "repo_bootstrap" => management_value(get_repo_dashboard_bootstrap(management_arg(
+            &args, "repo",
+        )?)?),
         "config" => management_value(get_config()?),
         "gitrun_settings" => management_value(get_gitrun_settings()?),
         "security_summary" => management_value(get_security_runtime_summary()?),
@@ -4057,8 +4054,7 @@ pub fn management_write(
             management_arg(&args, "repository")?,
         )?),
         "vm_configs_replace" => {
-            let configs: Vec<gitrun_scheduler::vm::VmConfig> =
-                management_arg(&args, "configs")?;
+            let configs: Vec<gitrun_scheduler::vm::VmConfig> = management_arg(&args, "configs")?;
             // Reuse the scheduler's loader validation by temporarily using its
             // public save API only in developer installs; system installs use
             // the existing fixed-purpose privileged writer after structural
@@ -4147,13 +4143,13 @@ pub fn management_write(
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
-        "service_control" => management_value(control_gitrun_service(management_arg(
-            &args, "action",
-        )?)?),
+        "service_control" => {
+            management_value(control_gitrun_service(management_arg(&args, "action")?)?)
+        }
         "json_recovery" => {
-            let action = gitrun_recovery::JsonRecoveryAction::parse(
-                &management_arg::<String>(&args, "action")?,
-            )?;
+            let action = gitrun_recovery::JsonRecoveryAction::parse(&management_arg::<String>(
+                &args, "action",
+            )?)?;
             management_value(gitrun_recovery::run_json_recovery_action(action)?)
         }
         other => Err(format!("unsupported management write action: {other}")),
@@ -4168,8 +4164,7 @@ pub fn management_write(
 /// Keeping the command macro expansion in this module avoids leaking Tauri's
 /// generated command glue into the dashboard facade.
 #[cfg(feature = "desktop")]
-pub fn invoke_handler(
-) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         is_first_run,
         secure_private_key,

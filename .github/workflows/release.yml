@@ -186,112 +186,19 @@ jobs:
             .gitrun-cargo
             target
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-release-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}
-      - name: Package canonical payload and native formats
+      - name: Create canonical updater archive and target binary
         shell: bash
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/assets"
-          stage="$RUNNER_TEMP/stage"
+          out="$RUNNER_TEMP/canonical"
           binary="target/$TARGET/release/gitrun"
-          rm -rf "$out" "$stage"
-          mkdir -p "$out" "$stage/usr/bin" "$stage/usr/share/gitrun" "$stage/usr/share/doc/gitrun"
-          install -m 0755 "$binary" "$stage/usr/bin/gitrun"
-          install -m 0644 version.txt "$stage/usr/share/gitrun/version.txt"
-          install -m 0644 LICENSE README.md config/config.example.env "$stage/usr/share/doc/gitrun/"
-          install -m 0644 systemd/gitrun.service systemd/gitrun-gsr.service systemd/gitrun-control.service "$stage/usr/share/gitrun/"
-          tar --zstd -C "$stage" -cf "$out/GitRun-$VERSION-$TARGET-server.tar.zst" .
-          update_root="$RUNNER_TEMP/update-root"
-          rm -rf "$update_root"
-          mkdir -p "$update_root"
-          install -m 0755 "$binary" "$update_root/gitrun"
-          install -m 0644 version.txt "$update_root/version.txt"
-          install -m 0644 LICENSE README.md config/config.example.env "$update_root/"
-          tar -C "$update_root" -czf "$out/GitRun-$VERSION-$TARGET-server.tar.gz" .
-
-          case "$TARGET" in
-            x86_64-unknown-linux-gnu) arch=amd64; formats="deb rpm archlinux"; xbps_arch=x86_64; xbps_dep=glibc ;;
-            aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm"; xbps_arch=aarch64; xbps_dep=glibc ;;
-            x86_64-unknown-linux-musl) arch=amd64; formats="apk"; xbps_arch=x86_64-musl; xbps_dep=musl ;;
-            aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl ;;
-            *) echo "Unsupported target: $TARGET" >&2; exit 1 ;;
-          esac
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm
-          command -v go >/dev/null
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
-          export PATH="$RUNNER_TEMP/bin:$PATH"
-          cat > "$RUNNER_TEMP/nfpm.yaml" <<NFPM
-          name: gitrun
-          arch: $arch
-          platform: linux
-          version: $VERSION_NUMBER
-          maintainer: Vider06
-          description: GitRun headless server, scheduler, runner manager and recovery CLI
-          license: Apache-2.0
-          contents:
-            - src: $stage/usr/bin/gitrun
-              dst: /usr/bin/gitrun
-            - src: $stage/usr/share/gitrun/version.txt
-              dst: /usr/share/gitrun/version.txt
-            - src: $stage/usr/share/doc/gitrun/LICENSE
-              dst: /usr/share/doc/gitrun/LICENSE
-            - src: $stage/usr/share/doc/gitrun/README.md
-              dst: /usr/share/doc/gitrun/README.md
-            - src: $stage/usr/share/doc/gitrun/config.example.env
-              dst: /usr/share/doc/gitrun/config.example.env
-            - src: $stage/usr/share/gitrun/gitrun.service
-              dst: /usr/lib/systemd/system/gitrun.service
-            - src: $stage/usr/share/gitrun/gitrun-gsr.service
-              dst: /usr/lib/systemd/system/gitrun-gsr.service
-            - src: $stage/usr/share/gitrun/gitrun-control.service
-              dst: /usr/lib/systemd/system/gitrun-control.service
-          deb:
-            depends: [libc6, policykit-1]
-            scripts:
-              postinstall: packaging/gitrun-postinst
-              preremove: packaging/gitrun-prerm
-          rpm:
-            depends: [glibc, polkit]
-          apk:
-            depends: [musl]
-          archlinux:
-            depends: [glibc]
-          NFPM
-          for format in $formats; do
-            nfpm package --config "$RUNNER_TEMP/nfpm.yaml" --packager "$format" --target "$out"
-            case "$format" in
-              deb) ext=deb; suffix=deb ;;
-              rpm) ext=rpm; suffix=rpm ;;
-              apk) ext=apk; suffix=apk ;;
-              archlinux) ext=pkg.tar.zst; suffix=arch ;;
-            esac
-            produced="$(find "$out" -maxdepth 1 -type f -name "gitrun*.$ext" -print -quit)"
-            test -n "$produced"
-            case "$TARGET" in x86_64-*) cpu=x86_64 ;; aarch64-*) cpu=aarch64 ;; esac
-            mv "$produced" "$out/GitRun-$VERSION-linux-$cpu-$suffix.$ext"
-          done
-
-          xbps_root="$RUNNER_TEMP/xbps"
-          mkdir -p "$xbps_root"
-          curl --fail --silent --show-error --location \
-            https://repo-default.voidlinux.org/static/xbps-static-latest.x86_64-musl.tar.xz \
-            -o "$RUNNER_TEMP/xbps-static.tar.xz"
-          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
-          xbps_create="$xbps_root/usr/bin/xbps-create"
-          test -x "$xbps_create"
-          (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-${VERSION_NUMBER}_1" \
-            -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
-            -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$stage")
-          xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
-          test -n "$xbps_file"
-          case "$TARGET" in
-            x86_64-unknown-linux-gnu) cpu=x86_64 ;;
-            aarch64-unknown-linux-gnu) cpu=aarch64 ;;
-            x86_64-unknown-linux-musl) cpu=x86_64-musl ;;
-            aarch64-unknown-linux-musl) cpu=aarch64-musl ;;
-          esac
-          mv "$xbps_file" "$out/GitRun-$VERSION-linux-$cpu-xbps.xbps"
-          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
+          rm -rf "$out"
+          mkdir -p "$out" "$RUNNER_TEMP/update-root"
+          install -m 0755 "$binary" "$out/gitrun-$TARGET"
+          install -m 0755 "$binary" "$RUNNER_TEMP/update-root/gitrun"
+          install -m 0644 version.txt "$RUNNER_TEMP/update-root/version.txt"
+          install -m 0644 LICENSE README.md config/config.example.env "$RUNNER_TEMP/update-root/"
+          tar -C "$RUNNER_TEMP/update-root" -czf "$out/GitRun-$VERSION-$TARGET-server.tar.gz" .
       - name: Upload immutable target artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -365,46 +272,10 @@ jobs:
           npm exec tauri build -- --bundles appimage
           appimage="$(find ../../target/release/bundle -type f -name '*.AppImage' -print -quit)"
           test -n "$appimage"
-          out="$RUNNER_TEMP/dashboard-assets"
-          stage="$RUNNER_TEMP/dashboard-stage"
-          rm -rf "$out" "$stage"
-          mkdir -p "$out" "$stage/opt/gitrun-dashboard" "$stage/usr/share/applications"
-          install -m 0755 "$appimage" "$stage/opt/gitrun-dashboard/GitRun.AppImage"
-          cat > "$stage/usr/share/applications/gitrun-dashboard.desktop" <<'DESKTOP'
-          [Desktop Entry]
-          Type=Application
-          Name=GitRun Dashboard
-          Comment=GitRun desktop management interface
-          Exec=/opt/gitrun-dashboard/GitRun.AppImage
-          Terminal=false
-          Categories=Development;System;
-          DESKTOP
-          cp "$stage/opt/gitrun-dashboard/GitRun.AppImage" "$out/GitRun-Dashboard-$VERSION-linux-x86_64.AppImage"
-          command -v go >/dev/null
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
-          export PATH="$RUNNER_TEMP/bin:$PATH"
-          cat > "$RUNNER_TEMP/dashboard-nfpm.yaml" <<NFPM
-          name: gitrun-dashboard
-          arch: amd64
-          platform: linux
-          version: $VERSION_NUMBER
-          maintainer: Vider06
-          description: GitRun Tauri Dashboard, independently installable from the server
-          license: Apache-2.0
-          depends: [libwebkit2gtk-4.1-0]
-          contents:
-            - src: $stage/opt/gitrun-dashboard/GitRun.AppImage
-              dst: /opt/gitrun-dashboard/GitRun.AppImage
-              file_info:
-                mode: 0755
-            - src: $stage/usr/share/applications/gitrun-dashboard.desktop
-              dst: /usr/share/applications/gitrun-dashboard.desktop
-          NFPM
-          nfpm package --config "$RUNNER_TEMP/dashboard-nfpm.yaml" --packager deb --target "$out"
-          deb="$(find "$out" -maxdepth 1 -type f -name 'gitrun-dashboard_*.deb' -print -quit)"
-          test -n "$deb"
-          mv "$deb" "$out/GitRun-Dashboard-$VERSION-linux-x86_64-deb.deb"
-          test "$(dpkg-deb -f "$out/GitRun-Dashboard-$VERSION-linux-x86_64-deb.deb" Package)" = gitrun-dashboard
+          out="$RUNNER_TEMP/dashboard-canonical"
+          rm -rf "$out"
+          mkdir -p "$out"
+          install -m 0755 "$appimage" "$out/GitRun-Dashboard-$VERSION-linux-x86_64.AppImage"
       - name: Upload independent Dashboard artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

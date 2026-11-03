@@ -284,11 +284,15 @@ fn contains_musl_loader(directory: &Path) -> bool {
 fn has_glibc_loader() -> bool {
     [
         "/lib64/ld-linux-x86-64.so.2",
+        "/usr/lib64/ld-linux-x86-64.so.2",
         "/lib/ld-linux-x86-64.so.2",
+        "/usr/lib/ld-linux-x86-64.so.2",
         "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
         "/lib/ld-linux-aarch64.so.1",
+        "/usr/lib/ld-linux-aarch64.so.1",
         "/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
         "/lib/ld-linux-armhf.so.3",
+        "/usr/lib/ld-linux-armhf.so.3",
     ]
     .iter()
     .any(|path| Path::new(path).is_file())

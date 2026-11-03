@@ -21,6 +21,8 @@ concurrency:
 env:
   RUST_VERSION: "1.99.0"
   RELEASE_TARGET: "x86_64-unknown-linux-gnu"
+  # Only x86_64 GNU is currently a validated release artifact. Add targets to the
+  # build/collect pipeline only after their native dependencies and package tests exist.
 
 jobs:
   release:
@@ -234,9 +236,9 @@ jobs:
           path: target
           # The manifest/lock fingerprint scopes dependency changes; the commit SHA makes the
           # cache immutable per build so updated artifacts can be saved for the next run.
-          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-${{ github.sha }}
+          key: gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v5-${{ env.RELEASE_TARGET }}-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-${{ github.sha }}
           restore-keys: |
-            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v4-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-
+            gitrun-${{ runner.os }}-${{ runner.arch }}-release-target-v5-${{ env.RELEASE_TARGET }}-${{ env.RUST_VERSION }}-${{ steps.release_cache_hashes.outputs.manifest_hash }}-
 
       - name: Install Linux build dependencies
         shell: bash

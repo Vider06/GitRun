@@ -47,7 +47,9 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), S
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut options = fs::OpenOptions::new();
-    options.read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     let mut file = options.open(path).map_err(|error| {
         SetupError::Command(format!(
             "unable to safely open GitHub App private key {}: {error}",
@@ -87,7 +89,8 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), S
     }
 
     let mut key = String::new();
-    file.take((1024 * 1024 + 1) as u64).read_to_string(&mut key)?;
+    file.take((1024 * 1024 + 1) as u64)
+        .read_to_string(&mut key)?;
     if key.len() > 1024 * 1024 {
         return Err(SetupError::Command(
             "GitHub App private key exceeds the 1 MiB safety limit".into(),

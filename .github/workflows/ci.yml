@@ -3,12 +3,11 @@ name: GitRun CI
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline map (needs):
 #    variables-verification ─┬─► environment
-#                            └─► detect ─► cargo-lock ─┬─ rust-lint · rust-test · rust-build · audit-rust
-#                                                       ├─ security-hardening · gsr-watchdog · runtime-contracts · systemd-verify · platform-compatibility · platform-target-check
-#                                                       ├─ ci-selftest · repository · workflows · shell · powershell
-#                                                       ├─ frontend ─► audit-node
-#                                                       └─ docker
-#    rust-lint + frontend ─► tauri · tauri-recovery
+#                            └─► detect ─► cargo-lock ─┬─ static checks · audits · Docker · systemd
+#                                                       └─ rust-lint
+#    rust-lint ─► rust-test ─► rust-build ─► platform-target-check
+#        ├─ security-hardening · gsr-watchdog · runtime-contracts · platform-compatibility
+#        └─ + frontend ─► tauri · tauri-recovery
 #    everything ─► summary (PR comment + Mermaid map) ─► cache-gc (push only)
 #
 #  Cache namespace:  gitrun-<epoch>-<os>-<arch>-<kind>-<details>-<hash>
@@ -1123,8 +1122,8 @@ jobs:
   # ───────────────────────────────────────────────────────── ci-selftest ──
   ci-selftest:
     name: CI helper self-test
-    needs: [cargo-lock, workflows]
-    if: needs.cargo-lock.outputs.workflows == 'true' && needs.workflows.result == 'success'
+    needs: cargo-lock
+    if: needs.cargo-lock.outputs.workflows == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1955,7 +1954,7 @@ jobs:
   security-hardening:
     name: Security hardening regression gate
     needs: [cargo-lock, rust-lint]
-    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2006,7 +2005,7 @@ jobs:
   gsr-watchdog:
     name: GSR watchdog lifecycle and failure detection
     needs: [cargo-lock, rust-lint]
-    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2042,7 +2041,7 @@ jobs:
   runtime-contracts:
     name: Runtime contracts and configuration integration
     needs: [cargo-lock, rust-lint]
-    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2205,7 +2204,7 @@ jobs:
   platform-target-check:
     name: Server + updater · ${{ matrix.target }}
     needs: [cargo-lock, rust-build]
-    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-build.result == 'success' || needs.rust-build.result == 'failure') }}
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2295,7 +2294,7 @@ jobs:
   platform-compatibility:
     name: Linux platform and updater target contracts
     needs: [cargo-lock, rust-lint]
-    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2355,7 +2354,7 @@ jobs:
   rust-test:
     name: Rust tests
     needs: [cargo-lock, rust-lint]
-    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -2406,7 +2405,7 @@ jobs:
   rust-build:
     name: Rust release build
     needs: [cargo-lock, rust-test]
-    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-test.result == 'success' || needs.rust-test.result == 'failure') }}
+    if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -2963,7 +2962,7 @@ jobs:
           environment|Runner environment|always|
           detect|Detect components|always|
           cargo-lock|Cargo.lock validation|rust|
-          ci-selftest|CI self-test|workflows|workflows
+          ci-selftest|CI self-test|workflows|
           repository|Hygiene and syntax|always|
           workflows|Workflow lint and security|workflows|
           shell|Shell|shell|
@@ -2993,12 +2992,13 @@ jobs:
             order+=("$id"); LABEL[$id]="$label"
             r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"
             case "$id" in
-              variables-verification) DEPS[$id]="–" ;;
-              environment|detect) DEPS[$id]="variables-verification" ;;
-              cargo-lock) DEPS[$id]="detect" ;;
-              *) DEPS[$id]="cargo-lock${extra:+, ${extra// /, }}" ;;
+              variables-verification) DEP_IDS[$id]="" ;;
+              environment|detect) DEP_IDS[$id]="variables-verification" ;;
+              cargo-lock) DEP_IDS[$id]="detect" ;;
+              *) DEP_IDS[$id]="cargo-lock${extra:+ $extra}" ;;
             esac
-            if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; }; then en=1; else en=0; fi
+            DEPS[$id]="${DEP_IDS[$id]// /, }"; DEPS[$id]="${DEPS[$id]:-–}"
+            if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; } || { [ "$id" = cargo-lock ] && [ "$detect_ok" != true ]; }; then en=1; else en=0; fi
             case "$r" in
               success) STATE[$id]=ok; nok=$((nok + 1)) ;;
               failure) STATE[$id]=fail; nfail=$((nfail + 1)) ;;
@@ -3007,8 +3007,7 @@ jobs:
                 if [ "$en" = 0 ]; then STATE[$id]=na; nna=$((nna + 1))
                 else
                   why=""
-                  blockers=""
-                  if [ "$id" != environment ] && [ "$id" != detect ] && [ "$id" != cargo-lock ]; then blockers="detect cargo-lock $extra"; fi
+                  blockers="${DEP_IDS[$id]:-}"
                   for b in $blockers; do
                     if [ "$(res "$b")" != success ]; then why="$why$b "; fi
                   done
@@ -3041,13 +3040,7 @@ jobs:
             printf '  verdict{{"%s"}}:::%s\n' "$head" "$([ "$verdict" = pass ] && echo ok || echo fail)"
             for id in "${order[@]}"; do
               n="${id//-/_}"
-              case "$id" in
-                variables-verification) ;;
-                environment|detect) echo "  variables_verification --> $n" ;;
-                cargo-lock) echo "  detect --> cargo_lock" ;;
-                *) echo "  cargo_lock --> $n" ;;
-              esac
-              for dep in ${extra:-}; do
+              for dep in ${DEP_IDS[$id]:-}; do
                 dep_node="${dep//-/_}"
                 echo "  $dep_node --> $n"
               done

@@ -1,6 +1,20 @@
 # Release history and historical verification
 
-Current source target: GitRun <!-- gitrun-version:start -->1.8.23<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+Current source target: GitRun <!-- gitrun-version:start -->1.9.0<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
+
+## GitRun 1.9.0 — Linux platform foundation, shared management backend and release split
+
+- **Source/product target:** `1.9.0`, recorded in `version.txt`. This entry describes source changes and does not assert that a signed multi-distribution release is published.
+- Add the shared `gitrun-platform` crate for conservative Linux distribution, libc ABI, package-manager and active init-system detection.
+- Keep GNU and musl Linux target identities distinct in CLI and scheduler update planning; unknown libc ABIs and unsupported architectures fail closed instead of being mislabeled as GNU.
+- Add `gitrun platform` to report host detection without implying that package installation, service integration or runner images are already supported on that host.
+- Extract management handlers, policy validation, persistence, typed dispatch and the privileged Control Manager protocol/service loop into the new headless-by-default `gitrun-management` crate. The Dashboard becomes a thin Tauri adapter; the CLI and system Control Manager no longer depend on the Dashboard crate.
+- Keep Recovery's engine headless by default and gate its graphical Tauri integration behind the optional `desktop` feature.
+- Split release outputs into independent Server and Desktop components. The Server workflow builds four GNU/musl x86_64/aarch64 targets and packages the canonical outputs into the declared native package/archive formats; Desktop is currently x86_64 Linux (DEB and AppImage).
+- Add a one-time 1.8.23-to-1.9.0 Debian migration package so the legacy updater can transition existing installations to the new Server package identity.
+- Restore native Debian runtime dependency metadata in the release package control file and validate each required dependency before including the package in release assets.
+- Reject Android, Termux and Android-based proot runtimes before CLI internal dispatch, scheduler, GSR, API, recovery and dashboard startup.
+- Bump only crates that consume the new platform library, keeping `Cargo.lock`, frontend bundle metadata and current-source Markdown markers aligned.
 
 ## GitRun 1.8.21 — system binary alias reconciliation
 

@@ -16,53 +16,57 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// dispatcher for arbitrary backend strings.
 fn action_is_allowed(operation: &str, action: &str) -> bool {
     match operation {
-        "read" => matches!(
-            action,
-            "first_run"
-                | "overview"
-                | "health"
-                | "runners"
-                | "host_resources"
-                | "repository_activity"
-                | "repo_detail"
-                | "repo_bootstrap"
-                | "config"
-                | "gitrun_settings"
-                | "security_summary"
-                | "vault_secrets"
-                | "gsr_status"
-                | "gsr_events"
-                | "service_logs"
-                | "zizmor"
-                | "logic_rules"
-                | "vm_configs"
-                | "hypervisor_decisions"
-                | "kitty"
-                | "repo_api_policies"
-                | "dock_requirements"
-                | "updates"
-        ),
-        "write" => matches!(
-            action,
-            "connect_repository"
-                | "vm_configs_replace"
-                | "fast_stop"
-                | "vault_set"
-                | "vault_delete"
-                | "zizmor_install"
-                | "zizmor_disable"
-                | "logic_rules_save"
-                | "vm_save"
-                | "vm_delete"
-                | "hypervisor_respond"
-                | "kitty_save"
-                | "gitrun_settings_save"
-                | "config_save"
-                | "dashboard_settings_save"
-                | "service_control"
-                | "maintenance_task"
-                | "json_recovery"
-        ),
+        "read" => {
+            matches!(
+                action,
+                "first_run"
+                    | "overview"
+                    | "health"
+                    | "runners"
+                    | "host_resources"
+                    | "repository_activity"
+                    | "repo_detail"
+                    | "repo_bootstrap"
+                    | "config"
+                    | "gitrun_settings"
+                    | "security_summary"
+                    | "vault_secrets"
+                    | "gsr_status"
+                    | "gsr_events"
+                    | "service_logs"
+                    | "zizmor"
+                    | "logic_rules"
+                    | "vm_configs"
+                    | "hypervisor_decisions"
+                    | "kitty"
+                    | "repo_api_policies"
+                    | "dock_requirements"
+                    | "updates"
+            ) || (cfg!(test) && action == "ipc_ping")
+        }
+        "write" => {
+            matches!(
+                action,
+                "connect_repository"
+                    | "vm_configs_replace"
+                    | "fast_stop"
+                    | "vault_set"
+                    | "vault_delete"
+                    | "zizmor_install"
+                    | "zizmor_disable"
+                    | "logic_rules_save"
+                    | "vm_save"
+                    | "vm_delete"
+                    | "hypervisor_respond"
+                    | "kitty_save"
+                    | "gitrun_settings_save"
+                    | "config_save"
+                    | "dashboard_settings_save"
+                    | "service_control"
+                    | "maintenance_task"
+                    | "json_recovery"
+            ) || (cfg!(test) && action == "ipc_test_write")
+        }
         _ => false,
     }
 }
@@ -113,6 +117,34 @@ pub fn enabled() -> bool {
 
 /// Send one bounded, structured request to the system control service.
 pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, String> {
+    request_at(Path::new(SOCKET_PATH), operation, action, args)
+}
+
+/// Internal transport seam used by IPC contract tests. Production callers
+/// always use the fixed system socket through `request`.
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+struct IpcTiming {
+    connect: std::time::Duration,
+    forward: std::time::Duration,
+    backward: std::time::Duration,
+}
+
+fn request_at(
+    socket_path: &Path,
+    operation: &str,
+    action: &str,
+    args: Value,
+) -> Result<Value, String> {
+    request_at_timed(socket_path, operation, action, args).map(|(reply, _)| reply)
+}
+
+fn request_at_timed(
+    socket_path: &Path,
+    operation: &str,
+    action: &str,
+    args: Value,
+) -> Result<(Value, IpcTiming), String> {
     if !matches!(operation, "read" | "write") {
         return Err("unsupported control-manager operation".into());
     }
@@ -125,11 +157,14 @@ pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, Stri
         use std::os::unix::net::UnixStream;
         use std::time::Duration;
 
-        let mut stream = UnixStream::connect(SOCKET_PATH).map_err(|error| {
+        let connect_started = std::time::Instant::now();
+        let mut stream = UnixStream::connect(socket_path).map_err(|error| {
             format!(
-                "GitRun Control Manager is unavailable at {SOCKET_PATH}: {error}. Check that gitrun-control.service is installed and active."
+                "GitRun Control Manager is unavailable at {}: {error}. Check that gitrun-control.service is installed and active.",
+                socket_path.display()
             )
         })?;
+        let connect_elapsed = connect_started.elapsed();
         stream
             .set_read_timeout(Some(Duration::from_secs(180)))
             .map_err(|error| format!("unable to set control-manager read timeout: {error}"))?;
@@ -148,36 +183,48 @@ pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, Stri
             return Err("control-manager request exceeds the 1 MiB limit".into());
         }
         bytes.push(b'\n');
+        let forward_started = std::time::Instant::now();
         stream
             .write_all(&bytes)
             .map_err(|error| format!("send control-manager request: {error}"))?;
+        let forward_elapsed = forward_started.elapsed();
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
+        let backward_started = std::time::Instant::now();
         let read = reader
             .by_ref()
             .take((MAX_MESSAGE_BYTES + 1) as u64)
             .read_line(&mut line)
             .map_err(|error| format!("read control-manager response: {error}"))?;
+        let backward_elapsed = backward_started.elapsed();
         if read == 0 || read > MAX_MESSAGE_BYTES {
             return Err("invalid or oversized control-manager response".into());
         }
         let reply: Reply = serde_json::from_str(&line)
             .map_err(|error| format!("decode control-manager response: {error}"))?;
-        if reply.ok {
+        let value = if reply.ok {
             reply
                 .result
-                .ok_or_else(|| "control-manager returned no result".to_owned())
+                .ok_or_else(|| "control-manager returned no result".to_owned())?
         } else {
-            Err(reply
+            return Err(reply
                 .error
-                .unwrap_or_else(|| "control-manager operation failed".into()))
-        }
+                .unwrap_or_else(|| "control-manager operation failed".into()));
+        };
+        Ok((
+            value,
+            IpcTiming {
+                connect: connect_elapsed,
+                forward: forward_elapsed,
+                backward: backward_elapsed,
+            },
+        ))
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (operation, action, args);
+        let _ = (socket_path, operation, action, args);
         Err("the persistent GitRun Control Manager is currently Linux-only".into())
     }
 }
@@ -330,8 +377,24 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
             return Err("invalid control-manager action".into());
         }
 
+        #[cfg(test)]
+        let dispatch_started = std::time::Instant::now();
         let result = match request.operation.as_str() {
-            "read" => super::management_tui_read(&request.action, request.args),
+            #[cfg(test)]
+            "read" if request.action == "ipc_ping" => Ok(serde_json::json!({
+                "channel": "unix-domain-socket",
+                "echo": request.args,
+                "server_elapsed_us": dispatch_started.elapsed().as_micros() as u64,
+                "protocol": "newline-delimited-json"
+            })),
+            "read" => super::management_read(&request.action, request.args),
+            #[cfg(test)]
+            "write" if request.action == "ipc_test_write" => Ok(serde_json::json!({
+                "channel": "unix-domain-socket",
+                "echo": request.args,
+                "server_elapsed_us": dispatch_started.elapsed().as_micros() as u64,
+                "protocol": "newline-delimited-json"
+            })),
             "write" => {
                 if needs_confirmation(&request.action, &request.args)
                     && !request
@@ -354,7 +417,7 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
                             .ok_or("maintenance task name is required")?,
                     )
                 } else {
-                    super::management_tui_write(&request.action, request.args)
+                    super::management_write(&request.action, request.args)
                 }
             }
             _ => unreachable!("operation was validated above"),
@@ -532,5 +595,158 @@ mod tests {
             "dashboard_settings_save",
             &serde_json::json!({"confirm_socket_opt_out":false})
         ));
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_ipc_round_trip_reports_channel_echo_and_latency() {
+        use std::os::unix::net::UnixListener;
+        use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "gitrun-control-ipc-test-{}-{nonce}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("bind isolated IPC test socket");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept IPC test client");
+            serve_client(stream);
+        });
+
+        let payload = serde_json::json!({
+            "origin": "gitrun-manage",
+            "probe": "read-only-ipc-contract",
+            "sequence": 1
+        });
+        let started = Instant::now();
+        let (reply, timing) = request_at_timed(&socket_path, "read", "ipc_ping", payload.clone())
+            .expect("IPC ping must complete");
+        let round_trip = started.elapsed();
+        server.join().expect("IPC test server must finish");
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert_eq!(reply["channel"], "unix-domain-socket");
+        assert_eq!(reply["protocol"], "newline-delimited-json");
+        assert_eq!(reply["echo"], payload);
+        assert!(reply["server_elapsed_us"].as_u64().is_some());
+        assert!(round_trip < std::time::Duration::from_secs(5));
+
+        eprintln!(
+            "IPC contract: channel=unix-domain-socket protocol=newline-delimited-json connect_ms={:.3} forward_ms={:.3} backward_ms={:.3} round_trip_ms={:.3} server_elapsed_us={}",
+            timing.connect.as_secs_f64() * 1_000.0,
+            timing.forward.as_secs_f64() * 1_000.0,
+            timing.backward.as_secs_f64() * 1_000.0,
+            round_trip.as_secs_f64() * 1_000.0,
+            reply["server_elapsed_us"].as_u64().unwrap_or_default()
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_ipc_rejects_unallowlisted_and_unconfirmed_commands() {
+        use std::os::unix::net::UnixListener;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "gitrun-control-ipc-deny-test-{}-{nonce}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("bind isolated IPC test socket");
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().expect("accept IPC test client");
+                serve_client(stream);
+            }
+        });
+
+        let denied = request_at(
+            &socket_path,
+            "write",
+            "run_shell",
+            serde_json::json!({"command":"true"}),
+        )
+        .expect_err("arbitrary shell actions must be rejected");
+        assert!(denied.contains("unsupported control-manager action"));
+
+        let unconfirmed = request_at(
+            &socket_path,
+            "write",
+            "maintenance_task",
+            serde_json::json!({"task":"update"}),
+        )
+        .expect_err("maintenance actions must require explicit confirmation");
+        assert!(unconfirmed.contains("requires explicit confirmation"));
+
+        server.join().expect("IPC denial server must finish");
+        let _ = std::fs::remove_file(&socket_path);
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_ipc_dispatches_safe_test_write_in_both_directions() {
+        use std::os::unix::net::UnixListener;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "gitrun-control-ipc-write-test-{}-{nonce}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("bind isolated IPC test socket");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept IPC test client");
+            serve_client(stream);
+        });
+
+        let payload = serde_json::json!({
+            "origin": "dashboard-adapter",
+            "probe": "harmless-test-write",
+            "sequence": 2
+        });
+        let reply = request_at(&socket_path, "write", "ipc_test_write", payload.clone())
+            .expect("test-only write probe must complete");
+        server.join().expect("IPC write test server must finish");
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert_eq!(reply["channel"], "unix-domain-socket");
+        assert_eq!(reply["protocol"], "newline-delimited-json");
+        assert_eq!(reply["echo"], payload);
+        assert!(reply["server_elapsed_us"].as_u64().is_some());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_ipc_dispatches_a_real_read_through_shared_management_backend() {
+        use std::os::unix::net::UnixListener;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "gitrun-control-ipc-backend-test-{}-{nonce}.sock",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket_path).expect("bind isolated IPC test socket");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept IPC test client");
+            serve_client(stream);
+        });
+
+        let reply = request_at(&socket_path, "read", "first_run", serde_json::json!({}))
+            .expect("real read-only backend operation must complete");
+        server.join().expect("backend IPC server must finish");
+        let _ = std::fs::remove_file(&socket_path);
+
+        assert!(reply.is_boolean(), "first_run must return a boolean result");
     }
 }

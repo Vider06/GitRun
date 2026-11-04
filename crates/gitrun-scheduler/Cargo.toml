@@ -1,12 +1,13 @@
 [package]
 name = "gitrun-scheduler"
-version = "0.11.15"
+version = "0.11.16"
 edition = "2021"
 license = "Apache-2.0"
 description = "GitRun autoscaler: reconciles desired vs actual runner containers against GitHub Actions and Docker"
 
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
+gitrun-platform = { path = "../gitrun-platform" }
 gitrun-smart-scheduler = { path = "../gitrun-smart-scheduler" }
 gitrun-exe = { path = "../gitrun-exe" }
 gitrun-gsr = { path = "../gitrun-gsr" }

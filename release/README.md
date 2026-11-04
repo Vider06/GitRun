@@ -2,7 +2,7 @@
 
 ## Source versioning
 
-The root version.txt records the current product version, <!-- gitrun-version:start -->1.8.23<!-- gitrun-version:end -->, and is the product-version source of truth. The release workflow synchronizes its marked references in Markdown, the Tauri bundle configuration, frontend package.json and package-lock.json, then checks the synchronized release workspace.
+The root version.txt records the current product version, <!-- gitrun-version:start -->1.9.0<!-- gitrun-version:end -->, and is the product-version source of truth. The release workflow synchronizes its marked references in Markdown, the Tauri bundle configuration, frontend package.json and package-lock.json, then checks the synchronized release workspace.
 
 Cargo crates use independent SemVer versions. Bump only crates affected by a change and keep Cargo.lock aligned with their manifests. The frontend package lock must likewise match its package manifest.
 
@@ -30,25 +30,13 @@ The release check requires 11 distinct, safe member paths and valid JSON object/
 
 Routine setup and update operations fill missing reference-library entries and create only missing local backups; they do not overwrite existing entries. The explicit Restore Main Library operation restores the dedicated reference library and does not replace active operator configuration.
 
-## Deployment and Debian package installation
+## Deployment and package outputs
 
-Each stable release publishes a prebuilt Debian package for amd64/x86-64 named `GitRun-vVERSION-linux-x86_64-deb.deb`, alongside the signed release manifest and its checksum metadata. For standard Debian/Ubuntu installations, use that package rather than cloning the source tree and running the source installer.
+The 1.9.0 release workflow builds independent Server and Desktop components. Server binaries are built for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`. Canonical Server outputs are then packaged into the formats declared by the workflow: DEB and RPM for GNU x86_64/aarch64, APK for musl x86_64/aarch64, Arch for GNU x86_64, XBPS for GNU/musl x86_64/aarch64, and TAR.GZ/TAR.ZST archives for all four targets. Desktop is a separate x86_64 Linux build distributed as a DEB and AppImage.
 
-Example for v1.8.21 (check [GitHub Releases](https://github.com/Vider06/GitRun/releases) for the latest stable tag):
+The 1.9.0 release also has a one-time legacy Debian migration package for existing 1.8.23 installations. It retains the old `gitrun` package identity to let the 1.8.23 updater install the new Server binary; it is not for fresh installations. See [Linux platform compatibility](../docs/PLATFORM_SUPPORT.md) for deployment boundaries and the [release workflow](../.github/workflows/release.yml) for the authoritative asset list.
 
-```bash
-VERSION="v1.8.21"
-ASSET="GitRun-${VERSION}-linux-x86_64-deb.deb"
-curl -fL --proto '=https' --tlsv1.2 \
-  "https://github.com/Vider06/GitRun/releases/download/${VERSION}/${ASSET}" \
-  -o "${ASSET}"
-sudo apt install "./${ASSET}"
-gitrun setup --terminal
-gitrun doctor
-```
+For a specific published version, use [GitHub Releases](https://github.com/Vider06/GitRun/releases) and install only an asset actually present in that release's signed manifest. On Debian/Ubuntu, install the matching `GitRun-Server-...-deb.deb` package with APT. Docker and GitHub credentials remain operator-managed prerequisites. A package build or source version does not by itself prove that an asset has been published or that every host lifecycle is supported.
 
-The package targets Debian/Ubuntu-compatible amd64 systems. It does not install Docker or configure GitHub credentials on the operator's behalf; those are deployment prerequisites and first-run setup tasks. APT resolves declared package dependencies when installing the local package.
+The separately packaged Desktop application can be installed independently of the Server package. The CLI and Dashboard use the same `gitrun-management` backend; terminal-first users can run `gitrun setup --terminal` and `gitrun manage` without installing the Tauri runtime.
 
-You can complete first-run setup and manage GitRun from the **desktop GUI**. Terminal-first users can instead run `gitrun setup --terminal` and use `gitrun manage` to open the keyboard-driven TUI. Both interfaces share the same validated backend operations.
-
-Validate release-signing configuration, rollback behavior and target-host health before rollout. Keep the distinction between source metadata, signed release assets and installed runtime state explicit when diagnosing an installation.

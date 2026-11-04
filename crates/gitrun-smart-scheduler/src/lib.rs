@@ -3333,10 +3333,15 @@ fn utc_weekday_hour_slot(epoch: u64) -> usize {
     weekday * 24 + hour
 }
 
+#[cfg(all(unix, target_env = "musl"))]
+type SchedulerTimeT = i64;
+#[cfg(all(unix, not(target_env = "musl")))]
+type SchedulerTimeT = libc::time_t;
+
 fn weekday_hour_slot(epoch: u64) -> usize {
     #[cfg(unix)]
     {
-        let Ok(timestamp) = libc::time_t::try_from(epoch) else {
+        let Ok(timestamp) = SchedulerTimeT::try_from(epoch) else {
             return utc_weekday_hour_slot(epoch);
         };
         let mut local = unsafe { std::mem::zeroed::<libc::tm>() };

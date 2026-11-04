@@ -10,6 +10,7 @@ gitrun setup --terminal
 gitrun connect OWNER/REPOSITORY
 gitrun config
 gitrun doctor
+gitrun platform
 gitrun update --check
 gitrun update --force
 gitrun manage
@@ -17,6 +18,14 @@ gitrun dashboard
 gitrun rollback BACKUP_PATH
 gitrun cat
 ```
+
+## Host platform report
+
+```text
+gitrun platform
+```
+
+Prints the detected Linux distribution, architecture, libc ABI, recognized package manager and active init system. GNU and musl target identities are kept separate, and an unknown ABI or unsupported architecture is not guessed. This is a host-detection report, not a promise that a native GitRun package, service integration or runner image is available for that distribution. Android, Termux and Android-based proot environments are explicitly unsupported and are rejected before GitRun entry-point dispatch.
 
 ## Update safeguards
 
@@ -78,3 +87,5 @@ Setup and updater create missing local `.json.Back` snapshots without replacing 
 ## CPU history
 
 The Overview now draws a host CPU utilization trend from real Linux resource samples, refreshed periodically and bounded to the latest 60 samples in memory. The Management TUI can display a CPU sparkline when the backend returns that history. The graph is host-wide utilization, not per-job CPU usage; the history is currently process-local and resets when GitRun restarts.
+
+The CLI and terminal management console use the shared `gitrun-management` crate directly. They do not link the dashboard package or enable its Tauri feature. See the [management backend guide](../gitrun-management/README.md) for the shared action API and Control Manager boundary.

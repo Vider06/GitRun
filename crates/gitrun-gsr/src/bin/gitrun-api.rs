@@ -18,6 +18,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 
 fn main() {
+    if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
+        eprintln!("GitRun API: {reason}");
+        std::process::exit(2);
+    }
+
     match run() {
         Ok(()) => std::process::exit(0),
         Err(error) => {

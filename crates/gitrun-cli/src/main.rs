@@ -159,8 +159,8 @@ fn current_version() -> String {
 
 fn target_triple() -> Result<String, Box<dyn std::error::Error>> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu".into()),
-        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu".into()),
+        ("linux", _) => Ok(gitrun_platform::linux_target_triple()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Unsupported, error))?),
         ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc".into()),
         ("macos", "x86_64") => Ok("x86_64-apple-darwin".into()),
         ("macos", "aarch64") => Ok("aarch64-apple-darwin".into()),
@@ -1163,43 +1163,8 @@ fn verify_repository_access(
     auth: &GitHubAuth,
     repository: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut parts = repository.split('/');
-    let owner = parts.next().unwrap_or_default();
-    let name = parts.next().unwrap_or_default();
-    if owner.is_empty() || name.is_empty() || parts.next().is_some() {
-        return Err(format!("invalid repository: {repository}").into());
-    }
-
-    let token = auth.bearer_token()?;
-    let url = format!("https://api.github.com/repos/{owner}/{name}");
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?;
-    let response = client
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("X-GitHub-Api-Version", "2026-03-10")
-        .header("User-Agent", concat!("GitRun/", env!("CARGO_PKG_VERSION")))
-        .send()?;
-
-    match response.status() {
-        reqwest::StatusCode::OK => Ok(()),
-        reqwest::StatusCode::UNAUTHORIZED => Err(
-            "GitHub rejected the configured credentials (401 Unauthorized).".into()
-        ),
-        reqwest::StatusCode::FORBIDDEN => Err(
-            "GitHub denied access or rate-limited the request (403 Forbidden).".into()
-        ),
-        reqwest::StatusCode::NOT_FOUND => Err(
-            format!("repository {repository} was not found or the configured authentication cannot access it.").into()
-        ),
-        status => Err(format!(
-            "GitHub returned HTTP {} while checking {repository}.",
-            status.as_u16()
-        ).into()),
-    }
+    gitrun_setup::verify_github_repository_access(auth, repository)?;
+    Ok(())
 }
 
 fn atomic_replace_text(
@@ -1320,8 +1285,9 @@ fn terminal_setup_command(
                 );
             }
 
-            let private_key = std::fs::read_to_string(&private_key_path)
-                .map_err(|error| format!("unable to read private key: {error}"))?;
+            let (secured_path, private_key) =
+                gitrun_setup::secure_github_app_private_key(Path::new(&private_key_path))?;
+            let private_key_path = secured_path.to_string_lossy().into_owned();
             let app = AppAuth::new(
                 &app_id,
                 &installation_id,
@@ -1397,8 +1363,7 @@ fn terminal_setup_command(
     }
     payload.push_str(&format!("GITRUN_REPOSITORIES={}\n", repositories.join(",")));
 
-    // Create the credential-bearing setup request atomically with restrictive
-    // permissions. A plain write followed by chmod leaves a brief exposure
+    // Create the credential-bearing setup request atomically with restrictive    // permissions. A plain write followed by chmod leaves a brief exposure
     // window in /tmp before the permissions are tightened.
     #[cfg(unix)]
     {
@@ -1451,8 +1416,22 @@ fn terminal_setup_command(
         Ok(())
     })();
 
-    let _ = std::fs::remove_file(&path);
-    result
+    match std::fs::remove_file(&path) {
+        Ok(()) => result,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => result,
+        Err(error) => match result {
+            Ok(()) => Err(format!(
+                "GitRun setup completed, but the temporary credential request could not be removed at {}: {error}",
+                path.display()
+            )
+            .into()),
+            Err(setup_error) => Err(format!(
+                "{setup_error}; additionally, the temporary credential request could not be removed at {}: {error}",
+                path.display()
+            )
+            .into()),
+        },
+    }
 }
 
 fn connect_command(
@@ -1466,8 +1445,8 @@ fn connect_command(
     // On a protected system install, repository connection is routed through
     // the persistent Control Manager. This keeps the credential-bearing config
     // root-only and avoids a per-connect sudo/pkexec prompt.
-    if gitrun_dashboard_tauri_lib::control_manager_enabled() && !running_as_root() {
-        let result = gitrun_dashboard_tauri_lib::control_manager_request(
+    if gitrun_management::control_manager_enabled() && !running_as_root() {
+        let result = gitrun_management::control_manager_request(
             "write",
             "connect_repository",
             serde_json::json!({ "repository": repository }),
@@ -1643,13 +1622,20 @@ fn is_interactive_terminal_setup(command: &Command) -> bool {
 }
 
 fn main() {
+    // This guard runs before internal subcommand dispatch so Android cannot
+    // enter watchdog, privileged-control or normal CLI code paths.
+    if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
+        std::eprintln!("GitRun: {reason}");
+        std::process::exit(2);
+    }
+
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("gsr-watchdog")) {
         std::process::exit(run_gsr_watchdog());
     }
     // The persistent Control Manager is a systemd-only internal entry point. It
     // bypasses the interactive presenter and refuses to run without root.
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("control-manager")) {
-        std::process::exit(gitrun_dashboard_tauri_lib::run_control_manager());
+        std::process::exit(gitrun_management::run_control_manager());
     }
     // Initialize the shared presenter before Clap so help and argument errors
     // follow the same mascot policy as normal commands. Internal callers can
@@ -1717,6 +1703,7 @@ fn main() {
 
     let exit_code = match command {
         Command::Config => run_config(),
+        Command::Platform => run_platform(),
         Command::Desired {
             min,
             max,
@@ -1980,6 +1967,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
 
     match command {
         Command::Config | Command::Settings => ValidationState::Reading,
+        Command::Platform => ValidationState::Ready,
         Command::Desired { .. } => ValidationState::Working,
         Command::FastStop { .. } => ValidationState::Working,
         Command::Setup { .. } | Command::InstallRoot { .. } => ValidationState::Setup,
@@ -2060,6 +2048,8 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Command {
+    /// Print the detected Linux distribution, libc ABI and native integration tools.
+    Platform,
     /// Print the active configuration as JSON.
     Config,
     /// Compute the desired runner count for given inputs (used by tests/tooling).
@@ -2911,7 +2901,7 @@ fn doctor_service_check(service: &str) -> Result<String, String> {
 fn doctor_expected_protected_json_permissions() -> bool {
     system_install_paths().is_some()
         && !running_as_root()
-        && gitrun_dashboard_tauri_lib::control_manager_enabled()
+        && gitrun_management::control_manager_enabled()
 }
 
 fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usize) {
@@ -3135,29 +3125,73 @@ fn doctor_json_file_check(
     Ok("valid JSON syntax and top-level structure".into())
 }
 
+fn control_manager_config_read(
+    request: impl FnOnce(&str, &str, serde_json::Value) -> Result<serde_json::Value, String>,
+) -> Result<serde_json::Value, String> {
+    request("read", "config", serde_json::json!({}))
+}
+
 fn doctor_load_config() -> Result<Config, String> {
     let system_install = system_install_paths().is_some();
-    if system_install && !running_as_root() && gitrun_dashboard_tauri_lib::control_manager_enabled()
-    {
+    if system_install && !running_as_root() && gitrun_management::control_manager_enabled() {
         // The system env file may be root-owned and intentionally unreadable
-        // to the desktop account. Reuse the same allowlisted Control Manager
-        // read used by the dashboard instead of mistaking that ACL for broken
-        // configuration. A direct read remains the explicit fallback.
-        match gitrun_dashboard_tauri_lib::management_tui_read(
-            "config",
-            serde_json::json!({}),
-        ) {
-            Ok(value) => serde_json::from_value(value)
-                .map_err(|error| format!("Control Manager returned invalid configuration: {error}")),
-            Err(ipc_error) => load_config().map_err(|error| {
-                format!(
-                    "configuration could not be read directly ({error}); Control Manager read failed ({ipc_error})"
-                )
+        // to the desktop account. Read it through the persistent Control
+        // Manager socket; do not call the dashboard backend in-process here.
+        match control_manager_config_read(|operation, action, args| {
+            gitrun_management::control_manager_request(operation, action, args)
+        }) {
+            Ok(value) => serde_json::from_value(value).map_err(|error| {
+                format!("Control Manager returned invalid configuration: {error}")
             }),
+            Err(ipc_error) => Err(format!(
+                "Control Manager config read failed; refusing an in-process fallback: {ipc_error}"
+            )),
         }
     } else {
         load_config().map_err(|error| error.to_string())
     }
+}
+
+fn run_platform() -> i32 {
+    println!("GitRun platform compatibility report");
+    println!("Operating system: {}", std::env::consts::OS);
+    println!("Architecture: {}", std::env::consts::ARCH);
+
+    if let Some(info) = gitrun_platform::inspect_linux() {
+        println!(
+            "Distribution: {}",
+            info.distribution.as_deref().unwrap_or("unknown")
+        );
+        println!(
+            "Libc ABI: {}",
+            info.abi
+                .map(gitrun_platform::LinuxAbi::as_str)
+                .unwrap_or("unknown")
+        );
+        println!(
+            "Rust target identity: {}",
+            info.target_triple
+                .as_deref()
+                .unwrap_or("unknown / unsupported")
+        );
+        println!(
+            "Package manager: {}",
+            info.package_manager
+                .map(gitrun_platform::PackageManager::as_str)
+                .unwrap_or("unknown")
+        );
+        println!(
+            "Service manager: {}",
+            info.service_manager
+                .map(gitrun_platform::ServiceManager::as_str)
+                .unwrap_or("unknown")
+        );
+    }
+
+    println!(
+        "Note: host detection does not certify that a GitRun package or service integration is available for this target."
+    );
+    0
 }
 
 fn run_doctor() -> i32 {
@@ -3981,6 +4015,48 @@ fn report_critical_startup(report: &gitrun_recovery::RecoveryReport) {
     }
 }
 
+/// Launch the separately packaged Tauri dashboard without linking the CLI to
+/// the desktop runtime. The CLI and dashboard share gitrun-management, but
+/// only the dashboard executable enables the optional desktop integration.
+fn launch_dashboard_binary() -> i32 {
+    let mut candidates = Vec::new();
+    #[cfg(unix)]
+    {
+        candidates.push(PathBuf::from("/usr/bin/gitrun-dashboard-tauri"));
+        candidates.push(PathBuf::from("/usr/local/bin/gitrun-dashboard-tauri"));
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            candidates.push(parent.join(if cfg!(windows) {
+                "gitrun-dashboard-tauri.exe"
+            } else {
+                "gitrun-dashboard-tauri"
+            }));
+        }
+    }
+
+    for candidate in candidates {
+        if !candidate.is_file() {
+            continue;
+        }
+        return match std::process::Command::new(&candidate).status() {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(error) => {
+                eprintln!(
+                    "GitRun dashboard: unable to launch {}: {error}",
+                    candidate.display()
+                );
+                1
+            }
+        };
+    }
+
+    eprintln!(
+        "GitRun dashboard: the separate gitrun-dashboard-tauri executable was not found. Install the Dashboard package or place it beside the GitRun CLI."
+    );
+    1
+}
+
 fn run_dashboard() -> i32 {
     match gitrun_recovery::startup(gitrun_recovery::StartupTarget::Dashboard) {
         Ok(report) if report.update.applied => match reexec_self(&["dashboard"]) {
@@ -3995,8 +4071,16 @@ fn run_dashboard() -> i32 {
             if std::env::var_os("DISPLAY").is_some()
                 || std::env::var_os("WAYLAND_DISPLAY").is_some()
             {
-                gitrun_recovery::ui::run();
-                0
+                #[cfg(feature = "desktop")]
+                {
+                    gitrun_recovery::ui::run();
+                    0
+                }
+                #[cfg(not(feature = "desktop"))]
+                {
+                    eprintln!("GitRun Recovery UI is not included in this headless build. Install the Desktop package to use graphical recovery.");
+                    1
+                }
             } else {
                 eprintln!("GitRun Recovery UI is unavailable without a graphical session.");
                 1
@@ -4011,8 +4095,7 @@ fn run_dashboard() -> i32 {
                     eprintln!("GitRun: unable to persist startup health: {error}");
                 }
             }
-            gitrun_dashboard_tauri_lib::run();
-            0
+            launch_dashboard_binary()
         }
         Err(error) => {
             eprintln!("GitRun dashboard: recovery preflight failed: {error}");
@@ -4083,6 +4166,18 @@ fn run_repair_service() -> i32 {
 }
 
 #[cfg(target_os = "linux")]
+fn select_reinstall_debian_artifact(
+    manifest: &gitrun_updater::ReleaseManifest,
+) -> Result<(&gitrun_updater::ReleaseArtifact, &'static str), UpdateError> {
+    match manifest.artifact_for("linux-x86_64-server-deb") {
+        Ok(artifact) => Ok((artifact, "gitrun-server")),
+        Err(_) => manifest
+            .artifact_for("linux-x86_64-deb")
+            .map(|artifact| (artifact, "gitrun")),
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("verified GitRun reinstall requires administrator privileges".into());
@@ -4090,7 +4185,6 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !cfg!(target_arch = "x86_64") {
         return Err("the official Debian reinstall currently targets Linux x86_64".into());
     }
-
     // Auto-reinstall is pinned to the official GitRun trust anchor.
     // Do not allow transient environment overrides to disable verification.
     std::env::set_var(
@@ -4101,7 +4195,11 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true");
     let manifest = latest_manifest("Vider06/GitRun")?;
     let version = manifest.version.clone();
-    let artifact = manifest.artifact_for("linux-x86_64-deb")?;
+
+    // New releases install the independently packaged Server product. Keep
+    // the historical target as a compatibility fallback for repositories
+    // whose latest signed manifest predates the Server/Desktop split.
+    let (artifact, expected_package) = select_reinstall_debian_artifact(&manifest)?;
     let artifact_name = artifact.file.clone();
     let artifact_sha256 = artifact.sha256.clone();
     let url = format!(
@@ -4127,9 +4225,12 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
             .arg("Package")
             .output()?;
         if !package_name.status.success()
-            || String::from_utf8_lossy(&package_name.stdout).trim() != "gitrun"
+            || String::from_utf8_lossy(&package_name.stdout).trim() != expected_package
         {
-            return Err("verified release artifact is not the GitRun Debian package".into());
+            return Err(format!(
+                "verified release artifact is not the expected {expected_package} Debian package"
+            )
+            .into());
         }
         let package_version = std::process::Command::new("/usr/bin/dpkg-deb")
             .arg("-f")
@@ -4144,7 +4245,9 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let installed = std::process::Command::new("/usr/bin/dpkg-query")
-            .args(["-W", "-f=${db:Status-Status}", "gitrun"])
+            .arg("-W")
+            .arg("-f=${db:Status-Status}")
+            .arg(expected_package)
             .output()
             .is_ok_and(|output| {
                 output.status.success()
@@ -4163,7 +4266,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
 
-        // systemd units use /usr/local/bin/gitrun, while the .deb owns
+        // systemd units use /usr/local/bin/gitrun, while the Server .deb owns
         // /usr/bin/gitrun. Atomically refresh the service entrypoint as well.
         install_debian_cli_as_service_binary()?;
 
@@ -4177,7 +4280,9 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("Latest GitRun package installed. No saved configuration was found; run gitrun setup --terminal to configure the host.");
         }
-        println!("GitRun reinstall: PASS — installed verified release {version}");
+        println!(
+            "GitRun reinstall: PASS — installed verified {expected_package} release {version}"
+        );
         Ok(())
     })();
 
@@ -4778,8 +4883,7 @@ fn save_gitrun_settings_root_command(input_path: &str) -> Result<(), Box<dyn std
     settings.save(&destination)?;
     // The root scheduler treats this file as authorization policy. Keep it
     // root-owned and read-only to the desktop user's primary group; the user
-    // must use this authenticated helper rather than editing the policy JSON.
-    gitrun_setup::secure_system_settings_file(&destination, Some(requester_uid))?;
+    // must use this authenticated helper rather than editing the policy JSON.    gitrun_setup::secure_system_settings_file(&destination, Some(requester_uid))?;
     std::fs::File::open(&state_dir)?.sync_all()?;
     println!("GitRun security settings saved successfully.");
     Ok(())
@@ -5273,6 +5377,14 @@ mod internal_lifecycle_command_tests {
     }
 
     #[test]
+    fn platform_command_is_registered() {
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "platform"]).map(|cli| cli.command),
+            Ok(Some(Command::Platform))
+        ));
+    }
+
+    #[test]
     fn fix_update_commands_are_registered() {
         assert!(matches!(
             Cli::try_parse_from(["gitrun", "fix-update"]).map(|cli| cli.command),
@@ -5470,8 +5582,7 @@ mod internal_lifecycle_command_tests {
             std::ffi::OsString::from("--no-cat"),
             std::ffi::OsString::from("doctor"),
         ]));
-        // Clap global flags may appear after the subcommand too; mascot
-        // suppression must be recognized before parsing in either position.
+        // Clap global flags may appear after the subcommand too; mascot        // suppression must be recognized before parsing in either position.
         assert!(super::no_cat_override_requested([
             std::ffi::OsString::from("doctor"),
             std::ffi::OsString::from("--no-cat"),
@@ -5681,5 +5792,100 @@ mod doctor_json_validation_tests {
             .unwrap_err()
             .contains("16 MiB JSON safety limit"));
         std::fs::remove_file(large).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod control_manager_cli_routing_tests {
+    use super::control_manager_config_read;
+
+    #[test]
+    fn doctor_reads_protected_config_over_control_manager_ipc() {
+        let expected = serde_json::json!({"config_source":"manager"});
+        let actual = control_manager_config_read(|operation, action, args| {
+            assert_eq!(operation, "read");
+            assert_eq!(action, "config");
+            assert_eq!(args, serde_json::json!({}));
+            Ok(expected.clone())
+        })
+        .expect("manager config read should succeed");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn doctor_propagates_control_manager_transport_failures() {
+        let error = control_manager_config_read(|operation, action, _| {
+            assert_eq!(operation, "read");
+            assert_eq!(action, "config");
+            Err("manager socket unavailable".into())
+        })
+        .expect_err("IPC failure must remain visible to the caller");
+        assert_eq!(error, "manager socket unavailable");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod debian_reinstall_artifact_tests {
+    use super::*;
+
+    fn artifact(target: &str, file: &str) -> gitrun_updater::ReleaseArtifact {
+        gitrun_updater::ReleaseArtifact {
+            target: target.into(),
+            file: file.into(),
+            sha256: "a".repeat(64),
+            download_url: None,
+        }
+    }
+
+    fn manifest(
+        artifacts: Vec<gitrun_updater::ReleaseArtifact>,
+    ) -> gitrun_updater::ReleaseManifest {
+        gitrun_updater::ReleaseManifest {
+            name: "GitRun".into(),
+            version: "v1.9.0".into(),
+            git_commit: "test-commit-id".into(),
+            artifacts,
+            signature: None,
+            signature_key_id: None,
+            dependencies: Vec::new(),
+            runner_image: None,
+            repository: Some("Vider06/GitRun".into()),
+        }
+    }
+
+    #[test]
+    fn prefers_new_server_deb_when_both_targets_exist() {
+        let release = manifest(vec![
+            artifact("linux-x86_64-deb", "GitRun-v1.9.0-linux-x86_64-deb.deb"),
+            artifact(
+                "linux-x86_64-server-deb",
+                "GitRun-Server-v1.9.0-linux-x86_64-deb.deb",
+            ),
+        ]);
+        let (selected, package) =
+            select_reinstall_debian_artifact(&release).expect("Server DEB target should win");
+        assert_eq!(selected.target, "linux-x86_64-server-deb");
+        assert_eq!(package, "gitrun-server");
+    }
+
+    #[test]
+    fn retains_legacy_target_fallback_for_old_manifests() {
+        let release = manifest(vec![artifact(
+            "linux-x86_64-deb",
+            "GitRun-v1.8.23-linux-x86_64-deb.deb",
+        )]);
+        let (selected, package) = select_reinstall_debian_artifact(&release)
+            .expect("legacy DEB target should remain usable");
+        assert_eq!(selected.target, "linux-x86_64-deb");
+        assert_eq!(package, "gitrun");
+    }
+
+    #[test]
+    fn rejects_manifests_without_a_supported_debian_target() {
+        let release = manifest(vec![artifact(
+            "aarch64-unknown-linux-gnu",
+            "GitRun-Server-v1.9.0-aarch64-unknown-linux-gnu-server.tar.gz",
+        )]);
+        assert!(select_reinstall_debian_artifact(&release).is_err());
     }
 }

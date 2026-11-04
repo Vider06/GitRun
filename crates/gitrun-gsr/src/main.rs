@@ -10,6 +10,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn main() {
+    if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
+        eprintln!("gitrun-gsr: {reason}");
+        std::process::exit(2);
+    }
+
     let stopping = Arc::new(AtomicBool::new(false));
     if let Err(error) = install_signal_handlers(&stopping) {
         eprintln!("gitrun-gsr: failed to install signal handlers: {error}");

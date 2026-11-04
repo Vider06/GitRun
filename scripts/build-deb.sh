@@ -60,7 +60,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: Vider06
-Depends: libc6, policykit-1, libwebkit2gtk-4.1-0, libgtk-3-0
+Depends: libc6, policykit-1, libwebkit2gtk-4.1-0
 Description: GitRun self-contained GitHub Actions runner manager
  GitRun provides the GitRun CLI, scheduler, recovery path and Tauri dashboard
  through a single executable.

@@ -1,6 +1,6 @@
 [package]
 name = "gitrun-cli"
-version = "0.13.24"
+version = "0.13.25"
 edition = "2021"
 license = "Apache-2.0"
 description = "Command-line interface for GitRun"
@@ -9,16 +9,21 @@ description = "Command-line interface for GitRun"
 name = "gitrun"
 path = "src/main.rs"
 
+[features]
+default = []
+desktop = ["gitrun-recovery/desktop"]
+
 [dependencies]
 base64 = "0.23"
 gitrun-scheduler = { path = "../gitrun-scheduler" }
 gitrun-smart-scheduler = { path = "../gitrun-smart-scheduler" }
 gitrun-core = { path = "../gitrun-core" }
+gitrun-platform = { path = "../gitrun-platform" }
 gitrun-gsr = { path = "../gitrun-gsr" }
 gitrun-setup = { path = "../gitrun-setup" }
 gitrun-updater = { path = "../gitrun-updater" }
 gitrun-recovery = { path = "../gitrun-recovery" }
-gitrun-dashboard-tauri = { path = "../gitrun-dashboard-tauri/src-tauri" }
+gitrun-management = { path = "../gitrun-management" }
 clap = { version = "4", features = ["derive"] }
 crossterm = { version = "0.29", default-features = false, features = ["windows"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "crossterm_0_29", "scrolling-regions", "unstable-rendered-line-info"] }

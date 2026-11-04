@@ -12,6 +12,11 @@ const GSR_EVENTS_PATH: &str = "/run/gitrun/gsr-events.jsonl";
 const SUPERVISE_ARG: &str = "--supervise-runner";
 
 fn main() {
+    if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
+        eprintln!("gitrun-gsr-agent: {reason}");
+        std::process::exit(2);
+    }
+
     let config = match Config::from_env_file(GSR_POLICY_FILE) {
         Ok(config) => config,
         Err(error) => {

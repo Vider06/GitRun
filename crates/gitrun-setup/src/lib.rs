@@ -38,6 +38,159 @@ pub enum BootstrapAuth {
     },
 }
 
+/// Secure a user-supplied GitHub App PEM before any privileged setup process
+/// receives its path. Open without following symlinks, validate the opened
+/// inode, enforce a bounded regular file, and apply mode 0600 through the
+/// already-open descriptor to avoid chmod/path substitution races.
+pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), SetupError> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut options = fs::OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    let file = options.open(path).map_err(|error| {
+        SetupError::Command(format!(
+            "unable to safely open GitHub App private key {}: {error}",
+            path.display()
+        ))
+    })?;
+    let before = file.metadata()?;
+    if !before.is_file() {
+        return Err(SetupError::Command(
+            "GitHub App private key must be a regular file".into(),
+        ));
+    }
+    if before.nlink() != 1 {
+        return Err(SetupError::Command(
+            "GitHub App private key must not have additional hard links".into(),
+        ));
+    }
+    if before.len() > 1024 * 1024 {
+        return Err(SetupError::Command(
+            "GitHub App private key exceeds the 1 MiB safety limit".into(),
+        ));
+    }
+
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    let after = file.metadata()?;
+    if !after.is_file() || after.permissions().mode() & 0o777 != 0o600 {
+        return Err(SetupError::Command(
+            "GitHub App private key could not be secured to mode 0600".into(),
+        ));
+    }
+
+    let canonical = fs::canonicalize(path)?;
+    let path_metadata = fs::symlink_metadata(&canonical)?;
+    if path_metadata.file_type().is_symlink()
+        || !path_metadata.is_file()
+        || path_metadata.dev() != after.dev()
+        || path_metadata.ino() != after.ino()
+    {
+        return Err(SetupError::Command(
+            "GitHub App private key path changed while it was being secured".into(),
+        ));
+    }
+
+    let mut key = String::new();
+    file.take((1024 * 1024 + 1) as u64)
+        .read_to_string(&mut key)?;
+    if key.len() > 1024 * 1024 {
+        return Err(SetupError::Command(
+            "GitHub App private key exceeds the 1 MiB safety limit".into(),
+        ));
+    }
+    Ok((canonical, key))
+}
+
+/// Verify that the selected GitHub credentials can access a repository.
+/// Both interactive setup frontends call this same check before elevation.
+pub fn verify_github_repository_access(
+    auth: &gitrun_core::GitHubAuth,
+    repository: &str,
+) -> Result<(), SetupError> {
+    let mut parts = repository.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    if owner.is_empty()
+        || name.is_empty()
+        || parts.next().is_some()
+        || owner
+            .chars()
+            .any(|character| matches!(character, '?' | '#' | '%'))
+        || name
+            .chars()
+            .any(|character| matches!(character, '?' | '#' | '%'))
+    {
+        return Err(SetupError::InvalidRepository(repository.to_owned()));
+    }
+
+    let token = auth
+        .bearer_token()
+        .map_err(|error| SetupError::Command(format!("GitHub authentication failed: {error}")))?;
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|error| SetupError::Command(format!("unable to create GitHub client: {error}")))?;
+    let response = client
+        .get(format!("https://api.github.com/repos/{owner}/{name}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("X-GitHub-Api-Version", "2026-03-10")
+        .header("User-Agent", concat!("GitRun/", env!("CARGO_PKG_VERSION")))
+        .send()
+        .map_err(|error| SetupError::Command(format!("GitHub repository check failed: {error}")))?;
+
+    match response.status() {
+        reqwest::StatusCode::OK => Ok(()),
+        reqwest::StatusCode::UNAUTHORIZED => Err(SetupError::Command(
+            "GitHub rejected the configured credentials (401 Unauthorized).".into(),
+        )),
+        reqwest::StatusCode::FORBIDDEN => Err(SetupError::Command(
+            "GitHub denied access or rate-limited the request (403 Forbidden).".into(),
+        )),
+        reqwest::StatusCode::NOT_FOUND => Err(SetupError::Command(format!(
+            "repository {repository} was not found or the configured authentication cannot access it."
+        ))),
+        status => Err(SetupError::Command(format!(
+            "GitHub returned HTTP {} while checking {repository}.",
+            status.as_u16()
+        ))),
+    }
+}
+
+/// Convert the setup payload to the same authenticated API client used by the
+/// terminal setup, securely reopening App PEMs without following symlinks.
+pub fn verify_bootstrap_repository_access(
+    auth: &BootstrapAuth,
+    repository: &str,
+) -> Result<(), SetupError> {
+    let auth = match auth {
+        BootstrapAuth::Pat(token) => gitrun_core::GitHubAuth::Pat(token.clone()),
+        BootstrapAuth::GitHubApp {
+            app_id,
+            installation_id,
+            private_key_path,
+        } => {
+            let (_path, key) = secure_github_app_private_key(Path::new(private_key_path))?;
+            let app = gitrun_core::AppAuth::new(
+                app_id,
+                installation_id,
+                &key,
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(20),
+            )
+            .map_err(|error| {
+                SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
+            })?;
+            gitrun_core::GitHubAuth::App(app)
+        }
+    };
+    verify_github_repository_access(&auth, repository)
+}
+
 #[derive(Debug, Error)]
 pub enum SetupError {
     #[error("failed to create setup directory: {0}")]
@@ -1018,35 +1171,9 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
             validate_env_value(installation_id, "GITRUN_GITHUB_APP_INSTALLATION_ID")?;
             validate_env_value(private_key_path, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?;
 
-            let key_path = Path::new(private_key_path);
-            let metadata = fs::symlink_metadata(key_path).map_err(|error| {
-                SetupError::Command(format!(
-                    "unable to inspect GitHub App private key at {private_key_path}: {error}"
-                ))
-            })?;
-            if metadata.file_type().is_symlink() {
-                return Err(SetupError::Command(format!(
-                    "GitHub App private key must not be a symbolic link: {private_key_path}"
-                )));
-            }
-            if !metadata.is_file() {
-                return Err(SetupError::Command(format!(
-                    "GitHub App private key is not a regular file: {private_key_path}"
-                )));
-            }
-            let mode = metadata.permissions().mode() & 0o777;
-            if mode & 0o077 != 0 {
-                return Err(SetupError::Command(format!(
-                    "GitHub App private key must not be group/world accessible (mode {mode:o}); chmod it to 0600"
-                )));
-            }
-
-            let key = fs::read_to_string(key_path).map_err(|error| {
-                SetupError::Command(format!(
-                    "unable to read GitHub App private key at {private_key_path}: {error}"
-                ))
-            })?;
-            gitrun_core::AppAuth::new(
+            let (_canonical_path, key) =
+                secure_github_app_private_key(Path::new(private_key_path))?;
+            let app = gitrun_core::AppAuth::new(
                 app_id,
                 installation_id,
                 &key,
@@ -1056,6 +1183,11 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
             .map_err(|error| {
                 SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
             })?;
+            gitrun_core::GitHubAuth::App(app)
+                .bearer_token()
+                .map_err(|error| {
+                    SetupError::Command(format!("GitHub App token exchange failed: {error}"))
+                })?;
         }
     }
     Ok(())
@@ -2624,6 +2756,39 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn github_app_key_is_opened_without_symlinks_and_hardened_to_0600() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-private-key-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let key_path = root.join("app.pem");
+        fs::write(&key_path, "test-private-key").unwrap();
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let (canonical, contents) = secure_github_app_private_key(&key_path).unwrap();
+        assert_eq!(contents, "test-private-key");
+        assert_eq!(canonical, fs::canonicalize(&key_path).unwrap());
+        assert_eq!(
+            fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        let link_path = root.join("app-link.pem");
+        symlink(&key_path, &link_path).unwrap();
+        assert!(secure_github_app_private_key(&link_path).is_err());
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn only_the_debian_gitrun_compatibility_link_is_allowed_for_replacement() {

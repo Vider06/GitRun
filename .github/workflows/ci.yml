@@ -3,12 +3,11 @@ name: GitRun CI
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline map (needs):
 #    variables-verification ─┬─► environment
-#                            └─► detect ─► cargo-lock ─┬─ rust-lint · rust-test · rust-build · audit-rust
-#                                                       ├─ security-hardening · gsr-watchdog · runtime-contracts · systemd-verify
-#                                                       ├─ ci-selftest · repository · workflows · shell · powershell
-#                                                       ├─ frontend ─► audit-node
-#                                                       └─ docker
-#    rust-lint + frontend ─► tauri · tauri-recovery
+#                            └─► detect ─► cargo-lock ─┬─ static checks · audits · Docker · systemd
+#                                                       └─ rust-lint
+#    rust-lint ─► rust-test ─► rust-build ─► platform-target-check
+#        ├─ security-hardening · gsr-watchdog · runtime-contracts · platform-compatibility
+#        └─ + frontend ─► tauri · tauri-recovery
 #    everything ─► summary (PR comment + Mermaid map) ─► cache-gc (push only)
 #
 #  Cache namespace:  gitrun-<epoch>-<os>-<arch>-<kind>-<details>-<hash>
@@ -30,12 +29,11 @@ permissions:
 env:
   RUST_VERSION: "1.99.0"
   NODE_VERSION: "22"
-  # Bump the number to invalidate EVERY cache. A fresh_cache run gets its own namespace.
+  # Bump the epoch to invalidate every cache; the next main cache-GC run purges the old namespace.
   # Persistent CI configuration comes from Repository Variables.
-  CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e1x{0}', github.run_id) || 'e1' }}
-  CACHE_BASE_EPOCH: e1
-  # Pull requests only READ caches (main/branch pushes save them). "true" lets PRs save too.
-  CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR || 'true' }}
+  CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e2x{0}', github.run_id) || 'e2' }}
+  CACHE_BASE_EPOCH: e2
+  # Pull requests restore shared caches but never write; only trusted pushes may update cache entries.
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && '1' || '0' }}
@@ -49,9 +47,11 @@ env:
   CARGO_TERM_PROGRESS_WHEN: never
   CARGO_INCREMENTAL: "0"
   CARGO_NET_RETRY: "10"
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  # Keep test artifacts smaller while retaining source line tables for diagnostics.
-  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+  # CI does not need local debug symbols; disabling them keeps Cargo target
+  # caches below the per-cache budget instead of repeatedly restoring oversized
+  # cross-job partial caches that cannot be saved again.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
   RUST_BACKTRACE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && 'full' || '1' }}
   FORCE_COLOR: "1"
   NPM_CONFIG_FUND: "false"
@@ -65,7 +65,7 @@ defaults:
 
 concurrency:
   group: gitrun-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
   # ─────────────────────────────────────────────── variables verification ──
@@ -87,7 +87,6 @@ jobs:
         id: verify
         env:
           GITRUN_CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE }}
-          GITRUN_CI_CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR }}
           GITRUN_CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE }}
           GITRUN_CI_UPLOAD_ARTIFACTS: ${{ vars.GITRUN_CI_UPLOAD_ARTIFACTS }}
           GITRUN_RUNNER_MODE: ${{ vars.GITRUN_RUNNER_MODE }}
@@ -101,7 +100,6 @@ jobs:
           echo "|---|---|"
           for name in \
             GITRUN_CI_FRESH_CACHE \
-            GITRUN_CI_CACHE_SAVE_PR \
             GITRUN_CI_VERBOSE \
             GITRUN_CI_UPLOAD_ARTIFACTS \
             GITRUN_RUNNER_MODE \
@@ -119,7 +117,6 @@ jobs:
             echo "|---|---|"
             for name in \
               GITRUN_CI_FRESH_CACHE \
-              GITRUN_CI_CACHE_SAVE_PR \
               GITRUN_CI_VERBOSE \
               GITRUN_CI_UPLOAD_ARTIFACTS \
               GITRUN_RUNNER_MODE \
@@ -1099,12 +1096,13 @@ jobs:
                 cat > "$tmp/Cargo.toml" <<'BOOTSTRAP_MANIFEST'
           [workspace]
           resolver = "2"
-          members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]
+          members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr", "crates/gitrun-platform"]
           BOOTSTRAP_MANIFEST
                 cp "$ws/$lock" "$tmp/Cargo.lock"
                 cp -a "$ws/crates/gitrun-core" "$tmp/crates/"
                 cp -a "$ws/crates/gitrun-exe" "$tmp/crates/"
                 cp -a "$ws/crates/gitrun-gsr" "$tmp/crates/"
+                cp -a "$ws/crates/gitrun-platform" "$tmp/crates/"
                 ci_run "runner-bootstrap.lock: cargo tree --workspace --locked"                   cargo tree --manifest-path "$tmp/Cargo.toml" --workspace --locked --depth 0 || fail=1
                 rm -rf "$tmp"
                 ;;
@@ -1155,9 +1153,10 @@ jobs:
           # separately useful target cache; image fingerprints must remain distinct too.
           jq -n '
             def fam:
-              if contains("-target-img") then
-                sub("-man[^-]+-[^-]+-prof"; "-prof")
-              else sub("-[^-]+$"; "") end;
+              sub("-run[0-9]+-attempt[0-9]+$"; "")
+              | if contains("-target-img") then
+                  sub("-man[^-]+-[^-]+-prof"; "-prof")
+                else sub("-[^-]+$"; "") end;
             [
               "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man11111111-lock11111111-profaaaaaaaa-rust-lint",
               "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-lint",
@@ -1422,6 +1421,53 @@ jobs:
           actionlint -version | head -n 1
           ci_run "actionlint" run_actionlint
 
+      - name: Verify Server, Desktop and migration release contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+          cli = Path("crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+          checks = {
+              "1.9.0-only migration allowlist": 'if [ "$number" = "1.9.0" ]' in release,
+              "legacy Debian package identity": "Package: gitrun" in release and 'artifact="GitRun-$VERSION-linux-x86_64-deb.deb"' in release,
+              "legacy updater target retained": 'artifact_for("linux-x86_64-deb")' in release,
+              "legacy updater source tag": "--branch v1.8.23" in release,
+              "legacy trust anchor is matched to the release signing key": "test \"$GITRUN_UPDATE_PUBLIC_KEY_HEX\" = \"$legacy_key_hex\"" in release and "test \"$GITRUN_UPDATE_SIGNING_KEY_ID\" = \"$legacy_key_id\"" in release,
+              "actual legacy reinstall command is executed": '--no-cat --reinstall-latest-root' in release,
+              "legacy updater uses latest manifest resolution": 'latest_manifest_download_url("Vider06/GitRun")' in release,
+              "migration keeps 1.8.23 maintainer scripts": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release,
+              "legacy updater SHA verification": "download_and_verify(&download_url, &artifact.sha256" in release,
+              "migration release is staged as prerelease": "--prerelease" in release and "-F prerelease=true" in release,
+              "failed migration verification is demoted back to prerelease": "Revert failed migration verification to prerelease" in release and "-f make_latest=false" in release,
+              "migration is promoted only after package verification": release.index("legacy-updater-package/usr/share/gitrun/version.txt") < release.index("make_latest=true"),
+              "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
+              "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
+              "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,
+              "new CLI validates gitrun-server package identity": '"gitrun-server"' in cli and "trim() != expected_package" in cli,
+              "new CLI detects the selected package for reinstall": ".arg(expected_package)" in cli,
+              "new CLI has reinstall target unit coverage": "prefers_new_server_deb_when_both_targets_exist" in cli and "retains_legacy_target_fallback_for_old_manifests" in cli,
+              "new CLI retains legacy manifest fallback": 'artifact_for("linux-x86_64-deb")' in cli and '"gitrun"' in cli,
+              "Desktop package remains independent": "name: gitrun-desktop" in release,
+              "Desktop excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,
+              "release notes include per-architecture ABI tables": '["Architecture", "ABI", "Package format", "Artifact", "SHA-256"]' in release,
+              "release notes are generated from signed manifest": "manifest = json.loads(manifest_path.read_text" in release,
+              "release notes verify asset checksums": 'digest != item["sha256"]' in release,
+              "migration notes include fresh-install warning": "DO NOT USE FOR FRESH INSTALL!" in release,
+              "standard release migration notice": "No migration needed, updater/release system has not been changed in a way that requires a migration package." in release,
+              "manifest contains separate Server package target": 'package_target[:-4] + "-server-deb"' in release,
+              "release asset inventory rejects unexpected files": "diff -u <(printf" in release,
+              "manifest requires the exact target set": "actual_targets != required" in release and "len(items) != len(required)" in release,
+          }
+          for label, passed in checks.items():
+              print(("PASS" if passed else "FAIL") + ": " + label)
+          failed = [label for label, passed in checks.items() if not passed]
+          if failed:
+              raise SystemExit("Release contract checks failed: " + "; ".join(failed))
+          PY
+
       - name: zizmor (security audit)
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -1498,7 +1544,7 @@ jobs:
           ci_ensure_pwsh
           pwsh --version
       - name: Save PowerShell cache
-        if: success() && steps.c_pwsh.outputs.cache-matched-key != steps.c_pwsh.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
+        if: success() && steps.c_pwsh.outputs.cache-matched-key != steps.c_pwsh.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1646,7 +1692,7 @@ jobs:
           fi
       - &s_npm
         name: Save npm cache
-        if: success() && steps.npm_prune.outputs.save == 'true' && steps.c_npm.outputs.cache-matched-key != steps.c_npm.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
+        if: success() && steps.npm_prune.outputs.save == 'true' && steps.c_npm.outputs.cache-matched-key != steps.c_npm.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1752,27 +1798,20 @@ jobs:
           fp="$(ci_image_fp)"
           lock="${lock_hash:-nolock}"
           profile="$(printf 'dev=%s;test=%s' "${CARGO_PROFILE_DEV_DEBUG:-default}" "${CARGO_PROFILE_TEST_DEBUG:-default}" | sha256sum | cut -c1-8)"
-          target="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-man${manifest_hash:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
-          # Restore prefixes must be literal prefixes of the primary key. Keep
-          # this through cfg: manifest, lock, profile, and job follow it. Cargo
-          # fingerprints validate artifacts restored from older keys or other jobs.
-          target_prefix="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-"
-          if [[ "$target" != "$target_prefix"* ]]; then
-            ci_err "target cache restore prefix is not a prefix of its primary key"
-            exit 1
-          fi
+          target_prefix="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-man${manifest_hash:0:8}-${lock}-prof${profile}-${GITHUB_JOB}-"
+          target="${target_prefix}run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}"
+          # Target artifacts are isolated by job, toolchain, configuration,
+          # manifest and lockfile. Restore only the same job's matching inputs;
+          # the run/attempt suffix makes concurrent writers use distinct keys.
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
             echo "toolchain_prefix=$ns-rustup-${RUST_VERSION}-"
             echo "registry=$ns-cargo-registry-${lock}"
-            # Lockfile/manifest hashes remain part of the exact target key. The fallback
-            # deliberately spans lockfile and workspace-crate bumps: Cargo's fingerprints
-            # validate restored artifacts and rebuild only incompatible dependencies.
             echo "registry_prefix=$ns-cargo-registry-"
             echo "target=$target"
             echo "target_prefix=$target_prefix"
           } >> "$GITHUB_OUTPUT"
-          echo "image fingerprint $fp: target caches are exact per job, with cross-job restore fallback"
+          echo "image fingerprint $fp: target caches are isolated by job and restored only for identical inputs"
       - &c_tc
         name: Restore toolchain cache
         id: c_tc
@@ -1839,12 +1878,14 @@ jobs:
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           fmt_run() { cargo fmt --all -- --check 2>&1 | ci_awk_fmt; }
-          clippy_run() { cargo clippy --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-targets --all-features --locked --message-format=json-diagnostic-rendered-ansi -- -D warnings | ci_cargo_json; }
-          doc_run() { cargo doc --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --no-deps --locked --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
+          clippy_run() { cargo clippy --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-targets --all-features --locked --message-format=json-diagnostic-rendered-ansi -- -D warnings | ci_cargo_json; }
+          doc_run() { cargo doc --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-features --no-deps --locked --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
           rc=0
           ci_run "cargo fmt --check" fmt_run || rc=1
           ci_run "cargo clippy (-D warnings)" clippy_run || rc=1
           ci_run "cargo doc --no-deps" doc_run || rc=1
+          ci_run "cargo clippy shared management backend (headless)" cargo clippy --locked -p gitrun-management --no-default-features --all-targets -- -D warnings || rc=1
+          ci_run "cargo doc shared management backend (headless)" cargo doc --locked -p gitrun-management --no-default-features --no-deps || rc=1
           exit "$rc"
       - &rust_prune
         name: Prune target cache
@@ -1862,6 +1903,12 @@ jobs:
           # deleting every local crate forces all GitRun crates to recompile each job.
           after="$(du -sm "$t" | cut -f1)"
           echo "target cache pruned: ${before} MB → ${after} MB (limit ${TARGET_CACHE_MAX_MB} MB)"
+          echo "largest target cache directories after pruning:"
+          for dir in "$t"/*; do
+            [ -d "$dir" ] || continue
+            printf '  %s\n' "${dir#"$t"/}"
+            du -sm "$dir"/* 2>/dev/null | sort -nr | head -n 5 | awk '{ printf "    %s MB  %s\n", $1, $2 }'
+          done
           { echo "- 🧹 target cache pruned: **${before} MB → ${after} MB**"; } | ci_sum
           if [ "$after" -gt "$TARGET_CACHE_MAX_MB" ]; then
             ci_warn "target cache is ${after} MB, above the ${TARGET_CACHE_MAX_MB} MB limit: it is NOT saved (raise TARGET_CACHE_MAX_MB or reduce build outputs)"
@@ -1871,7 +1918,7 @@ jobs:
           fi
       - &s_tc
         name: Save toolchain cache
-        if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
+        if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1881,7 +1928,7 @@ jobs:
           key: ${{ steps.c_tc.outputs.cache-primary-key }}
       - &s_reg
         name: Save cargo registry cache
-        if: success() && steps.c_reg.outputs.cache-matched-key != steps.c_reg.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
+        if: success() && steps.c_reg.outputs.cache-matched-key != steps.c_reg.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1892,7 +1939,7 @@ jobs:
           key: ${{ steps.c_reg.outputs.cache-primary-key }}
       - &s_tgt
         name: Save target cache
-        if: success() && steps.prune.outputs.save == 'true' && steps.c_tgt.outputs.cache-matched-key != steps.c_tgt.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
+        if: success() && steps.prune.outputs.save == 'true' && steps.c_tgt.outputs.cache-matched-key != steps.c_tgt.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1904,7 +1951,7 @@ jobs:
   # ───────────────────────────────────────────── security-hardening gate ──
   security-hardening:
     name: Security hardening regression gate
-    needs: cargo-lock
+    needs: [cargo-lock, rust-lint]
     if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -1955,7 +2002,7 @@ jobs:
   # ───────────────────────────────────────────── GSR watchdog lifecycle ──
   gsr-watchdog:
     name: GSR watchdog lifecycle and failure detection
-    needs: cargo-lock
+    needs: [cargo-lock, rust-lint]
     if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -1991,7 +2038,7 @@ jobs:
   # ───────────────────────────────────────────── runtime contract gate ──
   runtime-contracts:
     name: Runtime contracts and configuration integration
-    needs: cargo-lock
+    needs: [cargo-lock, rust-lint]
     if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -2018,8 +2065,10 @@ jobs:
           ci_run "Setup-generated environment and service contracts" cargo test --locked -p gitrun-setup generated_bootstrap_env_parses_and_validates_with_runtime_loader || rc=1
           ci_run "Setup installs the shared CLI, watchdog and Control Manager" cargo test --locked -p gitrun-setup installed_services_share_the_single_gitrun_binary_and_start_separate_watchdog || rc=1
           ci_run "Partial dashboard repository settings use safe defaults" cargo test --locked -p gitrun-core dashboard_partial_repository_settings_deserialize_with_safe_defaults || rc=1
-          ci_run "Dashboard build version follows version.txt" cargo test --locked -p gitrun-dashboard-tauri dashboard_build_version_matches_workspace_version_txt || rc=1
-          ci_run "Control Manager rejects malformed IPC and enforces confirmations" cargo test --locked -p gitrun-dashboard-tauri control_manager::tests || rc=1
+          ci_run "Management backend build version follows version.txt" cargo test --locked -p gitrun-management --no-default-features management_build_version_matches_workspace_version_txt || rc=1
+          ci_run "Control Manager IPC validates requests and enforces confirmations" cargo test --locked -p gitrun-management --no-default-features backend::control_manager::tests -- --nocapture || rc=1
+          ci_run "Manage routes reads and writes through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_routing_tests -- --nocapture || rc=1
+          ci_run "CLI doctor reads protected configuration through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_cli_routing_tests -- --nocapture || rc=1
 
           validate_systemd_units() {
             command -v systemd-analyze >/dev/null 2>&1 || {
@@ -2149,10 +2198,170 @@ jobs:
       - *report
       - *logs
 
+  # ─────────────────────────────── Linux product target build matrix ──
+  platform-target-check:
+    name: Server + updater · ${{ matrix.target }}
+    needs: [cargo-lock, rust-build]
+    if: needs.cargo-lock.outputs.rust == 'true'
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Restore target-specific Cargo cache
+        id: target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-
+      - name: Verify cross-build runtime
+        run: |
+          set -euo pipefail
+          command -v docker >/dev/null 2>&1
+          docker info >/dev/null
+          command -v file
+          command -v readelf
+      - name: Install pinned cross compiler
+        run: |
+          set -euo pipefail
+          cargo install cross --locked --version 0.2.5
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - name: Build the complete headless server and updater for target
+        env:
+          TARGET: ${{ matrix.target }}
+          CARGO_TERM_COLOR: always
+        run: |
+          set -euo pipefail
+          cross build --locked --release -p gitrun-cli --bin gitrun --target "$TARGET"
+          cross test --locked -p gitrun-updater --no-run --target "$TARGET"
+          cross check --locked -p gitrun-management --target "$TARGET"
+          binary="target/$TARGET/release/gitrun"
+          test -x "$binary"
+          file "$binary"
+          case "$TARGET" in
+            x86_64-unknown-linux-gnu)
+              test "$("$binary" --version --gitrun)" = "GitRun $(tr -d '[:space:]' < version.txt)"
+              ;;
+            aarch64-unknown-linux-gnu)
+              readelf -h "$binary" | grep -Fq 'AArch64'
+              readelf -l "$binary" | grep -Fq 'ld-linux-aarch64.so.1'
+              ;;
+            x86_64-unknown-linux-musl)
+              readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
+              # musl static PIE binaries may be reported as "static-pie linked"
+              # by file(1). The ABI-level invariant is that no PT_INTERP loader
+              # is requested; checking the ELF program headers is stable.
+              if readelf -lW "$binary" | grep -Fq ' INTERP '; then
+                echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
+                exit 1
+              fi
+              ;;
+            aarch64-unknown-linux-musl)
+              readelf -h "$binary" | grep -Fq 'AArch64'
+              # A static musl executable must not declare a PT_INTERP loader.
+              if readelf -lW "$binary" | grep -Fq ' INTERP '; then
+                echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
+                exit 1
+              fi
+              ;;
+          esac
+      - name: Save target-specific Cargo cache
+        if: success() && steps.target-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+
+  # ───────────────────────────────────────────── Linux platform contracts ──
+  platform-compatibility:
+    name: Linux platform and updater target contracts
+    needs: [cargo-lock, rust-lint]
+    if: needs.cargo-lock.outputs.rust == 'true'
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      RUST_COMPONENTS: ""
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - *rust_keys
+      - *c_tc
+      - *c_reg
+      - *c_tgt
+      - *rust_install
+      - *rust_tnote
+      - name: Verify platform detection and updater target selection
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          rc=0
+          ci_run "Linux ABI, distro, package manager and init-system detection" cargo test --locked -p gitrun-platform || rc=1
+          check_android_entrypoint_guards() {
+            local file
+            local entrypoints=(
+              crates/gitrun-cli/src/main.rs
+              crates/gitrun-scheduler/src/main.rs
+              crates/gitrun-gsr/src/main.rs
+              crates/gitrun-gsr/src/bin/gitrun-api.rs
+              crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs
+              crates/gitrun-recovery/src/main.rs
+              crates/gitrun-dashboard-tauri/src-tauri/src/main.rs
+            )
+            for file in "${entrypoints[@]}"; do
+              test -f "$file" || { ci_err "missing executable entry point: $file"; return 1; }
+              awk '
+                /^fn main\(\)/ { main_line = NR; in_main = 1; next }
+                in_main && /ensure_supported_runtime\(\)/ { guard_line = NR; exit }
+                END { if (!main_line || !guard_line || guard_line - main_line > 6) exit 1 }
+              ' "$file" || { ci_err "Android runtime guard missing or too late in $file"; return 1; }
+            done
+          }
+          ci_run "Android guard coverage at every executable entry point" check_android_entrypoint_guards || rc=1
+          ci_run "Minimal runner bootstrap carries the platform crate" cargo test --locked -p gitrun-setup bootstrap_lock_matches_the_minimal_workspace || rc=1
+          ci_run "Minimal runner Dockerfile includes all bootstrap crates" cargo test --locked -p gitrun-setup bootstrap_dockerfile_uses_minimal_gsr_build_context_and_original_bash || rc=1
+          ci_run "Headless management backend compiles without desktop features" cargo test --locked -p gitrun-management || rc=1
+          ci_run "CLI dependency graph excludes Tauri and WebKit" bash -c '! cargo tree --locked -p gitrun-cli -e normal | grep -Eiq "(^| )tauri v|webkit2gtk" ' || rc=1
+          ci_run "Updater release-manifest target selection and signature contracts" cargo test --locked -p gitrun-updater || rc=1
+          exit "$rc"
+      - *rust_prune
+      - *s_tc
+      - *s_reg
+      - *s_tgt
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────────────────────── rust-test ──
   rust-test:
     name: Rust tests
-    needs: cargo-lock
+    needs: [cargo-lock, rust-lint]
     if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -2169,9 +2378,25 @@ jobs:
       - name: Test
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          test_run() { cargo test --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --locked --no-fail-fast 2>&1 | ci_awk_tests; }
+          test_run() { cargo test --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-features --locked --no-fail-fast 2>&1 | ci_awk_tests; }
           rc=0
           ci_run "cargo test" test_run || rc=1
+          ci_run "Shared management backend tests (headless)" cargo test --locked -p gitrun-management --no-default-features --all-targets || rc=1
+          cli_graph_check() {
+            graph="$(cargo tree --locked -e normal -p gitrun-cli)"
+            if grep -q "gitrun-dashboard-tauri" <<<"$graph"; then
+              echo "gitrun-cli must not depend on the dashboard package" >&2
+              return 1
+            fi
+            if grep -qE "(^|[[:space:]])tauri v" <<<"$graph"; then
+              echo "gitrun-cli must not link the Tauri runtime" >&2
+              return 1
+            fi
+            test -f crates/gitrun-management/src/backend.rs
+            test -f crates/gitrun-management/src/control_manager.rs
+            test ! -e crates/gitrun-dashboard-tauri/src-tauri/src/control_manager.rs
+          }
+          ci_run "CLI and Control Manager are dashboard-independent" cli_graph_check
           if [ -s "$CI_DIR/test-totals.txt" ]; then
             read -r totals < "$CI_DIR/test-totals.txt"
             { echo "### 🧪 Tests"; echo; echo "\`$totals\`"; echo; } | ci_sum
@@ -2187,7 +2412,7 @@ jobs:
   # ──────────────────────────────────────────────────────────── rust-build ──
   rust-build:
     name: Rust release build
-    needs: cargo-lock
+    needs: [cargo-lock, rust-test]
     if: needs.cargo-lock.outputs.rust == 'true'
     runs-on: *runner
     timeout-minutes: 60
@@ -2204,13 +2429,29 @@ jobs:
       - name: Build (release)
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          build_run() { cargo build --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --all-features --release --locked --timings --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
+          build_run() { cargo build --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-features --release --locked --timings --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
           ci_run "cargo build --release" build_run
           {
             echo "### 📦 Release binaries"; echo; echo "| Binary | Size |"; echo "|---|---|"
             find "$CARGO_TARGET_DIR/release" -maxdepth 1 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -printf '%f %s\n' | sort | awk '{ printf "| %s | %.1f MB |\n", $1, $2 / 1048576 }'
             echo
           } | ci_sum
+      - name: Verify complete headless workspace build
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          headless_workspace_check() {
+            cargo check --locked --workspace --exclude gitrun-dashboard-tauri --all-targets
+          }
+          ci_run "Compile every workspace crate and target without the Dashboard GUI" headless_workspace_check
+          headless_graph_check() {
+            local graph
+            graph="$(cargo tree --locked --workspace --exclude gitrun-dashboard-tauri -e normal)"
+            if grep -Eiq '(^|[[:space:]])(tauri|webkit2gtk) v' <<<"$graph"; then
+              echo "The headless workspace dependency graph unexpectedly includes Tauri or WebKitGTK" >&2
+              return 1
+            fi
+          }
+          ci_run "Headless workspace dependency graph excludes Tauri and WebKitGTK" headless_graph_check
       - name: Upload cargo build timings
         if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -2310,14 +2551,17 @@ jobs:
           ci_cache_note npm "$PRIMARY" "$MATCHED" "$NPM_CONFIG_CACHE"
           deps() { (cd crates/gitrun-dashboard-tauri && npm install --ignore-scripts --no-audit --no-fund); }
           ci_run "npm install (tauri frontend)" deps
-      - name: Test privileged dashboard executable trust boundary
+      - name: Test management privileged executable trust boundary
         if: runner.os == 'Linux'
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           dashboard_security_test() {
-            cargo test --locked -p gitrun-dashboard-tauri --lib trusted_privileged_binary_accepts_system_cli_and_rejects_symlinks
+            cargo test --locked -p gitrun-management --no-default-features trusted_privileged_binary_accepts_system_cli_and_rejects_symlinks
           }
-          ci_run "Trusted system CLI and symlink rejection" dashboard_security_test
+          rc=0
+          ci_run "Trusted system CLI and symlink rejection" dashboard_security_test || rc=1
+          ci_run "Dashboard command registry delegates to shared backend" cargo test --locked -p gitrun-dashboard-tauri --lib dashboard_uses_the_shared_management_command_registry || rc=1
+          exit "$rc"
       - name: Build Tauri application
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -2383,7 +2627,7 @@ jobs:
       - name: Test GitRun Recovery GUI
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-          recovery_gui() { cargo check -p gitrun-recovery --locked 2>&1 | ci_cargo_json; }
+          recovery_gui() { cargo check -p gitrun-recovery --features desktop --locked 2>&1 | ci_cargo_json; }
           ci_run "GitRun Recovery GUI smoke check" recovery_gui
       - name: Build GitRun Recovery Tauri application
         run: |
@@ -2392,7 +2636,7 @@ jobs:
           mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
           build() {
             cd crates/gitrun-recovery
-            npm exec --yes --package "@tauri-apps/cli@2.12.1" -- tauri build --ci --no-bundle
+            npm exec --yes --package "@tauri-apps/cli@2.12.1" -- tauri build --ci --no-bundle --features desktop
           }
           ci_run "tauri recovery build --no-bundle" build
       - *rust_prune
@@ -2464,7 +2708,7 @@ jobs:
           docker buildx version
           hadolint --version
       - name: Save Docker tools cache
-        if: success() && steps.c_dtools.outputs.cache-matched-key != steps.c_dtools.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
+        if: success() && steps.c_dtools.outputs.cache-matched-key != steps.c_dtools.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -2532,7 +2776,7 @@ jobs:
           grep -Fq 'COPY Cargo.toml Cargo.lock ./' "$premade"
           grep -Fq 'COPY crates ./crates' "$premade"
           grep -Fq 'ENTRYPOINT ["/entrypoint.sh"]' "$premade"
-          sed '/^COPY Cargo.toml Cargo.lock \.\/$/ { N; s|COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates|COPY Cargo.toml Cargo.lock ./\nCOPY crates/gitrun-core ./crates/gitrun-core\nCOPY crates/gitrun-exe ./crates/gitrun-exe\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr|; }' "$premade" > "$adapted"
+          sed '/^COPY Cargo.toml Cargo.lock \.\/$/ { N; s|COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates|COPY Cargo.toml Cargo.lock ./\nCOPY crates/gitrun-core ./crates/gitrun-core\nCOPY crates/gitrun-exe ./crates/gitrun-exe\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr\nCOPY crates/gitrun-platform ./crates/gitrun-platform|; }' "$premade" > "$adapted"
           if grep -Fq 'COPY crates ./crates' "$adapted"; then
             echo "ERROR: adapted Dockerfile still copies the full crates workspace" >&2
             exit 1
@@ -2540,6 +2784,7 @@ jobs:
           grep -Fq 'COPY crates/gitrun-core ./crates/gitrun-core' "$adapted"
           grep -Fq 'COPY crates/gitrun-exe ./crates/gitrun-exe' "$adapted"
           grep -Fq 'COPY crates/gitrun-gsr ./crates/gitrun-gsr' "$adapted"
+          grep -Fq 'COPY crates/gitrun-platform ./crates/gitrun-platform' "$adapted"
           echo "Linting immutable installer-pinned Dockerfile: $premade_path@$premade_ref"
           # This upstream Dockerfile intentionally keeps root as the entrypoint
           # bootstrap user and follows Debian's pinned-bookworm security stream.
@@ -2554,7 +2799,7 @@ jobs:
           while IFS= read -r target; do
             case "$target" in
               Cargo.toml)
-                printf '%s\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr"]' > "$context/Cargo.toml"
+                printf '%s\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr", "crates/gitrun-platform"]' > "$context/Cargo.toml"
                 ;;
               Cargo.lock)
                 cp crates/gitrun-setup/src/runner-bootstrap.lock "$context/Cargo.lock"
@@ -2574,6 +2819,8 @@ jobs:
             crates/gitrun-exe/src/lib.rs \
             crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs \
             crates/gitrun-gsr/src/bin/gitrun-api.rs \
+            crates/gitrun-platform/Cargo.toml \
+            crates/gitrun-platform/src/lib.rs \
             docker/runner/entrypoint.sh
           do
             if [ ! -s "$context/$required" ]; then
@@ -2586,7 +2833,7 @@ jobs:
             echo
             echo "- Fetched the exact immutable Premade Dockerfile pinned by gitrun-updater."
             echo "- Applied the same workspace-copy adaptation as gitrun-setup."
-            echo "- Prepared the minimal three-crate workspace and pinned bootstrap lockfile for the actual image build below."
+            echo "- Prepared the minimal four-crate workspace and pinned bootstrap lockfile for the actual image build below."
             echo
           } | ci_sum
       - name: Validate Compose and lint Dockerfiles
@@ -2688,6 +2935,8 @@ jobs:
       - gsr-watchdog
       - runtime-contracts
       - systemd-verify
+      - platform-compatibility
+      - platform-target-check
       - tauri
       - tauri-recovery
       - docker
@@ -2729,32 +2978,35 @@ jobs:
           frontend|JS, TS and CSS|node|
           audit-node|npm audit|node|
           rust-lint|Rust lint|rust|
-          rust-test|Rust tests|rust|
-          rust-build|Rust release build|rust|
+          rust-test|Rust tests|rust|rust-lint
+          rust-build|Rust release build|rust|rust-test
           audit-rust|Cargo audit and deny|rust|
-          security-hardening|Security hardening regression gate|rust|
-          gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|
-          runtime-contracts|Runtime contracts and configuration integration|rust|
+          security-hardening|Security hardening regression gate|rust|rust-lint
+          gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|rust-lint
+          runtime-contracts|Runtime contracts and configuration integration|rust|rust-lint
           systemd-verify|systemd-analyze unit verification|rust|
+          platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
+          platform-target-check|Server and updater Linux target matrix|rust|rust-build
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
           JOBS
 
           detect_ok=false; if [ "$(res detect)" = success ]; then detect_ok=true; fi
-          declare -A STATE LABEL SECS CACHE DEPS WHY
+          declare -A STATE LABEL SECS CACHE DEPS DEP_IDS WHY
           order=(); nfail=0; ncancel=0; nok=0; nblocked=0; nna=0
           while IFS='|' read -r id label flag extra; do
             [ -n "$id" ] || continue
             order+=("$id"); LABEL[$id]="$label"
             r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"
             case "$id" in
-              variables-verification) DEPS[$id]="–" ;;
-              environment|detect) DEPS[$id]="variables-verification" ;;
-              cargo-lock) DEPS[$id]="detect" ;;
-              *) DEPS[$id]="cargo-lock${extra:+, ${extra// /, }}" ;;
+              variables-verification) DEP_IDS[$id]="" ;;
+              environment|detect) DEP_IDS[$id]="variables-verification" ;;
+              cargo-lock) DEP_IDS[$id]="detect" ;;
+              *) DEP_IDS[$id]="cargo-lock${extra:+ $extra}" ;;
             esac
-            if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; }; then en=1; else en=0; fi
+            DEPS[$id]="${DEP_IDS[$id]// /, }"; DEPS[$id]="${DEPS[$id]:-–}"
+            if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; } || { [ "$id" = cargo-lock ] && [ "$detect_ok" != true ]; }; then en=1; else en=0; fi
             case "$r" in
               success) STATE[$id]=ok; nok=$((nok + 1)) ;;
               failure) STATE[$id]=fail; nfail=$((nfail + 1)) ;;
@@ -2763,9 +3015,8 @@ jobs:
                 if [ "$en" = 0 ]; then STATE[$id]=na; nna=$((nna + 1))
                 else
                   why=""
-                  blockers=""
-                  if [ "$id" != environment ] && [ "$id" != detect ] && [ "$id" != cargo-lock ]; then blockers="detect cargo-lock $extra"; fi
-                  for b in $blockers; do
+                  read -r -a blockers <<< "${DEP_IDS[$id]:-}"
+                  for b in "${blockers[@]}"; do
                     if [ "$(res "$b")" != success ]; then why="$why$b "; fi
                   done
                   if [ -n "$why" ]; then STATE[$id]=blocked; WHY[$id]="${why% }"; nblocked=$((nblocked + 1))
@@ -2797,14 +3048,11 @@ jobs:
             printf '  verdict{{"%s"}}:::%s\n' "$head" "$([ "$verdict" = pass ] && echo ok || echo fail)"
             for id in "${order[@]}"; do
               n="${id//-/_}"
-              case "$id" in
-                variables-verification) ;;
-                environment|detect) echo "  variables_verification --> $n" ;;
-                cargo-lock) echo "  detect --> cargo_lock" ;;
-                *) echo "  cargo_lock --> $n" ;;
-              esac
-              [ "$id" = tauri ] && { echo "  rust_lint --> tauri"; echo "  frontend --> tauri"; }
-              [ "$id" = tauri-recovery ] && { echo "  rust_lint --> tauri_recovery"; echo "  frontend --> tauri_recovery"; }
+              read -r -a dep_ids <<< "${DEP_IDS[$id]:-}"
+              for dep in "${dep_ids[@]}"; do
+                dep_node="${dep//-/_}"
+                echo "  $dep_node --> $n"
+              done
               echo "  $n --> verdict"
             done
             echo '  classDef ok fill:#dafbe1,stroke:#1a7f37,color:#0a3622'
@@ -2906,8 +3154,9 @@ jobs:
           used_before="$(api "$base/cache/usage" | jq -r '.active_caches_size_in_bytes // 0')"
 
           # Deletion plan. A cache is removed only if it is clearly stale or if a NEWER cache of the
-          # same kind exists on the same ref. The 2 newest on main (1 elsewhere) are always kept, and
-          # nothing younger than ~10 minutes is ever touched (a save may still be in flight).
+          # same kind exists on the same ref. Keep only the newest cache per family/ref to stay
+          # comfortably inside GitHub Free's shared 10 GB repository budget, and never touch a cache
+          # younger than ~10 minutes (a save may still be in flight).
           jq --arg epoch "$CACHE_BASE_EPOCH" --arg rust "$RUST_VERSION" --argjson now "$(date +%s)" '
             def ts: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
             def fam:
@@ -2925,7 +3174,7 @@ jobs:
                   else null end ) })
             | ( map(select(.reason == null)) | group_by([.ref, .fam])
                 | map( sort_by(.created_at) | reverse | to_entries
-                       | map(select(.key >= (if .value.ref == "refs/heads/main" then 2 else 1 end)) | .value + { reason: "superseded by a newer cache of the same kind" }) )
+                       | map(select(.key >= 1) | .value + { reason: "superseded by a newer cache of the same kind" }) )
                 | add // [] ) as $superseded
             | ( map(select(.reason != null)) + $superseded )
             | map(select(.age > 0.007))
@@ -2949,9 +3198,10 @@ jobs:
             echo "| Kind | Ref | Count | MB |"; echo "|---|---|---|---|"
             jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
               def fam:
-                if contains("-target-img") then
-                  sub("-man[^-]+-[^-]+-prof"; "-prof")
-                else sub("-[^-]+$"; "") end;
+                sub("-run[0-9]+-attempt[0-9]+$"; "")
+                | if contains("-target-img") then
+                    sub("-man[^-]+-[^-]+-prof"; "-prof")
+                  else sub("-[^-]+$"; "") end;
               ([$plan[0][].id]) as $gone
               | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })
               | group_by([.fam, .ref]) | .[]

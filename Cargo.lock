@@ -1585,14 +1585,15 @@ dependencies = [
 
 [[package]]
 name = "gitrun-cli"
-version = "0.13.24"
+version = "0.13.25"
 dependencies = [
  "base64 0.23.1",
  "clap",
  "crossterm",
  "gitrun-core",
- "gitrun-dashboard-tauri",
  "gitrun-gsr",
+ "gitrun-management",
+ "gitrun-platform",
  "gitrun-recovery",
  "gitrun-scheduler",
  "gitrun-setup",
@@ -1620,18 +1621,10 @@ dependencies = [
 
 [[package]]
 name = "gitrun-dashboard-tauri"
-version = "0.11.8"
+version = "0.11.9"
 dependencies = [
- "gitrun-core",
- "gitrun-gsr",
- "gitrun-recovery",
- "gitrun-scheduler",
- "gitrun-setup",
- "gitrun-smart-scheduler",
- "gitrun-vault",
- "libc",
- "serde",
- "serde_json",
+ "gitrun-management",
+ "gitrun-platform",
  "tauri",
  "tauri-build",
 ]
@@ -1652,10 +1645,11 @@ dependencies = [
 
 [[package]]
 name = "gitrun-gsr"
-version = "0.6.7"
+version = "0.6.8"
 dependencies = [
  "gitrun-core",
  "gitrun-exe",
+ "gitrun-platform",
  "libc",
  "serde",
  "serde_json",
@@ -1664,10 +1658,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "gitrun-recovery"
-version = "0.6.16"
+name = "gitrun-management"
+version = "0.1.0"
 dependencies = [
  "gitrun-core",
+ "gitrun-gsr",
+ "gitrun-platform",
+ "gitrun-recovery",
+ "gitrun-scheduler",
+ "gitrun-setup",
+ "gitrun-smart-scheduler",
+ "gitrun-vault",
+ "libc",
+ "serde",
+ "serde_json",
+ "tauri",
+]
+
+[[package]]
+name = "gitrun-platform"
+version = "0.1.0"
+
+[[package]]
+name = "gitrun-recovery"
+version = "0.6.17"
+dependencies = [
+ "gitrun-core",
+ "gitrun-platform",
  "gitrun-scheduler",
  "gitrun-setup",
  "gitrun-updater",
@@ -1679,13 +1696,14 @@ dependencies = [
 
 [[package]]
 name = "gitrun-scheduler"
-version = "0.11.15"
+version = "0.11.16"
 dependencies = [
  "base64 0.23.1",
  "filetime",
  "gitrun-core",
  "gitrun-exe",
  "gitrun-gsr",
+ "gitrun-platform",
  "gitrun-setup",
  "gitrun-smart-scheduler",
  "gitrun-updater",
@@ -1705,6 +1723,7 @@ dependencies = [
  "gitrun-core",
  "gitrun-updater",
  "libc",
+ "reqwest 0.12.28",
  "sha2 0.11.1",
  "thiserror 2.0.21",
 ]

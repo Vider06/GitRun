@@ -3220,6 +3220,14 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
+          summary_started="$(date +%s)"
+          summary_record_step() {
+            rc=$?
+            local result=ok
+            [ "$rc" -eq 0 ] || result=fail
+            printf 'Build workflow verdict and pipeline report\t%s\t%s\n' "$result" "$(( $(date +%s) - summary_started ))" >> "$CI_STEPS"
+          }
+          trap summary_record_step EXIT
           J="$RUNNER_TEMP/needs.json"; printf '%s' "$NEEDS" > "$J"
           res() { jq -r --arg j "$1" '.[$j].result // "skipped"' "$J"; }
           out() { jq -r --arg j "$1" --arg k "$2" '.[$j].outputs[$k] // ""' "$J"; }
@@ -3330,6 +3338,9 @@ jobs:
             for id in "${order[@]}"; do
               note=""
               case "${STATE[$id]}" in blocked) note="blocked by ${WHY[$id]}" ;; na) note="not applicable" ;; fail) note="${WHY[$id]:-}" ;; esac
+              if [ "$id" = platform-target-check ]; then
+                note="${note:+$note; }each target publishes an independent job report"
+              fi
               echo "| $(icon "${STATE[$id]}") | \`$id\` — ${LABEL[$id]} | $(dur "${SECS[$id]}") | ${DEPS[$id]} | ${CACHE[$id]:-–} | $note |"
             done
             echo

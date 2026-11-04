@@ -38,7 +38,6 @@ RUNTIME_BASELINE = {
     "crates/gitrun-recovery/src/lib.rs": {
         "systemctl": 6, "systemd-path": 7,
     },
-    "crates/gitrun-recovery/src/json_recovery.rs": {"systemd-run": 2},
     "crates/gitrun-management/src/backend.rs": {
         "systemctl": 11, "systemd-path": 6,
     },
@@ -46,6 +45,15 @@ RUNTIME_BASELINE = {
         "systemctl": 2, "systemd-run": 1,
     },
     "crates/gitrun-cli/src/manage.rs": {"systemctl": 1},
+}
+
+# Conditional host integrations are not migration debt: they are reachable
+# only after explicit service-manager detection and have a tested native route.
+CONDITIONAL_RUNTIME_ALLOWLIST = {
+    "crates/gitrun-recovery/src/json_recovery.rs": {
+        "systemd-run": 2,
+        "description": "systemd-only transient-unit path; OpenRC/runit use direct privileged restore",
+    },
 }
 
 # These occurrences are intentional and must remain isolated to their
@@ -146,6 +154,7 @@ def check_recovery_service_manager_contract(errors: list[str]) -> None:
 def main() -> int:
     errors: list[str] = []
     known: list[str] = []
+    conditional: list[str] = []
     files = tracked_files()
 
     for relative in files:
@@ -161,6 +170,22 @@ def main() -> int:
         counts = {name: len(pattern.findall(content)) for name, pattern in PATTERNS.items()}
         counts = {name: count for name, count in counts.items() if count}
         if not counts:
+            continue
+
+        if relative in CONDITIONAL_RUNTIME_ALLOWLIST:
+            contract = CONDITIONAL_RUNTIME_ALLOWLIST[relative]
+            limits = {key: value for key, value in contract.items() if key != "description"}
+            for name, count in counts.items():
+                limit = limits.get(name, 0)
+                if count != limit:
+                    errors.append(
+                        f"{relative}: conditional integration {name} count changed "
+                        f"from the reviewed contract ({limit} -> {count})"
+                    )
+            conditional.append(
+                f"- `{relative}`: {contract['description']} "
+                f"({', '.join(f'{name}={count}' for name, count in counts.items())})"
+            )
             continue
 
         if relative in RUNTIME_BASELINE:
@@ -201,6 +226,12 @@ def main() -> int:
         "- DEB maintainer hooks are package-format-specific.",
         "- The runner API package-install operation executes inside the pinned Debian runner image.",
         "",
+        "## Conditional host-runtime integrations",
+        "",
+        "These references are intentionally limited to a service-manager-specific branch and are not classified as migration debt.",
+        "",
+        *(conditional or ["- No conditional host-runtime integrations found."]),
+        "",
         "## Known host-runtime migration debt",
         "",
         "These reviewed legacy references remain and must be migrated to the shared platform layer. "
@@ -221,7 +252,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Multi-distro contract audit: PASS (known runtime debt is reported above)")
+    print("Multi-distro contract audit: PASS (conditional integrations and known runtime debt are reported separately)")
     return 0
 
 

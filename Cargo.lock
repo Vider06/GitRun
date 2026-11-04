@@ -1723,7 +1723,7 @@ dependencies = [
  "gitrun-core",
  "gitrun-updater",
  "libc",
- "reqwest",
+ "reqwest 0.12.28",
  "sha2 0.11.1",
  "thiserror 2.0.21",
 ]

@@ -111,8 +111,8 @@ pub fn verify_github_repository_access(
     if owner.is_empty()
         || name.is_empty()
         || parts.next().is_some()
-        || owner.contains(['?', '#', '%'])
-        || name.contains(['?', '#', '%'])
+        || owner.chars().any(|character| matches!(character, '?' | '#' | '%'))
+        || name.chars().any(|character| matches!(character, '?' | '#' | '%'))
     {
         return Err(SetupError::InvalidRepository(repository.to_owned()));
     }

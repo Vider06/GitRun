@@ -50,7 +50,7 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), S
     options
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    let mut file = options.open(path).map_err(|error| {
+    let file = options.open(path).map_err(|error| {
         SetupError::Command(format!(
             "unable to safely open GitHub App private key {}: {error}",
             path.display()

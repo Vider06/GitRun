@@ -2298,9 +2298,8 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+      - *checkout
+      - *boot
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
@@ -2315,58 +2314,79 @@ jobs:
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-
+      - name: Record target cache restore
+        env:
+          TARGET_CACHE_PRIMARY: ${{ steps.target-cache.outputs.cache-primary-key }}
+          TARGET_CACHE_MATCHED: ${{ steps.target-cache.outputs.cache-matched-key }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_cache_note "target-$TARGET" "$TARGET_CACHE_PRIMARY" "$TARGET_CACHE_MATCHED" .gitrun-cargo target
       - name: Verify cross-build runtime
         run: |
-          set -euo pipefail
-          command -v docker >/dev/null 2>&1
-          docker info >/dev/null
-          command -v file
-          command -v readelf
+          source "$RUNNER_TEMP/ci-lib.sh"
+          verify_cross_build_runtime() {
+            set -euo pipefail
+            command -v docker >/dev/null 2>&1
+            docker info >/dev/null
+            command -v file
+            command -v readelf
+          }
+          ci_run "Verify cross-build runtime" verify_cross_build_runtime
       - name: Install pinned cross compiler
         run: |
-          set -euo pipefail
-          cargo install cross --locked --version 0.2.5
-          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          source "$RUNNER_TEMP/ci-lib.sh"
+          install_cross() {
+            set -euo pipefail
+            cargo install cross --locked --version 0.2.5
+            echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          }
+          ci_run "Install cross 0.2.5" install_cross
       - name: Build the complete headless server and updater for target
         env:
           TARGET: ${{ matrix.target }}
           CARGO_TERM_COLOR: always
         run: |
-          set -euo pipefail
-          cross build --locked --release -p gitrun-cli --bin gitrun --target "$TARGET"
-          cross test --locked -p gitrun-updater --no-run --target "$TARGET"
-          cross check --locked -p gitrun-management --target "$TARGET"
-          binary="target/$TARGET/release/gitrun"
-          test -x "$binary"
-          file "$binary"
-          case "$TARGET" in
-            x86_64-unknown-linux-gnu)
-              test "$("$binary" --version --gitrun)" = "GitRun $(tr -d '[:space:]' < version.txt)"
-              ;;
-            aarch64-unknown-linux-gnu)
-              readelf -h "$binary" | grep -Fq 'AArch64'
-              readelf -l "$binary" | grep -Fq 'ld-linux-aarch64.so.1'
-              ;;
-            x86_64-unknown-linux-musl)
-              readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
-              # musl static PIE binaries may be reported as "static-pie linked"
-              # by file(1). The ABI-level invariant is that no PT_INTERP loader
-              # is requested; checking the ELF program headers is stable.
-              if readelf -lW "$binary" | grep -Fq ' INTERP '; then
-                echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
-                exit 1
-              fi
-              ;;
-            aarch64-unknown-linux-musl)
-              readelf -h "$binary" | grep -Fq 'AArch64'
-              # A static musl executable must not declare a PT_INTERP loader.
-              if readelf -lW "$binary" | grep -Fq ' INTERP '; then
-                echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
-                exit 1
-              fi
-              ;;
-          esac
+          source "$RUNNER_TEMP/ci-lib.sh"
+          build_target() {
+            set -euo pipefail
+            cross build --locked --release -p gitrun-cli --bin gitrun --target "$TARGET"
+            cross test --locked -p gitrun-updater --no-run --target "$TARGET"
+            cross check --locked -p gitrun-management --target "$TARGET"
+            binary="target/$TARGET/release/gitrun"
+            test -x "$binary"
+            file "$binary"
+            case "$TARGET" in
+              x86_64-unknown-linux-gnu)
+                test "$("$binary" --version --gitrun)" = "GitRun $(tr -d '[:space:]' < version.txt)"
+                ;;
+              aarch64-unknown-linux-gnu)
+                readelf -h "$binary" | grep -Fq 'AArch64'
+                readelf -l "$binary" | grep -Fq 'ld-linux-aarch64.so.1'
+                ;;
+              x86_64-unknown-linux-musl)
+                readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
+                # musl static PIE binaries may be reported as "static-pie linked"
+                # by file(1). The ABI-level invariant is that no PT_INTERP loader
+                # is requested; checking the ELF program headers is stable.
+                if readelf -lW "$binary" | grep -Fq ' INTERP '; then
+                  echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
+                  exit 1
+                fi
+                ;;
+              aarch64-unknown-linux-musl)
+                readelf -h "$binary" | grep -Fq 'AArch64'
+                # A static musl executable must not declare a PT_INTERP loader.
+                if readelf -lW "$binary" | grep -Fq ' INTERP '; then
+                  echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          }
+          ci_run "Build and validate server + updater ($TARGET)" build_target
       - name: Save target-specific Cargo cache
+        id: target-cache-save
         if: success() && steps.target-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -2375,6 +2395,22 @@ jobs:
             .gitrun-cargo
             target
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+      - name: Record target cache save result
+        if: always()
+        env:
+          CACHE_SAVE_OUTCOME: ${{ steps.target-cache-save.outcome || 'skipped' }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          {
+            echo "### Target cache save"
+            echo
+            echo "- Target: `$TARGET`"
+            echo "- Save action result: `$CACHE_SAVE_OUTCOME`"
+            echo
+          } | ci_sum
+      - *report
+      - *logs
 
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:
@@ -2445,18 +2481,24 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs: *job_outputs
     steps:
       - *checkout
+      - *boot
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      - name: Test platform detection contracts
-        run: cargo test --locked -p gitrun-platform
-      - name: Test native recovery service-manager routing
-        run: cargo test --locked -p gitrun-recovery main_library_restore_routes_by_the_active_service_manager
-      - name: Audit repository-wide multi-distro boundaries
-        run: python3 scripts/check-multidistro-contracts.py
+      - name: Test multi-distro portability contracts
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          rc=0
+          ci_run "Test platform detection contracts" cargo test --locked -p gitrun-platform || rc=1
+          ci_run "Test native recovery service-manager routing" cargo test --locked -p gitrun-recovery main_library_restore_routes_by_the_active_service_manager || rc=1
+          ci_run "Audit repository-wide multi-distro boundaries" python3 scripts/check-multidistro-contracts.py || rc=1
+          exit "$rc"
+      - *report
+      - *logs
 
   # ───────────────────────────────────────────── release contracts ──
   release-contracts:

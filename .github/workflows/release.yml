@@ -498,7 +498,7 @@ jobs:
           export XBPS_ARCH="$xbps_arch"
           (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
             -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
-            -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$stage")
+            -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$package_stage")
           xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
           test -n "$xbps_file"
           test -s "$xbps_file"

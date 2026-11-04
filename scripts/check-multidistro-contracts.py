@@ -38,6 +38,7 @@ RUNTIME_BASELINE = {
     "crates/gitrun-recovery/src/lib.rs": {
         "systemctl": 6, "systemd-path": 7,
     },
+    "crates/gitrun-recovery/src/json_recovery.rs": {"systemd-run": 2},
     "crates/gitrun-management/src/backend.rs": {
         "systemctl": 11, "systemd-path": 6,
     },

@@ -2318,6 +2318,8 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Test platform detection contracts
         run: cargo test --locked -p gitrun-platform
+      - name: Test native recovery service-manager routing
+        run: cargo test --locked -p gitrun-recovery main_library_restore_routes_by_the_active_service_manager
       - name: Audit repository-wide multi-distro boundaries
         run: python3 scripts/check-multidistro-contracts.py
 

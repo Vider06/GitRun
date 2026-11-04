@@ -765,7 +765,8 @@ fn push_recovery_detail(report: &mut JsonRecoveryReport, detail: String) {
 mod tests {
     use super::{
         active_path_for_backup, append_backup_suffix, remove_trailing_json_commas,
-        repaired_json_value, same_json_root_shape, JsonRecoveryAction,
+        main_library_restore_mode, repaired_json_value, same_json_root_shape,
+        JsonRecoveryAction, MainLibraryRestoreMode,
     };
     use std::path::Path;
 

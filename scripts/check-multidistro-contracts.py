@@ -17,11 +17,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 PATTERNS = {
-    "apt-get": re.compile(r"\\bapt-get\\b"),
-    "dpkg": re.compile(r"\\bdpkg(?:-query)?\\b"),
-    "systemctl": re.compile(r"\\bsystemctl\\b"),
+    "apt-get": re.compile(r"\bapt-get\\b"),
+    "dpkg": re.compile(r"\bdpkg(?:-query)?\\b"),
+    "systemctl": re.compile(r"\bsystemctl\\b"),
     "systemd-path": re.compile(r"/(?:etc|usr/lib|lib)/systemd/"),
-    "systemd-run": re.compile(r"\\bsystemd-run\\b"),
+    "systemd-run": re.compile(r"\bsystemd-run\\b"),
 }
 
 # Temporary, explicit inventory of runtime paths not yet routed through the
@@ -74,7 +74,7 @@ def tracked_files() -> list[str]:
     result = subprocess.run(
         ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True
     )
-    return [item.decode("utf-8") for item in result.stdout.split(b"\\0") if item]
+    return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
 
 
 def read_text(path: Path) -> str | None:
@@ -188,7 +188,7 @@ def main() -> int:
         *(known or ["- No known direct platform-specific references found."]),
         "",
     ]
-    summary_text = "\\n".join(summary)
+    summary_text = "\n".join(summary)
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as stream:

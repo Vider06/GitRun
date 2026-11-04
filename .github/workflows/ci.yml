@@ -18,9 +18,11 @@ name: GitRun CI
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
+  # Feature branches are validated once, when their pull request is opened or updated.
+  # Main receives the full pipeline on push; PR runs intentionally omit cache-gc.
   push:
     branches:
-      - "**"
+      - main
   pull_request:
   workflow_dispatch:
 

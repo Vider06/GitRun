@@ -1206,7 +1206,7 @@ jobs:
               "",
               "## Installation notes",
               "",
-              "- **Debian / Ubuntu:** install the matching Server or Desktop DEB with apt.",
+              "- **Debian / Ubuntu:** install the matching Server or Desktop DEB with apt. The GitRun-Server DEB declares the legacy gitrun package transition so apt can replace an existing migration-era installation.",
               "- **RPM-based distributions:** install the matching Server RPM with dnf.",
               "- **Arch Linux:** install the Server package with pacman.",
               "- **Alpine:** install the matching musl APK using the system package manager and the package's declared dependencies.",
@@ -1235,6 +1235,7 @@ jobs:
                   "Its /usr/bin/gitrun payload is the new 1.9.0 Server binary.",
                   "",
                   "From the existing 1.8.23 installation, run gitrun reinstall; its privileged helper will request administrator authorization when needed. "
+                  "This first transaction deliberately retains the legacy Debian package identity. After it completes, a subsequent gitrun reinstall selects GitRun-Server and replaces that legacy package registration. "
                   "Do not use this package for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",

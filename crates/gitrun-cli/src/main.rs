@@ -4283,7 +4283,9 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("Latest GitRun package installed. No saved configuration was found; run gitrun setup --terminal to configure the host.");
         }
-        println!("GitRun reinstall: PASS — installed verified {expected_package} release {version}");
+        println!(
+            "GitRun reinstall: PASS — installed verified {expected_package} release {version}"
+        );
         Ok(())
     })();
 

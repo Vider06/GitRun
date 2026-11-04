@@ -9,6 +9,10 @@ description = "Command-line interface for GitRun"
 name = "gitrun"
 path = "src/main.rs"
 
+[features]
+default = []
+desktop = ["gitrun-recovery/desktop"]
+
 [dependencies]
 base64 = "0.23"
 gitrun-scheduler = { path = "../gitrun-scheduler" }

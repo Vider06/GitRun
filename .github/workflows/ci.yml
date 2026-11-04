@@ -1338,7 +1338,7 @@ jobs:
           CI_DETAILS="$test_dir/details.md"; GITHUB_STEP_SUMMARY="$test_dir/summary.md"
           mkdir -p "$CI_LOGS"; touch "$CI_STEPS" "$CI_CACHES" "$CI_CHECKS" "$CI_ANNOT" "$CI_TAILS" "$CI_DETAILS"
           date +%s > "$CI_DIR/t0"; date -u +'%Y-%m-%dT%H:%M:%SZ' > "$CI_DIR/started_at"
-          GITRUN_JOB_STATUS=success
+          export GITRUN_JOB_STATUS=success
           ci_check error "report self-test success" true
           ci_check warn "report self-test warning" false
           ci_gate error "report self-test gate" true
@@ -2527,8 +2527,8 @@ jobs:
           {
             echo "### Target cache save"
             echo
-            echo "- Target: `$TARGET`"
-            echo "- Save action result: `$CACHE_SAVE_OUTCOME`"
+            printf -- '- Target: `%s`\n' "$TARGET"
+            printf -- '- Save action result: `%s`\n' "$CACHE_SAVE_OUTCOME"
             echo
           } | ci_sum
       - *report
@@ -2838,8 +2838,7 @@ jobs:
           exit "$rc"
       - *s_tc
       - *s_reg
-      - &audit_cache_save_report
-        name: Report Rust audit cache saves
+      - name: Report Rust audit cache saves
         if: always()
         env:
           CACHE_EVENT: ${{ github.event_name }}

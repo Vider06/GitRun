@@ -833,7 +833,7 @@ jobs:
             unzip -p "$root/library.zip" "$member" | jq -e 'type == "object" or type == "array"' >/dev/null
           done
 
-          (cd "$root" && sha256sum * > SHA256SUMS && sha256sum -c SHA256SUMS)
+          (cd "$root" && sha256sum -- * > SHA256SUMS && sha256sum -c SHA256SUMS)
       - name: Upload validated release payload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

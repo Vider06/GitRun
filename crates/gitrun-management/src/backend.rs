@@ -10,10 +10,12 @@
 
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
 use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
+#[cfg(feature = "desktop")]
 use gitrun_setup::BootstrapAuth;
 use gitrun_smart_scheduler::{KittyDashboardStatus, KittyRuntime, KittySettings};
 use gitrun_vault::{Scope, Vault};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "desktop")]
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -789,7 +791,7 @@ fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
-#[cfg(any(feature = "desktop", test))]
+#[cfg(feature = "desktop")]
 fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
     let value = validate_setup_value(value, key)?;
     if !value.chars().all(|c| c.is_ascii_digit()) {
@@ -895,7 +897,7 @@ fn secure_private_key(private_key_path: String) -> Result<String, String> {
     Ok(path)
 }
 
-#[cfg(any(feature = "desktop", test))]
+#[cfg(feature = "desktop")]
 fn build_first_setup_auth(
     auth_mode: &str,
     token: &str,

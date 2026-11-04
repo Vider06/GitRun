@@ -871,7 +871,7 @@ jobs:
               echo "| Report generated (UTC) | $generated_at |"
               echo "| Runner | ${RUNNER_NAME:-unknown} (${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}) |"
               echo "| Commit | ${GITHUB_SHA:0:12} |"
-              echo "| Run | ${GITHUB_RUN_ID:-unknown} |"
+              echo "| Run | [${GITHUB_RUN_ID:-unknown}](${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-unknown}/actions/runs/${GITHUB_RUN_ID:-}) |"
               echo
               echo "_Duration is measured from the report bootstrap step; runner queue time and earlier checkout/setup time are excluded. Skipped jobs cannot write a job-local summary; their status is reported by the workflow-level verification summary._"
               echo
@@ -922,7 +922,7 @@ jobs:
             line="$(awk -F'\t' '{printf "%s=%s ", $1, $2}' "$CI_CACHES")"
             {
               echo "secs=$secs"
-              echo "cache=${line% }"
+              echo "cache=${line:-not-used}"
               echo "errors<<GITRUN_EOF"
               if [ -s "$CI_ANNOT" ]; then head -c 1800 "$CI_ANNOT" | ci_strip; elif [ -s "$CI_TAILS" ]; then head -c 1800 "$CI_TAILS" | ci_strip; fi
               echo
@@ -3329,6 +3329,7 @@ jobs:
             exit 1
           fi
           echo "Verdict: $verdict"
+      - *report
 
   # ──────────────────────────────────────────────────────────── cache-gc ──
   cache-gc:
@@ -3343,11 +3344,20 @@ jobs:
     steps:
       - *boot
       - name: Remove superseded caches (never the newest ones)
+        id: gc
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ env.CI_GC_DRY_RUN }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
+          gc_started="$(date +%s)"
+          gc_record_step() {
+            rc=$?
+            local result=ok
+            [ "$rc" -eq 0 ] || result=fail
+            printf 'Cache inventory and garbage collection\t%s\t%s\n' "$result" "$(( $(date +%s) - gc_started ))" >> "$CI_STEPS"
+          }
+          trap gc_record_step EXIT
           api() { curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$@"; }
           base="https://api.github.com/repos/$GITHUB_REPOSITORY/actions"
           pages="$RUNNER_TEMP/cache-pages"; rm -rf "$pages"; mkdir -p "$pages"
@@ -3430,3 +3440,4 @@ jobs:
             used_after="$(api "$base/cache/usage" | jq -r '.active_caches_size_in_bytes // 0')"
             echo "cache usage: $((used_before / 1048576)) MB → $((used_after / 1048576)) MB"
           fi
+      - *report

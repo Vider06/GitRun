@@ -1198,9 +1198,13 @@ jobs:
               for name, item in sorted(by_name.items())
               if name in {"SHA256SUMS", "library.zip", "cargo-metadata.json", "sbom.spdx.json", "provenance.json"}
           ]
-          lines += table(["Metadata artifact", "Download", "SHA-256"], metadata_rows)
+          metadata_rows.append((
+              "release-manifest.json (Ed25519 signed)",
+              link("release-manifest.json"),
+              "Ed25519 signature; self-hash intentionally omitted",
+          ))
+          lines += table(["Metadata artifact", "Download", "Integrity"], metadata_rows)
           lines += [
-              f"- **Signed release manifest:** [release-manifest.json]({url('release-manifest.json')})",
               "- **Signature:** Ed25519; signature and key identifier are embedded in the manifest.",
               "- **Checksum list:** SHA256SUMS covers the published payload files; the manifest itself is authenticated by its Ed25519 signature.",
               "",

@@ -1544,6 +1544,7 @@ jobs:
           ci_ensure_pwsh
           pwsh --version
       - name: Save PowerShell cache
+        if: success() && steps.c_pwsh.outputs.cache-matched-key != steps.c_pwsh.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1691,6 +1692,7 @@ jobs:
           fi
       - &s_npm
         name: Save npm cache
+        if: success() && steps.npm_prune.outputs.save == 'true' && steps.c_npm.outputs.cache-matched-key != steps.c_npm.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1916,6 +1918,7 @@ jobs:
           fi
       - &s_tc
         name: Save toolchain cache
+        if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1925,6 +1928,7 @@ jobs:
           key: ${{ steps.c_tc.outputs.cache-primary-key }}
       - &s_reg
         name: Save cargo registry cache
+        if: success() && steps.c_reg.outputs.cache-matched-key != steps.c_reg.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1935,6 +1939,7 @@ jobs:
           key: ${{ steps.c_reg.outputs.cache-primary-key }}
       - &s_tgt
         name: Save target cache
+        if: success() && steps.prune.outputs.save == 'true' && steps.c_tgt.outputs.cache-matched-key != steps.c_tgt.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -2284,6 +2289,7 @@ jobs:
               ;;
           esac
       - name: Save target-specific Cargo cache
+        if: success() && steps.target-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -2702,6 +2708,7 @@ jobs:
           docker buildx version
           hadolint --version
       - name: Save Docker tools cache
+        if: success() && steps.c_dtools.outputs.cache-matched-key != steps.c_dtools.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:

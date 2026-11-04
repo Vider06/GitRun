@@ -858,14 +858,12 @@ fn build_first_setup_auth(
         )?)),
         "app" => {
             let app_id = validate_numeric_setup_id(app_id, "GitHub App ID")?;
-            let installation_id = validate_numeric_setup_id(
-                installation_id,
-                "GitHub App installation ID",
-            )?;
+            let installation_id =
+                validate_numeric_setup_id(installation_id, "GitHub App installation ID")?;
             let private_key_path = validate_private_key_path(private_key_path)?;
-            let secured_path = gitrun_setup::secure_github_app_private_key(
-                std::path::Path::new(&private_key_path),
-            )
+            let secured_path = gitrun_setup::secure_github_app_private_key(std::path::Path::new(
+                &private_key_path,
+            ))
             .map_err(|error| error.to_string())?;
             Ok(BootstrapAuth::GitHubApp {
                 app_id,

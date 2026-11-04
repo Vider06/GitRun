@@ -46,7 +46,9 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<PathBuf, SetupError>
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut options = fs::OpenOptions::new();
-    options.read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     let file = options.open(path).map_err(|error| {
         SetupError::Command(format!(
             "unable to safely open GitHub App private key {}: {error}",

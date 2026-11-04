@@ -19,7 +19,8 @@ name: GitRun CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - "**"
   pull_request:
   workflow_dispatch:
 
@@ -70,6 +71,7 @@ concurrency:
 jobs:
   # ─────────────────────────────────────────────── variables verification ──
   variables-verification:
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Repository CI variables
     runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
@@ -146,6 +148,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
   # ───────────────────────────────────────────────────────── environment ──
   environment:
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Runner environment
     needs: variables-verification
     runs-on: &runner ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
@@ -920,6 +923,7 @@ jobs:
 
   # ───────────────────────────────────────────────────────────── detect ──
   detect:
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Detect project components
     needs: variables-verification
     runs-on: *runner
@@ -1010,7 +1014,7 @@ jobs:
   cargo-lock:
     name: Validate Cargo.lock
     needs: detect
-    if: needs.detect.result == 'success'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.detect.result == 'success') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs:
@@ -1121,7 +1125,7 @@ jobs:
   ci-selftest:
     name: CI helper self-test
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.workflows == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.workflows == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1215,6 +1219,7 @@ jobs:
 
   # ───────────────────────────────────────────────────────── repository ──
   repository:
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Repository hygiene and syntax
     needs: cargo-lock
     runs-on: *runner
@@ -1386,7 +1391,7 @@ jobs:
   workflows:
     name: Workflow lint and security audit
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.workflows == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.workflows == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -1486,7 +1491,7 @@ jobs:
   shell:
     name: Shell validation
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.shell == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.shell == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1514,7 +1519,7 @@ jobs:
   powershell:
     name: PowerShell validation
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.powershell == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.powershell == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1576,7 +1581,7 @@ jobs:
   frontend:
     name: JavaScript, TypeScript and CSS validation
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.node == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.node == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1705,7 +1710,7 @@ jobs:
   audit-node:
     name: npm dependency audit
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.node == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.node == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1744,7 +1749,7 @@ jobs:
   rust-lint:
     name: Rust lint (fmt, clippy, docs)
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1952,7 +1957,7 @@ jobs:
   security-hardening:
     name: Security hardening regression gate
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2003,7 +2008,7 @@ jobs:
   gsr-watchdog:
     name: GSR watchdog lifecycle and failure detection
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2039,7 +2044,7 @@ jobs:
   runtime-contracts:
     name: Runtime contracts and configuration integration
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2136,7 +2141,7 @@ jobs:
   systemd-verify:
     name: systemd-analyze unit verification
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2202,7 +2207,7 @@ jobs:
   platform-target-check:
     name: Server + updater · ${{ matrix.target }}
     needs: [cargo-lock, rust-build]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2298,11 +2303,29 @@ jobs:
             target
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
 
+  # ───────────────────────────────────────────── multi-distro contracts ──
+  multi-distro-contracts:
+    name: Multi-distro portability contracts
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Test platform detection contracts
+        run: cargo test --locked -p gitrun-platform
+      - name: Audit repository-wide multi-distro boundaries
+        run: python3 scripts/check-multidistro-contracts.py
+
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:
     name: Linux platform and updater target contracts
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2362,7 +2385,7 @@ jobs:
   rust-test:
     name: Rust tests
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -2413,7 +2436,7 @@ jobs:
   rust-build:
     name: Rust release build
     needs: [cargo-lock, rust-test]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -2472,7 +2495,7 @@ jobs:
   audit-rust:
     name: Cargo audit and deny
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -2516,7 +2539,7 @@ jobs:
   tauri:
     name: Tauri GUI build and package
     needs: [cargo-lock, rust-lint, frontend]
-    if: needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -2599,7 +2622,7 @@ jobs:
   tauri-recovery:
     name: Tauri GitRun Recovery GUI build and test
     needs: [cargo-lock, rust-lint, frontend]
-    if: needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -2652,7 +2675,7 @@ jobs:
   docker:
     name: Docker and Compose validation
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.docker == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.docker == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -2914,7 +2937,7 @@ jobs:
   # ───────────────────────────────────────────────────────────── summary ──
   summary:
     name: Verification summary
-    if: ${{ always() }}
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (always()) }}
     needs:
       - variables-verification
       - environment
@@ -2936,6 +2959,7 @@ jobs:
       - runtime-contracts
       - systemd-verify
       - platform-compatibility
+      - multi-distro-contracts
       - platform-target-check
       - tauri
       - tauri-recovery
@@ -3126,7 +3150,7 @@ jobs:
   cache-gc:
     name: Cache garbage collection
     needs: summary
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (!cancelled() && github.event_name != 'pull_request') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:

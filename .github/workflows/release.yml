@@ -720,7 +720,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          cp all-assets/GitRun-* release-assets/
+          cp -- all-assets/GitRun-* release-assets/
           cp all-assets/library.zip all-assets/cargo-metadata.json all-assets/sbom.spdx.json all-assets/provenance.json release-assets/
       - name: Install release verification tools
         run: |
@@ -766,8 +766,14 @@ jobs:
           gui="$root/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb"
           test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
           dpkg-deb -c "$gui" | grep -Fq '/opt/gitrun-desktop/GitRun.AppImage'
-          ! dpkg-deb -c "$gui" | grep -Eq '/usr/bin/gitrun$'
-          ! dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb" | grep -Eq '/GitRun\.AppImage$'
+          if dpkg-deb -c "$gui" | grep -Eq '/usr/bin/gitrun$'; then
+            echo "Desktop package unexpectedly contains /usr/bin/gitrun" >&2
+            exit 1
+          fi
+          if dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb" | grep -Eq '/GitRun\.AppImage$'; then
+            echo "Server package unexpectedly contains the Desktop AppImage" >&2
+            exit 1
+          fi
           if [ "$MIGRATION_RELEASE" = true ]; then
             legacy="$root/GitRun-$VERSION-linux-x86_64-deb.deb"
             test -s "$legacy"
@@ -777,7 +783,10 @@ jobs:
             dpkg-deb -c "$legacy" | grep -Fq '/usr/libexec/gitrun/reinstall-latest.sh'
             dpkg-deb -c "$legacy" | grep -Fq '/usr/bin/gitrun'
           else
-            ! find "$root" -maxdepth 1 -type f -name 'GitRun-*-linux-x86_64-deb.deb' | grep -q .
+            if find "$root" -maxdepth 1 -type f -name 'GitRun-*-linux-x86_64-deb.deb' | grep -q .; then
+              echo "A legacy migration DEB was staged for a standard release" >&2
+              exit 1
+            fi
           fi
           mapfile -t expected_sorted < <(printf '%s\n' "${expected_files[@]}" | sort)
           mapfile -t actual_sorted < <(find "$root" -maxdepth 1 -type f -printf '%f\n' | sort)
@@ -1316,7 +1325,8 @@ jobs:
           trap 'rm -f "$key" "$public"' EXIT
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
-          export GITRUN_UPDATE_PUBLIC_KEY_HEX="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
+          GITRUN_UPDATE_PUBLIC_KEY_HEX="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
+          export GITRUN_UPDATE_PUBLIC_KEY_HEX
           legacy_key_hex="$(python3 - "$old/crates/gitrun-cli/src/main.rs" <<'PYKEY'
           import re, sys
           source = open(sys.argv[1], encoding="utf-8").read()
@@ -1385,7 +1395,7 @@ jobs:
           # now-latest release; this exercises its built-in trust anchor,
           # latest-manifest lookup, legacy target selection, download and apt install.
           legacy_reinstall_ok=false
-          for attempt in 1 2 3 4 5; do
+          for _ in 1 2 3 4 5; do
             if sudo "$old/target/release/gitrun" --no-cat --reinstall-latest-root; then
               legacy_reinstall_ok=true
               break
@@ -1408,7 +1418,7 @@ jobs:
           }
           RUST
           latest_manifest_ok=false
-          for attempt in 1 2 3 4 5; do
+          for _ in 1 2 3 4 5; do
             if (cd "$old" && cargo test --locked -p gitrun-updater --test migration_release_compat v1823_latest_manifest_selects_the_legacy_target -- --nocapture); then
               latest_manifest_ok=true
               break

@@ -4178,6 +4178,7 @@ fn run_repair_service() -> i32 {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn select_reinstall_debian_artifact(
     manifest: &gitrun_updater::ReleaseManifest,
 ) -> Result<(&gitrun_updater::ReleaseArtifact, &'static str), UpdateError> {
@@ -5837,7 +5838,7 @@ mod control_manager_cli_routing_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod debian_reinstall_artifact_tests {
     use super::*;
 
@@ -5850,7 +5851,9 @@ mod debian_reinstall_artifact_tests {
         }
     }
 
-    fn manifest(artifacts: Vec<gitrun_updater::ReleaseArtifact>) -> gitrun_updater::ReleaseManifest {
+    fn manifest(
+        artifacts: Vec<gitrun_updater::ReleaseArtifact>,
+    ) -> gitrun_updater::ReleaseManifest {
         gitrun_updater::ReleaseManifest {
             name: "GitRun".into(),
             version: "v1.9.0".into(),
@@ -5882,8 +5885,8 @@ mod debian_reinstall_artifact_tests {
             "linux-x86_64-deb",
             "GitRun-v1.8.23-linux-x86_64-deb.deb",
         )]);
-        let (selected, package) =
-            select_reinstall_debian_artifact(&release).expect("legacy DEB target should remain usable");
+        let (selected, package) = select_reinstall_debian_artifact(&release)
+            .expect("legacy DEB target should remain usable");
         assert_eq!(selected.target, "linux-x86_64-deb");
         assert_eq!(package, "gitrun");
     }

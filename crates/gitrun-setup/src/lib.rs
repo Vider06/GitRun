@@ -2752,6 +2752,39 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    #[cfg(unix)]
+    #[test]
+    fn github_app_key_is_opened_without_symlinks_and_hardened_to_0600() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitrun-private-key-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let key_path = root.join("app.pem");
+        fs::write(&key_path, "test-private-key").unwrap();
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let (canonical, contents) = secure_github_app_private_key(&key_path).unwrap();
+        assert_eq!(contents, "test-private-key");
+        assert_eq!(canonical, fs::canonicalize(&key_path).unwrap());
+        assert_eq!(
+            fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        let link_path = root.join("app-link.pem");
+        symlink(&key_path, &link_path).unwrap();
+        assert!(secure_github_app_private_key(&link_path).is_err());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn only_the_debian_gitrun_compatibility_link_is_allowed_for_replacement() {
         assert!(is_expected_debian_gitrun_symlink(

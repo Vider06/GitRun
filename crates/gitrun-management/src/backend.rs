@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+#[cfg(any(feature = "desktop", test))]
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "desktop")]

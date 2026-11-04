@@ -1394,6 +1394,10 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
     {
         return Err("Enter at least one repository as owner/repository".into());
     }
+    for repository in &repositories {
+        gitrun_setup::verify_bootstrap_repository_access(&auth, repository)
+            .map_err(|error| error.to_string())?;
+    }
 
     let pkexec = pkexec_path().ok_or(
         "trusted pkexec was not found at a root-owned, non-writable system path; graphical setup cannot safely continue",

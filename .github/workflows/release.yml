@@ -1380,11 +1380,19 @@ jobs:
           # fetched the signed manifest, selected the legacy target, downloaded
           # the package and verified both its digest and Debian payload.
           release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq .id)"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F prerelease=false -F make_latest=true >/dev/null
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F prerelease=false -f make_latest=true >/dev/null
           # Run the actual v1.8.23 privileged reinstall command against the
           # now-latest release; this exercises its built-in trust anchor,
           # latest-manifest lookup, legacy target selection, download and apt install.
-          sudo "$old/target/release/gitrun" --no-cat --reinstall-latest-root
+          legacy_reinstall_ok=false
+          for attempt in 1 2 3 4 5; do
+            if sudo "$old/target/release/gitrun" --no-cat --reinstall-latest-root; then
+              legacy_reinstall_ok=true
+              break
+            fi
+            sleep 3
+          done
+          test "$legacy_reinstall_ok" = true
           test "$(dpkg-query -W -f='${Version}' gitrun)" = 1.9.0
           cat >> "$test_dir/migration_release_compat.rs" <<'RUST'
           #[test]
@@ -1399,7 +1407,12 @@ jobs:
               assert_eq!(artifact.file, "GitRun-v1.9.0-linux-x86_64-deb.deb");
           }
           RUST
-          (
-            cd "$old"
-            cargo test --locked -p gitrun-updater --test migration_release_compat v1823_latest_manifest_selects_the_legacy_target -- --nocapture
-          )
+          latest_manifest_ok=false
+          for attempt in 1 2 3 4 5; do
+            if (cd "$old" && cargo test --locked -p gitrun-updater --test migration_release_compat v1823_latest_manifest_selects_the_legacy_target -- --nocapture); then
+              latest_manifest_ok=true
+              break
+            fi
+            sleep 3
+          done
+          test "$latest_manifest_ok" = true

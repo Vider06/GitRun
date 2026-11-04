@@ -720,7 +720,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          cp -- all-assets/GitRun-* release-assets/
+          mapfile -d '' -t release_binaries < <(find all-assets -maxdepth 1 -type f -name 'GitRun-*' -print0)
+          if ((${#release_binaries[@]} == 0)); then
+            echo "No GitRun release artifacts were staged" >&2
+            exit 1
+          fi
+          cp -- "${release_binaries[@]}" release-assets/
           cp all-assets/library.zip all-assets/cargo-metadata.json all-assets/sbom.spdx.json all-assets/provenance.json release-assets/
       - name: Install release verification tools
         run: |

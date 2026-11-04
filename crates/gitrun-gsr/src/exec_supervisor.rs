@@ -67,13 +67,20 @@ mod linux {
     const RUNNER_USER: &str = "runner";
     const RUNNER_SCRIPT: &str = "/home/runner/actions-runner/run.sh";
 
-    const PTRACE_CONT: libc::c_int = 7;
-    const PTRACE_GETREGS: libc::c_int = 12;
-    const PTRACE_SETREGS: libc::c_int = 13;
-    const PTRACE_SYSCALL: libc::c_int = 24;
-    const PTRACE_SEIZE: libc::c_int = 0x4206;
-    const PTRACE_INTERRUPT: libc::c_int = 0x4207;
-    const PTRACE_GETEVENTMSG: libc::c_int = 0x4201;
+    // libc exposes ptrace's request parameter as c_uint on GNU Linux and
+    // c_int on musl Linux. Keep the request constants ABI-matched per target.
+    #[cfg(target_env = "musl")]
+    type PtraceRequest = libc::c_int;
+    #[cfg(not(target_env = "musl"))]
+    type PtraceRequest = libc::c_uint;
+
+    const PTRACE_CONT: PtraceRequest = 7;
+    const PTRACE_GETREGS: PtraceRequest = 12;
+    const PTRACE_SETREGS: PtraceRequest = 13;
+    const PTRACE_SYSCALL: PtraceRequest = 24;
+    const PTRACE_SEIZE: PtraceRequest = 0x4206;
+    const PTRACE_INTERRUPT: PtraceRequest = 0x4207;
+    const PTRACE_GETEVENTMSG: PtraceRequest = 0x4201;
 
     const PTRACE_O_TRACEFORK: libc::c_ulong = 0x0000_0002;
     const PTRACE_O_TRACEVFORK: libc::c_ulong = 0x0000_0004;

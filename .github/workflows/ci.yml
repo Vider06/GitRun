@@ -2258,26 +2258,6 @@ jobs:
             target
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
 
-  # ───────────────────────────────────────────── multi-distro contracts ──
-  multi-distro-contracts:
-    name: Multi-distro portability contracts
-    runs-on: *runner
-    timeout-minutes: 60
-    permissions:
-      contents: read
-    steps:
-      - *checkout
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - name: Test platform detection contracts
-        run: cargo test --locked -p gitrun-platform
-      - name: Test native recovery service-manager routing
-        run: cargo test --locked -p gitrun-recovery main_library_restore_routes_by_the_active_service_manager
-      - name: Audit repository-wide multi-distro boundaries
-        run: python3 scripts/check-multidistro-contracts.py
-
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:
     name: Linux platform and updater target contracts
@@ -2337,6 +2317,28 @@ jobs:
       - *s_tgt
       - *report
       - *logs
+
+  # ───────────────────────────────────────────── multi-distro contracts ──
+  multi-distro-contracts:
+    name: Multi-distro portability contracts
+    needs: [cargo-lock, rust-lint]
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Test platform detection contracts
+        run: cargo test --locked -p gitrun-platform
+      - name: Test native recovery service-manager routing
+        run: cargo test --locked -p gitrun-recovery main_library_restore_routes_by_the_active_service_manager
+      - name: Audit repository-wide multi-distro boundaries
+        run: python3 scripts/check-multidistro-contracts.py
 
   # ───────────────────────────────────────────── release contracts ──
   release-contracts:

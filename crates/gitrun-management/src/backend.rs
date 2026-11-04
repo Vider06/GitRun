@@ -861,10 +861,22 @@ fn build_first_setup_auth(
             let installation_id =
                 validate_numeric_setup_id(installation_id, "GitHub App installation ID")?;
             let private_key_path = validate_private_key_path(private_key_path)?;
-            let secured_path = gitrun_setup::secure_github_app_private_key(std::path::Path::new(
-                &private_key_path,
-            ))
-            .map_err(|error| error.to_string())?;
+            let (secured_path, private_key) =
+                gitrun_setup::secure_github_app_private_key(std::path::Path::new(
+                    &private_key_path,
+                ))
+                .map_err(|error| error.to_string())?;
+            let app = gitrun_core::AppAuth::new(
+                &app_id,
+                &installation_id,
+                &private_key,
+                Duration::from_secs(5),
+                Duration::from_secs(20),
+            )
+            .map_err(|error| format!("invalid GitHub App authentication data: {error}"))?;
+            gitrun_core::GitHubAuth::App(app)
+                .bearer_token()
+                .map_err(|error| format!("GitHub App authentication failed: {error}"))?;
             Ok(BootstrapAuth::GitHubApp {
                 app_id,
                 installation_id,

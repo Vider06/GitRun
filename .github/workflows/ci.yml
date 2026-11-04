@@ -871,7 +871,7 @@ jobs:
               echo "| Commit | ${GITHUB_SHA:0:12} |"
               echo "| Run | [${GITHUB_RUN_ID:-unknown}](${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-unknown}/actions/runs/${GITHUB_RUN_ID:-}) |"
               echo
-              echo "_Duration is measured from the report bootstrap step; runner queue time and earlier checkout/setup time are excluded. Skipped jobs cannot write a job-local summary; their status is reported by the workflow-level verification summary._"
+              echo "_Duration is measured from completion of the shared CI helper bootstrap and runner diagnostics. Runner queue time and checkout are excluded. Skipped jobs cannot write a job-local summary; their status is reported by the workflow-level verification summary._"
               echo
               echo "## Step results and timings"
               echo
@@ -2119,6 +2119,8 @@ jobs:
                   echo "not saved (exact cache already restored)"
                 elif [ "$reason" = over-budget ]; then
                   echo "not saved (target cache exceeded size limit)"
+                elif [ "$reason" = prune-unavailable ]; then
+                  echo "not determined (target cache pruning did not complete)"
                 else
                   echo "skipped (job did not reach cache save)"
                 fi
@@ -2132,7 +2134,11 @@ jobs:
             echo "|---|---|"
             printf '| Toolchain | %s |\n' "$(save_state "$TC_OUTCOME" "$TC_MATCH" "$TC_PRIMARY" "")"
             printf '| Cargo registry | %s |\n' "$(save_state "$REG_OUTCOME" "$REG_MATCH" "$REG_PRIMARY" "")"
-            prune_reason=""; [ "$PRUNE_SAVE" = true ] || prune_reason=over-budget
+            case "$PRUNE_SAVE" in
+              false) prune_reason=over-budget ;;
+              true) prune_reason="" ;;
+              *) prune_reason=prune-unavailable ;;
+            esac
             printf '| Target artifacts | %s |\n' "$(save_state "$TGT_OUTCOME" "$TGT_MATCH" "$TGT_PRIMARY" "$prune_reason")"
             echo
           } | ci_sum

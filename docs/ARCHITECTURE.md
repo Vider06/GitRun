@@ -21,7 +21,7 @@ The installed Linux service runs the Rust scheduler through the `gitrun` executa
 | `gitrun-vault` | AES-256-GCM encrypted secret storage |
 | `gitrun-setup` | First-run preflight and installation preparation |
 | `gitrun-updater` | Release update, verification and rollback |
-| `gitrun-recovery` | Startup/repair diagnostics and recovery UI |
+| `gitrun-recovery` | Headless startup/repair diagnostics and recovery engine; optional Tauri UI behind the `desktop` feature |
 | `gitrun-dashboard-tauri` | Tauri operator dashboard |
 
 ## Workflow API flow
@@ -60,7 +60,7 @@ Important shared state lives under `GITRUN_STATE_DIR`:
 
 Some setup, health and crash records are intentionally root-owned and mode `0600`. An unprivileged recovery UI can receive `PermissionDenied` when reading them; that alone is not evidence of corruption or incomplete setup. The repair path treats this as protected state and only migrates the validated legacy files/directories described in the [release history](RELEASE_HISTORY.md).
 
-The Tauri dashboard and scheduler intentionally share file formats for VM and Logic Containers configuration.
+The Tauri Dashboard and scheduler intentionally share file formats for VM and Logic Containers configuration. The Dashboard is a separately packaged executable; the CLI launches it without linking the Tauri runtime.
 
 ## JSON integrity, recovery and host telemetry
 
@@ -99,4 +99,4 @@ Future Mapping projects the next hour into twelve five-minute buckets, with an o
 
 ## Shared management backend
 
-The management API, policy checks, persistence operations, typed command dispatcher and privileged Control Manager live in the `gitrun-management` crate. The crate's default feature set is headless: CLI, system services and the Control Manager do not link Tauri or require GTK/WebKit. The dashboard is a thin Tauri adapter that enables the optional `desktop` feature and re-exports the backend's UI commands. Both the terminal management console and the dashboard invoke the same management handlers; protected system operations are routed through the allowlisted Unix-domain-socket Control Manager.
+The management API, policy checks, persistence operations, typed command dispatcher and privileged Control Manager live in the `gitrun-management` crate. The crate's default feature set is headless: CLI, system services and the Control Manager do not link Tauri or require GTK/WebKit. The separately packaged Dashboard is a thin Tauri adapter that enables the optional `desktop` feature and exposes the backend's UI commands. Both the terminal management console and the Dashboard invoke the same management handlers; protected system operations are routed through the allowlisted Unix-domain-socket Control Manager. The CLI launches the Dashboard executable as a separate process and has no direct dependency on the Dashboard crate.

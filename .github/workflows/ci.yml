@@ -1443,6 +1443,7 @@ jobs:
               "migration keeps 1.8.23 maintainer scripts": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release,
               "legacy updater SHA verification": "download_and_verify(&download_url, &artifact.sha256" in release,
               "migration release is staged as prerelease": "--prerelease" in release and "-F prerelease=true" in release,
+              "failed migration verification is demoted back to prerelease": "Revert failed migration verification to prerelease" in release and "-f make_latest=false" in release,
               "migration is promoted only after package verification": release.index("legacy-updater-package/usr/share/gitrun/version.txt") < release.index("make_latest=true"),
               "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
               "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,

@@ -65,6 +65,7 @@ PREFIX_ALLOWLIST = (
 FILE_ALLOWLIST = {
     "packaging/gitrun-postinst": "DEB-only maintainer hook",
     "packaging/gitrun-prerm": "DEB-only maintainer hook",
+    "scripts/build-deb.sh": "DEB-only package builder",
 }
 
 SCANNED_SUFFIXES = {".rs", ".sh", ".ps1", ".service"}

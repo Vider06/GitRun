@@ -1269,10 +1269,19 @@ jobs:
           if [ "$MIGRATION_RELEASE" = true ]; then title="GitRun $VERSION — Migration Release"; else title="GitRun $VERSION"; fi
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release edit "$VERSION" --title "$title" --notes-file "$NOTES_FILE"
+            if [ "$MIGRATION_RELEASE" = true ]; then
+              release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq .id)"
+              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F prerelease=true >/dev/null
+            fi
             gh release upload "$VERSION" "${assets[@]}" --clobber
           else
-            gh release create "$VERSION" "${assets[@]}" --target "$GITHUB_SHA" \
-              --title "$title" --notes-file "$NOTES_FILE"
+            if [ "$MIGRATION_RELEASE" = true ]; then
+              gh release create "$VERSION" "${assets[@]}" --target "$GITHUB_SHA" \
+                --title "$title" --notes-file "$NOTES_FILE" --prerelease
+            else
+              gh release create "$VERSION" "${assets[@]}" --target "$GITHUB_SHA" \
+                --title "$title" --notes-file "$NOTES_FILE"
+            fi
           fi
       - name: Install Rust toolchain for legacy updater verification
         if: env.MIGRATION_RELEASE == 'true'
@@ -1305,10 +1314,9 @@ jobs:
           use std::path::PathBuf;
           #[test]
           fn v1823_reinstall_contract_downloads_and_verifies_migration_deb() {
-              let manifest_url = latest_manifest_download_url("Vider06/GitRun")
-                  .expect("legacy updater must construct the latest manifest URL");
-              let manifest = fetch_manifest(&manifest_url)
-                  .expect("legacy updater must fetch and verify the signed manifest");
+              let manifest_url = "https://github.com/Vider06/GitRun/releases/download/v1.9.0/release-manifest.json";
+              let manifest = fetch_manifest(manifest_url)
+                  .expect("legacy updater must fetch and verify the signed migration manifest");
               assert_eq!(manifest.version, "v1.9.0");
               let artifact = manifest.artifact_for("linux-x86_64-deb")
                   .expect("legacy reinstall target must exist");
@@ -1337,3 +1345,25 @@ jobs:
           test -x "$RUNNER_TEMP/legacy-updater-package/usr/bin/gitrun"
           test -x "$RUNNER_TEMP/legacy-updater-package/usr/libexec/gitrun/reinstall-latest.sh"
           test "$(cat "$RUNNER_TEMP/legacy-updater-package/usr/share/gitrun/version.txt")" = 1.9.0
+          # The release remains a prerelease until the real v1.8.23 updater has
+          # fetched the signed manifest, selected the legacy target, downloaded
+          # the package and verified both its digest and Debian payload.
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq .id)"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F prerelease=false -F make_latest=true >/dev/null
+          cat >> "$test_dir/migration_release_compat.rs" <<'RUST'
+          #[test]
+          fn v1823_latest_manifest_selects_the_legacy_target() {
+              let manifest_url = latest_manifest_download_url("Vider06/GitRun")
+                  .expect("legacy updater must construct the latest-release manifest URL");
+              let manifest = fetch_manifest(&manifest_url)
+                  .expect("legacy updater must fetch and verify the latest signed manifest");
+              assert_eq!(manifest.version, "v1.9.0");
+              let artifact = manifest.artifact_for("linux-x86_64-deb")
+                  .expect("the latest manifest must retain the 1.8.23 reinstall target");
+              assert_eq!(artifact.file, "GitRun-v1.9.0-linux-x86_64-deb.deb");
+          }
+          RUST
+          (
+            cd "$old"
+            cargo test --locked -p gitrun-updater --test migration_release_compat v1823_latest_manifest_selects_the_legacy_target -- --nocapture
+          )

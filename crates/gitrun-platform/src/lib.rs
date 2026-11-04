@@ -255,7 +255,7 @@ fn detect_service_manager_from_signals(
         None
     }
 }
-
+//!cat
 pub fn detect_service_manager() -> Option<ServiceManager> {
     // Prefer the active PID 1/init runtime over installed management commands.
     // A host may have systemctl, rc-service or sv installed without running

@@ -111,8 +111,12 @@ pub fn verify_github_repository_access(
     if owner.is_empty()
         || name.is_empty()
         || parts.next().is_some()
-        || owner.chars().any(|character| matches!(character, '?' | '#' | '%'))
-        || name.chars().any(|character| matches!(character, '?' | '#' | '%'))
+        || owner
+            .chars()
+            .any(|character| matches!(character, '?' | '#' | '%'))
+        || name
+            .chars()
+            .any(|character| matches!(character, '?' | '#' | '%'))
     {
         return Err(SetupError::InvalidRepository(repository.to_owned()));
     }
@@ -173,7 +177,9 @@ pub fn verify_bootstrap_repository_access(
                 std::time::Duration::from_secs(5),
                 std::time::Duration::from_secs(20),
             )
-            .map_err(|error| SetupError::Command(format!("invalid GitHub App authentication data: {error}")))?;
+            .map_err(|error| {
+                SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
+            })?;
             gitrun_core::GitHubAuth::App(app)
         }
     };

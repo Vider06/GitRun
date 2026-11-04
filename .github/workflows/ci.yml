@@ -85,7 +85,9 @@ jobs:
       errors: ${{ steps.report.outputs.errors }}
     steps:
       - name: Start report clock
-        run: echo "GITRUN_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+        run: |
+          echo "GITRUN_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          echo "GITRUN_JOB_STARTED_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
 
       - name: Verify repository variables
         id: verify
@@ -115,8 +117,6 @@ jobs:
           done
 
           {
-            echo "### Repository CI variables"
-            echo
             echo "| Variable | Current repository value |"
             echo "|---|---|"
             for name in \
@@ -130,18 +130,55 @@ jobs:
               value="${!name:-<unset>}"
               printf '| `%s` | `%s` |\n' "$name" "$value"
             done
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > "$RUNNER_TEMP/gitrun-variables-details.md"
+          echo "GITRUN_VERIFY_SECS=$(( $(date +%s) - GITRUN_JOB_STARTED ))" >> "$GITHUB_ENV"
 
       - name: Report job status
         id: report
         if: always()
         env:
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          GITRUN_JOB_STATUS: ${{ job.status }}
         run: |
           started="${GITRUN_JOB_STARTED:-$(date +%s)}"
+          started_utc="${GITRUN_JOB_STARTED_UTC:-unavailable}"
+          generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          secs=$(( $(date +%s) - started ))
+          verify_secs="${GITRUN_VERIFY_SECS:-unavailable}"
+          status="${GITRUN_JOB_STATUS:-unknown}"
           {
-            echo "secs=$(( $(date +%s) - started ))"
-            echo "cache="
+            echo "# GitRun CI job report"
+            echo
+            echo "| Field | Runtime value |"
+            echo "|---|---|"
+            echo "| Job | Repository CI variables |"
+            echo "| Result | **${status}** |"
+            echo "| Execution duration | ${secs}s |"
+            echo "| Measurement started (UTC) | ${started_utc} |"
+            echo "| Report generated (UTC) | ${generated_at} |"
+            echo "| Runner | ${RUNNER_NAME:-unknown} (${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}) |"
+            echo "| Commit | ${GITHUB_SHA:0:12} |"
+            echo "| Run | ${GITHUB_RUN_ID:-unknown} |"
+            echo
+            echo "_Skipped jobs do not execute a job-local report; their status is shown in the workflow-level verification summary._"
+            echo
+            echo "## Step results and timings"
+            echo
+            echo "| Step | Result | Time |"
+            echo "|---|---|---:|"
+            echo "| Verify repository variables | ${VERIFY_OUTCOME:-unavailable} | ${verify_secs}s |"
+            echo
+            echo "## Cache activity"
+            echo
+            echo "_No cache restore operation was recorded for this job._"
+            echo
+            echo "## Job-specific details"
+            echo
+            if [ -f "$RUNNER_TEMP/gitrun-variables-details.md" ]; then cat "$RUNNER_TEMP/gitrun-variables-details.md"; else echo "_No details were captured._"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "secs=$secs"
+            echo "cache=not-used"
             echo "errors<<GITRUN_EOF"
             if [ "$VERIFY_OUTCOME" != success ]; then
               echo "Repository CI variable verification ended with: $VERIFY_OUTCOME"

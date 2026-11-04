@@ -1448,6 +1448,8 @@ jobs:
               "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
               "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,
               "new CLI validates gitrun-server package identity": '"gitrun-server"' in cli and "trim() != expected_package" in cli,
+              "new CLI detects the selected package for reinstall": ".arg(expected_package)" in cli,
+              "new CLI has reinstall target unit coverage": "prefers_new_server_deb_when_both_targets_exist" in cli and "retains_legacy_target_fallback_for_old_manifests" in cli,
               "new CLI retains legacy manifest fallback": 'artifact_for("linux-x86_64-deb")' in cli and '"gitrun"' in cli,
               "Desktop package remains independent": "name: gitrun-desktop" in release,
               "Desktop excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,

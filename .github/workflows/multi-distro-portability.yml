@@ -1,0 +1,29 @@
+name: Multi-distro portability contract
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portability-contract:
+    name: Host portability regression guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check platform detection and portability boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check-multidistro-contract.py
+          cargo test -p gitrun-platform --locked
+          cargo check -p gitrun-platform --locked

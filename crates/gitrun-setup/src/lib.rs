@@ -49,7 +49,7 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), S
     let mut options = fs::OpenOptions::new();
     options
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
     let file = options.open(path).map_err(|error| {
         SetupError::Command(format!(
             "unable to safely open GitHub App private key {}: {error}",
@@ -60,6 +60,11 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), S
     if !before.is_file() {
         return Err(SetupError::Command(
             "GitHub App private key must be a regular file".into(),
+        ));
+    }
+    if before.nlink() != 1 {
+        return Err(SetupError::Command(
+            "GitHub App private key must not have additional hard links".into(),
         ));
     }
     if before.len() > 1024 * 1024 {

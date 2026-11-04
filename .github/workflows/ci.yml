@@ -29,7 +29,7 @@ permissions:
 env:
   RUST_VERSION: "1.99.0"
   NODE_VERSION: "22"
-  # Bump the number to invalidate EVERY cache. A fresh_cache run gets its own namespace.
+  # Bump the epoch to invalidate every cache; the next main cache-GC run purges the old namespace.
   # Persistent CI configuration comes from Repository Variables.
   CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e2x{0}', github.run_id) || 'e2' }}
   CACHE_BASE_EPOCH: e2

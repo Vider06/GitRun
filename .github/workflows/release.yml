@@ -1193,10 +1193,7 @@ jobs:
               "The manifest is signed with Ed25519. Its artifact entries contain the SHA-256 digest of every other downloadable release file.",
               "",
           ]
-          metadata_rows = [
-              (name, link(name), digest_cell(item))
-              for name, item in sorted(metadata_assets)
-          ]
+          metadata_rows = sorted(metadata_assets)
           metadata_rows.append((
               "release-manifest.json (Ed25519 signed)",
               link("release-manifest.json"),

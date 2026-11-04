@@ -35,10 +35,6 @@ BASELINE = {
         "crates/gitrun-setup/src/lib.rs": 3,
         "crates/gitrun-cli/src/main.rs": 1,
     },
-    "dpkg": {
-        "crates/gitrun-setup/src/lib.rs": 12,
-        "crates/gitrun-cli/src/main.rs": 5,
-    },
     "systemctl": {
         "crates/gitrun-setup/src/lib.rs": 38,
         "crates/gitrun-recovery/src/lib.rs": 14,

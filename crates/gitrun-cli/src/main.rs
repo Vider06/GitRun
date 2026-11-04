@@ -1320,11 +1320,9 @@ fn terminal_setup_command(
                 );
             }
 
-            let secured_path =
+            let (secured_path, private_key) =
                 gitrun_setup::secure_github_app_private_key(Path::new(&private_key_path))?;
             let private_key_path = secured_path.to_string_lossy().into_owned();
-            let private_key = std::fs::read_to_string(&secured_path)
-                .map_err(|error| format!("unable to read secured private key: {error}"))?;
             let app = AppAuth::new(
                 &app_id,
                 &installation_id,

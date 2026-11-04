@@ -1416,3 +1416,16 @@ jobs:
             sleep 3
           done
           test "$latest_manifest_ok" = true
+      - name: Revert failed migration verification to prerelease
+        if: failure() && env.MIGRATION_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq .id)"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              -F prerelease=true -f make_latest=false >/dev/null
+          fi

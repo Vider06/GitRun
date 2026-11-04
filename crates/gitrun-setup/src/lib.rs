@@ -99,6 +99,87 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), S
     Ok((canonical, key))
 }
 
+/// Verify that the selected GitHub credentials can access a repository.
+/// Both interactive setup frontends call this same check before elevation.
+pub fn verify_github_repository_access(
+    auth: &gitrun_core::GitHubAuth,
+    repository: &str,
+) -> Result<(), SetupError> {
+    let mut parts = repository.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    if owner.is_empty()
+        || name.is_empty()
+        || parts.next().is_some()
+        || owner.contains(['?', '#', '%'])
+        || name.contains(['?', '#', '%'])
+    {
+        return Err(SetupError::InvalidRepository(repository.to_owned()));
+    }
+
+    let token = auth
+        .bearer_token()
+        .map_err(|error| SetupError::Command(format!("GitHub authentication failed: {error}")))?;
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|error| SetupError::Command(format!("unable to create GitHub client: {error}")))?;
+    let response = client
+        .get(format!("https://api.github.com/repos/{owner}/{name}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("X-GitHub-Api-Version", "2026-03-10")
+        .header("User-Agent", concat!("GitRun/", env!("CARGO_PKG_VERSION")))
+        .send()
+        .map_err(|error| SetupError::Command(format!("GitHub repository check failed: {error}")))?;
+
+    match response.status() {
+        reqwest::StatusCode::OK => Ok(()),
+        reqwest::StatusCode::UNAUTHORIZED => Err(SetupError::Command(
+            "GitHub rejected the configured credentials (401 Unauthorized).".into(),
+        )),
+        reqwest::StatusCode::FORBIDDEN => Err(SetupError::Command(
+            "GitHub denied access or rate-limited the request (403 Forbidden).".into(),
+        )),
+        reqwest::StatusCode::NOT_FOUND => Err(SetupError::Command(format!(
+            "repository {repository} was not found or the configured authentication cannot access it."
+        ))),
+        status => Err(SetupError::Command(format!(
+            "GitHub returned HTTP {} while checking {repository}.",
+            status.as_u16()
+        ))),
+    }
+}
+
+/// Convert the setup payload to the same authenticated API client used by the
+/// terminal setup, securely reopening App PEMs without following symlinks.
+pub fn verify_bootstrap_repository_access(
+    auth: &BootstrapAuth,
+    repository: &str,
+) -> Result<(), SetupError> {
+    let auth = match auth {
+        BootstrapAuth::Pat(token) => gitrun_core::GitHubAuth::Pat(token.clone()),
+        BootstrapAuth::GitHubApp {
+            app_id,
+            installation_id,
+            private_key_path,
+        } => {
+            let (_path, key) = secure_github_app_private_key(Path::new(private_key_path))?;
+            let app = gitrun_core::AppAuth::new(
+                app_id,
+                installation_id,
+                &key,
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(20),
+            )
+            .map_err(|error| SetupError::Command(format!("invalid GitHub App authentication data: {error}")))?;
+            gitrun_core::GitHubAuth::App(app)
+        }
+    };
+    verify_github_repository_access(&auth, repository)
+}
+
 #[derive(Debug, Error)]
 pub enum SetupError {
     #[error("failed to create setup directory: {0}")]

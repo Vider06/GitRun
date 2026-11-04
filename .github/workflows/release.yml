@@ -1306,6 +1306,26 @@ jobs:
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           export GITRUN_UPDATE_PUBLIC_KEY_HEX="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
+          legacy_key_hex="$(python3 - "$old/crates/gitrun-cli/src/main.rs" <<'PYKEY'
+          import re, sys
+          source = open(sys.argv[1], encoding="utf-8").read()
+          match = re.search(r'const DEFAULT_UPDATE_PUBLIC_KEY_HEX: &str\s*=\s*"([0-9a-f]{64})"', source)
+          if not match:
+              raise SystemExit("Could not read the 1.8.23 built-in update trust anchor")
+          print(match.group(1))
+          PYKEY
+          )"
+          legacy_key_id="$(python3 - "$old/crates/gitrun-cli/src/main.rs" <<'PYID'
+          import re, sys
+          source = open(sys.argv[1], encoding="utf-8").read()
+          match = re.search(r'const DEFAULT_UPDATE_PUBLIC_KEY_ID: &str\s*=\s*"([^"]+)"', source)
+          if not match:
+              raise SystemExit("Could not read the 1.8.23 update key identifier")
+          print(match.group(1))
+          PYID
+          )"
+          test "$GITRUN_UPDATE_PUBLIC_KEY_HEX" = "$legacy_key_hex"
+          test "$GITRUN_UPDATE_SIGNING_KEY_ID" = "$legacy_key_id"
           export GITRUN_UPDATE_PUBLIC_KEY_ID="$GITRUN_UPDATE_SIGNING_KEY_ID"
           export GITRUN_UPDATE_SIGNATURE_REQUIRED=true
           test_dir="$old/crates/gitrun-updater/tests"; mkdir -p "$test_dir"
@@ -1350,6 +1370,11 @@ jobs:
           # the package and verified both its digest and Debian payload.
           release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq .id)"
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F prerelease=false -F make_latest=true >/dev/null
+          # Run the actual v1.8.23 privileged reinstall command against the
+          # now-latest release; this exercises its built-in trust anchor,
+          # latest-manifest lookup, legacy target selection, download and apt install.
+          sudo "$old/target/release/gitrun" --no-cat --reinstall-latest-root
+          test "$(dpkg-query -W -f='${Version}' gitrun)" = 1.9.0
           cat >> "$test_dir/migration_release_compat.rs" <<'RUST'
           #[test]
           fn v1823_latest_manifest_selects_the_legacy_target() {

@@ -1195,8 +1195,7 @@ jobs:
           ]
           metadata_rows = [
               (name, link(name), digest_cell(item))
-              for name, item in sorted(by_name.items())
-              if name in {"SHA256SUMS", "library.zip", "cargo-metadata.json", "sbom.spdx.json", "provenance.json"}
+              for name, item in sorted(metadata_assets)
           ]
           metadata_rows.append((
               "release-manifest.json (Ed25519 signed)",

@@ -2,13 +2,13 @@
 
 Installation, release-build and verification scripts for Linux, macOS and Windows. Scripts are operational tooling rather than part of the Rust runtime. Check installer and release behavior against the current source/product version in `version.txt` (currently <!-- gitrun-version:start -->1.9.0<!-- gitrun-version:end --> on this source branch). The 1.8.16 source line adds GTUU read-only checks, forced validated local runner-image rebuilding, safe permanent-runner replacement and automatic sudo authorization for system installations. The 1.8.15 source line fingerprints local runner-image build inputs, validates a temporary image against the runtime GSR policy bootstrap and triggers GTUU reconciliation. The 1.8.14 source line added acknowledged Windows/Linux Logs clipboard helpers with a Save As fallback and repaired the GSR bootstrap entrypoint across runner profiles. The 1.8.12 source line improved native clipboard delivery and tmux OSC 52 passthrough. Use `bash scripts/gitrun-manage.sh --target user@host` on Linux or `powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\gitrun-manage.ps1 -Target user@host` on Windows when you want local clipboard acknowledgement and interactive file export. The 1.8.11 source line corrected the transient restore timeout and hardened recovery of the workflow API socket path. The 1.8.10 source line fixed Docker's built-in seccomp default handling and improved diagnostics for failed isolated Main Library restoration. It builds on the 1.8.9 signed Main Library restore path and protected JSON reporting, the 1.8.8 CI cache-fingerprint helper, and earlier guarded JSON recovery, host CPU history, runner-network bootstrap fix and TUI Logs clipboard shortcut. Their behavior and limits are recorded in [the consolidated release history](../docs/RELEASE_HISTORY.md); Kitty queue-evaluation remains documented in [the Smart Scheduler guide](../docs/SMART_SCHEDULER.md), while protected dashboard settings and earlier runtime migration are historical records. Historical verification limits are summarized in [release history](../docs/RELEASE_HISTORY.md); they do not validate a new installer or release commit.
 
-## Installing a published Debian package
+## Installing a published Server package
 
-For standard Debian/Ubuntu amd64 hosts, prefer the prebuilt package attached to the latest stable [GitHub Release](https://github.com/Vider06/GitRun/releases). The package asset is named `GitRun-vVERSION-linux-x86_64-deb.deb` (replace `vVERSION` with the release tag, such as `v1.8.21`).
+For Debian/Ubuntu, use the matching **Server** DEB asset from the selected signed [GitHub Release](https://github.com/Vider06/GitRun/releases). The 1.9.0 workflow names these assets `GitRun-Server-VERSION-linux-x86_64-deb.deb` and `GitRun-Server-VERSION-linux-aarch64-deb.deb`; select the one matching the host architecture. Do not use the one-time `GitRun-v1.9.0-linux-x86_64-deb.deb` migration asset for a fresh installation: it exists only to transition existing 1.8.23 installations.
 
 ```bash
-VERSION="v1.8.21"
-ASSET="GitRun-${VERSION}-linux-x86_64-deb.deb"
+VERSION="v1.9.0"
+ASSET="GitRun-Server-${VERSION}-linux-x86_64-deb.deb" # choose aarch64 when appropriate
 curl -fL --proto '=https' --tlsv1.2 \
   "https://github.com/Vider06/GitRun/releases/download/${VERSION}/${ASSET}" \
   -o "${ASSET}"
@@ -17,11 +17,9 @@ gitrun setup --terminal
 gitrun doctor
 ```
 
-Check GitHub Releases for the newest version before installing. This artifact targets amd64/x86-64; it is not suitable for ARM64. Docker must be installed and configured separately. A local `.deb` install through APT resolves package dependencies.
+Use this example only if that asset is present in the selected release and listed in its signed manifest. The Server build matrix also includes GNU/musl x86_64/aarch64; other package formats and the independent Desktop DEB/AppImage are listed in [Linux platform compatibility](../docs/PLATFORM_SUPPORT.md). Docker must be installed and configured separately. A local DEB install through APT resolves declared package dependencies.
 
-First-run setup and day-to-day configuration can be completed in the **desktop GUI**. If you prefer the terminal, use `gitrun setup --terminal` for guided setup and `gitrun manage` for the keyboard-driven TUI. The GUI and TUI use the same validated backend operations.
-
-Use `scripts/install-server.sh` when you deliberately need a source build rather than the published package. The macOS and Windows helper scripts have separate platform requirements; see their script-specific instructions before running them.
+First-run setup and day-to-day configuration can be completed in the **desktop GUI**. If you prefer the terminal, use `gitrun setup --terminal` for guided setup and `gitrun manage` for the keyboard-driven TUI. The GUI and TUI use the same `gitrun-management` backend.
 
 ## Main Library release archive
 

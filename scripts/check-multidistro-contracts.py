@@ -125,6 +125,24 @@ def check_release_package_boundaries(errors: list[str]) -> None:
             errors.append("XBPS archive must not consume the systemd-enabled package stage")
 
 
+def check_recovery_service_manager_contract(errors: list[str]) -> None:
+    recovery = (ROOT / "crates/gitrun-recovery/src/json_recovery.rs").read_text(encoding="utf-8")
+    required = (
+        "main_library_restore_mode",
+        "ServiceManager::Systemd",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+        "MainLibraryRestoreMode::DirectRoot",
+        "run_json_recovery_root_action(action.as_str())",
+    )
+    missing = [item for item in required if item not in recovery]
+    if missing:
+        errors.append(
+            "Main Library restore must route systemd, OpenRC, and runit explicitly; "
+            "missing: " + ", ".join(missing)
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     known: list[str] = []
@@ -169,6 +187,7 @@ def main() -> int:
 
     check_platform_catalog(errors)
     check_release_package_boundaries(errors)
+    check_recovery_service_manager_contract(errors)
 
     summary = [
         "# Multi-distro contract audit",

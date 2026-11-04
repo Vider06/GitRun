@@ -697,7 +697,8 @@ fn update_command(
             if let Some(url) = manifest_url {
                 child.arg(url);
             }
-            let child_result = child                .status()
+            let child_result = child
+                .status()
                 .map_err(|error| {
                     format!("unable to launch the newly installed GTUU updater: {error}")
                 })
@@ -2095,7 +2096,8 @@ enum Command {
         /// GitHub Actions workflow run ID.
         run_id: u64,
         /// Required acknowledgement that the entire workflow run will be cancelled.
-        #[arg(long, required = true)]        yes: bool,
+        #[arg(long, required = true)]
+        yes: bool,
     },
     /// Check dependencies and prepare config/state/log directories.
     Setup {
@@ -2794,7 +2796,8 @@ fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
             eprintln!("GitRun setup: FAIL — {error}");
             1
         }
-    }}
+    }
+}
 
 fn refresh_json_setup_assets(
     config: &Config,
@@ -3493,7 +3496,8 @@ fn run_doctor() -> i32 {
         .iter()
         .find(|path| Path::new(path).is_file());
         doctor_check(
-            "GSR systemd unit",            gsr_unit
+            "GSR systemd unit",
+            gsr_unit
                 .map(|path| Ok((*path).to_owned()))
                 .unwrap_or_else(|| {
                     Err("gitrun-gsr.service unit is missing; run sudo gitrun fix-update".into())

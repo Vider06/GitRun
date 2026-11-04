@@ -1437,6 +1437,8 @@ jobs:
               "legacy Debian package identity": "Package: gitrun" in release and 'artifact="GitRun-$VERSION-linux-x86_64-deb.deb"' in release,
               "legacy updater target retained": 'artifact_for("linux-x86_64-deb")' in release,
               "legacy updater source tag": "--branch v1.8.23" in release,
+              "legacy trust anchor is matched to the release signing key": "test \"$GITRUN_UPDATE_PUBLIC_KEY_HEX\" = \"$legacy_key_hex\"" in release and "test \"$GITRUN_UPDATE_SIGNING_KEY_ID\" = \"$legacy_key_id\"" in release,
+              "actual legacy reinstall command is executed": '--no-cat --reinstall-latest-root' in release,
               "legacy updater uses latest manifest resolution": 'latest_manifest_download_url("Vider06/GitRun")' in release,
               "migration keeps 1.8.23 maintainer scripts": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release,
               "legacy updater SHA verification": "download_and_verify(&download_url, &artifact.sha256" in release,

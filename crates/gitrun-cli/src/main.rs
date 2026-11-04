@@ -697,8 +697,7 @@ fn update_command(
             if let Some(url) = manifest_url {
                 child.arg(url);
             }
-            let child_result = child
-                .status()
+            let child_result = child                .status()
                 .map_err(|error| {
                     format!("unable to launch the newly installed GTUU updater: {error}")
                 })
@@ -1397,8 +1396,7 @@ fn terminal_setup_command(
     }
     payload.push_str(&format!("GITRUN_REPOSITORIES={}\n", repositories.join(",")));
 
-    // Create the credential-bearing setup request atomically with restrictive
-    // permissions. A plain write followed by chmod leaves a brief exposure
+    // Create the credential-bearing setup request atomically with restrictive    // permissions. A plain write followed by chmod leaves a brief exposure
     // window in /tmp before the permissions are tightened.
     #[cfg(unix)]
     {
@@ -2097,8 +2095,7 @@ enum Command {
         /// GitHub Actions workflow run ID.
         run_id: u64,
         /// Required acknowledgement that the entire workflow run will be cancelled.
-        #[arg(long, required = true)]
-        yes: bool,
+        #[arg(long, required = true)]        yes: bool,
     },
     /// Check dependencies and prepare config/state/log directories.
     Setup {
@@ -2797,8 +2794,7 @@ fn run_setup(presenter: &mut presenter::CatPresenter) -> i32 {
             eprintln!("GitRun setup: FAIL — {error}");
             1
         }
-    }
-}
+    }}
 
 fn refresh_json_setup_assets(
     config: &Config,
@@ -3497,8 +3493,7 @@ fn run_doctor() -> i32 {
         .iter()
         .find(|path| Path::new(path).is_file());
         doctor_check(
-            "GSR systemd unit",
-            gsr_unit
+            "GSR systemd unit",            gsr_unit
                 .map(|path| Ok((*path).to_owned()))
                 .unwrap_or_else(|| {
                     Err("gitrun-gsr.service unit is missing; run sudo gitrun fix-update".into())
@@ -4198,7 +4193,6 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !cfg!(target_arch = "x86_64") {
         return Err("the official Debian reinstall currently targets Linux x86_64".into());
     }
-
     // Auto-reinstall is pinned to the official GitRun trust anchor.
     // Do not allow transient environment overrides to disable verification.
     std::env::set_var(
@@ -4897,8 +4891,7 @@ fn save_gitrun_settings_root_command(input_path: &str) -> Result<(), Box<dyn std
     settings.save(&destination)?;
     // The root scheduler treats this file as authorization policy. Keep it
     // root-owned and read-only to the desktop user's primary group; the user
-    // must use this authenticated helper rather than editing the policy JSON.
-    gitrun_setup::secure_system_settings_file(&destination, Some(requester_uid))?;
+    // must use this authenticated helper rather than editing the policy JSON.    gitrun_setup::secure_system_settings_file(&destination, Some(requester_uid))?;
     std::fs::File::open(&state_dir)?.sync_all()?;
     println!("GitRun security settings saved successfully.");
     Ok(())
@@ -5597,8 +5590,7 @@ mod internal_lifecycle_command_tests {
             std::ffi::OsString::from("--no-cat"),
             std::ffi::OsString::from("doctor"),
         ]));
-        // Clap global flags may appear after the subcommand too; mascot
-        // suppression must be recognized before parsing in either position.
+        // Clap global flags may appear after the subcommand too; mascot        // suppression must be recognized before parsing in either position.
         assert!(super::no_cat_override_requested([
             std::ffi::OsString::from("doctor"),
             std::ffi::OsString::from("--no-cat"),
@@ -5859,7 +5851,7 @@ mod debian_reinstall_artifact_tests {
         gitrun_updater::ReleaseManifest {
             name: "GitRun".into(),
             version: "v1.9.0".into(),
-            git_commit: "0123456789abcdef0123456789abcdef01234567".into(),
+            git_commit: "test-commit-id".into(),
             artifacts,
             signature: None,
             signature_key_id: None,

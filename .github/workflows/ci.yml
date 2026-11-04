@@ -611,7 +611,6 @@ jobs:
             printf '%s\t%s\t%s\n' "$name" "$result" "$elapsed" >> "$CI_STEPS"
             return 0
           }
-          }
           # ci_checks_finish TITLE -> summary table, returns 1 if any error-level check failed
           ci_checks_finish() {
             local lvl st name detail bad=0
@@ -647,7 +646,6 @@ jobs:
             fi
             printf '%s\t%s\t%s\n' "$name" "$result" "$elapsed" >> "$CI_STEPS"
             return 0
-          }
           }
 
           # ------------------------------------------------------------ cache logs ----
@@ -928,7 +926,6 @@ jobs:
               echo
               echo "GITRUN_EOF"
             } >> "${GITHUB_OUTPUT:-/dev/null}"
-          }
           }
           GITRUN_LIB
           source "$RUNNER_TEMP/ci-lib.sh"

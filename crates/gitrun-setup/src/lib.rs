@@ -38,6 +38,55 @@ pub enum BootstrapAuth {
     },
 }
 
+/// Secure a user-supplied GitHub App PEM before any privileged setup process
+/// receives its path. Open without following symlinks, validate the opened
+/// inode, enforce a bounded regular file, and apply mode 0600 through the
+/// already-open descriptor to avoid chmod/path substitution races.
+pub fn secure_github_app_private_key(path: &Path) -> Result<PathBuf, SetupError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut options = fs::OpenOptions::new();
+    options.read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let file = options.open(path).map_err(|error| {
+        SetupError::Command(format!(
+            "unable to safely open GitHub App private key {}: {error}",
+            path.display()
+        ))
+    })?;
+    let before = file.metadata()?;
+    if !before.is_file() {
+        return Err(SetupError::Command(
+            "GitHub App private key must be a regular file".into(),
+        ));
+    }
+    if before.len() > 1024 * 1024 {
+        return Err(SetupError::Command(
+            "GitHub App private key exceeds the 1 MiB safety limit".into(),
+        ));
+    }
+
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    let after = file.metadata()?;
+    if !after.is_file() || after.permissions().mode() & 0o777 != 0o600 {
+        return Err(SetupError::Command(
+            "GitHub App private key could not be secured to mode 0600".into(),
+        ));
+    }
+
+    let canonical = fs::canonicalize(path)?;
+    let path_metadata = fs::symlink_metadata(&canonical)?;
+    if path_metadata.file_type().is_symlink()
+        || !path_metadata.is_file()
+        || path_metadata.dev() != after.dev()
+        || path_metadata.ino() != after.ino()
+    {
+        return Err(SetupError::Command(
+            "GitHub App private key path changed while it was being secured".into(),
+        ));
+    }
+    Ok(canonical)
+}
+
 #[derive(Debug, Error)]
 pub enum SetupError {
     #[error("failed to create setup directory: {0}")]

@@ -549,18 +549,31 @@ jobs:
 
           # ci_check LEVEL NAME CMD...   (error|warn) collects results, never exits
           ci_check() {
-            local lvl="$1" name="$2" out rc; shift 2
+            local lvl="$1" name="$2" out rc started elapsed result; shift 2
+            started="$(date +%s)"
             if out="$("$@" 2>&1)"; then
+              elapsed=$(( $(date +%s) - started ))
               printf '✅ %s%s\n' "$name" "${out:+ — ${out%%$'\n'*}}"
               printf '%s\tok\t%s\t%s\n' "$lvl" "$name" "${out%%$'\n'*}" >> "$CI_CHECKS"
+              result=ok
             else
               rc=$?
+              elapsed=$(( $(date +%s) - started ))
               out="${out%%$'\n'*}"
-              if [ "$lvl" = error ]; then printf '❌ %s — %s\n' "$name" "${out:-exit $rc}"; ci_annot error "" "" "" "$name" "${out:-exit $rc}"
-              else printf '⚠️  %s — %s\n' "$name" "${out:-exit $rc}"; ci_annot warning "" "" "" "$name" "${out:-exit $rc}"; fi
+              if [ "$lvl" = error ]; then
+                printf '❌ %s — %s\n' "$name" "${out:-exit $rc}"
+                ci_annot error "" "" "" "$name" "${out:-exit $rc}"
+                result=fail
+              else
+                printf '⚠️  %s — %s\n' "$name" "${out:-exit $rc}"
+                ci_annot warning "" "" "" "$name" "${out:-exit $rc}"
+                result=warn
+              fi
               printf '%s\tfail\t%s\t%s\n' "$lvl" "$name" "${out:-exit $rc}" >> "$CI_CHECKS"
             fi
+            printf '%s\t%s\t%s\n' "$name" "$result" "$elapsed" >> "$CI_STEPS"
             return 0
+          }
           }
           # ci_checks_finish TITLE -> summary table, returns 1 if any error-level check failed
           ci_checks_finish() {
@@ -581,16 +594,23 @@ jobs:
           # ci_gate LEVEL NAME CMD...  like ci_check, but the output is NOT captured: use it for
           # functions that print their own annotations. CMD returns non-zero when it found problems.
           ci_gate() {
-            local lvl="$1" name="$2" rc icon="❌"; shift 2
+            local lvl="$1" name="$2" rc icon="❌" started elapsed result; shift 2
+            started="$(date +%s)"
             if "$@"; then
-              printf '✅ %s\n' "$name"; printf '%s\tok\t%s\t\n' "$lvl" "$name" >> "$CI_CHECKS"
+              elapsed=$(( $(date +%s) - started ))
+              printf '✅ %s\n' "$name"
+              printf '%s\tok\t%s\t\n' "$lvl" "$name" >> "$CI_CHECKS"
+              result=ok
             else
               rc=$?
-              if [ "$lvl" != error ]; then icon="⚠️"; fi
+              elapsed=$(( $(date +%s) - started ))
+              if [ "$lvl" != error ]; then icon="⚠️"; result=warn; else result=fail; fi
               printf '%s %s (exit %s)\n' "$icon" "$name" "$rc"
               printf '%s\tfail\t%s\tsee annotations / log\n' "$lvl" "$name" >> "$CI_CHECKS"
             fi
+            printf '%s\t%s\t%s\n' "$name" "$result" "$elapsed" >> "$CI_STEPS"
             return 0
+          }
           }
 
           # ------------------------------------------------------------ cache logs ----
@@ -605,7 +625,7 @@ jobs:
               partial) echo "    ↳ restored from an older key (${matched}); only what changed gets rebuilt" ;;
               miss) echo "    ↳ no usable cache: cold start, everything is built/downloaded" ;;
             esac
-            printf '%s\t%s\t%s\t%s\n' "$name" "$res" "$size" "$primary" >> "$CI_CACHES"
+            printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$res" "$size" "$primary" "$matched" >> "$CI_CACHES"
           }
 
           # ---------------------------------------------------- output parsers (awk) ----
@@ -840,7 +860,7 @@ jobs:
                 echo "| Cache | Restore result | Restored size | Matched key | Requested key |"
                 echo "|---|---|---:|---|---|"
                 while IFS=$'\t' read -r lbl res sz primary matched; do
-                  echo "| $lbl | $res | ${sz:—} | ${matched:—} | ${primary:—} |"
+                  echo "| $lbl | $res | ${sz:-—} | ${matched:-—} | ${primary:-—} |"
                 done < "$CI_CACHES"
               else
                 echo "_No cache restore operation was recorded for this job._"

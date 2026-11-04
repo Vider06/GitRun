@@ -42,14 +42,13 @@ pub enum BootstrapAuth {
 /// receives its path. Open without following symlinks, validate the opened
 /// inode, enforce a bounded regular file, and apply mode 0600 through the
 /// already-open descriptor to avoid chmod/path substitution races.
-pub fn secure_github_app_private_key(path: &Path) -> Result<PathBuf, SetupError> {
+pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), SetupError> {
+    use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut options = fs::OpenOptions::new();
-    options
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    let file = options.open(path).map_err(|error| {
+    options.read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = options.open(path).map_err(|error| {
         SetupError::Command(format!(
             "unable to safely open GitHub App private key {}: {error}",
             path.display()
@@ -86,7 +85,15 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<PathBuf, SetupError>
             "GitHub App private key path changed while it was being secured".into(),
         ));
     }
-    Ok(canonical)
+
+    let mut key = String::new();
+    file.take((1024 * 1024 + 1) as u64).read_to_string(&mut key)?;
+    if key.len() > 1024 * 1024 {
+        return Err(SetupError::Command(
+            "GitHub App private key exceeds the 1 MiB safety limit".into(),
+        ));
+    }
+    Ok((canonical, key))
 }
 
 #[derive(Debug, Error)]

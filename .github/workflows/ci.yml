@@ -1123,8 +1123,8 @@ jobs:
   # ───────────────────────────────────────────────────────── ci-selftest ──
   ci-selftest:
     name: CI helper self-test
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.workflows == 'true'
+    needs: [cargo-lock, workflows]
+    if: needs.cargo-lock.outputs.workflows == 'true' && needs.workflows.result == 'success'
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1954,8 +1954,8 @@ jobs:
   # ───────────────────────────────────────────── security-hardening gate ──
   security-hardening:
     name: Security hardening regression gate
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    needs: [cargo-lock, rust-lint]
+    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2005,8 +2005,8 @@ jobs:
   # ───────────────────────────────────────────── GSR watchdog lifecycle ──
   gsr-watchdog:
     name: GSR watchdog lifecycle and failure detection
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    needs: [cargo-lock, rust-lint]
+    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2041,8 +2041,8 @@ jobs:
   # ───────────────────────────────────────────── runtime contract gate ──
   runtime-contracts:
     name: Runtime contracts and configuration integration
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    needs: [cargo-lock, rust-lint]
+    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2204,8 +2204,8 @@ jobs:
   # ─────────────────────────────── Linux product target build matrix ──
   platform-target-check:
     name: Server + updater · ${{ matrix.target }}
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    needs: [cargo-lock, rust-build]
+    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-build.result == 'success' || needs.rust-build.result == 'failure') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2294,8 +2294,8 @@ jobs:
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:
     name: Linux platform and updater target contracts
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    needs: [cargo-lock, rust-lint]
+    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2354,8 +2354,8 @@ jobs:
   # ───────────────────────────────────────────────────────────── rust-test ──
   rust-test:
     name: Rust tests
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    needs: [cargo-lock, rust-lint]
+    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-lint.result == 'success' || needs.rust-lint.result == 'failure') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -2405,8 +2405,8 @@ jobs:
   # ──────────────────────────────────────────────────────────── rust-build ──
   rust-build:
     name: Rust release build
-    needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    needs: [cargo-lock, rust-test]
+    if: ${{ always() && needs.cargo-lock.outputs.rust == 'true' && (needs.rust-test.result == 'success' || needs.rust-test.result == 'failure') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -2963,7 +2963,7 @@ jobs:
           environment|Runner environment|always|
           detect|Detect components|always|
           cargo-lock|Cargo.lock validation|rust|
-          ci-selftest|CI self-test|workflows|
+          ci-selftest|CI self-test|workflows|workflows
           repository|Hygiene and syntax|always|
           workflows|Workflow lint and security|workflows|
           shell|Shell|shell|
@@ -2971,15 +2971,15 @@ jobs:
           frontend|JS, TS and CSS|node|
           audit-node|npm audit|node|
           rust-lint|Rust lint|rust|
-          rust-test|Rust tests|rust|
-          rust-build|Rust release build|rust|
+          rust-test|Rust tests|rust|rust-lint
+          rust-build|Rust release build|rust|rust-test
           audit-rust|Cargo audit and deny|rust|
-          security-hardening|Security hardening regression gate|rust|
-          gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|
-          runtime-contracts|Runtime contracts and configuration integration|rust|
+          security-hardening|Security hardening regression gate|rust|rust-lint
+          gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|rust-lint
+          runtime-contracts|Runtime contracts and configuration integration|rust|rust-lint
           systemd-verify|systemd-analyze unit verification|rust|
-          platform-compatibility|Linux platform and updater target contracts|rust|
-          platform-target-check|Server and updater Linux target matrix|rust|
+          platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
+          platform-target-check|Server and updater Linux target matrix|rust|rust-build
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
@@ -3047,8 +3047,10 @@ jobs:
                 cargo-lock) echo "  detect --> cargo_lock" ;;
                 *) echo "  cargo_lock --> $n" ;;
               esac
-              [ "$id" = tauri ] && { echo "  rust_lint --> tauri"; echo "  frontend --> tauri"; }
-              [ "$id" = tauri-recovery ] && { echo "  rust_lint --> tauri_recovery"; echo "  frontend --> tauri_recovery"; }
+              for dep in ${extra:-}; do
+                dep_node="${dep//-/_}"
+                echo "  $dep_node --> $n"
+              done
               echo "  $n --> verdict"
             done
             echo '  classDef ok fill:#dafbe1,stroke:#1a7f37,color:#0a3622'

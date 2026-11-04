@@ -811,12 +811,14 @@ jobs:
             test "$(cat "$dir/usr/share/gitrun/version.txt")" = "$VERSION_NUMBER"
           done
           # Inspect the native package metadata and payloads without executing foreign-architecture binaries.
-          for rpm_file in "$root"/GitRun-Server-"$VERSION"-linux-*-rpm.rpm; do
+          mapfile -d '' -t rpm_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-rpm.rpm" -print0)
+          for rpm_file in "${rpm_files[@]}"; do
             rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
             rpm -qpl "$rpm_file" | grep -Fxq /usr/bin/gitrun
             rpm -qpl "$rpm_file" | grep -Fxq /usr/lib/systemd/system/gitrun.service
           done
-          for apk_file in "$root"/GitRun-Server-"$VERSION"-linux-*-apk.apk; do
+          mapfile -d '' -t apk_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-apk.apk" -print0)
+          for apk_file in "${apk_files[@]}"; do
             tar -tzf "$apk_file" | grep -Fxq .PKGINFO
           done
           arch_file="$root/GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst"

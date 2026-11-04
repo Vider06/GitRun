@@ -2985,7 +2985,7 @@ jobs:
           JOBS
 
           detect_ok=false; if [ "$(res detect)" = success ]; then detect_ok=true; fi
-          declare -A STATE LABEL SECS CACHE DEPS WHY
+          declare -A STATE LABEL SECS CACHE DEPS DEP_IDS WHY
           order=(); nfail=0; ncancel=0; nok=0; nblocked=0; nna=0
           while IFS='|' read -r id label flag extra; do
             [ -n "$id" ] || continue
@@ -3007,8 +3007,8 @@ jobs:
                 if [ "$en" = 0 ]; then STATE[$id]=na; nna=$((nna + 1))
                 else
                   why=""
-                  blockers="${DEP_IDS[$id]:-}"
-                  for b in $blockers; do
+                  read -r -a blockers <<< "${DEP_IDS[$id]:-}"
+                  for b in "${blockers[@]}"; do
                     if [ "$(res "$b")" != success ]; then why="$why$b "; fi
                   done
                   if [ -n "$why" ]; then STATE[$id]=blocked; WHY[$id]="${why% }"; nblocked=$((nblocked + 1))
@@ -3040,7 +3040,8 @@ jobs:
             printf '  verdict{{"%s"}}:::%s\n' "$head" "$([ "$verdict" = pass ] && echo ok || echo fail)"
             for id in "${order[@]}"; do
               n="${id//-/_}"
-              for dep in ${DEP_IDS[$id]:-}; do
+              read -r -a dep_ids <<< "${DEP_IDS[$id]:-}"
+              for dep in "${dep_ids[@]}"; do
                 dep_node="${dep//-/_}"
                 echo "  $dep_node --> $n"
               done

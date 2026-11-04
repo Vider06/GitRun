@@ -243,6 +243,7 @@ Read [Security](SECURITY.md) and the detailed [security model](docs/SECURITY_MOD
 | Diagnose or report a problem | [Support](SUPPORT.md) |
 | Repair JSON safely or restore the Main Library | [CLI recovery guide](crates/gitrun-cli/README.md#json-integrity-and-recovery) and [Recovery component](crates/gitrun-recovery/README.md) |
 | Understand dashboard CPU history and freshness | [Dashboard guide](crates/gitrun-dashboard-tauri/README.md#host-cpu-history) |
+| Understand accessibility behavior and known limitations | [Accessibility](ACCESSIBILITY.md) |
 | Contribute code | [Contributing](CONTRIBUTING.md) |
 | Understand version-specific changes | [Release history](docs/RELEASE_HISTORY.md) |
 

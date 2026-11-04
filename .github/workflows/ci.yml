@@ -48,9 +48,11 @@ env:
   CARGO_TERM_PROGRESS_WHEN: never
   CARGO_INCREMENTAL: "0"
   CARGO_NET_RETRY: "10"
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  # Keep test artifacts smaller while retaining source line tables for diagnostics.
-  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+  # CI does not need local debug symbols; disabling them keeps Cargo target
+  # caches below the per-cache budget instead of repeatedly restoring oversized
+  # cross-job partial caches that cannot be saved again.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
   RUST_BACKTRACE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && 'full' || '1' }}
   FORCE_COLOR: "1"
   NPM_CONFIG_FUND: "false"
@@ -1803,23 +1805,17 @@ jobs:
           # Restore prefixes must be literal prefixes of the primary key. Keep
           # this through cfg: manifest, lock, profile, and job follow it. Cargo
           # fingerprints validate artifacts restored from older keys or other jobs.
-          target_prefix="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-"
-          if [[ "$target" != "$target_prefix"* ]]; then
-            ci_err "target cache restore prefix is not a prefix of its primary key"
-            exit 1
-          fi
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
             echo "toolchain_prefix=$ns-rustup-${RUST_VERSION}-"
             echo "registry=$ns-cargo-registry-${lock}"
-            # Lockfile/manifest hashes remain part of the exact target key. The fallback
-            # deliberately spans lockfile and workspace-crate bumps: Cargo's fingerprints
-            # validate restored artifacts and rebuild only incompatible dependencies.
             echo "registry_prefix=$ns-cargo-registry-"
             echo "target=$target"
-            echo "target_prefix=$target_prefix"
           } >> "$GITHUB_OUTPUT"
-          echo "image fingerprint $fp: target caches are exact per job, with cross-job restore fallback"
+          # Target artifacts are large and profile/job-specific. Never restore a
+          # partial target cache from another job: it can consume several GB and
+          # then exceed the save budget after this job adds its own artifacts.
+          echo "image fingerprint $fp: target caches are isolated by job and restored only on exact key"
       - &c_tc
         name: Restore toolchain cache
         id: c_tc
@@ -1848,7 +1844,6 @@ jobs:
         with:
           path: target
           key: ${{ steps.keys.outputs.target }}
-          restore-keys: ${{ steps.keys.outputs.target_prefix }}
       - &rust_install
         name: Install Rust toolchain
         env:

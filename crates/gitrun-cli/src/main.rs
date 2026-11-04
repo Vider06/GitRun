@@ -4178,6 +4178,17 @@ fn run_repair_service() -> i32 {
     }
 }
 
+fn select_reinstall_debian_artifact(
+    manifest: &gitrun_updater::ReleaseManifest,
+) -> Result<(&gitrun_updater::ReleaseArtifact, &'static str), UpdateError> {
+    match manifest.artifact_for("linux-x86_64-server-deb") {
+        Ok(artifact) => Ok((artifact, "gitrun-server")),
+        Err(_) => manifest
+            .artifact_for("linux-x86_64-deb")
+            .map(|artifact| (artifact, "gitrun")),
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
@@ -4201,10 +4212,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     // New releases install the independently packaged Server product. Keep
     // the historical target as a compatibility fallback for repositories
     // whose latest signed manifest predates the Server/Desktop split.
-    let (artifact, expected_package) = match manifest.artifact_for("linux-x86_64-server-deb") {
-        Ok(artifact) => (artifact, "gitrun-server"),
-        Err(_) => (manifest.artifact_for("linux-x86_64-deb")?, "gitrun"),
-    };
+    let (artifact, expected_package) = select_reinstall_debian_artifact(&manifest)?;
     let artifact_name = artifact.file.clone();
     let artifact_sha256 = artifact.sha256.clone();
     let url = format!(
@@ -5826,5 +5834,66 @@ mod control_manager_cli_routing_tests {
         })
         .expect_err("IPC failure must remain visible to the caller");
         assert_eq!(error, "manager socket unavailable");
+    }
+}
+
+#[cfg(test)]
+mod debian_reinstall_artifact_tests {
+    use super::*;
+
+    fn artifact(target: &str, file: &str) -> gitrun_updater::ReleaseArtifact {
+        gitrun_updater::ReleaseArtifact {
+            target: target.into(),
+            file: file.into(),
+            sha256: "a".repeat(64),
+            download_url: None,
+        }
+    }
+
+    fn manifest(artifacts: Vec<gitrun_updater::ReleaseArtifact>) -> gitrun_updater::ReleaseManifest {
+        gitrun_updater::ReleaseManifest {
+            name: "GitRun".into(),
+            version: "v1.9.0".into(),
+            git_commit: "0123456789abcdef0123456789abcdef01234567".into(),
+            artifacts,
+            signature: None,
+            signature_key_id: None,
+            dependencies: Vec::new(),
+            runner_image: None,
+            repository: Some("Vider06/GitRun".into()),
+        }
+    }
+
+    #[test]
+    fn prefers_new_server_deb_when_both_targets_exist() {
+        let release = manifest(vec![
+            artifact("linux-x86_64-deb", "GitRun-v1.9.0-linux-x86_64-deb.deb"),
+            artifact("linux-x86_64-server-deb", "GitRun-Server-v1.9.0-linux-x86_64-deb.deb"),
+        ]);
+        let (selected, package) =
+            select_reinstall_debian_artifact(&release).expect("Server DEB target should win");
+        assert_eq!(selected.target, "linux-x86_64-server-deb");
+        assert_eq!(package, "gitrun-server");
+    }
+
+    #[test]
+    fn retains_legacy_target_fallback_for_old_manifests() {
+        let release = manifest(vec![artifact(
+            "linux-x86_64-deb",
+            "GitRun-v1.8.23-linux-x86_64-deb.deb",
+        )]);
+        let (selected, package) =
+            select_reinstall_debian_artifact(&release).expect("legacy DEB target should remain usable");
+        assert_eq!(selected.target, "linux-x86_64-deb");
+        assert_eq!(package, "gitrun");
+    }
+
+    #[test]
+    fn rejects_manifests_without_a_supported_debian_target() {
+        let release = manifest(vec![artifact(
+            "aarch64-unknown-linux-gnu",
+            "GitRun-Server-v1.9.0-aarch64-unknown-linux-gnu-server.tar.gz",
+        )]);
+        assert!(select_reinstall_debian_artifact(&release).is_err());
     }
 }

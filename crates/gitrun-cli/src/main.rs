@@ -5871,7 +5871,10 @@ mod debian_reinstall_artifact_tests {
     fn prefers_new_server_deb_when_both_targets_exist() {
         let release = manifest(vec![
             artifact("linux-x86_64-deb", "GitRun-v1.9.0-linux-x86_64-deb.deb"),
-            artifact("linux-x86_64-server-deb", "GitRun-Server-v1.9.0-linux-x86_64-deb.deb"),
+            artifact(
+                "linux-x86_64-server-deb",
+                "GitRun-Server-v1.9.0-linux-x86_64-deb.deb",
+            ),
         ]);
         let (selected, package) =
             select_reinstall_debian_artifact(&release).expect("Server DEB target should win");

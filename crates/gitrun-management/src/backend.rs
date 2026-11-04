@@ -975,7 +975,6 @@ const FIRST_SETUP_EVENT: &str = "gitrun-setup-progress";
 const FIRST_SETUP_TOTAL: u8 = 9;
 
 #[cfg(feature = "desktop")]
-#[cfg(feature = "desktop")]
 fn emit_first_setup_event(
     app: &AppHandle,
     phase: u8,
@@ -1047,7 +1046,6 @@ where
     });
 }
 
-#[cfg(feature = "desktop")]
 #[cfg(feature = "desktop")]
 fn stream_privileged_command(
     app: &AppHandle,
@@ -1143,7 +1141,6 @@ fn stream_privileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
-#[cfg(feature = "desktop")]
 async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical uninstall currently targets Linux x86_64".into());
@@ -1213,7 +1210,6 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "desktop")]
 #[cfg(feature = "desktop")]
 fn stream_unprivileged_command(
     app: &AppHandle,
@@ -1290,7 +1286,6 @@ fn stream_unprivileged_command(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
 #[cfg(feature = "desktop")]
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
@@ -1379,7 +1374,6 @@ struct FirstSetupRequest {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
 #[cfg(feature = "desktop")]
 async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
     let FirstSetupRequest {

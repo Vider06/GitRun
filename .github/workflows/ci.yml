@@ -31,8 +31,8 @@ env:
   NODE_VERSION: "22"
   # Bump the number to invalidate EVERY cache. A fresh_cache run gets its own namespace.
   # Persistent CI configuration comes from Repository Variables.
-  CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e1x{0}', github.run_id) || 'e1' }}
-  CACHE_BASE_EPOCH: e1
+  CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e2x{0}', github.run_id) || 'e2' }}
+  CACHE_BASE_EPOCH: e2
   # Pull requests only READ caches (main/branch pushes save them). "true" lets PRs save too.
   CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR || 'false' }}
   TARGET_CACHE_MAX_MB: "4096"
@@ -3158,8 +3158,9 @@ jobs:
           used_before="$(api "$base/cache/usage" | jq -r '.active_caches_size_in_bytes // 0')"
 
           # Deletion plan. A cache is removed only if it is clearly stale or if a NEWER cache of the
-          # same kind exists on the same ref. The 2 newest on main (1 elsewhere) are always kept, and
-          # nothing younger than ~10 minutes is ever touched (a save may still be in flight).
+          # same kind exists on the same ref. Keep only the newest cache per family/ref to stay
+          # comfortably inside GitHub Free's shared 10 GB repository budget, and never touch a cache
+          # younger than ~10 minutes (a save may still be in flight).
           jq --arg epoch "$CACHE_BASE_EPOCH" --arg rust "$RUST_VERSION" --argjson now "$(date +%s)" '
             def ts: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
             def fam:
@@ -3177,7 +3178,7 @@ jobs:
                   else null end ) })
             | ( map(select(.reason == null)) | group_by([.ref, .fam])
                 | map( sort_by(.created_at) | reverse | to_entries
-                       | map(select(.key >= (if .value.ref == "refs/heads/main" then 2 else 1 end)) | .value + { reason: "superseded by a newer cache of the same kind" }) )
+                       | map(select(.key >= 1) | .value + { reason: "superseded by a newer cache of the same kind" }) )
                 | add // [] ) as $superseded
             | ( map(select(.reason != null)) + $superseded )
             | map(select(.age > 0.007))

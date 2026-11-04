@@ -4197,7 +4197,14 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true");
     let manifest = latest_manifest("Vider06/GitRun")?;
     let version = manifest.version.clone();
-    let artifact = manifest.artifact_for("linux-x86_64-deb")?;
+
+    // New releases install the independently packaged Server product. Keep
+    // the historical target as a compatibility fallback for repositories
+    // whose latest signed manifest predates the Server/Desktop split.
+    let (artifact, expected_package) = match manifest.artifact_for("linux-x86_64-server-deb") {
+        Ok(artifact) => (artifact, "gitrun-server"),
+        Err(_) => (manifest.artifact_for("linux-x86_64-deb")?, "gitrun"),
+    };
     let artifact_name = artifact.file.clone();
     let artifact_sha256 = artifact.sha256.clone();
     let url = format!(
@@ -4223,9 +4230,12 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
             .arg("Package")
             .output()?;
         if !package_name.status.success()
-            || String::from_utf8_lossy(&package_name.stdout).trim() != "gitrun"
+            || String::from_utf8_lossy(&package_name.stdout).trim() != expected_package
         {
-            return Err("verified release artifact is not the GitRun Debian package".into());
+            return Err(format!(
+                "verified release artifact is not the expected {expected_package} Debian package"
+            )
+            .into());
         }
         let package_version = std::process::Command::new("/usr/bin/dpkg-deb")
             .arg("-f")
@@ -4240,7 +4250,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let installed = std::process::Command::new("/usr/bin/dpkg-query")
-            .args(["-W", "-f=${db:Status-Status}", "gitrun"])
+            .args(["-W", "-f=${db:Status-Status}", "gitrun-server"])
             .output()
             .is_ok_and(|output| {
                 output.status.success()
@@ -4259,7 +4269,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
 
-        // systemd units use /usr/local/bin/gitrun, while the .deb owns
+        // systemd units use /usr/local/bin/gitrun, while the Server .deb owns
         // /usr/bin/gitrun. Atomically refresh the service entrypoint as well.
         install_debian_cli_as_service_binary()?;
 
@@ -4273,7 +4283,7 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("Latest GitRun package installed. No saved configuration was found; run gitrun setup --terminal to configure the host.");
         }
-        println!("GitRun reinstall: PASS — installed verified release {version}");
+        println!("GitRun reinstall: PASS — installed verified {expected_package} release {version}");
         Ok(())
     })();
 

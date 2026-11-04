@@ -4259,7 +4259,9 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let installed = std::process::Command::new("/usr/bin/dpkg-query")
-            .args(["-W", "-f=${db:Status-Status}", "gitrun-server"])
+            .arg("-W")
+            .arg("-f=${db:Status-Status}")
+            .arg(expected_package)
             .output()
             .is_ok_and(|output| {
                 output.status.success()

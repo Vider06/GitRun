@@ -1326,6 +1326,38 @@ jobs:
           expect "git diff --check → annotation" '::warning file=a.txt,line=2,title=whitespace' "$out"
 
           expect "property escaping" 'a%3Ab%2Cc' "$(ci_escp 'a:b,c')"
+
+          # Exercise the shared per-job report with isolated files so the test
+          # cannot pollute this job's real summary, cache data or error report.
+          test_dir="$RUNNER_TEMP/gitrun-ci-report-selftest"
+          rm -rf "$test_dir"; mkdir -p "$test_dir/cache-data"
+          printf 'fixture\n' > "$test_dir/cache-data/item"
+          saved_ci_dir="$CI_DIR"; saved_ci_steps="$CI_STEPS"; saved_ci_caches="$CI_CACHES"
+          saved_ci_checks="$CI_CHECKS"; saved_ci_annot="$CI_ANNOT"; saved_ci_tails="$CI_TAILS"
+          saved_ci_details="$CI_DETAILS"; saved_summary="$GITHUB_STEP_SUMMARY"
+          CI_DIR="$test_dir"; CI_LOGS="$test_dir/logs"; CI_STEPS="$test_dir/steps.tsv"
+          CI_CACHES="$test_dir/caches.tsv"; CI_CHECKS="$test_dir/checks.tsv"
+          CI_ANNOT="$test_dir/annotations.txt"; CI_TAILS="$test_dir/tails.txt"
+          CI_DETAILS="$test_dir/details.md"; GITHUB_STEP_SUMMARY="$test_dir/summary.md"
+          mkdir -p "$CI_LOGS"; touch "$CI_STEPS" "$CI_CACHES" "$CI_CHECKS" "$CI_ANNOT" "$CI_TAILS" "$CI_DETAILS"
+          date +%s > "$CI_DIR/t0"; date -u +'%Y-%m-%dT%H:%M:%SZ' > "$CI_DIR/started_at"
+          GITRUN_JOB_STATUS=success
+          ci_check error "report self-test success" true
+          ci_check warn "report self-test warning" false
+          ci_gate error "report self-test gate" true
+          ci_cache_note "report-cache" "requested-key" "restored-partial-key" "$test_dir/cache-data"
+          echo "- Runtime-generated detail fixture." | ci_sum
+          ci_report
+          expect "standard report has timing section" "## Step results and timings" "$(cat "$GITHUB_STEP_SUMMARY")"
+          expect "standard report has cache section" "## Cache activity" "$(cat "$GITHUB_STEP_SUMMARY")"
+          expect "standard report identifies partial cache restore" "partial" "$(cat "$GITHUB_STEP_SUMMARY")"
+          expect "standard report shows requested and matched cache keys" "restored-partial-key" "$(cat "$GITHUB_STEP_SUMMARY")"
+          expect "standard report preserves job-specific details" "Runtime-generated detail fixture" "$(cat "$GITHUB_STEP_SUMMARY")"
+          expect "ci_check and ci_gate append timed rows" "report self-test gate" "$(cat "$CI_STEPS")"
+          CI_DIR="$saved_ci_dir"; CI_STEPS="$saved_ci_steps"; CI_CACHES="$saved_ci_caches"
+          CI_CHECKS="$saved_ci_checks"; CI_ANNOT="$saved_ci_annot"; CI_TAILS="$saved_ci_tails"
+          CI_DETAILS="$saved_ci_details"; GITHUB_STEP_SUMMARY="$saved_summary"
+          unset GITRUN_JOB_STATUS
           if ci_run "intentional failure (exit code is propagated)" bash -c 'exit 7' > /dev/null; then echo "❌ ci_run swallowed a failure"; fail=1; else echo "✅ ci_run propagates failures"; fi
           if CI_LEVEL=warning ci_run "advisory failure" bash -c 'exit 7' > /dev/null; then echo "✅ advisory runs do not fail"; else echo "❌ advisory run failed"; fail=1; fi
           printf 'x' > "$RUNNER_TEMP/selftest.bin"

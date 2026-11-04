@@ -51,7 +51,11 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
         // as read-only. Run the fixed-purpose restore in its own transient unit
         // with only the official library destination writable.
         if action == JsonRecoveryAction::RestoreMainLibrary {
-            return restore_main_library_via_transient_unit();
+            return match gitrun_platform::detect_service_manager() {
+                Some(gitrun_platform::ServiceManager::Systemd) => restore_main_library_via_transient_unit(),
+                Some(gitrun_platform::ServiceManager::OpenRc | gitrun_platform::ServiceManager::Runit) => run_json_recovery_root_action(action.as_str()),
+                None => Err("cannot safely restore the Main Library: no supported Linux service manager was detected".into()),
+            };
         }
         return run_json_recovery_root_action(action.as_str());
     }

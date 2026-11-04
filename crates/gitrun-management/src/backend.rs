@@ -861,11 +861,10 @@ fn build_first_setup_auth(
             let installation_id =
                 validate_numeric_setup_id(installation_id, "GitHub App installation ID")?;
             let private_key_path = validate_private_key_path(private_key_path)?;
-            let (secured_path, private_key) =
-                gitrun_setup::secure_github_app_private_key(std::path::Path::new(
-                    &private_key_path,
-                ))
-                .map_err(|error| error.to_string())?;
+            let (secured_path, private_key) = gitrun_setup::secure_github_app_private_key(
+                std::path::Path::new(&private_key_path),
+            )
+            .map_err(|error| error.to_string())?;
             let app = gitrun_core::AppAuth::new(
                 &app_id,
                 &installation_id,

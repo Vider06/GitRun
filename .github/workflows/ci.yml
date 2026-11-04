@@ -2979,10 +2979,10 @@ jobs:
       - gsr-watchdog
       - runtime-contracts
       - systemd-verify
-      - platform-compatibility
-      - release-contracts
-      - multi-distro-contracts
       - platform-target-check
+      - platform-compatibility
+      - multi-distro-contracts
+      - release-contracts
       - tauri
       - tauri-recovery
       - docker
@@ -3031,9 +3031,10 @@ jobs:
           gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|rust-lint
           runtime-contracts|Runtime contracts and configuration integration|rust|rust-lint
           systemd-verify|systemd-analyze unit verification|rust|
-          platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
-          release-contracts|Server, Desktop and migration release contracts|workflows|
           platform-target-check|Server and updater Linux target matrix|rust|rust-build
+          platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
+          multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
+          release-contracts|Server, Desktop and migration release contracts|workflows|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|

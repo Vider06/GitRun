@@ -117,6 +117,7 @@ pub fn is_android_runtime(signals: &AndroidRuntimeSignals) -> bool {
         return true;
     }
 
+    // Avoid false positives when Linux guests inherit unrelated Android environment variables.
     let android_system_files = signals.system_getprop_present || signals.system_build_prop_present;
     let android_root = signals.android_root.as_deref() == Some("/system");
     let android_data = signals.android_data.as_deref() == Some("/data");

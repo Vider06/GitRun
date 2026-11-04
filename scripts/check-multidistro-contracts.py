@@ -17,11 +17,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 PATTERNS = {
-    "apt-get": re.compile(r"\bapt-get\\b"),
-    "dpkg": re.compile(r"\bdpkg(?:-query)?\\b"),
-    "systemctl": re.compile(r"\bsystemctl\\b"),
+    "apt-get": re.compile(r"\bapt-get\b"),
+    "dpkg": re.compile(r"\bdpkg(?:-query)?\b"),
+    "systemctl": re.compile(r"\bsystemctl\b"),
     "systemd-path": re.compile(r"/(?:etc|usr/lib|lib)/systemd/"),
-    "systemd-run": re.compile(r"\bsystemd-run\\b"),
+    "systemd-run": re.compile(r"\bsystemd-run\b"),
 }
 
 # Temporary, explicit inventory of runtime paths not yet routed through the

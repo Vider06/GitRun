@@ -746,6 +746,22 @@ mod tests {
     };
     use std::path::Path;
 
+    #[test]
+    fn main_library_restore_routes_by_the_active_service_manager() {
+        use gitrun_platform::ServiceManager::{OpenRc, Runit, Systemd};
+
+        assert!(matches!(
+            gitrun_platform::detect_service_manager()
+                .or(Some(Systemd))
+                .unwrap(),
+            Systemd
+        ));
+        // The native managers must never need systemd-run.
+        for manager in [OpenRc, Runit] {
+            assert_ne!(manager, Systemd);
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn main_library_restore_oneshot_does_not_force_an_immediate_start_timeout() {

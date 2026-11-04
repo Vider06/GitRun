@@ -1234,7 +1234,7 @@ jobs:
                   "1.8.23 gitrun reinstall flow can select, download and verify it from the legacy signed-manifest target. "
                   "Its /usr/bin/gitrun payload is the new 1.9.0 Server binary.",
                   "",
-                  "From the existing 1.8.23 installation, run sudo gitrun reinstall and follow the normal privileged reinstall flow. "
+                  "From the existing 1.8.23 installation, run gitrun reinstall; its privileged helper will request administrator authorization when needed. "
                   "Do not use this package for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",

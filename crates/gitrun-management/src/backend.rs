@@ -852,10 +852,13 @@ fn build_first_setup_auth(
     private_key_path: &str,
 ) -> Result<BootstrapAuth, String> {
     match auth_mode.trim().to_ascii_lowercase().as_str() {
-        "pat" => Ok(BootstrapAuth::Pat(validate_setup_value(
-            token,
-            "GitHub token",
-        )?)),
+        "pat" => {
+            let token = validate_setup_value(token, "GitHub token")?;
+            gitrun_core::GitHubAuth::Pat(token.clone())
+                .bearer_token()
+                .map_err(|error| format!("GitHub PAT authentication failed: {error}"))?;
+            Ok(BootstrapAuth::Pat(token))
+        }
         "app" => {
             let app_id = validate_numeric_setup_id(app_id, "GitHub App ID")?;
             let installation_id =

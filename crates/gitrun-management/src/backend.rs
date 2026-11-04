@@ -777,6 +777,7 @@ fn recent_event_cutoff() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(any(feature = "desktop", test))]
 fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -788,6 +789,7 @@ fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
+#[cfg(any(feature = "desktop", test))]
 fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
     let value = validate_setup_value(value, key)?;
     if !value.chars().all(|c| c.is_ascii_digit()) {
@@ -796,6 +798,7 @@ fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
     Ok(value)
 }
 
+#[cfg(any(feature = "desktop", test))]
 fn validate_private_key_path(value: &str) -> Result<String, String> {
     let path = validate_setup_value(value, "private key path")?;
     let path_buf = PathBuf::from(&path);
@@ -817,6 +820,7 @@ fn validate_private_key_path(value: &str) -> Result<String, String> {
 /// to 0600 rather than merely rejecting common download modes such as 0644 or
 /// 0664: the operator already owns the file, and root can still read a 0600
 /// file when the setup is elevated through pkexec.
+#[cfg(any(feature = "desktop", test))]
 fn secure_private_key_file(path: &std::path::Path) -> Result<(), String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|e| {
         format!(
@@ -883,6 +887,7 @@ fn trusted_executable_mode(mode: u32) -> bool {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
 fn secure_private_key(private_key_path: String) -> Result<String, String> {
     let path = validate_setup_value(&private_key_path, "private key path")?;
     let path_buf = PathBuf::from(&path);
@@ -890,6 +895,7 @@ fn secure_private_key(private_key_path: String) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(any(feature = "desktop", test))]
 fn build_first_setup_auth(
     auth_mode: &str,
     token: &str,
@@ -914,6 +920,7 @@ fn build_first_setup_auth(
     }
 }
 
+#[cfg(any(feature = "desktop", test))]
 fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), String> {
     let mut created_file = false;
     let result = (|| -> Result<(), String> {
@@ -952,6 +959,7 @@ fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), Stri
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg(feature = "desktop")]
 struct FirstSetupEvent {
     phase: u8,
     total: u8,
@@ -961,9 +969,12 @@ struct FirstSetupEvent {
     success: bool,
 }
 
+#[cfg(feature = "desktop")]
 const FIRST_SETUP_EVENT: &str = "gitrun-setup-progress";
+#[cfg(any(feature = "desktop", test))]
 const FIRST_SETUP_TOTAL: u8 = 9;
 
+#[cfg(feature = "desktop")]
 #[cfg(feature = "desktop")]
 fn emit_first_setup_event(
     app: &AppHandle,
@@ -988,6 +999,7 @@ fn emit_first_setup_event(
     }
 }
 
+#[cfg(any(feature = "desktop", test))]
 fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
     let rest = line.strip_prefix("[GitRun setup] [")?;
     let (fraction, message) = rest.split_once("] ")?;
@@ -999,11 +1011,13 @@ fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
     Some((step.min(FIRST_SETUP_TOTAL), message.to_owned()))
 }
 
+#[cfg(feature = "desktop")]
 enum SetupChildOutput {
     Line { stream: &'static str, line: String },
     Done,
 }
 
+#[cfg(feature = "desktop")]
 fn spawn_setup_reader<R>(reader: R, stream: &'static str, sender: mpsc::Sender<SetupChildOutput>)
 where
     R: std::io::Read + Send + 'static,
@@ -1033,6 +1047,7 @@ where
     });
 }
 
+#[cfg(feature = "desktop")]
 #[cfg(feature = "desktop")]
 fn stream_privileged_command(
     app: &AppHandle,
@@ -1128,6 +1143,7 @@ fn stream_privileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+#[cfg(feature = "desktop")]
 async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical uninstall currently targets Linux x86_64".into());
@@ -1197,6 +1213,7 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[cfg(feature = "desktop")]
 fn stream_unprivileged_command(
     app: &AppHandle,
@@ -1274,6 +1291,7 @@ fn stream_unprivileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+#[cfg(feature = "desktop")]
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("graphical reinstall currently targets Linux x86_64".into());
@@ -1348,6 +1366,7 @@ async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(feature = "desktop")]
 struct FirstSetupRequest {
     auth_mode: String,
     token: String,
@@ -1360,6 +1379,7 @@ struct FirstSetupRequest {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
 #[cfg(feature = "desktop")]
 async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
     let FirstSetupRequest {

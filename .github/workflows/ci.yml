@@ -1995,6 +1995,7 @@ jobs:
             echo "save=true" >> "$GITHUB_OUTPUT"
           fi
       - &s_tc
+        id: save_tc
         name: Save toolchain cache
         if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
@@ -2005,6 +2006,7 @@ jobs:
             .gitrun-ci/cargo/bin
           key: ${{ steps.c_tc.outputs.cache-primary-key }}
       - &s_reg
+        id: save_reg
         name: Save cargo registry cache
         if: success() && steps.c_reg.outputs.cache-matched-key != steps.c_reg.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
@@ -2016,6 +2018,7 @@ jobs:
             .gitrun-ci/cargo/git/db
           key: ${{ steps.c_reg.outputs.cache-primary-key }}
       - &s_tgt
+        id: save_tgt
         name: Save target cache
         if: success() && steps.prune.outputs.save == 'true' && steps.c_tgt.outputs.cache-matched-key != steps.c_tgt.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
@@ -2023,6 +2026,52 @@ jobs:
         with:
           path: target
           key: ${{ steps.c_tgt.outputs.cache-primary-key }}
+      - &cache_save_report
+        name: Report cache save activity
+        if: always()
+        env:
+          CACHE_EVENT: ${{ github.event_name }}
+          TC_OUTCOME: ${{ steps.save_tc.outcome || 'skipped' }}
+          REG_OUTCOME: ${{ steps.save_reg.outcome || 'skipped' }}
+          TGT_OUTCOME: ${{ steps.save_tgt.outcome || 'skipped' }}
+          TC_MATCH: ${{ steps.c_tc.outputs.cache-matched-key }}
+          TC_PRIMARY: ${{ steps.c_tc.outputs.cache-primary-key }}
+          REG_MATCH: ${{ steps.c_reg.outputs.cache-matched-key }}
+          REG_PRIMARY: ${{ steps.c_reg.outputs.cache-primary-key }}
+          TGT_MATCH: ${{ steps.c_tgt.outputs.cache-matched-key }}
+          TGT_PRIMARY: ${{ steps.c_tgt.outputs.cache-primary-key }}
+          PRUNE_SAVE: ${{ steps.prune.outputs.save || 'unknown' }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          save_state() {
+            local outcome="$1" matched="$2" primary="$3" reason="$4"
+            case "$outcome" in
+              success) echo "saved" ;;
+              failure) echo "save failed (continue-on-error)" ;;
+              *)
+                if [ "$CACHE_EVENT" = pull_request ]; then
+                  echo "not saved (pull-request cache-write policy)"
+                elif [ -n "$matched" ] && [ "$matched" = "$primary" ]; then
+                  echo "not saved (exact cache already restored)"
+                elif [ "$reason" = over-budget ]; then
+                  echo "not saved (target cache exceeded size limit)"
+                else
+                  echo "skipped (job did not reach cache save)"
+                fi
+                ;;
+            esac
+          }
+          {
+            echo "### Cache save activity"
+            echo
+            echo "| Cache | Save result |"
+            echo "|---|---|"
+            printf '| Toolchain | %s |\n' "$(save_state "$TC_OUTCOME" "$TC_MATCH" "$TC_PRIMARY" "")"
+            printf '| Cargo registry | %s |\n' "$(save_state "$REG_OUTCOME" "$REG_MATCH" "$REG_PRIMARY" "")"
+            prune_reason=""; [ "$PRUNE_SAVE" = true ] || prune_reason=over-budget
+            printf '| Target artifacts | %s |\n' "$(save_state "$TGT_OUTCOME" "$TGT_MATCH" "$TGT_PRIMARY" "$prune_reason")"
+            echo
+          } | ci_sum
       - *report
       - *logs
 
@@ -2074,6 +2123,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2110,6 +2160,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2207,6 +2258,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2469,6 +2521,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2610,6 +2663,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2669,6 +2723,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 

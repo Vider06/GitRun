@@ -52,8 +52,12 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
         // with only the official library destination writable.
         if action == JsonRecoveryAction::RestoreMainLibrary {
             return match main_library_restore_mode(gitrun_platform::detect_service_manager())? {
-                MainLibraryRestoreMode::SystemdTransientUnit => restore_main_library_via_transient_unit(),
-                MainLibraryRestoreMode::DirectRoot => run_json_recovery_root_action(action.as_str()),
+                MainLibraryRestoreMode::SystemdTransientUnit => {
+                    restore_main_library_via_transient_unit()
+                }
+                MainLibraryRestoreMode::DirectRoot => {
+                    run_json_recovery_root_action(action.as_str())
+                }
             };
         }
         return run_json_recovery_root_action(action.as_str());

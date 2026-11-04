@@ -1416,8 +1416,22 @@ fn terminal_setup_command(
         Ok(())
     })();
 
-    let _ = std::fs::remove_file(&path);
-    result
+    match std::fs::remove_file(&path) {
+        Ok(()) => result,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => result,
+        Err(error) => match result {
+            Ok(()) => Err(format!(
+                "GitRun setup completed, but the temporary credential request could not be removed at {}: {error}",
+                path.display()
+            )
+            .into()),
+            Err(setup_error) => Err(format!(
+                "{setup_error}; additionally, the temporary credential request could not be removed at {}: {error}",
+                path.display()
+            )
+            .into()),
+        },
+    }
 }
 
 fn connect_command(

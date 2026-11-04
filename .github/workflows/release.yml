@@ -256,8 +256,7 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: crates/gitrun-dashboard-tauri/package-lock.json
+          package-manager-cache: false
       - name: Synchronize Dashboard package version
         working-directory: crates/gitrun-dashboard-tauri
         run: |

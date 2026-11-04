@@ -1133,6 +1133,8 @@ jobs:
               "All downloadable files below are taken from the signed release manifest; each listed "
               "checksum is verified against the published file before these notes are generated.",
               "",
+              f"**Published release assets:** {len(assets) + 1} (including the signed manifest).",
+              "",
               "## Release overview",
               "",
               "| Component | Description |",

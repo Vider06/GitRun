@@ -460,6 +460,8 @@ jobs:
           overrides:
             deb:
               depends: [libc6, policykit-1]
+              conflicts: [gitrun]
+              replaces: [gitrun]
             rpm:
               depends: [glibc, polkit]
             apk:
@@ -757,6 +759,8 @@ jobs:
           for deb in "$root"/GitRun-Server-"$VERSION"-linux-*-deb.deb; do
             test "$(dpkg-deb -f "$deb" Package)" = gitrun-server
             test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
+            test "$(dpkg-deb -f "$deb" Conflicts)" = gitrun
+            test "$(dpkg-deb -f "$deb" Replaces)" = gitrun
             dpkg-deb -c "$deb" | grep -Fq '/usr/lib/systemd/system/gitrun.service'
           done
           gui="$root/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb"
@@ -1009,79 +1013,247 @@ jobs:
         with:
           name: signed-release-assets
           path: release-assets
-      - name: Generate release notes
+      - name: Generate professional release notes
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+        shell: bash
         run: |
           set -euo pipefail
-          generated="$RUNNER_TEMP/generated-notes.md"; notes="$RUNNER_TEMP/release-notes.md"
+          generated="$RUNNER_TEMP/generated-notes.md"
+          notes="$RUNNER_TEMP/release-notes.md"
           gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             -f tag_name="$VERSION" -f target_commitish="$GITHUB_SHA" --jq '.body' > "$generated" || : > "$generated"
-          {
-            echo "# GitRun $VERSION"; echo
-            echo "Your self-hosted GitHub Actions runners, under your control."
-            echo
-            echo "## What's included"
-            echo "- **GitRun-Server:** headless server and CLI for x86_64/aarch64 GNU and musl."
-            echo "- **GitRun-Desktop:** independent desktop application, distributed as AppImage and DEB."
-            echo "- Server formats: updater TAR.GZ, TAR.ZST, DEB, RPM, APK, Arch Linux and XBPS."
-            echo
-            echo "## Downloads"
-            for arch in x86_64 aarch64; do
-              echo "### $arch"
-              echo "#### GNU"
-              for file in \
-                "release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-gnu-server.tar.gz" \
-                "release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-gnu-server.tar.zst" \
-                "release-assets/GitRun-Server-$VERSION-linux-$arch-deb.deb" \
-                "release-assets/GitRun-Server-$VERSION-linux-$arch-rpm.rpm" \
-                "release-assets/GitRun-Server-$VERSION-linux-$arch-arch.pkg.tar.zst" \
-                "release-assets/GitRun-Server-$VERSION-linux-$arch-xbps.xbps"; do
-                [ -f "$file" ] || continue
-                name="${file##*/}"
-                echo "- [$name](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$name)"
-              done
-              echo "#### musl"
-              for file in \
-                "release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-musl-server.tar.gz" \
-                "release-assets/GitRun-Server-$VERSION-$arch-unknown-linux-musl-server.tar.zst" \
-                "release-assets/GitRun-Server-$VERSION-linux-$arch-musl-apk.apk" \
-                "release-assets/GitRun-Server-$VERSION-linux-$arch-musl-xbps.xbps"; do
-                [ -f "$file" ] || continue
-                name="${file##*/}"
-                echo "- [$name](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$name)"
-              done
-            done
-            echo "### Desktop"
-            for file in release-assets/GitRun-Desktop-$VERSION-*; do
-              [ -f "$file" ] || continue
-              name="${file##*/}"
-              echo "- [$name](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$name)"
-            done
-            echo
-            echo "## Integrity and build metadata"
-            for name in release-manifest.json SHA256SUMS library.zip cargo-metadata.json sbom.spdx.json provenance.json; do
-              [ -s "release-assets/$name" ] && echo "- [$name](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$name)"
-            done
-            echo
-            echo "## Changes"; echo
-            if [ -s "$generated" ]; then cat "$generated"; else echo "See the commits and pull requests associated with this release."; fi
-            if [ "$MIGRATION_RELEASE" = true ]; then
-              echo
-              echo "## Migration Release"
-              echo
-              echo "**DO NOT USE FOR FRESH INSTALL!**"
-              echo
-              echo "One-time migration from GitRun 1.8.23 to 1.9.0. Use the existing installation's legacy gitrun reinstall flow; do not install this package on a fresh system."
-              echo
-              echo "### Legacy downloads"
-              echo "- [GitRun-$VERSION-linux-x86_64-deb.deb](https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/GitRun-$VERSION-linux-x86_64-deb.deb)"
-            else
-              echo
-              echo "No migration needed, updater/release system has not been changed in a way that requires a migration package."
-            fi
-          } > "$notes"
+          python3 - "$VERSION" "$GITHUB_REPOSITORY" "$MIGRATION_RELEASE" "$generated" "$notes" <<'PY'
+          import hashlib
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          version, repository, migration, generated_path, output_path = sys.argv[1:]
+          root = Path("release-assets")
+          manifest_path = root / "release-manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if manifest.get("version") != version or manifest.get("name") != "GitRun":
+              raise SystemExit("Release notes refused: manifest identity/version mismatch")
+
+          assets = manifest.get("artifacts", [])
+          if not assets:
+              raise SystemExit("Release notes refused: signed manifest has no assets")
+          by_name = {}
+          for item in assets:
+              name = item["file"]
+              path = root / name
+              if not path.is_file():
+                  raise SystemExit(f"Release notes refused: manifest asset is missing: {name}")
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if digest != item["sha256"]:
+                  raise SystemExit(f"Release notes refused: SHA-256 mismatch for {name}")
+              if name in by_name:
+                  raise SystemExit(f"Release notes refused: duplicate asset name: {name}")
+              by_name[name] = {**item, "sha256": digest}
+
+          disk_assets = {p.name for p in root.iterdir() if p.is_file() and p.name != "release-manifest.json"}
+          if disk_assets != set(by_name):
+              raise SystemExit(
+                  "Release notes refused: release files and signed manifest differ; "
+                  f"unlisted={sorted(disk_assets - set(by_name))}, "
+                  f"missing={sorted(set(by_name) - disk_assets)}"
+              )
+
+          def url(name):
+              return f"https://github.com/{repository}/releases/download/{version}/{name}"
+
+          def link(name):
+              return f"[{name}]({url(name)})"
+
+          def table(headers, rows):
+              if not rows:
+                  return ["_No artifacts in this category._", ""]
+              lines = [
+                  "| " + " | ".join(headers) + " |",
+                  "| " + " | ".join("---" for _ in headers) + " |",
+              ]
+              lines.extend("| " + " | ".join(str(value).replace("|", "\\|").replace("\n", " ") for value in row) + " |" for row in rows)
+              lines.append("")
+              return lines
+
+          def digest_cell(item):
+              return item["sha256"]
+
+          def arch_abi(name):
+              prefix = f"GitRun-Server-{version}-"
+              if name.startswith(prefix):
+                  suffix = name[len(prefix):]
+                  for ending in ("-server.tar.gz", "-server.tar.zst"):
+                      if suffix.endswith(ending):
+                          triple = suffix[:-len(ending)]
+                          arch, _, abi = triple.partition("-unknown-linux-")
+                          return arch, abi
+              match = re.search(r"linux-(x86_64|aarch64)(?:-(musl))?-(?:deb|rpm|apk|arch|xbps)", name)
+              if match:
+                  return match.group(1), match.group(2) or "gnu"
+              return "—", "—"
+
+          updater_archives, portable_archives, native_packages = [], [], []
+          desktop_assets, migration_assets, metadata_assets = [], [], []
+          for name, item in sorted(by_name.items()):
+              if name.endswith("-server.tar.gz"):
+                  arch, abi = arch_abi(name)
+                  updater_archives.append((arch, abi, "TAR.GZ (updater)", link(name), digest_cell(item)))
+              elif name.endswith("-server.tar.zst"):
+                  arch, abi = arch_abi(name)
+                  portable_archives.append((arch, abi, "TAR.ZST", link(name), digest_cell(item)))
+              elif name.startswith(f"GitRun-Server-{version}-linux-"):
+                  arch, abi = arch_abi(name)
+                  fmt = (
+                      "DEB" if name.endswith(".deb") else
+                      "RPM" if name.endswith(".rpm") else
+                      "APK" if name.endswith(".apk") else
+                      "Arch package" if name.endswith(".pkg.tar.zst") else
+                      "XBPS" if name.endswith(".xbps") else "Unknown"
+                  )
+                  native_packages.append((arch, abi, fmt, link(name), digest_cell(item)))
+              elif name.startswith(f"GitRun-Desktop-{version}-"):
+                  fmt = "AppImage" if name.endswith(".AppImage") else "DEB"
+                  desktop_assets.append(("x86_64", fmt, link(name), digest_cell(item)))
+              elif name == f"GitRun-{version}-linux-x86_64-deb.deb":
+                  migration_assets.append(("x86_64", "Debian / Ubuntu", "Legacy DEB; package gitrun", link(name), digest_cell(item)))
+              else:
+                  metadata_assets.append((name, link(name), digest_cell(item)))
+
+          lines = [
+              f"# GitRun {version}",
+              "",
+              "> Your self-hosted GitHub Actions runners, under your control.",
+              "",
+              "This release separates the headless server distribution from the desktop application. "
+              "All downloadable files below are taken from the signed release manifest; each listed "
+              "checksum is verified against the published file before these notes are generated.",
+              "",
+              "## Release overview",
+              "",
+              "| Component | Description |",
+              "| --- | --- |",
+              "| **GitRun-Server** | Headless server, CLI, runner management, scheduler and recovery tools. |",
+              "| **GitRun-Desktop** | Independent desktop application; it does not bundle the Server executable. |",
+              "| **Release integrity** | Ed25519-signed manifest, SHA-256 checksums, SPDX SBOM and build provenance. |",
+              "",
+              "## GitRun-Server downloads",
+              "",
+              "### Updater archives",
+              "",
+              "Use the canonical TAR.GZ archive for the built-in updater. The target is the Rust target triple.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
+              updater_archives,
+          )
+          lines += [
+              "### Portable archives",
+              "",
+              "TAR.ZST archives contain the Server executable and its runtime payload under a standard filesystem layout.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
+              portable_archives,
+          )
+          lines += [
+              "### Native packages",
+              "",
+              "Install the package matching the host architecture and libc. Package-manager dependencies are declared in each package.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Package format", "Artifact", "SHA-256"],
+              native_packages,
+          )
+          lines += [
+              "### Init-system support",
+              "",
+              "- GNU packages include the GitRun systemd service units.",
+              "- APK and XBPS packages are intentionally init-neutral; native OpenRC/runit service integration is not included yet.",
+              "",
+              "## GitRun-Desktop downloads",
+              "",
+              "Desktop packages are independent of GitRun-Server and can be installed separately.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "Format", "Artifact", "SHA-256"],
+              desktop_assets,
+          )
+          lines += [
+              "## Release metadata and verification",
+              "",
+              "The manifest is signed with Ed25519. Its artifact entries contain the SHA-256 digest of every other downloadable release file.",
+              "",
+          ]
+          metadata_rows = [
+              (name, link(name), digest_cell(item))
+              for name, item in sorted(by_name.items())
+              if name in {"SHA256SUMS", "library.zip", "cargo-metadata.json", "sbom.spdx.json", "provenance.json"}
+          ]
+          lines += table(["Metadata artifact", "Download", "SHA-256"], metadata_rows)
+          lines += [
+              f"- **Signed release manifest:** [release-manifest.json]({url('release-manifest.json')})",
+              "- **Signature:** Ed25519; signature and key identifier are embedded in the manifest.",
+              "- **Checksum list:** SHA256SUMS covers the published payload files; the manifest itself is authenticated by its Ed25519 signature.",
+              "",
+              "## Installation notes",
+              "",
+              "- **Debian / Ubuntu:** install the matching Server or Desktop DEB with apt.",
+              "- **RPM-based distributions:** install the matching Server RPM with dnf.",
+              "- **Arch Linux:** install the Server package with pacman.",
+              "- **Alpine:** install the matching musl APK using the system package manager and the package's declared dependencies.",
+              "- **Void Linux:** install the matching XBPS package using the host's local-package workflow.",
+              "- **AppImage:** make the Desktop AppImage executable and launch it as a regular user.",
+              "- **Updater:** gitrun update uses the canonical TAR.GZ target archive, not a distribution-specific package.",
+              "",
+              "## Changes",
+              "",
+          ]
+          generated = Path(generated_path).read_text(encoding="utf-8").strip()
+          lines += [generated if generated else "_No generated GitHub changelog was available for this tag._", ""]
+          if migration == "true":
+              if version != "v1.9.0":
+                  raise SystemExit("Migration Release allowlist violation: only v1.9.0 may publish the legacy package")
+              if len(migration_assets) != 1:
+                  raise SystemExit("Migration Release must contain exactly one legacy Debian artifact")
+              lines += [
+                  "## Migration Release",
+                  "",
+                  "> **DO NOT USE FOR FRESH INSTALL!**",
+                  "",
+                  "This is a one-time compatibility package for existing GitRun **1.8.23** installations migrating to **1.9.0**. "
+                  "It preserves the historical Debian package identity (gitrun), filename and filesystem layout so the "
+                  "1.8.23 gitrun reinstall flow can select, download and verify it from the legacy signed-manifest target. "
+                  "Its /usr/bin/gitrun payload is the new 1.9.0 Server binary.",
+                  "",
+                  "From the existing 1.8.23 installation, run sudo gitrun reinstall and follow the normal privileged reinstall flow. "
+                  "Do not use this package for a fresh installation; fresh installs must use the GitRun-Server packages above.",
+                  "",
+                  "### Legacy migration artifact",
+                  "",
+              ]
+              lines += table(
+                  ["Architecture", "Distribution", "Compatibility contract", "Artifact", "SHA-256"],
+                  migration_assets,
+              )
+          else:
+              lines += [
+                  "## Migration status",
+                  "",
+                  "No migration needed, updater/release system has not been changed in a way that requires a migration package.",
+                  "",
+              ]
+
+          Path(output_path).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+          PY
           echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
       - name: Publish all release assets
         env:

@@ -34,7 +34,7 @@ env:
   CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e1x{0}', github.run_id) || 'e1' }}
   CACHE_BASE_EPOCH: e1
   # Pull requests only READ caches (main/branch pushes save them). "true" lets PRs save too.
-  CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR || 'true' }}
+  CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR || 'false' }}
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && '1' || '0' }}
@@ -1157,9 +1157,10 @@ jobs:
           # separately useful target cache; image fingerprints must remain distinct too.
           jq -n '
             def fam:
-              if contains("-target-img") then
-                sub("-man[^-]+-[^-]+-prof"; "-prof")
-              else sub("-[^-]+$"; "") end;
+              sub("-run[0-9]+-attempt[0-9]+$"; "")
+              | if contains("-target-img") then
+                  sub("-man[^-]+-[^-]+-prof"; "-prof")
+                else sub("-[^-]+$"; "") end;
             [
               "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man11111111-lock11111111-profaaaaaaaa-rust-lint",
               "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-lint",
@@ -1801,21 +1802,20 @@ jobs:
           fp="$(ci_image_fp)"
           lock="${lock_hash:-nolock}"
           profile="$(printf 'dev=%s;test=%s' "${CARGO_PROFILE_DEV_DEBUG:-default}" "${CARGO_PROFILE_TEST_DEBUG:-default}" | sha256sum | cut -c1-8)"
-          target="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-man${manifest_hash:0:8}-${lock}-prof${profile}-${GITHUB_JOB}"
-          # Restore prefixes must be literal prefixes of the primary key. Keep
-          # this through cfg: manifest, lock, profile, and job follow it. Cargo
-          # fingerprints validate artifacts restored from older keys or other jobs.
+          target_prefix="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-man${manifest_hash:0:8}-${lock}-prof${profile}-${GITHUB_JOB}-"
+          target="${target_prefix}run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}"
+          # Target artifacts are isolated by job, toolchain, configuration,
+          # manifest and lockfile. Restore only the same job's matching inputs;
+          # the run/attempt suffix makes concurrent writers use distinct keys.
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
             echo "toolchain_prefix=$ns-rustup-${RUST_VERSION}-"
             echo "registry=$ns-cargo-registry-${lock}"
             echo "registry_prefix=$ns-cargo-registry-"
             echo "target=$target"
+            echo "target_prefix=$target_prefix"
           } >> "$GITHUB_OUTPUT"
-          # Target artifacts are large and profile/job-specific. Never restore a
-          # partial target cache from another job: it can consume several GB and
-          # then exceed the save budget after this job adds its own artifacts.
-          echo "image fingerprint $fp: target caches are isolated by job and restored only on exact key"
+          echo "image fingerprint $fp: target caches are isolated by job and restored only for identical inputs"
       - &c_tc
         name: Restore toolchain cache
         id: c_tc
@@ -1844,6 +1844,7 @@ jobs:
         with:
           path: target
           key: ${{ steps.keys.outputs.target }}
+          restore-keys: ${{ steps.keys.outputs.target_prefix }}
       - &rust_install
         name: Install Rust toolchain
         env:
@@ -1906,6 +1907,12 @@ jobs:
           # deleting every local crate forces all GitRun crates to recompile each job.
           after="$(du -sm "$t" | cut -f1)"
           echo "target cache pruned: ${before} MB → ${after} MB (limit ${TARGET_CACHE_MAX_MB} MB)"
+          echo "largest target cache directories after pruning:"
+          for dir in "$t"/*; do
+            [ -d "$dir" ] || continue
+            printf '  %s\n' "${dir#"$t"/}"
+            du -sm "$dir"/* 2>/dev/null | sort -nr | head -n 5 | awk '{ printf "    %s MB  %s\n", $1, $2 }'
+          done
           { echo "- 🧹 target cache pruned: **${before} MB → ${after} MB**"; } | ci_sum
           if [ "$after" -gt "$TARGET_CACHE_MAX_MB" ]; then
             ci_warn "target cache is ${after} MB, above the ${TARGET_CACHE_MAX_MB} MB limit: it is NOT saved (raise TARGET_CACHE_MAX_MB or reduce build outputs)"
@@ -2231,9 +2238,9 @@ jobs:
           path: |
             .gitrun-cargo
             target
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
           restore-keys: |
-            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-
       - name: Verify cross-build runtime
         run: |
           set -euo pipefail
@@ -2286,14 +2293,14 @@ jobs:
               ;;
           esac
       - name: Save target-specific Cargo cache
-        if: success() && steps.target-cache.outputs.cache-hit != 'true'
+        if: success() && steps.target-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             .gitrun-cargo
             target
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
 
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:
@@ -3194,9 +3201,10 @@ jobs:
             echo "| Kind | Ref | Count | MB |"; echo "|---|---|---|---|"
             jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
               def fam:
-                if contains("-target-img") then
-                  sub("-man[^-]+-[^-]+-prof"; "-prof")
-                else sub("-[^-]+$"; "") end;
+                sub("-run[0-9]+-attempt[0-9]+$"; "")
+                | if contains("-target-img") then
+                    sub("-man[^-]+-[^-]+-prof"; "-prof")
+                  else sub("-[^-]+$"; "") end;
               ([$plan[0][].id]) as $gone
               | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })
               | group_by([.fam, .ref]) | .[]

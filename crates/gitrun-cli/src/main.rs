@@ -4091,8 +4091,16 @@ fn run_dashboard() -> i32 {
             if std::env::var_os("DISPLAY").is_some()
                 || std::env::var_os("WAYLAND_DISPLAY").is_some()
             {
-                gitrun_recovery::ui::run();
-                0
+                #[cfg(feature = "desktop")]
+                {
+                    gitrun_recovery::ui::run();
+                    0
+                }
+                #[cfg(not(feature = "desktop"))]
+                {
+                    eprintln!("GitRun Recovery UI is not included in this headless build. Install the Desktop package to use graphical recovery.");
+                    1
+                }
             } else {
                 eprintln!("GitRun Recovery UI is unavailable without a graphical session.");
                 1

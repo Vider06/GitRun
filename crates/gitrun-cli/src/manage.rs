@@ -522,7 +522,7 @@ fn app_read(action: &str, args: Value) -> Result<Value, String> {
         |operation, action, args| {
             gitrun_management::control_manager_request(operation, action, args)
         },
-        |action, args| gitrun_management::management_read(action, args),
+        gitrun_management::management_read,
     )
 }
 
@@ -567,7 +567,7 @@ fn app_write(action: &str, args: Value) -> Result<Value, String> {
         |operation, action, args| {
             gitrun_management::control_manager_request(operation, action, args)
         },
-        |action, args| gitrun_management::management_write(action, args),
+        gitrun_management::management_write,
     )
 }
 

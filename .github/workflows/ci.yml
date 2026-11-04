@@ -2273,11 +2273,21 @@ jobs:
               ;;
             x86_64-unknown-linux-musl)
               readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
-              file "$binary" | grep -Fq 'statically linked'
+              # musl static PIE binaries may be reported as "static-pie linked"
+              # by file(1). The ABI-level invariant is that no PT_INTERP loader
+              # is requested; checking the ELF program headers is stable.
+              if readelf -lW "$binary" | grep -Fq ' INTERP '; then
+                echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
+                exit 1
+              fi
               ;;
             aarch64-unknown-linux-musl)
               readelf -h "$binary" | grep -Fq 'AArch64'
-              file "$binary" | grep -Fq 'statically linked'
+              # A static musl executable must not declare a PT_INTERP loader.
+              if readelf -lW "$binary" | grep -Fq ' INTERP '; then
+                echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
+                exit 1
+              fi
               ;;
           esac
       - name: Save target-specific Cargo cache

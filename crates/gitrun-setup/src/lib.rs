@@ -1079,35 +1079,9 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
             validate_env_value(installation_id, "GITRUN_GITHUB_APP_INSTALLATION_ID")?;
             validate_env_value(private_key_path, "GITRUN_GITHUB_APP_PRIVATE_KEY_PATH")?;
 
-            let key_path = Path::new(private_key_path);
-            let metadata = fs::symlink_metadata(key_path).map_err(|error| {
-                SetupError::Command(format!(
-                    "unable to inspect GitHub App private key at {private_key_path}: {error}"
-                ))
-            })?;
-            if metadata.file_type().is_symlink() {
-                return Err(SetupError::Command(format!(
-                    "GitHub App private key must not be a symbolic link: {private_key_path}"
-                )));
-            }
-            if !metadata.is_file() {
-                return Err(SetupError::Command(format!(
-                    "GitHub App private key is not a regular file: {private_key_path}"
-                )));
-            }
-            let mode = metadata.permissions().mode() & 0o777;
-            if mode & 0o077 != 0 {
-                return Err(SetupError::Command(format!(
-                    "GitHub App private key must not be group/world accessible (mode {mode:o}); chmod it to 0600"
-                )));
-            }
-
-            let key = fs::read_to_string(key_path).map_err(|error| {
-                SetupError::Command(format!(
-                    "unable to read GitHub App private key at {private_key_path}: {error}"
-                ))
-            })?;
-            gitrun_core::AppAuth::new(
+            let (_canonical_path, key) =
+                secure_github_app_private_key(Path::new(private_key_path))?;
+            let app = gitrun_core::AppAuth::new(
                 app_id,
                 installation_id,
                 &key,
@@ -1117,6 +1091,11 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
             .map_err(|error| {
                 SetupError::Command(format!("invalid GitHub App authentication data: {error}"))
             })?;
+            gitrun_core::GitHubAuth::App(app)
+                .bearer_token()
+                .map_err(|error| {
+                    SetupError::Command(format!("GitHub App token exchange failed: {error}"))
+                })?;
         }
     }
     Ok(())

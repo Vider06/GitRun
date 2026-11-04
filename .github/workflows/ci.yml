@@ -33,8 +33,7 @@ env:
   # Persistent CI configuration comes from Repository Variables.
   CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e2x{0}', github.run_id) || 'e2' }}
   CACHE_BASE_EPOCH: e2
-  # Pull requests only READ caches (main/branch pushes save them). "true" lets PRs save too.
-  CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR || 'false' }}
+  # Pull requests restore shared caches but never write; only trusted pushes may update cache entries.
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && '1' || '0' }}
@@ -88,7 +87,6 @@ jobs:
         id: verify
         env:
           GITRUN_CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE }}
-          GITRUN_CI_CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR }}
           GITRUN_CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE }}
           GITRUN_CI_UPLOAD_ARTIFACTS: ${{ vars.GITRUN_CI_UPLOAD_ARTIFACTS }}
           GITRUN_RUNNER_MODE: ${{ vars.GITRUN_RUNNER_MODE }}
@@ -102,7 +100,6 @@ jobs:
           echo "|---|---|"
           for name in \
             GITRUN_CI_FRESH_CACHE \
-            GITRUN_CI_CACHE_SAVE_PR \
             GITRUN_CI_VERBOSE \
             GITRUN_CI_UPLOAD_ARTIFACTS \
             GITRUN_RUNNER_MODE \
@@ -120,7 +117,6 @@ jobs:
             echo "|---|---|"
             for name in \
               GITRUN_CI_FRESH_CACHE \
-              GITRUN_CI_CACHE_SAVE_PR \
               GITRUN_CI_VERBOSE \
               GITRUN_CI_UPLOAD_ARTIFACTS \
               GITRUN_RUNNER_MODE \
@@ -1548,7 +1544,6 @@ jobs:
           ci_ensure_pwsh
           pwsh --version
       - name: Save PowerShell cache
-        if: success() && steps.c_pwsh.outputs.cache-matched-key != steps.c_pwsh.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1696,7 +1691,6 @@ jobs:
           fi
       - &s_npm
         name: Save npm cache
-        if: success() && steps.npm_prune.outputs.save == 'true' && steps.c_npm.outputs.cache-matched-key != steps.c_npm.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1922,7 +1916,6 @@ jobs:
           fi
       - &s_tc
         name: Save toolchain cache
-        if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1932,7 +1925,6 @@ jobs:
           key: ${{ steps.c_tc.outputs.cache-primary-key }}
       - &s_reg
         name: Save cargo registry cache
-        if: success() && steps.c_reg.outputs.cache-matched-key != steps.c_reg.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1943,7 +1935,6 @@ jobs:
           key: ${{ steps.c_reg.outputs.cache-primary-key }}
       - &s_tgt
         name: Save target cache
-        if: success() && steps.prune.outputs.save == 'true' && steps.c_tgt.outputs.cache-matched-key != steps.c_tgt.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -2293,7 +2284,6 @@ jobs:
               ;;
           esac
       - name: Save target-specific Cargo cache
-        if: success() && steps.target-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -2712,7 +2702,6 @@ jobs:
           docker buildx version
           hadolint --version
       - name: Save Docker tools cache
-        if: success() && steps.c_dtools.outputs.cache-matched-key != steps.c_dtools.outputs.cache-primary-key && (github.event_name != 'pull_request' || env.CACHE_SAVE_PR == 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:

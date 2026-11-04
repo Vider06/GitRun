@@ -1798,6 +1798,7 @@ jobs:
             echo "npm cache ${mb} MB (limit ${NPM_CACHE_MAX_MB} MB)"; echo "save=true" >> "$GITHUB_OUTPUT"
           fi
       - &s_npm
+        id: save_npm
         name: Save npm cache
         if: success() && steps.npm_prune.outputs.save == 'true' && steps.c_npm.outputs.cache-matched-key != steps.c_npm.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
@@ -1805,6 +1806,40 @@ jobs:
         with:
           path: .gitrun-ci/npm-cache
           key: ${{ steps.c_npm.outputs.cache-primary-key }}
+      - &npm_cache_save_report
+        name: Report npm cache save activity
+        if: always()
+        env:
+          CACHE_EVENT: ${{ github.event_name }}
+          NPM_OUTCOME: ${{ steps.save_npm.outcome || 'skipped' }}
+          NPM_MATCH: ${{ steps.c_npm.outputs.cache-matched-key }}
+          NPM_PRIMARY: ${{ steps.c_npm.outputs.cache-primary-key }}
+          NPM_PRUNE_SAVE: ${{ steps.npm_prune.outputs.save || 'unknown' }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          case "$NPM_OUTCOME" in
+            success) result="saved" ;;
+            failure) result="save failed (continue-on-error)" ;;
+            *)
+              if [ "$CACHE_EVENT" = pull_request ]; then
+                result="not saved (pull-request cache-write policy)"
+              elif [ -n "$NPM_MATCH" ] && [ "$NPM_MATCH" = "$NPM_PRIMARY" ]; then
+                result="not saved (exact cache already restored)"
+              elif [ "$NPM_PRUNE_SAVE" != true ]; then
+                result="not saved (npm cache exceeded size limit)"
+              else
+                result="skipped (job did not reach cache save)"
+              fi
+              ;;
+          esac
+          {
+            echo "### Cache save activity"
+            echo
+            echo "| Cache | Save result |"
+            echo "|---|---|"
+            printf '| npm | %s |\n' "$result"
+            echo
+          } | ci_sum
       - *report
       - *logs
 
@@ -2797,6 +2832,40 @@ jobs:
           exit "$rc"
       - *s_tc
       - *s_reg
+      - &audit_cache_save_report
+        name: Report Rust audit cache saves
+        if: always()
+        env:
+          CACHE_EVENT: ${{ github.event_name }}
+          TC_OUTCOME: ${{ steps.save_tc.outcome || 'skipped' }}
+          REG_OUTCOME: ${{ steps.save_reg.outcome || 'skipped' }}
+          TC_MATCH: ${{ steps.c_tc.outputs.cache-matched-key }}
+          TC_PRIMARY: ${{ steps.c_tc.outputs.cache-primary-key }}
+          REG_MATCH: ${{ steps.c_reg.outputs.cache-matched-key }}
+          REG_PRIMARY: ${{ steps.c_reg.outputs.cache-primary-key }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          save_state() {
+            local outcome="$1" matched="$2" primary="$3"
+            case "$outcome" in
+              success) echo "saved" ;;
+              failure) echo "save failed (continue-on-error)" ;;
+              *)
+                if [ "$CACHE_EVENT" = pull_request ]; then echo "not saved (pull-request cache-write policy)"
+                elif [ -n "$matched" ] && [ "$matched" = "$primary" ]; then echo "not saved (exact cache already restored)"
+                else echo "skipped (job did not reach cache save)"; fi
+                ;;
+            esac
+          }
+          {
+            echo "### Cache save activity"
+            echo
+            echo "| Cache | Save result |"
+            echo "|---|---|"
+            printf '| Toolchain | %s |\n' "$(save_state "$TC_OUTCOME" "$TC_MATCH" "$TC_PRIMARY")"
+            printf '| Cargo registry | %s |\n' "$(save_state "$REG_OUTCOME" "$REG_MATCH" "$REG_PRIMARY")"
+            echo
+          } | ci_sum
       - *report
       - *logs
 
@@ -2879,7 +2948,9 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *s_npm
+      - *npm_cache_save_report
       - *report
       - *logs
 
@@ -2932,7 +3003,9 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *s_npm
+      - *npm_cache_save_report
       - *report
       - *logs
 

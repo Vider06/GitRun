@@ -1163,43 +1163,8 @@ fn verify_repository_access(
     auth: &GitHubAuth,
     repository: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut parts = repository.split('/');
-    let owner = parts.next().unwrap_or_default();
-    let name = parts.next().unwrap_or_default();
-    if owner.is_empty() || name.is_empty() || parts.next().is_some() {
-        return Err(format!("invalid repository: {repository}").into());
-    }
-
-    let token = auth.bearer_token()?;
-    let url = format!("https://api.github.com/repos/{owner}/{name}");
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?;
-    let response = client
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("X-GitHub-Api-Version", "2026-03-10")
-        .header("User-Agent", concat!("GitRun/", env!("CARGO_PKG_VERSION")))
-        .send()?;
-
-    match response.status() {
-        reqwest::StatusCode::OK => Ok(()),
-        reqwest::StatusCode::UNAUTHORIZED => Err(
-            "GitHub rejected the configured credentials (401 Unauthorized).".into()
-        ),
-        reqwest::StatusCode::FORBIDDEN => Err(
-            "GitHub denied access or rate-limited the request (403 Forbidden).".into()
-        ),
-        reqwest::StatusCode::NOT_FOUND => Err(
-            format!("repository {repository} was not found or the configured authentication cannot access it.").into()
-        ),
-        status => Err(format!(
-            "GitHub returned HTTP {} while checking {repository}.",
-            status.as_u16()
-        ).into()),
-    }
+    gitrun_setup::verify_github_repository_access(auth, repository)?;
+    Ok(())
 }
 
 fn atomic_replace_text(

@@ -825,64 +825,9 @@ fn validate_private_key_path(value: &str) -> Result<String, String> {
 /// file when the setup is elevated through pkexec.
 #[cfg(any(feature = "desktop", test))]
 fn secure_private_key_file(path: &std::path::Path) -> Result<(), String> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|e| {
-        format!(
-            "unable to inspect GitHub App private key {}: {e}",
-            path.display()
-        )
-    })?;
-    if metadata.file_type().is_symlink() {
-        return Err("GitHub App private key path must not be a symbolic link".into());
-    }
-    if !metadata.is_file() {
-        return Err(format!(
-            "GitHub App private key path is not a regular file: {}",
-            path.display()
-        ));
-    }
-    if metadata.len() > 1024 * 1024 {
-        return Err("GitHub App private key exceeds the 1 MiB safety limit".into());
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| {
-            format!(
-                "unable to secure GitHub App private key {} to mode 0600: {e}",
-                path.display()
-            )
-        })?;
-
-        let metadata = std::fs::symlink_metadata(path).map_err(|e| {
-            format!(
-                "unable to re-check GitHub App private key {} after chmod: {e}",
-                path.display()
-            )
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(
-                "GitHub App private key path changed or is no longer a regular file".into(),
-            );
-        }
-
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode != 0o600 {
-            return Err(format!(
-                "GitHub App private key could not be secured to mode 0600 (actual mode {mode:o})"
-            ));
-        }
-
-        std::fs::File::open(path).map_err(|e| {
-            format!(
-                "GitHub App private key {} is not readable after securing it to 0600: {e}",
-                path.display()
-            )
-        })?;
-    }
-
-    Ok(())
+    gitrun_setup::secure_github_app_private_key(path)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn trusted_executable_mode(mode: u32) -> bool {
@@ -911,14 +856,23 @@ fn build_first_setup_auth(
             token,
             "GitHub token",
         )?)),
-        "app" => Ok(BootstrapAuth::GitHubApp {
-            app_id: validate_numeric_setup_id(app_id, "GitHub App ID")?,
-            installation_id: validate_numeric_setup_id(
+        "app" => {
+            let app_id = validate_numeric_setup_id(app_id, "GitHub App ID")?;
+            let installation_id = validate_numeric_setup_id(
                 installation_id,
                 "GitHub App installation ID",
-            )?,
-            private_key_path: validate_private_key_path(private_key_path)?,
-        }),
+            )?;
+            let private_key_path = validate_private_key_path(private_key_path)?;
+            let secured_path = gitrun_setup::secure_github_app_private_key(
+                std::path::Path::new(&private_key_path),
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(BootstrapAuth::GitHubApp {
+                app_id,
+                installation_id,
+                private_key_path: secured_path.to_string_lossy().into_owned(),
+            })
+        }
         other => Err(format!("unsupported GitHub authentication mode: {other}")),
     }
 }

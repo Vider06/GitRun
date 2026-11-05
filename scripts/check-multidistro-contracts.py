@@ -235,6 +235,7 @@ def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
         "install_gitrun_service_definitions(",
         "start_gitrun_services()",
         "stop_gitrun_services()",
+        "trusted_service_manager_binary(manager)",
         "gitrun_platform::PackageManager::Apt",
         "gitrun_platform::PackageManager::Dnf",
         "gitrun_platform::PackageManager::Zypper",

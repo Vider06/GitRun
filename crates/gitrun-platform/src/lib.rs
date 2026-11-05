@@ -158,6 +158,14 @@ pub const fn service_command_candidates(manager: ServiceManager) -> &'static [&'
     }
 }
 
+pub fn trusted_service_manager_binary(manager: ServiceManager) -> Option<std::path::PathBuf> {
+    service_command_candidates(manager)
+        .iter()
+        .map(Path::new)
+        .find(|path| trusted_service_definition(path, true))
+        .map(Path::to_path_buf)
+}
+
 pub fn service_command(
     manager: ServiceManager,
     action: ServiceAction,

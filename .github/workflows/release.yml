@@ -1644,7 +1644,7 @@ jobs:
               """fn is_https_url(url: &reqwest::Url) -> bool {
               url.scheme() == "https"
                   || (url.scheme() == "http"
-                      && url.host_str() == Some("127.0.0.1")
+                      && url.host_str() == Some("127.0.0.1") // DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.8.23 migration-test checkout and accepts loopback only.
                       && std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").is_ok())
           }""",
               "HTTPS validator",
@@ -1653,7 +1653,7 @@ jobs:
               lib,
               r"    Ok\(format!\(\s*\"https://github\.com/\{\}/releases/latest/download/release-manifest\.json\",\s*repository\.trim_end_matches\('/'\)\s*\)\)",
               """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
-              if !base_url.starts_with("http://127.0.0.1:") {
+              if !base_url.starts_with("http://127.0.0.1:") { // DevSkim: ignore DS137138 because this URL is accepted only by the disposable migration-test checkout.
                   return Err(UpdateError::InvalidManifest(
                       "migration test URL must use loopback HTTP".into(),
                   ));
@@ -1673,7 +1673,7 @@ jobs:
               cli,
               r"    let url = format!\(\s*\"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}\",\s*version, artifact_name\s*\);",
               """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
-              if !base_url.starts_with("http://127.0.0.1:") {
+              if !base_url.starts_with("http://127.0.0.1:") { // DevSkim: ignore DS137138 because this URL is accepted only by the disposable migration-test checkout.
                   return Err("migration test URL must use loopback HTTP".into());
               }
               format!(
@@ -1714,14 +1714,13 @@ jobs:
           port="$(python3 - <<'PYPORT'
           import socket
           with socket.socket() as sock:
-              sock.bind(("127.0.0.1", 0))
+              sock.bind(("127.0.0.1", 0))  # DevSkim: ignore DS137138 because the ephemeral fixture server binds only to loopback.
               print(sock.getsockname()[1])
           PYPORT
           )"
-          python3 -m http.server "$port" --bind 127.0.0.1 --directory "$mock_root" \
-            > "$RUNNER_TEMP/migration-http.log" 2>&1 &
+          python3 -m http.server "$port" --bind 127.0.0.1 --directory "$mock_root" > "$RUNNER_TEMP/migration-http.log" 2>&1 & # DevSkim: ignore DS137138 because this temporary server serves fixtures only to the local migration test.
           server_pid=$!
-          base="http://127.0.0.1:$port"
+          base="http://127.0.0.1:$port" # DevSkim: ignore DS137138 because this URL is consumed only by the isolated migration test.
           ready=false
           for _ in 1 2 3 4 5 6 7 8 9 10; do
             if curl --fail --silent "$base/releases/latest/download/release-manifest.json" >/dev/null; then

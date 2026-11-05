@@ -927,10 +927,7 @@ fn stop_scheduler_service_for_update() -> Result<(), Box<dyn std::error::Error>>
     let Some(manager) = gitrun_platform::detect_service_manager() else {
         return Ok(());
     };
-    if !gitrun_platform::service_is_installed(
-        manager,
-        gitrun_platform::ManagedService::Scheduler,
-    ) {
+    if !gitrun_platform::service_is_installed(manager, gitrun_platform::ManagedService::Scheduler) {
         return Ok(());
     }
     let output = run_managed_service_action(
@@ -953,10 +950,7 @@ fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
     let Some(manager) = gitrun_platform::detect_service_manager() else {
         return Ok(());
     };
-    if !gitrun_platform::service_is_installed(
-        manager,
-        gitrun_platform::ManagedService::Scheduler,
-    ) {
+    if !gitrun_platform::service_is_installed(manager, gitrun_platform::ManagedService::Scheduler) {
         return Ok(());
     }
     let output = run_managed_service_action(
@@ -966,7 +960,10 @@ fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(std::io::Error::other(if detail.is_empty() {
-            format!("{} could not restart the GitRun scheduler", manager.as_str())
+            format!(
+                "{} could not restart the GitRun scheduler",
+                manager.as_str()
+            )
         } else {
             detail
         })

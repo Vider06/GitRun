@@ -206,13 +206,59 @@ pub fn service_command(
     }
 }
 
+fn trusted_service_mode_is_safe(mode: u32, require_executable: bool) -> bool {
+    mode & 0o022 == 0 && (!require_executable || mode & 0o111 != 0)
+}
+
+#[cfg(unix)]
+fn trusted_service_definition(path: &Path, require_executable: bool) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.uid() != 0
+        || !trusted_service_mode_is_safe(metadata.permissions().mode(), require_executable)
+    {
+        return false;
+    }
+
+    let mut parent = path.parent();
+    while let Some(directory) = parent {
+        let Ok(metadata) = fs::symlink_metadata(directory) else {
+            return false;
+        };
+        if !metadata.is_dir()
+            || metadata.uid() != 0
+            || metadata.permissions().mode() & 0o022 != 0
+        {
+            return false;
+        }
+        if directory == Path::new("/") {
+            break;
+        }
+        parent = directory.parent();
+    }
+    true
+}
+
+#[cfg(not(unix))]
+fn trusted_service_definition(_path: &Path, _require_executable: bool) -> bool {
+    false
+}
+
 pub fn service_is_installed(manager: ServiceManager, service: ManagedService) -> bool {
     let paths = match manager {
         ServiceManager::Systemd => service.systemd_unit_paths(),
         ServiceManager::OpenRc => service.openrc_service_paths(),
         ServiceManager::Runit => service.runit_service_paths(),
     };
-    paths.iter().any(|path| Path::new(path).is_file())
+    let require_executable = manager != ServiceManager::Systemd;
+    paths
+        .iter()
+        .any(|path| trusted_service_definition(Path::new(path), require_executable))
 }
 
 impl ServiceManager {
@@ -724,6 +770,15 @@ mod tests {
             .args,
             ["status", "/var/service/gitrun-gsr"]
         );
+    }
+
+    #[test]
+    fn trusted_service_definition_mode_rejects_writable_scripts() {
+        assert!(trusted_service_mode_is_safe(0o644, false));
+        assert!(trusted_service_mode_is_safe(0o755, true));
+        assert!(!trusted_service_mode_is_safe(0o666, false));
+        assert!(!trusted_service_mode_is_safe(0o777, true));
+        assert!(!trusted_service_mode_is_safe(0o644, true));
     }
 
     #[test]

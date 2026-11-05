@@ -422,7 +422,6 @@ jobs:
             -e MUSL_DISTRO="$MUSL_DISTRO" \
             -e RUSTFLAGS="-C target-feature=-crt-static" \
             -e CARGO_HOME=/workspace/.gitrun-cargo \
-            -e RUSTUP_HOME=/workspace/.gitrun-cargo/rustup \
             -e CARGO_TARGET_DIR=/workspace/target \
             -e CARGO_INCREMENTAL=0 \
             -e NPM_CONFIG_CACHE=/workspace/.gitrun-npm-cache \
@@ -438,6 +437,7 @@ jobs:
                 xbps-install -y base-devel pkg-config nodejs curl ca-certificates file ImageMagick \
                   libwebkit2gtk41-devel libayatana-appindicator-devel librsvg-devel gtk+3-devel \
                   openssl-devel cairo-devel harfbuzz-devel glib-devel wayland-devel zlib-devel
+                export RUSTUP_HOME=/workspace/.gitrun-cargo/rustup
                 curl --fail --silent --show-error --location \
                   "https://static.rust-lang.org/rustup/dist/${TARGET}/rustup-init" \
                   -o /tmp/rustup-init
@@ -448,6 +448,13 @@ jobs:
                 test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
                 rustc --version | grep -Fq "rustc $RUST_VERSION "
               fi
+              if [ "$MUSL_DISTRO" = "alpine" ]; then
+                # The pinned rust:1.99.0-alpine image already contains its matching
+                # toolchain under /usr/local/rustup; do not shadow it with an empty cache.
+                export RUSTUP_HOME=/usr/local/rustup
+              fi
+              test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
+              rustc --version | grep -Fq "rustc $RUST_VERSION "
               pkg-config --exists gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1
               node --version
               npm --version

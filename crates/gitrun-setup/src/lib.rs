@@ -3226,7 +3226,7 @@ mod tests {
             (
                 PackageManager::Dnf,
                 "/usr/bin/dnf",
-                vec!["install", "-y", "docker"],
+                vec!["install", "-y", "moby-engine"],
             ),
             (
                 PackageManager::Zypper,
@@ -3256,11 +3256,15 @@ mod tests {
         ];
 
         for (manager, expected_program, expected_args) in cases {
-            let (program, args) = package_install_spec(manager, &["docker"]).unwrap();
+            let packages = docker_packages(manager);
+            let (program, args) = package_install_spec(manager, packages).unwrap();
             assert_eq!(program, expected_program, "wrong installer for {manager:?}");
+            let mut expected = expected_args;
+            expected.truncate(expected.len().saturating_sub(1));
+            expected.extend_from_slice(packages);
             assert_eq!(
                 args.iter().map(String::as_str).collect::<Vec<_>>(),
-                expected_args,
+                expected,
                 "wrong package arguments for {manager:?}"
             );
         }
@@ -3274,7 +3278,7 @@ mod tests {
         );
         assert_eq!(
             docker_packages(PackageManager::Dnf),
-            ["docker", "docker-compose"]
+            ["moby-engine", "docker-compose"]
         );
         assert_eq!(
             docker_packages(PackageManager::Pacman),
@@ -3537,7 +3541,9 @@ mod tests {
             .next()
             .unwrap();
         assert!(!hook.contains("dpkg"));
-        assert!(uninstall.contains("args([\"--purge\", \"gitrun\"])"));
+        assert!(uninstall.contains("package_remove_spec(manager, name)"));
+        assert!(!hook.contains("package_remove_spec"));
+        assert!(!hook.contains("dpkg"));
     }
 
     #[test]

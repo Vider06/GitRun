@@ -404,9 +404,9 @@ jobs:
             .gitrun-cargo
             target
             .gitrun-npm-cache
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.musl_distro }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', '.github/workflows/release.yml', 'scripts/ci/check-dashboard-distro-dependencies.py') }}
           restore-keys: |
-            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.musl_distro }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-
       - name: Build native musl Dashboard in distro-native environment
         env:
           DOCKER_PLATFORM: ${{ matrix.docker_platform }}
@@ -491,7 +491,7 @@ jobs:
             .gitrun-cargo
             target
             .gitrun-npm-cache
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.musl_distro }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', '.github/workflows/release.yml', 'scripts/ci/check-dashboard-distro-dependencies.py') }}
 
   collect:
     name: Collect canonical target builds

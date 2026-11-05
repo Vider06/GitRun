@@ -1510,9 +1510,18 @@ jobs:
                   )
                   native_packages.append((arch, abi, fmt, link(name), digest_cell(item)))
               elif name.startswith(f"GitRun-Desktop-{version}-"):
-                  fmt = "AppImage" if name.endswith(".AppImage") else "DEB"
-                  arch = "aarch64" if "-linux-aarch64" in name else "x86_64"
-                  desktop_assets.append((arch, fmt, link(name), digest_cell(item)))
+                  fmt = (
+                      "AppImage" if name.endswith(".AppImage") else
+                      "DEB" if name.endswith(".deb") else
+                      "RPM" if name.endswith(".rpm") else
+                      "Arch Linux" if name.endswith(".pkg.tar.zst") else
+                      "APK" if name.endswith(".apk") else
+                      "XBPS" if name.endswith(".xbps") else
+                      "musl executable" if name.endswith(".bin") else "Unknown"
+                  )
+                  arch = "aarch64" if ("-aarch64" in name or "-arm64" in name) else "x86_64"
+                  abi = "musl" if "musl" in name else "GNU"
+                  desktop_assets.append((arch, abi, fmt, link(name), digest_cell(item)))
               elif name == f"GitRun-{version}-linux-x86_64-deb.deb":
                   migration_assets.append(("x86_64", "Debian / Ubuntu", "Legacy DEB; package gitrun", link(name), digest_cell(item)))
               else:
@@ -1580,7 +1589,7 @@ jobs:
               "",
           ]
           lines += table(
-              ["Architecture", "Format", "Artifact", "SHA-256"],
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
               desktop_assets,
           )
           lines += [
@@ -2229,9 +2238,18 @@ jobs:
                   )
                   native_packages.append((arch, abi, fmt, link(name), digest_cell(item)))
               elif name.startswith(f"GitRun-Desktop-{version}-"):
-                  fmt = "AppImage" if name.endswith(".AppImage") else "DEB"
-                  arch = "aarch64" if "-linux-aarch64" in name else "x86_64"
-                  desktop_assets.append((arch, fmt, link(name), digest_cell(item)))
+                  fmt = (
+                      "AppImage" if name.endswith(".AppImage") else
+                      "DEB" if name.endswith(".deb") else
+                      "RPM" if name.endswith(".rpm") else
+                      "Arch Linux" if name.endswith(".pkg.tar.zst") else
+                      "APK" if name.endswith(".apk") else
+                      "XBPS" if name.endswith(".xbps") else
+                      "musl executable" if name.endswith(".bin") else "Unknown"
+                  )
+                  arch = "aarch64" if ("-aarch64" in name or "-arm64" in name) else "x86_64"
+                  abi = "musl" if "musl" in name else "GNU"
+                  desktop_assets.append((arch, abi, fmt, link(name), digest_cell(item)))
               elif name == f"GitRun-{version}-linux-x86_64-deb.deb":
                   migration_assets.append(("x86_64", "Debian / Ubuntu", "Legacy DEB; package gitrun", link(name), digest_cell(item)))
               else:
@@ -2299,7 +2317,7 @@ jobs:
               "",
           ]
           lines += table(
-              ["Architecture", "Format", "Artifact", "SHA-256"],
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
               desktop_assets,
           )
           lines += [

@@ -47,8 +47,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CARGO_HOME=/opt/cargo \
     PATH=/opt/cargo/bin:/usr/local/bin:$PATH
 
-# hadolint ignore=DL3008
 # Runtime packages intentionally follow Debian Bookworm security updates instead of freezing stale versions.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl git jq tar gzip sudo python3 python3-pip \

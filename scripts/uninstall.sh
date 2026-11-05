@@ -15,10 +15,10 @@ case "$canonical" in
     exit 1
     ;;
 esac
-[ -f "$canonical" ] && [ "$(stat -c %u -- "$canonical")" = 0 ] || {
+if [ ! -f "$canonical" ] || [ "$(stat -c %u -- "$canonical")" != 0 ]; then
   echo "Refusing privilege elevation: GitRun binary is not root-owned." >&2
   exit 1
-}
+fi
 mode="$(stat -c %a -- "$canonical")"
 case "$mode" in
   *[2367][0-7]|*[0-7][2367])

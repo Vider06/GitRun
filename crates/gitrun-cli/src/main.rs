@@ -4243,8 +4243,8 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     let package_manager = gitrun_platform::inspect_linux()
         .and_then(|platform| platform.package_manager)
         .ok_or_else(|| {
-        "unable to identify a supported native Linux package manager for reinstall".to_owned()
-    })?;
+            "unable to identify a supported native Linux package manager for reinstall".to_owned()
+        })?;
     if package_manager != gitrun_platform::PackageManager::Apt
         || target_triple()? != "x86_64-unknown-linux-gnu"
     {

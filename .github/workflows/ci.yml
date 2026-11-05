@@ -75,7 +75,7 @@ jobs:
   variables-verification:
     if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Repository CI variables
-    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -190,7 +190,7 @@ jobs:
     if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Runner environment
     needs: variables-verification
-    runs-on: &runner ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: &runner ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read

@@ -4240,8 +4240,18 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("verified GitRun reinstall requires administrator privileges".into());
     }
-    if !cfg!(target_arch = "x86_64") {
-        return Err("the official Debian reinstall currently targets Linux x86_64".into());
+    let package_manager = gitrun_platform::detect_package_manager().ok_or_else(|| {
+        "unable to identify a supported native Linux package manager for reinstall".to_owned()
+    })?;
+    if package_manager != gitrun_platform::PackageManager::Apt
+        || target_triple()? != "x86_64-unknown-linux-gnu"
+    {
+        return Err(format!(
+            "automatic package reinstall currently supports only x86_64 GNU/Linux with APT; detected {} on {}. Use the distribution's native package manager for reinstall.",
+            package_manager.as_str(),
+            target_triple()?
+        )
+        .into());
     }
     // Auto-reinstall is pinned to the official GitRun trust anchor.
     // Do not allow transient environment overrides to disable verification.

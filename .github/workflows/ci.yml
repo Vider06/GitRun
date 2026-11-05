@@ -2068,6 +2068,86 @@ jobs:
       - *report
       - *logs
 
+  # ───────────────────────────────────────────── native ARM64 Dashboard ──
+  tauri-arm64:
+    name: Tauri GUI build and package · ARM64
+    needs: [cargo-lock, rust-lint, frontend]
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: "0"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Tauri Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf xdg-utils libwebkit2gtk-4.1-dev imagemagick
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Restore ARM64 Dashboard Cargo and npm caches
+        id: dashboard-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-ci/npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-aarch64-gnu-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-aarch64-gnu-${{ env.RUST_VERSION }}-
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Install Dashboard frontend dependencies
+        run: |
+          set -euo pipefail
+          mkdir -p "$NPM_CONFIG_CACHE"
+          npm --prefix crates/gitrun-dashboard-tauri ci
+      - name: Build native ARM64 Dashboard
+        run: |
+          set -euo pipefail
+          export TMPDIR="$RUNNER_TEMP/tauri-tmp" XDG_CACHE_HOME="$RUNNER_TEMP/tauri-cache"
+          mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
+          npm --prefix crates/gitrun-dashboard-tauri run tauri build -- --ci --no-bundle
+          npm --prefix crates/gitrun-dashboard-tauri run tauri bundle -- --bundles appimage --no-binary-patching
+          appimage="$(find target/release/bundle -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          file "$appimage"
+          install -Dm0755 "$appimage" "$RUNNER_TEMP/GitRun-Desktop-linux-aarch64.AppImage"
+      - name: Upload native ARM64 Dashboard artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: gitrun-dashboard-arm64-ci
+          path: ${{ runner.temp }}/GitRun-Desktop-linux-aarch64.AppImage
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save ARM64 Dashboard Cargo and npm caches
+        if: success() && steps.dashboard-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-ci/npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-aarch64-gnu-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+
   # ─────────────────────────────────────────────────────── tauri-recovery ──
   tauri-recovery:
     name: Tauri GitRun Recovery GUI build and test
@@ -2415,6 +2495,7 @@ jobs:
       - multi-distro-contracts
       - release-contracts
       - tauri
+      - tauri-arm64
       - tauri-recovery
       - docker
     runs-on: *runner
@@ -2476,6 +2557,7 @@ jobs:
           multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
           release-contracts|Server, Desktop and migration release contracts|workflows|
           tauri|Tauri GUI|tauri|rust-lint frontend
+          tauri-arm64|Tauri GUI native ARM64 build|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
           JOBS

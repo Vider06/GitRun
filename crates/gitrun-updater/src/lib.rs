@@ -2282,12 +2282,17 @@ fn update_linux_dependency(name: &str) -> Result<(), UpdateError> {
     } else if manager == P::Zypper {
         run_linux_package_command("zypper", &["--non-interactive", "refresh"])?;
     }
-    run_linux_package_command(program, &args.iter().map(String::as_str).collect::<Vec<_>>())
+    run_linux_package_command(
+        program,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
 }
 
 fn run_linux_package_command(program: &str, args: &[&str]) -> Result<(), UpdateError> {
     let executable = linux_system_command(program).ok_or_else(|| {
-        UpdateError::Command(format!("trusted system package-manager executable {program} was not found"))
+        UpdateError::Command(format!(
+            "trusted system package-manager executable {program} was not found"
+        ))
     })?;
     let mut command = if is_root() {
         Command::new(executable)
@@ -3348,7 +3353,10 @@ mod tests {
         assert_eq!(linux_system_command("zypper"), Some("/usr/bin/zypper"));
         assert_eq!(linux_system_command("pacman"), Some("/usr/bin/pacman"));
         assert_eq!(linux_system_command("apk"), Some("/sbin/apk"));
-        assert_eq!(linux_system_command("xbps-install"), Some("/usr/bin/xbps-install"));
+        assert_eq!(
+            linux_system_command("xbps-install"),
+            Some("/usr/bin/xbps-install")
+        );
         assert_eq!(linux_system_command("emerge"), Some("/usr/bin/emerge"));
         assert_eq!(linux_system_command("sudo"), Some("/usr/bin/sudo"));
         assert_eq!(linux_system_command("id"), Some("/usr/bin/id"));
@@ -3359,13 +3367,38 @@ mod tests {
     fn linux_dependency_packages_follow_native_distribution_names() {
         use gitrun_platform::PackageManager as P;
 
-        assert_eq!(linux_dependency_packages(P::Apt, "Docker").unwrap(), ["docker.io", "docker-compose-v2"]);
-        assert_eq!(linux_dependency_packages(P::Dnf, "Docker").unwrap(), ["docker", "docker-compose", "docker-buildx"]);
-        assert_eq!(linux_dependency_packages(P::Zypper, "Docker").unwrap(), ["docker", "docker-compose", "docker-buildx"]);
-        assert_eq!(linux_dependency_packages(P::Pacman, "Docker").unwrap(), ["docker", "docker-compose", "docker-buildx"]);
-        assert_eq!(linux_dependency_packages(P::Apk, "Docker").unwrap(), ["docker", "docker-cli-compose", "docker-cli-buildx"]);
-        assert_eq!(linux_dependency_packages(P::Xbps, "Docker").unwrap(), ["docker", "docker-compose", "docker-buildx"]);
-        assert_eq!(linux_dependency_packages(P::Emerge, "Docker").unwrap(), ["app-containers/docker", "app-containers/docker-compose", "app-containers/docker-buildx"]);
+        assert_eq!(
+            linux_dependency_packages(P::Apt, "Docker").unwrap(),
+            ["docker.io", "docker-compose-v2"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Dnf, "Docker").unwrap(),
+            ["docker", "docker-compose", "docker-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Zypper, "Docker").unwrap(),
+            ["docker", "docker-compose", "docker-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Pacman, "Docker").unwrap(),
+            ["docker", "docker-compose", "docker-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Apk, "Docker").unwrap(),
+            ["docker", "docker-cli-compose", "docker-cli-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Xbps, "Docker").unwrap(),
+            ["docker", "docker-compose", "docker-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Emerge, "Docker").unwrap(),
+            [
+                "app-containers/docker",
+                "app-containers/docker-compose",
+                "app-containers/docker-buildx"
+            ]
+        );
         assert!(linux_dependency_packages(P::Rpm, "Docker").is_err());
         assert!(linux_dependency_packages(P::Apt, "unknown").is_err());
     }

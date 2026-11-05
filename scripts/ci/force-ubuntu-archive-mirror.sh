@@ -19,7 +19,7 @@ sources=(
 for source in "${sources[@]}"; do
   [ -f "$source" ] || continue
   sed -i -E \
-    's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' \
+    's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#https://archive.ubuntu.com/ubuntu/#g' \
     "$source"
 done
 
@@ -38,7 +38,7 @@ for source in "${sources[@]}"; do
   [ -f "$source" ] || continue
   case "$source" in
     /etc/apt/apt-mirrors.txt|/etc/apt/sources.list|/etc/apt/sources.list.d/*.list|/etc/apt/sources.list.d/*.sources)
-      grep -E '(^|[[:space:]])(URIs:|deb |http://|https://)' "$source" || true
+      grep -E '(^|[[:space:]])(URIs:|deb |https?://)' "$source" || true
       ;;
   esac
 done

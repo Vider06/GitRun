@@ -484,16 +484,17 @@ jobs:
               depends: [libc6, policykit-1]
               conflicts: [gitrun]
               replaces: [gitrun]
+              # Debian maintainer scripts use dpkg-specific arguments.
+              # Keep them in the Debian override, not the Deb-only metadata block.
+              scripts:
+                postinstall: packaging/gitrun-postinst
+                preremove: packaging/gitrun-prerm
             rpm:
               depends: [glibc, polkit]
             apk:
               depends: [musl]
             archlinux:
-              depends: [glibc]
-          deb:
-            scripts:
-              postinstall: packaging/gitrun-postinst
-              preremove: packaging/gitrun-prerm
+              depends: [glibc, polkit]
           NFPM
           for format in $formats; do
             nfpm package --config "$RUNNER_TEMP/nfpm.yaml" --packager "$format" --target "$out"
@@ -600,7 +601,7 @@ jobs:
           maintainer: Vider06
           description: GitRun Tauri Dashboard, independently installable from the server
           license: Apache-2.0
-          depends: [libwebkit2gtk-4.1-0]
+          depends: [libwebkit2gtk-4.1-0, policykit-1]
           contents:
             - src: $stage/opt/gitrun-desktop/GitRun.AppImage
               dst: /opt/gitrun-desktop/GitRun.AppImage
@@ -803,6 +804,7 @@ jobs:
           gui="$root/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb"
           test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
           dpkg-deb -c "$gui" | grep -Fq '/opt/gitrun-desktop/GitRun.AppImage'
+          dpkg-deb -f "$gui" Depends | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -Fxq policykit-1
           if dpkg-deb -c "$gui" | grep -Eq '/usr/bin/gitrun$'; then
             echo "Desktop package unexpectedly contains /usr/bin/gitrun" >&2
             exit 1
@@ -848,6 +850,8 @@ jobs:
             rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
             rpm -qpl "$rpm_file" | grep -Fxq /usr/bin/gitrun
             rpm -qpl "$rpm_file" | grep -Fxq /usr/lib/systemd/system/gitrun.service
+            rpm -qp --requires "$rpm_file" | grep -Fxq glibc
+            rpm -qp --requires "$rpm_file" | grep -Fxq polkit
           done
           mapfile -d '' -t apk_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-apk.apk" -print0)
           for apk_file in "${apk_files[@]}"; do
@@ -857,6 +861,9 @@ jobs:
           tar --zstd -tf "$arch_file" | grep -Fxq .PKGINFO
           tar --zstd -tf "$arch_file" | grep -Fxq usr/bin/gitrun
           tar --zstd -tf "$arch_file" | grep -Fxq usr/lib/systemd/system/gitrun.service
+          arch_pkginfo="$(tar --zstd -xOf "$arch_file" .PKGINFO)"
+          grep -Fxq 'depend = glibc' <<< "$arch_pkginfo"
+          grep -Fxq 'depend = polkit' <<< "$arch_pkginfo"
 
           mapfile -t library_members < <(unzip -Z1 "$root/library.zip")
           (("${#library_members[@]}" == 11))

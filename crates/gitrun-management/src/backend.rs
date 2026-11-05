@@ -2600,7 +2600,9 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
                 command.arg("--unit").arg(unit);
             }
             let output = command.output().map_err(|error| {
-                format!("Unable to execute journalctl; GitRun service logs are unavailable: {error}")
+                format!(
+                    "Unable to execute journalctl; GitRun service logs are unavailable: {error}"
+                )
             })?;
             if !output.status.success() {
                 let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -2660,8 +2662,9 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
                 if !path.is_file() {
                     continue;
                 }
-                let contents = std::fs::read_to_string(&path)
-                    .map_err(|error| format!("unable to read runit log {}: {error}", path.display()))?;
+                let contents = std::fs::read_to_string(&path).map_err(|error| {
+                    format!("unable to read runit log {}: {error}", path.display())
+                })?;
                 entries.extend(contents.lines().map(str::to_owned));
             }
             if entries.len() > limit {
@@ -3360,11 +3363,8 @@ fn service_status(
         return (false, false, None);
     };
     let installed = gitrun_platform::service_is_installed(manager, service);
-    let spec = gitrun_platform::service_command(
-        manager,
-        gitrun_platform::ServiceAction::Status,
-        service,
-    );
+    let spec =
+        gitrun_platform::service_command(manager, gitrun_platform::ServiceAction::Status, service);
     let active = spec.candidates.iter().any(|candidate| {
         trusted_privileged_binary(Path::new(candidate)).is_some_and(|program| {
             let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
@@ -3408,10 +3408,17 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
         native_action,
         gitrun_platform::ManagedService::Scheduler,
     );
-    let program = spec.candidates.iter()
+    let program = spec
+        .candidates
+        .iter()
         .map(PathBuf::from)
         .find_map(|path| trusted_privileged_binary(&path))
-        .ok_or_else(|| format!("trusted {} service-control executable was not found", manager.as_str()))?;
+        .ok_or_else(|| {
+            format!(
+                "trusted {} service-control executable was not found",
+                manager.as_str()
+            )
+        })?;
     let action_arg = service_action_name(action);
     let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = if current_process_is_root() {
@@ -3426,14 +3433,28 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             .arg(&program)
             .args(&args)
             .output()
-            .map_err(|error| format!("unable to request privileged {} service control: {error}", manager.as_str()))?
+            .map_err(|error| {
+                format!(
+                    "unable to request privileged {} service control: {error}",
+                    manager.as_str()
+                )
+            })?
     };
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
-            format!("{} {} GitRun service exited with {}", manager.as_str(), action_arg, output.status)
+            format!(
+                "{} {} GitRun service exited with {}",
+                manager.as_str(),
+                action_arg,
+                output.status
+            )
         } else {
-            format!("{} {} GitRun service failed: {detail}", manager.as_str(), action_arg)
+            format!(
+                "{} {} GitRun service failed: {detail}",
+                manager.as_str(),
+                action_arg
+            )
         });
     }
     if let Some(cache) = DASHBOARD_HEALTH_CACHE.get() {
@@ -3441,7 +3462,10 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             *cached = None;
         }
     }
-    Ok(format!("Requested GitRun service action through {}: {action_arg}", manager.as_str()))
+    Ok(format!(
+        "Requested GitRun service action through {}: {action_arg}",
+        manager.as_str()
+    ))
 }
 
 fn connect_repository_through_manager(repository: String) -> Result<serde_json::Value, String> {

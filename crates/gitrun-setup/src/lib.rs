@@ -3196,6 +3196,26 @@ mod tests {
     }
 
     #[test]
+    fn docker_engine_and_buildx_package_names_match_distribution_repositories() {
+        assert_eq!(
+            docker_packages(PackageManager::Dnf),
+            ["moby-engine", "docker-compose"]
+        );
+        assert_eq!(
+            buildx_packages(PackageManager::Dnf),
+            &[&["docker-buildx"][..]]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Apk),
+            ["docker", "docker-cli-compose"]
+        );
+        assert_eq!(
+            buildx_packages(PackageManager::Apk),
+            &[&["docker-cli-buildx"][..]]
+        );
+    }
+
+    #[test]
     fn package_install_commands_are_native_to_each_supported_distribution() {
         let cases = [
             (

@@ -1158,7 +1158,6 @@ jobs:
             "GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
             "GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin" \
             "GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk" \
-            "GitRun-Desktop-$VERSION-linux-aarch64-musl-apk.apk" \
             "GitRun-Desktop-$VERSION-linux-x86_64-musl-xbps.xbps" \
             "GitRun-Desktop-$VERSION-linux-aarch64-musl-xbps.xbps" \
             library.zip cargo-metadata.json sbom.spdx.json provenance.json; do
@@ -1212,16 +1211,20 @@ jobs:
             gui_files="$(tar --zstd -tf "$gui_arch")"
             grep -Fq 'opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_files"
           done
+          if [ -e "$root/GitRun-Desktop-$VERSION-linux-aarch64-musl-apk.apk" ]; then
+            echo "Alpine ARM64 Desktop APK must not be published without WebKitGTK 4.1 support" >&2
+            exit 1
+          fi
+          gui_apk="$root/GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk"
+          apk_listing="$(tar -tzf "$gui_apk")"
+          grep -Fq '.PKGINFO' <<< "$apk_listing"
+          apk_metadata="$(tar -xOzf "$gui_apk" .PKGINFO)"
+          grep -Fxq 'pkgname = gitrun-desktop' <<< "$apk_metadata"
+          grep -Fxq 'arch = x86_64' <<< "$apk_metadata"
+          grep -Fxq 'depend = musl' <<< "$apk_metadata"
+          grep -Fxq 'depend = webkit2gtk-4.1' <<< "$apk_metadata"
+          grep -Fxq 'depend = polkit' <<< "$apk_metadata"
           for arch in x86_64 aarch64; do
-            gui_apk="$root/GitRun-Desktop-$VERSION-linux-$arch-musl-apk.apk"
-            apk_listing="$(tar -tzf "$gui_apk")"
-            grep -Fq '.PKGINFO' <<< "$apk_listing"
-            apk_metadata="$(tar -xOzf "$gui_apk" .PKGINFO)"
-            grep -Fxq 'pkgname = gitrun-desktop' <<< "$apk_metadata"
-            grep -Fxq "arch = $arch" <<< "$apk_metadata"
-            grep -Fxq 'depend = musl' <<< "$apk_metadata"
-            grep -Fxq 'depend = webkit2gtk-4.1' <<< "$apk_metadata"
-            grep -Fxq 'depend = polkit' <<< "$apk_metadata"
             test -s "$root/GitRun-Desktop-$VERSION-linux-$arch-musl-xbps.xbps"
             test -x "$root/GitRun-Desktop-$VERSION-$arch-unknown-linux-musl.bin"
           done

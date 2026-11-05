@@ -3369,6 +3369,9 @@ fn service_status(
         return (false, false, None);
     };
     let installed = gitrun_platform::service_is_installed(manager, service);
+    if !installed {
+        return (false, false, Some(manager));
+    }
     let spec =
         gitrun_platform::service_command(manager, gitrun_platform::ServiceAction::Status, service);
     let active = spec.candidates.iter().any(|candidate| {

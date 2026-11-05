@@ -105,7 +105,7 @@ jobs:
             '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"GitRun",documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit),creationInfo:{created:$created,creators:["Tool: GitRun CI"]},packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
             "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
           jq -n --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
-            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_target:"x86_64-unknown-linux-gnu"}' \
+            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],desktop_package_formats:["deb","rpm","archlinux","appimage","apk","xbps"],desktop_package_arches:{apk:["x86_64"],xbps:["x86_64","aarch64"]}}' \
             > "$root/provenance.json"
       - name: Upload shared inputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -240,15 +240,31 @@ jobs:
           retention-days: 3
 
   build-dashboard:
-    name: Independent GitRun Desktop
+    name: Independent GitRun Desktop · ${{ matrix.target }}
     needs: prepare
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            arch: aarch64
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      TARGET: ${{ matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: "0"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-npm-cache
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -265,8 +281,19 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - name: Restore Dashboard Cargo and npm caches
+        id: dashboard-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
           package-manager-cache: false
@@ -274,7 +301,7 @@ jobs:
         working-directory: crates/gitrun-dashboard-tauri
         run: |
           set -euo pipefail
-          node --input-type=module - "$VERSION_NUMBER" <<'NODE'
+          node --input-type=module - "$VERSION_NUMBER" <<NODE
           import fs from "node:fs";
           const version = process.argv[2];
           for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
@@ -287,6 +314,7 @@ jobs:
           lock.packages[""].version = version;
           fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n");
           NODE
+          mkdir -p "$NPM_CONFIG_CACHE"
           npm ci
       - name: Normalize Tauri PNG icons
         shell: bash
@@ -313,25 +341,170 @@ jobs:
           out="$RUNNER_TEMP/dashboard-canonical"
           rm -rf "$out"
           mkdir -p "$out"
-          install -m 0755 "$appimage" "$out/GitRun-Desktop-$VERSION-linux-x86_64.AppImage"
+          install -m 0755 "$appimage" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
       - name: Upload independent Dashboard artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: dashboard-linux-x86_64
+          name: dashboard-${{ matrix.target }}
           path: ${{ runner.temp }}/dashboard-canonical/*
           if-no-files-found: error
           retention-days: 3
+      - name: Save Dashboard Cargo and npm caches
+        if: success() && steps.dashboard-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+
+  build-dashboard-musl:
+    name: Independent GitRun Desktop · ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            docker_platform: linux/amd64
+            musl_distro: alpine
+            cache_variant: alpine-rust-1.99.0-alpine3.24
+            container_image: rust:1.99.0-alpine3.24
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            docker_platform: linux/arm64
+            musl_distro: void
+            cache_variant: void-musl-20260801r1
+            container_image: ghcr.io/void-linux/void-musl-full:20260801r1
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      TARGET: ${{ matrix.target }}
+      MUSL_DISTRO: ${{ matrix.musl_distro }}
+      CONTAINER_IMAGE: ${{ matrix.container_image }}
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: "0"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-npm-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Restore musl Dashboard Cargo and npm caches
+        id: dashboard-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', '.github/workflows/release.yml', 'scripts/ci/check-dashboard-distro-dependencies.py') }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-
+      - name: Build native musl Dashboard in distro-native environment
+        env:
+          DOCKER_PLATFORM: ${{ matrix.docker_platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE"
+          docker run --rm --pull=always --platform "$DOCKER_PLATFORM" \
+            -e VERSION_NUMBER="$VERSION_NUMBER" \
+            -e TARGET="$TARGET" \
+            -e RUST_VERSION="$RUST_VERSION" \
+            -e MUSL_DISTRO="$MUSL_DISTRO" \
+            -e CARGO_HOME=/workspace/.gitrun-cargo \
+            -e RUSTUP_HOME=/workspace/.gitrun-cargo/rustup \
+            -e CARGO_TARGET_DIR=/workspace/target \
+            -e CARGO_INCREMENTAL=0 \
+            -e NPM_CONFIG_CACHE=/workspace/.gitrun-npm-cache \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace/crates/gitrun-dashboard-tauri \
+            "$CONTAINER_IMAGE" sh -ec '
+              if [ "$MUSL_DISTRO" = "alpine" ]; then
+                apk add --no-cache build-base pkgconf nodejs npm curl wget file openssl-dev \
+                  webkit2gtk-4.1-dev libayatana-appindicator-dev librsvg font-dejavu imagemagick \
+                  openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
+              else
+                xbps-install -Suy
+                xbps-install -y base-devel pkg-config nodejs curl ca-certificates file ImageMagick \
+                  libwebkit2gtk41-devel libayatana-appindicator-devel librsvg-devel gtk+3-devel \
+                  openssl-devel cairo-devel harfbuzz-devel glib-devel wayland-devel zlib-devel
+                curl --fail --silent --show-error --location \
+                  "https://static.rust-lang.org/rustup/dist/${TARGET}/rustup-init" \
+                  -o /tmp/rustup-init
+                chmod 0755 /tmp/rustup-init
+                /tmp/rustup-init -y --no-modify-path --profile minimal \
+                  --default-toolchain "$RUST_VERSION" --default-host "$TARGET"
+                . "$CARGO_HOME/env"
+                test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
+                rustc --version | grep -Fq "rustc $RUST_VERSION "
+              fi
+              pkg-config --exists gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1
+              node --version
+              npm --version
+              node --input-type=module - "$VERSION_NUMBER" <<NODE
+          import fs from "node:fs";
+          const version = process.argv[2];
+          for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
+            const value = JSON.parse(fs.readFileSync(file, "utf8"));
+            value.version = version;
+            fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\\n");
+          }
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          lock.version = version;
+          lock.packages[""].version = version;
+          fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\\n");
+          NODE
+              npm ci
+              for icon in src-tauri/icons/*.png; do
+                [ -f "$icon" ] || continue
+                tmp="$(mktemp --suffix=.png)"
+                convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+                mv "$tmp" "$icon"
+              done
+              npm run tauri build -- --ci --no-bundle
+              test -s /workspace/target/release/gitrun-dashboard-tauri
+            '
+          out="$RUNNER_TEMP/dashboard-musl-canonical"
+          rm -rf "$out"
+          mkdir -p "$out"
+          install -m 0755 "$GITHUB_WORKSPACE/target/release/gitrun-dashboard-tauri" "$out/GitRun-Desktop-$VERSION-$TARGET.bin"
+      - name: Upload independent musl Dashboard executable
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dashboard-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-musl-canonical/*
+          if-no-files-found: error
+          retention-days: 3
+      - name: Save musl Dashboard Cargo and npm caches
+        if: success() && steps.dashboard-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', '.github/workflows/release.yml', 'scripts/ci/check-dashboard-distro-dependencies.py') }}
 
   collect:
     name: Collect canonical target builds
-    needs: [prepare, build-server, build-dashboard]
+    needs: [prepare, build-server, build-dashboard, build-dashboard-musl]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
     steps:
       - name: Download immutable build outputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           path: canonical-inputs
           merge-multiple: true
@@ -350,6 +523,9 @@ jobs:
             test -s "$archive"
           done
           test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-aarch64.AppImage"
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-musl.bin"
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-musl.bin"
           test -s canonical-inputs/library.zip
           test -s canonical-inputs/cargo-metadata.json
           test -s canonical-inputs/sbom.spdx.json
@@ -365,7 +541,7 @@ jobs:
   package-server:
     name: Package Server target matrix
     needs: [prepare, collect]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -373,22 +549,31 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            xbps_static_arch: aarch64
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            xbps_static_arch: aarch64
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
       TARGET: ${{ matrix.target }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
     steps:
       - name: Checkout packaging metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Download canonical target outputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: canonical
@@ -404,7 +589,7 @@ jobs:
       - name: Set up pinned Go toolchain for nFPM
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.26.4"
+          go-version: "1.26.10"
           check-latest: false
           cache: false
       - name: Create TAR.ZST, DEB, RPM, APK, Arch and XBPS packages
@@ -426,7 +611,7 @@ jobs:
           cp -a "$stage" "$package_stage"
           unit_contents=""
           # Only systemd package formats carry systemd units. APK and XBPS remain
-          # init-neutral until native OpenRC/runit service backends are implemented.
+          # init-neutral; gitrun setup creates the native OpenRC/runit service definitions.
           if [[ "$TARGET" == *-gnu ]]; then
             mkdir -p "$package_stage/usr/lib/systemd/system"
             for unit in gitrun.service gitrun-gsr.service gitrun-control.service; do
@@ -448,7 +633,7 @@ jobs:
 
           case "$TARGET" in
             x86_64-unknown-linux-gnu) arch=amd64; formats="deb rpm archlinux"; xbps_arch=x86_64; xbps_dep=glibc; base_dep=libc6; cpu=x86_64 ;;
-            aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm"; xbps_arch=aarch64; xbps_dep=glibc; base_dep=libc6; cpu=aarch64 ;;
+            aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm archlinux"; xbps_arch=aarch64; xbps_dep=glibc; base_dep=libc6; cpu=aarch64 ;;
             x86_64-unknown-linux-musl) arch=amd64; formats="apk"; xbps_arch=x86_64-musl; xbps_dep=musl; base_dep=musl; cpu=x86_64-musl ;;
             aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl; base_dep=musl; cpu=aarch64-musl ;;
             *) echo "Unsupported package target: $TARGET" >&2; exit 1 ;;
@@ -518,12 +703,13 @@ jobs:
           xbps_root="$RUNNER_TEMP/xbps"
           mkdir -p "$xbps_root"
           curl --fail --silent --show-error --location \
-            https://repo-default.voidlinux.org/static/xbps-static-latest.x86_64-musl.tar.xz \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
             -o "$RUNNER_TEMP/xbps-static.tar.xz"
           tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
           xbps_create="$xbps_root/usr/bin/xbps-create"
           xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
-          test -x "$xbps_create" && test -x "$xbps_rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
           export XBPS_ARCH="$xbps_arch"
           (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
             -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
@@ -534,6 +720,8 @@ jobs:
           mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
           # Indexing the local repository parses the XBPS archive and validates its metadata.
           "$xbps_rindex" -a "$out"/*.xbps
+          server_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-server-${VERSION_NUMBER}_1")"
+          grep -Fq "$xbps_dep" <<< "$server_deps"
           test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
       - name: Upload immutable target packages
@@ -545,36 +733,53 @@ jobs:
           retention-days: 3
 
   package-dashboard:
-    name: Package independent Desktop
+    name: Package independent Desktop · ${{ matrix.target }}
     needs: [prepare, collect]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+            package_arch: amd64
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+            package_arch: arm64
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
     steps:
       - name: Checkout packaging metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Download canonical Dashboard build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: canonical
+      - name: Install package inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
       - name: Set up pinned Go toolchain for nFPM
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.26.4"
+          go-version: "1.26.10"
           check-latest: false
           cache: false
       - name: Create separate Dashboard DEB
         shell: bash
         run: |
           set -euo pipefail
-          appimage="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-linux-x86_64.AppImage"
+          appimage="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
           test -s "$appimage"
           stage="$RUNNER_TEMP/dashboard-stage"
           out="$RUNNER_TEMP/dashboard-package"
@@ -595,13 +800,18 @@ jobs:
           export PATH="$RUNNER_TEMP/bin:$PATH"
           cat > "$RUNNER_TEMP/dashboard-nfpm.yaml" <<NFPM
           name: gitrun-desktop
-          arch: amd64
+          arch: $PACKAGE_ARCH
           platform: linux
           version: $VERSION_NUMBER
           maintainer: Vider06
           description: GitRun Tauri Dashboard, independently installable from the server
           license: Apache-2.0
           depends: [libwebkit2gtk-4.1-0, policykit-1]
+          overrides:
+            rpm:
+              depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]
+            archlinux:
+              depends: [webkit2gtk-4.1, polkit]
           contents:
             - src: $stage/opt/gitrun-desktop/GitRun.AppImage
               dst: /opt/gitrun-desktop/GitRun.AppImage
@@ -610,16 +820,164 @@ jobs:
             - src: $stage/usr/share/applications/gitrun-desktop.desktop
               dst: /usr/share/applications/gitrun-desktop.desktop
           NFPM
-          nfpm package --config "$RUNNER_TEMP/dashboard-nfpm.yaml" --packager deb --target "$out"
+          config="$RUNNER_TEMP/dashboard-nfpm.yaml"
+          nfpm package --config "$config" --packager deb --target "$out"
           deb="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop_*.deb' -print -quit)"
           test -n "$deb"
-          mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb"
-          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb" Package)" = gitrun-desktop
+          mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb"
+          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Package)" = gitrun-desktop
+
+          nfpm package --config "$config" --packager rpm --target "$out"
+          rpm="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.rpm' -print -quit)"
+          test -n "$rpm"
+          mv "$rpm" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm"
+          test "$(rpm -qp --queryformat '%{NAME}' "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")" = gitrun-desktop
+          rpm_requires="$(rpm -qp --requires "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")"
+          grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+          grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+
+          nfpm package --config "$config" --packager archlinux --target "$out"
+          arch="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.pkg.tar.zst' -print -quit)"
+          test -n "$arch"
+          mv "$arch" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst"
+          arch_pkginfo="$(tar --zstd -xOf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst" .PKGINFO)"
+          grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_pkginfo"
+          grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_pkginfo"
       - name: Upload separate Dashboard package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: dashboard-package
+          name: dashboard-package-${{ matrix.target }}
           path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 3
+
+  package-dashboard-musl:
+    name: Package independent musl Desktop · ${{ matrix.target }}
+    needs: [prepare, collect]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            xbps_static_arch: x86_64
+            arch: x86_64
+            package_arch: amd64
+            xbps_arch: x86_64-musl
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            xbps_static_arch: aarch64
+            arch: aarch64
+            package_arch: arm64
+            xbps_arch: aarch64-musl
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      TARGET: ${{ matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+      XBPS_ARCH: ${{ matrix.xbps_arch }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
+    steps:
+      - name: Checkout packaging metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download canonical Dashboard build
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: canonical-release-inputs
+          path: canonical
+      - name: Set up pinned Go toolchain for nFPM
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Build musl APK and XBPS packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-$TARGET.bin"
+          test -s "$binary"
+          stage="$RUNNER_TEMP/dashboard-musl-stage"
+          out="$RUNNER_TEMP/dashboard-musl-packages"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/usr/bin" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$binary" "$stage/usr/bin/gitrun-desktop"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/usr/bin/gitrun-desktop
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard for musl Linux, independently installable from the server
+          license: Apache-2.0
+          depends: [musl]
+          overrides:
+            apk:
+              depends: [musl, webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/usr/bin/gitrun-desktop
+              dst: /usr/bin/gitrun-desktop
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          if [ "$DESKTOP_ARCH" = "x86_64" ]; then
+            nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
+            apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.apk' -print -quit)"
+            test -n "$apk"
+            mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
+            apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_contents"
+          fi
+
+          xbps_stage="$RUNNER_TEMP/dashboard-xbps-stage"
+          cp -a "$stage" "$xbps_stage"
+          xbps_root="$RUNNER_TEMP/xbps-static"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          (cd "$out" && "$xbps_create" -A "$XBPS_ARCH" \
+            -n "gitrun-desktop-${VERSION_NUMBER}_1" -D "musl libwebkit2gtk41 polkit" \
+            -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
+            -s "GitRun Desktop for musl Linux" "$xbps_stage")
+          xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.xbps' -print -quit)"
+          test -n "$xbps"
+          mv "$xbps" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
+          "$xbps_rindex" -a "$out"/*.xbps
+          desktop_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-desktop-${VERSION_NUMBER}_1")"
+          grep -Fq musl <<< "$desktop_deps"
+          grep -Fq libwebkit2gtk41 <<< "$desktop_deps"
+          grep -Fq polkit <<< "$desktop_deps"
+      - name: Upload musl Desktop packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dashboard-package-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-musl-packages/*
           if-no-files-found: error
           retention-days: 3
 
@@ -640,7 +998,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download new Server binary
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: canonical
@@ -710,8 +1068,8 @@ jobs:
 
   validate:
     name: Validate collected package matrix
-    needs: [prepare, collect, package-server, package-dashboard, migration-package]
-    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
+    needs: [prepare, collect, package-server, package-dashboard, package-dashboard-musl, migration-package]
+    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && needs.package-dashboard-musl.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -726,25 +1084,25 @@ jobs:
         with:
           persist-credentials: false
       - name: Download collected canonical inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: all-assets
       - name: Download all Server package targets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           pattern: server-packages-*
           path: all-assets
           merge-multiple: true
       - name: Download independent Dashboard package
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
-          name: dashboard-package
+          pattern: dashboard-package-*
           path: all-assets
           merge-multiple: true
       - name: Download one-off legacy migration package
         if: env.MIGRATION_RELEASE == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: migration-deb-linux-x86_64
           path: all-assets
@@ -784,12 +1142,24 @@ jobs:
             "GitRun-Server-$VERSION-linux-x86_64-musl-apk.apk" \
             "GitRun-Server-$VERSION-linux-aarch64-musl-apk.apk" \
             "GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst" \
+            "GitRun-Server-$VERSION-linux-aarch64-arch.pkg.tar.zst" \
             "GitRun-Server-$VERSION-linux-x86_64-xbps.xbps" \
             "GitRun-Server-$VERSION-linux-aarch64-xbps.xbps" \
             "GitRun-Server-$VERSION-linux-x86_64-musl-xbps.xbps" \
             "GitRun-Server-$VERSION-linux-aarch64-musl-xbps.xbps" \
             "GitRun-Desktop-$VERSION-linux-x86_64-deb.deb" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-deb.deb" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-rpm.rpm" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-rpm.rpm" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-archlinux.pkg.tar.zst" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-archlinux.pkg.tar.zst" \
             "GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
+            "GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
+            "GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-musl-xbps.xbps" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-musl-xbps.xbps" \
             library.zip cargo-metadata.json sbom.spdx.json provenance.json; do
             expected_files+=("$file")
             test -s "$root/$file" || { echo "Missing required artifact: $file" >&2; exit 1; }
@@ -799,7 +1169,8 @@ jobs:
             test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
             test "$(dpkg-deb -f "$deb" Conflicts)" = gitrun
             test "$(dpkg-deb -f "$deb" Replaces)" = gitrun
-            dpkg-deb -c "$deb" | grep -Fq '/usr/lib/systemd/system/gitrun.service'
+            deb_contents="$(dpkg-deb -c "$deb")"
+            grep -Fq '/usr/lib/systemd/system/gitrun.service' <<< "$deb_contents"
             control="$RUNNER_TEMP/$(basename "$deb").control"
             mkdir -p "$control"
             dpkg-deb --control "$deb" "$control"
@@ -808,15 +1179,57 @@ jobs:
               sh -n "$control/$script"
             done
           done
-          gui="$root/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb"
-          test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
-          dpkg-deb -c "$gui" | grep -Fq '/opt/gitrun-desktop/GitRun.AppImage'
-          dpkg-deb -f "$gui" Depends | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -Fxq policykit-1
-          if dpkg-deb -c "$gui" | grep -Eq '/usr/bin/gitrun$'; then
-            echo "Desktop package unexpectedly contains /usr/bin/gitrun" >&2
+          for arch in x86_64 aarch64; do
+            server_arch="$root/GitRun-Server-$VERSION-linux-$arch-arch.pkg.tar.zst"
+            server_pkginfo="$(tar --zstd -xOf "$server_arch" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-server' <<< "$server_pkginfo"
+            server_files="$(tar --zstd -tf "$server_arch")"
+            grep -Fq 'usr/bin/gitrun' <<< "$server_files"
+            grep -Fq 'usr/lib/systemd/system/gitrun.service' <<< "$server_files"
+
+            gui="$root/GitRun-Desktop-$VERSION-linux-$arch-deb.deb"
+            test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
+            gui_contents="$(dpkg-deb -c "$gui")"
+            grep -Fq '/opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_contents"
+            gui_dependencies="$(dpkg-deb -f "$gui" Depends | tr ',' '\n' | sed 's/^[[:space:]]*//')"
+            grep -Fxq policykit-1 <<< "$gui_dependencies"
+            if grep -Eq '/usr/bin/gitrun$' <<< "$gui_contents"; then
+              echo "Desktop package unexpectedly contains /usr/bin/gitrun" >&2
+              exit 1
+            fi
+
+            gui_rpm="$root/GitRun-Desktop-$VERSION-linux-$arch-rpm.rpm"
+            test "$(rpm -qp --queryformat '%{NAME}' "$gui_rpm")" = gitrun-desktop
+            rpm_requires="$(rpm -qp --requires "$gui_rpm")"
+            grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+            grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+
+            gui_arch="$root/GitRun-Desktop-$VERSION-linux-$arch-archlinux.pkg.tar.zst"
+            arch_pkginfo="$(tar --zstd -xOf "$gui_arch" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_pkginfo"
+            grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_pkginfo"
+            gui_files="$(tar --zstd -tf "$gui_arch")"
+            grep -Fq 'opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_files"
+          done
+          if [ -e "$root/GitRun-Desktop-$VERSION-linux-aarch64-musl-apk.apk" ]; then
+            echo "Alpine ARM64 Desktop APK must not be published without WebKitGTK 4.1 support" >&2
             exit 1
           fi
-          if dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb" | grep -Eq '/GitRun\.AppImage$'; then
+          gui_apk="$root/GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk"
+          apk_listing="$(tar -tzf "$gui_apk")"
+          grep -Fq '.PKGINFO' <<< "$apk_listing"
+          apk_metadata="$(tar -xOzf "$gui_apk" .PKGINFO)"
+          grep -Fxq 'pkgname = gitrun-desktop' <<< "$apk_metadata"
+          grep -Fxq 'arch = x86_64' <<< "$apk_metadata"
+          grep -Fxq 'depend = musl' <<< "$apk_metadata"
+          grep -Fxq 'depend = webkit2gtk-4.1' <<< "$apk_metadata"
+          grep -Fxq 'depend = polkit' <<< "$apk_metadata"
+          for arch in x86_64 aarch64; do
+            test -s "$root/GitRun-Desktop-$VERSION-linux-$arch-musl-xbps.xbps"
+            test -x "$root/GitRun-Desktop-$VERSION-$arch-unknown-linux-musl.bin"
+          done
+          server_deb_contents="$(dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb")"
+          if grep -Eq '/GitRun\.AppImage$' <<< "$server_deb_contents"; then
             echo "Server package unexpectedly contains the Desktop AppImage" >&2
             exit 1
           fi
@@ -826,10 +1239,14 @@ jobs:
             test "$(dpkg-deb -f "$legacy" Package)" = gitrun
             test "$(dpkg-deb -f "$legacy" Version)" = "$VERSION_NUMBER"
             expected_files+=("GitRun-$VERSION-linux-x86_64-deb.deb")
-            dpkg-deb -c "$legacy" | grep -Fq '/usr/libexec/gitrun/reinstall-latest.sh'
-            dpkg-deb -c "$legacy" | grep -Fq '/usr/bin/gitrun'
+            legacy_contents="$(dpkg-deb -c "$legacy")"
+            grep -Fq '/usr/libexec/gitrun/reinstall-latest.sh' <<< "$legacy_contents"
+            grep -Fq '/usr/bin/gitrun' <<< "$legacy_contents"
           else
-            if find "$root" -maxdepth 1 -type f -name 'GitRun-*-linux-x86_64-deb.deb' | grep -q .; then
+            shopt -s nullglob
+            legacy_candidates=("$root"/GitRun-*-linux-x86_64-deb.deb)
+            shopt -u nullglob
+            if (("${#legacy_candidates[@]}" > 0)); then
               echo "A legacy migration DEB was staged for a standard release" >&2
               exit 1
             fi
@@ -855,19 +1272,23 @@ jobs:
           mapfile -d '' -t rpm_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-rpm.rpm" -print0)
           for rpm_file in "${rpm_files[@]}"; do
             rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
-            rpm -qpl "$rpm_file" | grep -Fxq /usr/bin/gitrun
-            rpm -qpl "$rpm_file" | grep -Fxq /usr/lib/systemd/system/gitrun.service
-            rpm -qp --requires "$rpm_file" | grep -Fxq glibc
-            rpm -qp --requires "$rpm_file" | grep -Fxq polkit
+            rpm_contents="$(rpm -qpl "$rpm_file")"
+            rpm_requirements="$(rpm -qp --requires "$rpm_file")"
+            grep -Fxq /usr/bin/gitrun <<< "$rpm_contents"
+            grep -Fxq /usr/lib/systemd/system/gitrun.service <<< "$rpm_contents"
+            grep -Fxq glibc <<< "$rpm_requirements"
+            grep -Fxq polkit <<< "$rpm_requirements"
           done
           mapfile -d '' -t apk_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-apk.apk" -print0)
           for apk_file in "${apk_files[@]}"; do
-            tar -tzf "$apk_file" | grep -Fxq .PKGINFO
+            apk_contents="$(tar -tzf "$apk_file")"
+            grep -Fxq .PKGINFO <<< "$apk_contents"
           done
           arch_file="$root/GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst"
-          tar --zstd -tf "$arch_file" | grep -Fxq .PKGINFO
-          tar --zstd -tf "$arch_file" | grep -Fxq usr/bin/gitrun
-          tar --zstd -tf "$arch_file" | grep -Fxq usr/lib/systemd/system/gitrun.service
+          arch_contents="$(tar --zstd -tf "$arch_file")"
+          grep -Fxq .PKGINFO <<< "$arch_contents"
+          grep -Fxq usr/bin/gitrun <<< "$arch_contents"
+          grep -Fxq usr/lib/systemd/system/gitrun.service <<< "$arch_contents"
           arch_pkginfo="$(tar --zstd -xOf "$arch_file" .PKGINFO)"
           grep -Fxq 'depend = glibc' <<< "$arch_pkginfo"
           grep -Fxq 'depend = polkit' <<< "$arch_pkginfo"
@@ -906,7 +1327,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download validated release payload
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: validated-release-assets
           path: release-assets
@@ -943,8 +1364,29 @@ jobs:
                   triple = name[len(f"GitRun-Server-{version}-"):-len("-server.tar.zst")]
                   cpu, abi = triple.split("-unknown-linux-")
                   target = f"linux-{cpu}-{abi}-tar-zst"
-              elif name.endswith(".AppImage"): target = "linux-x86_64-desktop-appimage"
-              elif "Desktop-" in name: target = "linux-x86_64-desktop-deb"
+              elif name.startswith(f"GitRun-Desktop-{version}-"):
+                  if name.endswith(".AppImage"):
+                      arch = "aarch64" if "-linux-aarch64." in name else "x86_64"
+                      target = f"linux-{arch}-desktop-appimage"
+                  elif name.endswith("-unknown-linux-musl.bin"):
+                      arch = "aarch64" if "aarch64-unknown" in name else "x86_64"
+                      target = f"linux-{arch}-musl-desktop-bin"
+                  else:
+                      arch = "aarch64" if "-linux-aarch64-" in name else "x86_64"
+                      if name.endswith("-deb.deb"):
+                          target = f"linux-{arch}-desktop-deb"
+                      elif name.endswith("-rpm.rpm"):
+                          target = f"linux-{arch}-desktop-rpm"
+                      elif name.endswith("-archlinux.pkg.tar.zst"):
+                          target = f"linux-{arch}-desktop-arch"
+                      elif name.endswith("-musl-apk.apk"):
+                          if arch != "x86_64":
+                              raise SystemExit("Alpine musl APK is only supported on x86_64; ARM64 uses XBPS")
+                          target = f"linux-{arch}-musl-desktop-apk"
+                      elif name.endswith("-musl-xbps.xbps"):
+                          target = f"linux-{arch}-musl-desktop-xbps"
+                      else:
+                          raise SystemExit(f"Unknown Desktop package suffix: {name}")
               elif name == f"GitRun-{version}-linux-x86_64-deb.deb": target = "linux-x86_64-deb"
               elif name.startswith(f"GitRun-Server-{version}-linux-"):
                   package_target = name[len(f"GitRun-Server-{version}-"):]
@@ -964,12 +1406,19 @@ jobs:
               "x86_64-unknown-linux-musl","aarch64-unknown-linux-musl",
               "linux-x86_64-gnu-tar-zst","linux-aarch64-gnu-tar-zst",
               "linux-x86_64-musl-tar-zst","linux-aarch64-musl-tar-zst",
-              "linux-x86_64-desktop-appimage","linux-x86_64-desktop-deb",
+              "linux-x86_64-desktop-appimage","linux-aarch64-desktop-appimage",
+              "linux-x86_64-desktop-deb","linux-aarch64-desktop-deb",
+              "linux-x86_64-desktop-rpm","linux-aarch64-desktop-rpm",
+              "linux-x86_64-desktop-arch","linux-aarch64-desktop-arch",
+              "linux-x86_64-musl-desktop-bin","linux-aarch64-musl-desktop-bin",
+              "linux-x86_64-musl-desktop-apk",
+              "linux-x86_64-musl-desktop-xbps","linux-aarch64-musl-desktop-xbps",
               "linux-x86_64-server-deb","linux-aarch64-server-deb",
               "linux-x86_64-server-rpm","linux-aarch64-server-rpm",
               "linux-x86_64-musl-server-apk","linux-aarch64-musl-server-apk",
-              "linux-x86_64-server-arch","linux-x86_64-server-xbps",
-              "linux-aarch64-server-xbps","linux-x86_64-musl-server-xbps",
+              "linux-x86_64-server-arch","linux-aarch64-server-arch",
+              "linux-x86_64-server-xbps","linux-aarch64-server-xbps",
+              "linux-x86_64-musl-server-xbps",
               "linux-aarch64-musl-server-xbps",
               "library-json-backup","cargo-metadata","sbom-spdx","provenance","sha256sums"
           }
@@ -1071,7 +1520,7 @@ jobs:
       MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
     steps:
       - name: Download signed release payload
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: signed-release-assets
           path: release-assets
@@ -1160,12 +1609,25 @@ jobs:
                   for ending in ("-server.tar.gz", "-server.tar.zst"):
                       if suffix.endswith(ending):
                           triple = suffix[:-len(ending)]
-                          arch, _, abi = triple.partition("-unknown-linux-")
-                          return arch, abi
+                          if triple.startswith("linux-"):
+                              triple = triple[len("linux-"):]
+                          arch, separator, abi = triple.partition("-unknown-linux-")
+                          if separator and arch in {"x86_64", "aarch64"} and abi in {"gnu", "musl"}:
+                              return arch, abi
               match = re.search(r"linux-(x86_64|aarch64)(?:-(musl))?-(?:deb|rpm|apk|arch|xbps)", name)
               if match:
                   return match.group(1), match.group(2) or "gnu"
               return "—", "—"
+
+          architecture_cases = (
+              (f"GitRun-Server-{version}-x86_64-unknown-linux-gnu-server.tar.gz", ("x86_64", "gnu")),
+              (f"GitRun-Server-{version}-linux-aarch64-unknown-linux-musl-server.tar.zst", ("aarch64", "musl")),
+              (f"GitRun-Server-{version}-linux-x86_64-musl-apk.apk", ("x86_64", "musl")),
+          )
+          for sample, expected in architecture_cases:
+              actual = arch_abi(sample)
+              if actual != expected:
+                  raise SystemExit(f"Release-note architecture parser mismatch for {sample}: {actual!r} != {expected!r}")
 
           updater_archives, portable_archives, native_packages = [], [], []
           desktop_assets, migration_assets, metadata_assets = [], [], []
@@ -1187,8 +1649,18 @@ jobs:
                   )
                   native_packages.append((arch, abi, fmt, link(name), digest_cell(item)))
               elif name.startswith(f"GitRun-Desktop-{version}-"):
-                  fmt = "AppImage" if name.endswith(".AppImage") else "DEB"
-                  desktop_assets.append(("x86_64", fmt, link(name), digest_cell(item)))
+                  fmt = (
+                      "AppImage" if name.endswith(".AppImage") else
+                      "DEB" if name.endswith(".deb") else
+                      "RPM" if name.endswith(".rpm") else
+                      "Arch Linux" if name.endswith(".pkg.tar.zst") else
+                      "APK" if name.endswith(".apk") else
+                      "XBPS" if name.endswith(".xbps") else
+                      "musl executable" if name.endswith(".bin") else "Unknown"
+                  )
+                  arch = "aarch64" if ("-aarch64" in name or "-arm64" in name) else "x86_64"
+                  abi = "musl" if "musl" in name else "GNU"
+                  desktop_assets.append((arch, abi, fmt, link(name), digest_cell(item)))
               elif name == f"GitRun-{version}-linux-x86_64-deb.deb":
                   migration_assets.append(("x86_64", "Debian / Ubuntu", "Legacy DEB; package gitrun", link(name), digest_cell(item)))
               else:
@@ -1256,7 +1728,7 @@ jobs:
               "",
           ]
           lines += table(
-              ["Architecture", "Format", "Artifact", "SHA-256"],
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
               desktop_assets,
           )
           lines += [

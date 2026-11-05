@@ -284,7 +284,10 @@ fn persist_gitrun_settings_as_root(
 }
 
 #[cfg(not(target_os = "linux"))]
-fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), String> {
+fn persist_gitrun_settings_as_root(
+    _settings: &GitRunSettings,
+    _confirm_socket_opt_out: bool,
+) -> Result<(), String> {
     Err("administrator-authorized security-settings persistence is Linux-only".into())
 }
 
@@ -1111,8 +1114,10 @@ fn stream_privileged_command(
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
 async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
-        return Err("graphical uninstall currently targets Linux x86_64".into());
+    if !cfg!(target_os = "linux")
+        || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
+    {
+        return Err("graphical uninstall currently targets Linux x86_64 and ARM64".into());
     }
     if control_manager_enabled() {
         let scheduled = control_manager_request(
@@ -1257,8 +1262,10 @@ fn stream_unprivileged_command(
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
-        return Err("graphical reinstall currently targets Linux x86_64".into());
+    if !cfg!(target_os = "linux")
+        || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
+    {
+        return Err("graphical reinstall currently targets Linux x86_64 and ARM64".into());
     }
     if control_manager_enabled() {
         let scheduled = control_manager_request(
@@ -1356,8 +1363,10 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
         reinstall,
     } = request;
 
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
-        return Err("graphical first-run setup currently targets Linux x86_64".into());
+    if !cfg!(target_os = "linux")
+        || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
+    {
+        return Err("graphical first-run setup currently targets Linux x86_64 and ARM64".into());
     }
     if reinstall {
         if configured_config_path().is_none() {
@@ -2562,6 +2571,90 @@ fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
     }
 }
 
+fn run_service_log_command(
+    program: &std::path::Path,
+    args: &[String],
+) -> Result<std::process::Output, String> {
+    let mut command = if current_process_is_root() {
+        std::process::Command::new(program)
+    } else {
+        let pkexec = pkexec_path()
+            .ok_or("trusted pkexec was not found; administrator authorization is required to read service logs")?;
+        let mut command = std::process::Command::new(pkexec);
+        command.arg(program);
+        command
+    };
+    command
+        .args(args)
+        .output()
+        .map_err(|error| format!("unable to execute service log reader: {error}"))
+}
+
+fn read_service_log_files(paths: &[PathBuf]) -> Result<Vec<String>, String> {
+    let mut lines = Vec::new();
+    let mut protected = Vec::new();
+    for path in paths {
+        if !path.is_file() {
+            continue;
+        }
+        match std::fs::read(path) {
+            Ok(contents) => lines.extend(
+                String::from_utf8_lossy(&contents)
+                    .lines()
+                    .map(str::to_owned),
+            ),
+            Err(_) => protected.push(path.clone()),
+        }
+    }
+    if protected.is_empty() {
+        return Ok(lines);
+    }
+
+    if current_process_is_root() {
+        return Err(format!(
+            "unable to read GitRun service log {}",
+            protected[0].display()
+        ));
+    }
+    let cat = ["/usr/bin/cat", "/bin/cat"]
+        .iter()
+        .map(PathBuf::from)
+        .find_map(|path| trusted_privileged_binary(&path));
+    let (program, prefix) = if let Some(cat) = cat {
+        (cat, Vec::new())
+    } else {
+        let busybox = ["/bin/busybox", "/usr/bin/busybox"]
+            .iter()
+            .map(PathBuf::from)
+            .find_map(|path| trusted_privileged_binary(&path))
+            .ok_or(
+                "trusted cat or BusyBox executable was not found to read protected GitRun logs",
+            )?;
+        (busybox, vec!["cat".to_owned()])
+    };
+    let mut args = prefix;
+    args.extend(
+        protected
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned()),
+    );
+    let output = run_service_log_command(&program, &args)?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!("privileged log reader exited with {}", output.status)
+        } else {
+            format!("unable to read protected GitRun logs: {detail}")
+        });
+    }
+    lines.extend(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned),
+    );
+    Ok(lines)
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
     if control_manager_enabled() && !current_process_is_root() {
@@ -2574,34 +2667,127 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
             .map_err(|error| format!("decode service logs from Control Manager: {error}"));
     }
     if !cfg!(target_os = "linux") {
-        return Err("System journal logs are currently available only on Linux.".into());
+        return Err("GitRun service logs are currently available only on Linux.".into());
     }
     let units = journal_units(&source)?;
     let limit = limit.unwrap_or(200).clamp(1, 500);
-    let mut command = std::process::Command::new("/usr/bin/journalctl");
-    command
-        .arg("--no-pager")
-        .arg("--output=short-iso-precise")
-        .arg("--lines")
-        .arg(limit.to_string());
-    for unit in units {
-        command.arg("--unit").arg(unit);
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or("no supported active service manager was detected; service logs are unavailable")?;
+
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let journalctl = [
+                PathBuf::from("/usr/bin/journalctl"),
+                PathBuf::from("/bin/journalctl"),
+            ]
+            .into_iter()
+            .find_map(|path| trusted_privileged_binary(&path))
+            .ok_or("trusted journalctl executable was not found")?;
+            let mut command = std::process::Command::new(journalctl);
+            command
+                .arg("--no-pager")
+                .arg("--output=short-iso-precise")
+                .arg("--lines")
+                .arg(limit.to_string());
+            for unit in units {
+                command.arg("--unit").arg(unit);
+            }
+            let output = command.output().map_err(|error| {
+                format!(
+                    "Unable to execute journalctl; GitRun service logs are unavailable: {error}"
+                )
+            })?;
+            if !output.status.success() {
+                let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                return Err(if detail.is_empty() {
+                    format!("journalctl exited with status {}", output.status)
+                } else {
+                    format!("Unable to read GitRun service journal: {detail}")
+                });
+            }
+            Ok(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::to_owned)
+                .collect())
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            let logread = ["/sbin/logread", "/usr/sbin/logread", "/usr/bin/logread"]
+                .iter()
+                .map(PathBuf::from)
+                .find_map(|path| trusted_privileged_binary(&path));
+            let logread = logread.or_else(|| {
+                ["/bin/busybox", "/usr/bin/busybox"]
+                    .iter()
+                    .map(PathBuf::from)
+                    .find_map(|path| trusted_privileged_binary(&path))
+            });
+            let mut lines = if let Some(logread) = logread {
+                let mut args = Vec::new();
+                if logread
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy() == "busybox")
+                {
+                    args.push("logread".to_owned());
+                }
+                args.extend(["-l".to_owned(), limit.saturating_mul(8).to_string()]);
+                run_service_log_command(&logread, &args)
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .map(|output| {
+                        String::from_utf8_lossy(&output.stdout)
+                            .lines()
+                            .filter(|line| {
+                                let line = line.to_ascii_lowercase();
+                                line.contains("gitrun") || line.contains("gitrun-gsr")
+                            })
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            if lines.is_empty() {
+                let mut paths = Vec::new();
+                if units.contains(&"gitrun.service") {
+                    paths.push(PathBuf::from("/var/log/gitrun/scheduler.log"));
+                }
+                if units.contains(&"gitrun-gsr.service") {
+                    paths.push(PathBuf::from("/var/log/gitrun/gsr.log"));
+                }
+                lines = read_service_log_files(&paths)?;
+            }
+            if lines.len() > limit {
+                lines.drain(..lines.len() - limit);
+            }
+            Ok(lines)
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            let mut paths = Vec::new();
+            if units.contains(&"gitrun.service") {
+                paths.extend([
+                    PathBuf::from("/var/log/gitrun/gitrun/current"),
+                    PathBuf::from("/var/log/gitrun/current"),
+                ]);
+            }
+            if units.contains(&"gitrun-gsr.service") {
+                paths.extend([
+                    PathBuf::from("/var/log/gitrun/gitrun-gsr/current"),
+                    PathBuf::from("/var/log/gitrun-gsr/current"),
+                ]);
+            }
+            // svlogd prefixes records with binary TAI64N timestamps; the
+            // payload is not guaranteed to be valid UTF-8.
+            let mut entries = read_service_log_files(&paths)?;
+            if entries.len() > limit {
+                entries.drain(..entries.len() - limit);
+            }
+            if entries.is_empty() {
+                return Err("runit is active, but no GitRun runsvdir log file was found at the standard service log locations".into());
+            }
+            Ok(entries)
+        }
     }
-    let output = command.output().map_err(|error| {
-        format!("Unable to execute journalctl; GitRun service logs are unavailable: {error}")
-    })?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if detail.is_empty() {
-            format!("journalctl exited with status {}", output.status)
-        } else {
-            format!("Unable to read GitRun service journal: {detail}")
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect())
 }
 
 #[cfg(test)]
@@ -3274,26 +3460,52 @@ fn current_process_is_root() -> bool {
         .is_some_and(|effective_uid| effective_uid == 0)
 }
 
-fn trusted_systemctl_path() -> Option<PathBuf> {
-    [
-        PathBuf::from("/usr/bin/systemctl"),
-        PathBuf::from("/bin/systemctl"),
-    ]
-    .into_iter()
-    .find_map(|path| trusted_privileged_binary(&path))
+fn service_action_name(action: ServiceAction) -> &'static str {
+    match action {
+        ServiceAction::Start => "start",
+        ServiceAction::Stop => "stop",
+        ServiceAction::Restart => "restart",
+    }
+}
+
+fn service_status(
+    service: gitrun_platform::ManagedService,
+) -> (bool, bool, Option<gitrun_platform::ServiceManager>) {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return (false, false, None);
+    };
+    let installed = gitrun_platform::service_is_installed(manager, service);
+    if !installed {
+        return (false, false, Some(manager));
+    }
+    let spec =
+        gitrun_platform::service_command(manager, gitrun_platform::ServiceAction::Status, service);
+    let active = gitrun_platform::trusted_service_manager_binary(manager).is_some_and(|program| {
+        let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+        command_success_with_timeout(
+            program.to_string_lossy().as_ref(),
+            &args,
+            Duration::from_secs(3),
+        )
+    });
+    (installed, active, Some(manager))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
-        return Err("GitRun system service controls currently target Linux".into());
+        return Err("GitRun service controls are currently available only on Linux".into());
+    }
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or("no supported active service manager was detected on this host")?;
+    if !gitrun_platform::service_is_installed(manager, gitrun_platform::ManagedService::Scheduler) {
+        return Err(format!(
+            "GitRun has no installed service definition for the active {} service manager; run the platform-specific setup before controlling the service.",
+            manager.as_str()
+        ));
     }
     if control_manager_enabled() && !current_process_is_root() {
-        let action_arg = match action {
-            ServiceAction::Start => "start",
-            ServiceAction::Stop => "stop",
-            ServiceAction::Restart => "restart",
-        };
+        let action_arg = service_action_name(action);
         let value = control_manager_request(
             "write",
             "service_control",
@@ -3304,38 +3516,62 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             .map(str::to_owned)
             .ok_or_else(|| "Control Manager returned an invalid service-control result".into());
     }
-    let systemctl = trusted_systemctl_path()
-        .ok_or("trusted systemctl binary was not found at a root-owned system path")?;
-    let action_arg = match action {
-        ServiceAction::Start => "start",
-        ServiceAction::Stop => "stop",
-        ServiceAction::Restart => "restart",
+
+    let native_action = match action {
+        ServiceAction::Start => gitrun_platform::ServiceAction::Start,
+        ServiceAction::Stop => gitrun_platform::ServiceAction::Stop,
+        ServiceAction::Restart => gitrun_platform::ServiceAction::Restart,
     };
+    let spec = gitrun_platform::service_command(
+        manager,
+        native_action,
+        gitrun_platform::ManagedService::Scheduler,
+    );
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        format!(
+            "trusted {} service-control executable was not found",
+            manager.as_str()
+        )
+    })?;
+    let action_arg = service_action_name(action);
+    let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = if current_process_is_root() {
-        std::process::Command::new(&systemctl)
-            .args([action_arg, "gitrun.service"])
+        std::process::Command::new(&program)
+            .args(&args)
             .output()
-            .map_err(|error| format!("unable to run systemctl: {error}"))?
+            .map_err(|error| format!("unable to run {}: {error}", manager.as_str()))?
     } else {
-        let pkexec = pkexec_path()
-            .ok_or("trusted pkexec was not found; service operation cannot continue")?;
-        std::process::Command::new(pkexec)
-            .arg(&systemctl)
-            .args([action_arg, "gitrun.service"])
+        // Prefer PolicyKit for GUI-launched operations; fall back to a trusted
+        // terminal privilege helper when pkexec is not installed.
+        let privilege_helper = pkexec_path()
+            .or_else(gitrun_platform::trusted_privilege_escalation_binary)
+            .ok_or("trusted pkexec, sudo or doas executable was not found")?;
+        std::process::Command::new(privilege_helper)
+            .arg(&program)
+            .args(&args)
             .output()
             .map_err(|error| {
-                format!("unable to request privileged system service control: {error}")
+                format!(
+                    "unable to request privileged {} service control: {error}",
+                    manager.as_str()
+                )
             })?
     };
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
             format!(
-                "systemctl {action_arg} gitrun.service exited with {}",
+                "{} {} GitRun service exited with {}",
+                manager.as_str(),
+                action_arg,
                 output.status
             )
         } else {
-            format!("systemctl {action_arg} gitrun.service failed: {detail}")
+            format!(
+                "{} {} GitRun service failed: {detail}",
+                manager.as_str(),
+                action_arg
+            )
         });
     }
     if let Some(cache) = DASHBOARD_HEALTH_CACHE.get() {
@@ -3343,7 +3579,10 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             *cached = None;
         }
     }
-    Ok(format!("Requested system service action: {action_arg}"))
+    Ok(format!(
+        "Requested GitRun service action through {}: {action_arg}",
+        manager.as_str()
+    ))
 }
 
 fn connect_repository_through_manager(repository: String) -> Result<serde_json::Value, String> {
@@ -3508,46 +3747,15 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
 
     let config = load_config()?;
     let config_path = configured_config_path();
-    let (docker_ok, service_active) = std::thread::scope(|scope| {
-        let docker_check = scope
-            .spawn(|| command_success_with_timeout("docker", &["info"], Duration::from_secs(5)));
-        let service_check = scope.spawn(|| {
-            command_success_with_timeout(
-                "/usr/bin/systemctl",
-                &["is-active", "--quiet", "gitrun.service"],
-                Duration::from_secs(3),
-            )
-        });
-        (
-            docker_check.join().unwrap_or(false),
-            service_check.join().unwrap_or(false),
-        )
-    });
+    let docker_ok = command_success_with_timeout("docker", &["info"], Duration::from_secs(5));
+    let (service_installed, service_active, service_manager) =
+        service_status(gitrun_platform::ManagedService::Scheduler);
     let gsr_process_seen = process_name_running("gitrun-gsr");
-    let (gsr_service_active, gsr_service_installed) = std::thread::scope(|scope| {
-        let active = scope.spawn(|| {
-            command_success_with_timeout(
-                "/usr/bin/systemctl",
-                &["is-active", "--quiet", "gitrun-gsr.service"],
-                Duration::from_secs(3),
-            )
-        });
-        let installed = [
-            "/etc/systemd/system/gitrun-gsr.service",
-            "/usr/lib/systemd/system/gitrun-gsr.service",
-            "/lib/systemd/system/gitrun-gsr.service",
-        ]
-        .iter()
-        .any(|path| std::path::Path::new(path).is_file());
-        (active.join().unwrap_or(false), installed)
-    });
-    let service_installed = [
-        "/etc/systemd/system/gitrun.service",
-        "/usr/lib/systemd/system/gitrun.service",
-        "/lib/systemd/system/gitrun.service",
-    ]
-    .iter()
-    .any(|path| std::path::Path::new(path).is_file());
+    let (gsr_service_installed, gsr_service_active, _) =
+        service_status(gitrun_platform::ManagedService::Gsr);
+    let service_manager_name = service_manager
+        .map(gitrun_platform::ServiceManager::as_str)
+        .unwrap_or("supported service manager");
     let vault_status = if config.vault_dir.trim().is_empty() {
         (
             true,
@@ -3588,11 +3796,11 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
             name: "GSR watchdog service".into(),
             ok: gsr_service_installed && gsr_service_active,
             detail: if gsr_service_active {
-                "systemd reports gitrun-gsr.service active.".into()
+                format!("{service_manager_name} reports the GSR service active.")
             } else if gsr_service_installed {
-                "The GSR unit exists but systemd does not report it as active.".into()
+                format!("The GSR service is installed but {service_manager_name} does not report it as active.")
             } else {
-                "The gitrun-gsr.service unit was not found in known systemd locations; run GitRun setup/reinstall to install it.".into()
+                "The GSR service was not found in the active service manager's known locations; run GitRun setup to install it.".into()
             },
         },
         DashboardHealthCheck {
@@ -3614,11 +3822,11 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
             name: "GitRun system service".into(),
             ok: service_installed && service_active,
             detail: if service_active {
-                "systemd reports gitrun.service active.".into()
+                format!("{service_manager_name} reports the GitRun service active.")
             } else if service_installed {
-                "The service unit exists but systemd does not report it as active.".into()
+                format!("The GitRun service is installed but {service_manager_name} does not report it as active.")
             } else {
-                "The gitrun.service unit was not found in known systemd locations.".into()
+                "The GitRun service was not found in the active service manager's known locations.".into()
             },
         },
         DashboardHealthCheck {

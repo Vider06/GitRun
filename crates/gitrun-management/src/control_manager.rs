@@ -111,6 +111,15 @@ impl Reply {
 /// through the persistent service instead of invoking pkexec from the UI.
 pub fn enabled() -> bool {
     cfg!(target_os = "linux")
+        && gitrun_platform::detect_service_manager()
+            == Some(gitrun_platform::ServiceManager::Systemd)
+        && [
+            "/etc/systemd/system/gitrun-control.service",
+            "/usr/lib/systemd/system/gitrun-control.service",
+            "/lib/systemd/system/gitrun-control.service",
+        ]
+        .iter()
+        .any(|path| Path::new(path).is_file())
         && Path::new("/etc/gitrun/gitrun.env").is_file()
         && super::trusted_system_cli_path().is_some()
 }

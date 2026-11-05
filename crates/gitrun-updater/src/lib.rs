@@ -405,7 +405,7 @@ pub fn latest_manifest_download_url(repository: &str) -> Result<String, UpdateEr
 }
 
 /// Build the immutable, version-specific manifest URL used after an
-/// unprivileged preflight so sudo does not have to resolve "latest" again.
+/// unprivileged preflight so the privileged retry does not have to resolve "latest" again.
 pub fn release_manifest_download_url(
     repository: &str,
     version: &str,
@@ -2089,14 +2089,11 @@ pub fn update_incompatible_dependencies(plan: &UpdatePlan) -> Result<Vec<String>
 }
 
 fn update_dependency(name: &str) -> Result<(), UpdateError> {
+    if std::env::consts::OS == "linux" {
+        return update_linux_dependency(name);
+    }
+
     let command = match (std::env::consts::OS, name) {
-        ("linux", "Git") => ("apt-get", vec!["install", "-y", "git"]),
-        ("linux", "Docker") => (
-            "apt-get",
-            vec!["install", "-y", "docker.io", "docker-compose-plugin"],
-        ),
-        ("linux", "Node.js") => ("apt-get", vec!["install", "-y", "nodejs"]),
-        ("linux", "Python") => ("apt-get", vec!["install", "-y", "python3"]),
         ("macos", "Git") => ("brew", vec!["upgrade", "git"]),
         ("macos", "Docker") => ("brew", vec!["upgrade", "--cask", "docker"]),
         ("macos", "Node.js") => ("brew", vec!["upgrade", "node"]),
@@ -2148,41 +2145,146 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
             )))
         }
     };
-    if command.0 == "apt-get" {
-        let apt_get = linux_system_command("apt-get")
-            .ok_or_else(|| UpdateError::Command("trusted /usr/bin/apt-get was not found".into()))?;
-        let mut apt = Command::new(apt_get);
-        apt.args(["update"]);
-        if !is_root() {
-            let sudo = linux_system_command("sudo").ok_or_else(|| {
-                UpdateError::Command("trusted /usr/bin/sudo was not found".into())
-            })?;
-            apt = Command::new(sudo);
-            apt.args([apt_get, "update"]);
-        }
-        run_command(&mut apt)?;
-    }
-    let mut update = if command.0 == "apt-get" {
-        let apt_get = linux_system_command("apt-get")
-            .ok_or_else(|| UpdateError::Command("trusted /usr/bin/apt-get was not found".into()))?;
-        if is_root() {
-            let mut apt = Command::new(apt_get);
-            apt.args(&command.1);
-            apt
-        } else {
-            let sudo = linux_system_command("sudo").ok_or_else(|| {
-                UpdateError::Command("trusted /usr/bin/sudo was not found".into())
-            })?;
-            let mut apt = Command::new(sudo);
-            apt.arg(apt_get).args(&command.1);
-            apt
-        }
-    } else {
-        let mut cmd = Command::new(command.0);
-        cmd.args(&command.1);
-        cmd
-    };
+    let mut update = Command::new(command.0);
+    update.args(&command.1);
     run_command(&mut update)
+}
+
+fn current_linux_package_manager() -> Result<gitrun_platform::PackageManager, UpdateError> {
+    let release = ["/etc/os-release", "/usr/lib/os-release"]
+        .iter()
+        .find_map(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default();
+    let value = |key: &str| {
+        release
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .map(|value| value.trim_matches(&['"', '\''][..]).to_owned())
+            .unwrap_or_default()
+    };
+    let id = value("ID");
+    let id_like = value("ID_LIKE");
+    gitrun_platform::detect_package_manager(&id, &id_like).ok_or_else(|| {
+        UpdateError::Command(format!(
+            "no supported Linux package manager detected for ID={id:?} ID_LIKE={id_like:?}"
+        ))
+    })
+}
+
+fn linux_dependency_packages(
+    manager: gitrun_platform::PackageManager,
+    dependency: &str,
+) -> Result<&'static [&'static str], UpdateError> {
+    use gitrun_platform::PackageManager as P;
+    let packages = match (manager, dependency) {
+        (P::Apt, "Git") => &["git"][..],
+        (P::Dnf | P::Zypper | P::Pacman | P::Xbps, "Git") => &["git"][..],
+        (P::Apk, "Git") => &["git"][..],
+        (P::Emerge, "Git") => &["dev-vcs/git"][..],
+
+        (P::Apt, "Docker") => &["docker.io", "docker-compose-v2"][..],
+        (P::Dnf, "Docker") => &["moby-engine", "docker-compose", "docker-buildx"][..],
+        (P::Zypper | P::Pacman | P::Xbps, "Docker") => {
+            &["docker", "docker-compose", "docker-buildx"][..]
+        }
+        (P::Apk, "Docker") => &["docker", "docker-cli-compose", "docker-cli-buildx"][..],
+        (P::Emerge, "Docker") => &[
+            "app-containers/docker",
+            "app-containers/docker-compose",
+            "app-containers/docker-buildx",
+        ][..],
+
+        (P::Apt, "Node.js") => &["nodejs"][..],
+        (P::Dnf | P::Zypper | P::Pacman | P::Xbps, "Node.js") => &["nodejs"][..],
+        (P::Apk, "Node.js") => &["nodejs"][..],
+        (P::Emerge, "Node.js") => &["net-libs/nodejs"][..],
+
+        (P::Apt, "Python") => &["python3"][..],
+        (P::Dnf | P::Zypper | P::Xbps, "Python") => &["python3"][..],
+        (P::Pacman, "Python") => &["python"][..],
+        (P::Apk, "Python") => &["python3"][..],
+        (P::Emerge, "Python") => &["dev-lang/python"][..],
+        (P::Rpm, _) => {
+            return Err(UpdateError::Command(
+                "rpm is a query tool, not a package installer; install dnf or zypper".into(),
+            ));
+        }
+        (_, other) => {
+            return Err(UpdateError::Command(format!(
+                "no native Linux package mapping for dependency {other}"
+            )));
+        }
+    };
+    Ok(packages)
+}
+
+fn linux_package_install_command(
+    manager: gitrun_platform::PackageManager,
+    packages: &[&str],
+) -> Result<(&'static str, Vec<String>), UpdateError> {
+    use gitrun_platform::PackageManager as P;
+    let args = |prefix: &[&str]| {
+        prefix
+            .iter()
+            .map(|value| (*value).to_owned())
+            .chain(packages.iter().map(|package| (*package).to_owned()))
+            .collect()
+    };
+    let command = match manager {
+        P::Apt => ("apt-get", args(&["install", "-y"])),
+        P::Dnf => ("dnf", args(&["install", "-y"])),
+        P::Zypper => ("zypper", args(&["--non-interactive", "install"])),
+        // Do not run a full Arch system upgrade from GitRun's dependency updater.
+        // Install/update only the dependency set requested by the caller.
+        P::Pacman => ("pacman", args(&["-S", "--noconfirm", "--needed"])),
+        P::Apk => ("apk", args(&["add", "--upgrade"])),
+        P::Xbps => ("xbps-install", args(&["-S"])),
+        P::Emerge => ("emerge", args(&["--ask=n", "--update"])),
+        P::Rpm => {
+            return Err(UpdateError::Command(
+                "rpm is a query tool, not a package installer".into(),
+            ));
+        }
+    };
+    Ok(command)
+}
+
+fn update_linux_dependency(name: &str) -> Result<(), UpdateError> {
+    use gitrun_platform::PackageManager as P;
+    let manager = current_linux_package_manager()?;
+    let packages = linux_dependency_packages(manager, name)?;
+    let (program, args) = linux_package_install_command(manager, packages)?;
+
+    if manager == P::Apt {
+        run_linux_package_command("apt-get", &["update"])?;
+    } else if manager == P::Zypper {
+        run_linux_package_command("zypper", &["--non-interactive", "refresh"])?;
+    }
+    run_linux_package_command(
+        program,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
+}
+
+fn run_linux_package_command(program: &str, args: &[&str]) -> Result<(), UpdateError> {
+    let executable = linux_system_command(program).ok_or_else(|| {
+        UpdateError::Command(format!(
+            "trusted system package-manager executable {program} was not found"
+        ))
+    })?;
+    let mut command = if is_root() {
+        Command::new(executable)
+    } else {
+        let privilege_helper =
+            gitrun_platform::trusted_privilege_escalation_binary().ok_or_else(|| {
+                UpdateError::Command("no trusted sudo, doas or pkexec executable was found".into())
+            })?;
+        let mut command = Command::new(privilege_helper);
+        command.arg(executable);
+        command
+    };
+    command.args(args);
+    run_command(&mut command)
 }
 
 pub fn dependency_status(name: &str, minimum_version: &str) -> DependencyStatus {
@@ -2232,7 +2334,12 @@ fn dependency_command(name: &str) -> Option<&'static str> {
 fn linux_system_command(name: &str) -> Option<&'static str> {
     match name {
         "apt-get" => Some("/usr/bin/apt-get"),
-        "sudo" => Some("/usr/bin/sudo"),
+        "dnf" => Some("/usr/bin/dnf"),
+        "zypper" => Some("/usr/bin/zypper"),
+        "pacman" => Some("/usr/bin/pacman"),
+        "apk" => Some("/sbin/apk"),
+        "xbps-install" => Some("/usr/bin/xbps-install"),
+        "emerge" => Some("/usr/bin/emerge"),
         "id" => Some("/usr/bin/id"),
         _ => None,
     }
@@ -3221,9 +3328,74 @@ mod tests {
     #[test]
     fn privileged_linux_package_commands_use_fixed_system_paths() {
         assert_eq!(linux_system_command("apt-get"), Some("/usr/bin/apt-get"));
-        assert_eq!(linux_system_command("sudo"), Some("/usr/bin/sudo"));
+        assert_eq!(linux_system_command("dnf"), Some("/usr/bin/dnf"));
+        assert_eq!(linux_system_command("zypper"), Some("/usr/bin/zypper"));
+        assert_eq!(linux_system_command("pacman"), Some("/usr/bin/pacman"));
+        assert_eq!(linux_system_command("apk"), Some("/sbin/apk"));
+        assert_eq!(
+            linux_system_command("xbps-install"),
+            Some("/usr/bin/xbps-install")
+        );
+        assert_eq!(linux_system_command("emerge"), Some("/usr/bin/emerge"));
         assert_eq!(linux_system_command("id"), Some("/usr/bin/id"));
         assert_eq!(linux_system_command("custom"), None);
+    }
+
+    #[test]
+    fn linux_dependency_packages_follow_native_distribution_names() {
+        use gitrun_platform::PackageManager as P;
+
+        assert_eq!(
+            linux_dependency_packages(P::Apt, "Docker").unwrap(),
+            ["docker.io", "docker-compose-v2"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Dnf, "Docker").unwrap(),
+            ["moby-engine", "docker-compose", "docker-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Zypper, "Docker").unwrap(),
+            ["docker", "docker-compose", "docker-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Pacman, "Docker").unwrap(),
+            ["docker", "docker-compose", "docker-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Apk, "Docker").unwrap(),
+            ["docker", "docker-cli-compose", "docker-cli-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Xbps, "Docker").unwrap(),
+            ["docker", "docker-compose", "docker-buildx"]
+        );
+        assert_eq!(
+            linux_dependency_packages(P::Emerge, "Docker").unwrap(),
+            [
+                "app-containers/docker",
+                "app-containers/docker-compose",
+                "app-containers/docker-buildx"
+            ]
+        );
+        assert!(linux_dependency_packages(P::Rpm, "Docker").is_err());
+        assert!(linux_dependency_packages(P::Apt, "unknown").is_err());
+    }
+
+    #[test]
+    fn pacman_dependency_updates_do_not_upgrade_the_entire_system() {
+        use gitrun_platform::PackageManager as P;
+
+        let (program, args) =
+            linux_package_install_command(P::Pacman, &["docker", "docker-buildx"])
+                .expect("Pacman install command");
+        assert_eq!(program, "pacman");
+        assert_eq!(
+            args,
+            ["-S", "--noconfirm", "--needed", "docker", "docker-buildx"]
+        );
+        assert!(!args
+            .iter()
+            .any(|argument| argument == "-u" || argument == "--sysupgrade"));
     }
 
     #[test]

@@ -1721,6 +1721,7 @@ name = "gitrun-setup"
 version = "0.9.17"
 dependencies = [
  "gitrun-core",
+ "gitrun-platform",
  "gitrun-updater",
  "libc",
  "reqwest 0.12.28",
@@ -1744,6 +1745,7 @@ version = "0.8.9"
 dependencies = [
  "flate2",
  "gitrun-core",
+ "gitrun-platform",
  "reqwest 0.12.28",
  "ring",
  "serde",

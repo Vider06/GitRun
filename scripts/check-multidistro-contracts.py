@@ -42,7 +42,7 @@ RUNTIME_BASELINE = {
         "systemctl": 11, "systemd-path": 6,
     },
     "crates/gitrun-management/src/control_manager.rs": {
-        "systemctl": 2, "systemd-run": 1,
+        "systemctl": 2, "systemd-path": 3, "systemd-run": 1,
     },
     "crates/gitrun-cli/src/manage.rs": {"systemctl": 1},
 }
@@ -62,7 +62,6 @@ CONTEXT_ALLOWLIST = {
     "crates/gitrun-platform/src/lib.rs": "native package-manager and service-manager detection",
     "crates/gitrun-core/src/compatibility.rs": "command compatibility classifier; strings are not executed",
     "crates/gitrun-scheduler/src/api_service.rs": "package installation runs as container root inside the pinned Debian runner image",
-    "scripts/ci/ci-lib.sh": "CI-only apt/dpkg helpers provision Debian-based GitHub Actions runners; they are not product runtime paths",
     "scripts/ci/ci-lib.sh": "CI-only apt/dpkg helpers provision Debian-based GitHub Actions runners; they are not product runtime paths",
 }
 
@@ -101,6 +100,8 @@ def check_platform_catalog(errors: list[str]) -> None:
     required = (
         "Apt", "Dnf", "Zypper", "Pacman", "Apk", "Xbps", "Emerge",
         "Systemd", "OpenRc", "Runit",
+        "ManagedService", "ServiceAction", "service_command_candidates",
+        "service_command", "service_is_installed", "trusted_privilege_escalation_binary",
         "known_distributions_prefer_their_native_package_manager",
     )
     missing = [item for item in required if item not in source]
@@ -120,6 +121,50 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         if target not in release:
             errors.append(f"release matrix no longer declares {target}")
 
+    desktop_targets = (
+        "target: x86_64-unknown-linux-gnu",
+        "target: aarch64-unknown-linux-gnu",
+        "target: x86_64-unknown-linux-musl",
+        "target: aarch64-unknown-linux-musl",
+        "build-dashboard-musl:",
+        "ghcr.io/void-linux/void-musl-full:20260801r1",
+        "libwebkit2gtk41-devel",
+        "rustup-init",
+        "runner: ubuntu-22.04-arm",
+        "runner: ubuntu-22.04",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk",
+        'if [ "$DESKTOP_ARCH" = "x86_64" ]',
+        "Alpine ARM64 Desktop APK must not be published",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps",
+        "desktop_package_formats:[\"deb\",\"rpm\",\"archlinux\",\"appimage\",\"apk\",\"xbps\"],desktop_package_arches:{apk:[\"x86_64\"],xbps:[\"x86_64\",\"aarch64\"]}",
+        'depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]',
+        "grep -Fq libwebkit2gtk-4_1-0",
+    )
+    for target in desktop_targets:
+        if target not in release:
+            errors.append(f"Desktop release matrix is missing {target}")
+    native_package_contracts = (
+        "package-server:\n    name: Package Server target matrix\n    needs: [prepare, collect]\n    runs-on: ${{ matrix.runner }}",
+        "package-dashboard-musl:",
+        "runs-on: ${{ matrix.runner }}",
+        "xbps_static_arch: aarch64",
+        "XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}",
+        "xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz",
+        '-D "musl libwebkit2gtk41 polkit"',
+        'aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm archlinux"',
+        '"GitRun-Server-$VERSION-linux-aarch64-arch.pkg.tar.zst"',
+    )
+    for contract in native_package_contracts:
+        if contract not in release:
+            errors.append(f"Native package matrix is missing {contract}")
+    if "xbps-static-latest.x86_64-musl.tar.xz" in release:
+        errors.append("XBPS packaging must not hardcode the x86_64 static tool for ARM64 jobs")
+    if "pattern: dashboard-package-*" not in release:
+        errors.append("Desktop package collection must merge every target-specific package artifact")
+
     if 'xbps_stage="$RUNNER_TEMP/xbps-stage"' not in release:
         errors.append("XBPS must use a dedicated init-neutral staging directory")
     if 'cp -a "$stage" "$xbps_stage"' not in release:
@@ -133,6 +178,122 @@ def check_release_package_boundaries(errors: list[str]) -> None:
             errors.append("XBPS archive creation must consume the init-neutral stage")
         if '"$xbps_create"' in block and '"$package_stage"' in block:
             errors.append("XBPS archive must not consume the systemd-enabled package stage")
+
+
+def check_portable_privilege_helpers(errors: list[str]) -> None:
+    cli = (ROOT / "crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+    updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
+    if "run_privileged_cli_action(" not in cli or "trusted_privilege_command()" not in cli:
+        errors.append("CLI uninstall/reinstall must use the trusted platform privilege helper directly")
+    if "run_embedded_privileged_helper(" in cli:
+        errors.append("CLI must not execute user-owned temporary scripts with elevated privileges")
+    if "trusted_privilege_escalation_binary()" not in updater:
+        errors.append("updater dependency installation must support the platform privilege helper")
+
+    for relative in ("scripts/uninstall.sh", "scripts/reinstall-latest.sh"):
+        source = read_text(ROOT / relative)
+        if source is None:
+            errors.append(f"missing portable privilege script: {relative}")
+            continue
+        if not source.startswith("#!/bin/sh"):
+            errors.append(f"{relative} must use the POSIX shell")
+        if "[[ " in source or "(( " in source or "bash" in source:
+            errors.append(f"{relative} contains Bash-only syntax")
+        if "trusted_helper" not in source or "/usr/bin/doas" not in source:
+            errors.append(f"{relative} must validate and support doas as a privilege helper")
+        syntax = subprocess.run(["sh", "-n", str(ROOT / relative)], check=False, capture_output=True, text=True)
+        if syntax.returncode:
+            errors.append(f"{relative} failed POSIX shell syntax validation: {syntax.stderr.strip()}")
+
+
+def check_dashboard_service_manager_contract(errors: list[str]) -> None:
+    backend = (ROOT / "crates/gitrun-management/src/backend.rs").read_text(encoding="utf-8")
+    control = (ROOT / "crates/gitrun-management/src/control_manager.rs").read_text(encoding="utf-8")
+    platform = (ROOT / "crates/gitrun-platform/src/lib.rs").read_text(encoding="utf-8")
+    required_backend = (
+        "gitrun_platform::detect_service_manager()",
+        "gitrun_platform::service_command(",
+        "gitrun_platform::service_is_installed(",
+        "gitrun_platform::ManagedService::Scheduler",
+        "gitrun_platform::ManagedService::Gsr",
+    )
+    missing = [item for item in required_backend if item not in backend]
+    required_platform = ("ServiceManager::Systemd", "ServiceManager::OpenRc", "ServiceManager::Runit")
+    missing.extend(item for item in required_platform if item not in platform)
+    if missing:
+        errors.append("Dashboard service operations are missing native init-system routing: " + ", ".join(missing))
+    if "pkexec_path()" not in backend or "gitrun_platform::trusted_privilege_escalation_binary" not in backend:
+        errors.append(
+            "Dashboard service controls must retain a trusted pkexec/sudo/doas privilege fallback"
+        )
+    if 'PathBuf::from("/usr/bin/systemctl")' in backend or 'PathBuf::from("/bin/systemctl")' in backend:
+        errors.append("Dashboard service controls must not hardcode systemctl executable paths")
+    if "detect_service_manager()" not in control or "ServiceManager::Systemd" not in control:
+        errors.append("Control Manager IPC must be gated to its installed systemd service backend")
+
+
+def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
+    setup = (ROOT / "crates/gitrun-setup/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "current_package_manager()",
+        "package_install_spec(",
+        "docker_packages(",
+        "buildx_packages(",
+        "package_remove_spec(",
+        "package_is_registered(",
+        "install_gitrun_service_definitions(",
+        "start_gitrun_services()",
+        "stop_gitrun_services()",
+        "trusted_service_manager_binary(manager)",
+        "gitrun_platform::PackageManager::Apt",
+        "gitrun_platform::PackageManager::Dnf",
+        "gitrun_platform::PackageManager::Zypper",
+        "gitrun_platform::PackageManager::Pacman",
+        "gitrun_platform::PackageManager::Apk",
+        "gitrun_platform::PackageManager::Xbps",
+        "gitrun_platform::PackageManager::Emerge",
+        "docker_packages(manager: gitrun_platform::PackageManager)",
+        "buildx_packages(manager: gitrun_platform::PackageManager)",
+        'PackageManager::Dnf => &["moby-engine", "docker-compose"]',
+        "ServiceManager::Systemd",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+    )
+    missing = [item for item in required if item not in setup]
+    if missing:
+        errors.append(
+            "Setup must use native package/service manager lifecycle operations; "
+            "missing: " + ", ".join(missing)
+        )
+    if 'Command::new("/usr/bin/apt-get").args(["install"' in setup:
+        errors.append("Docker bootstrap must not invoke apt-get outside the Apt package-manager branch")
+    if '"-Syu"' in setup:
+        errors.append("Docker bootstrap must not trigger a full Arch system upgrade")
+
+
+def check_updater_native_package_contract(errors: list[str]) -> None:
+    updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "current_linux_package_manager()",
+        "linux_dependency_packages(",
+        "run_linux_package_command(",
+        "P::Apt",
+        "P::Dnf",
+        "P::Zypper",
+        "P::Pacman",
+        "P::Apk",
+        "P::Xbps",
+        "P::Emerge",
+        '(P::Dnf, "Docker") => &["moby-engine", "docker-compose", "docker-buildx"][..]',
+    )
+    missing = [item for item in required if item not in updater]
+    if missing:
+        errors.append(
+            "Dependency updates must use native Linux package managers; missing: "
+            + ", ".join(missing)
+        )
+    if '"-Syu"' in updater:
+        errors.append("Dependency updates must not trigger a full Arch system upgrade")
 
 
 def check_recovery_service_manager_contract(errors: list[str]) -> None:
@@ -214,6 +375,10 @@ def main() -> int:
 
     check_platform_catalog(errors)
     check_release_package_boundaries(errors)
+    check_dashboard_service_manager_contract(errors)
+    check_portable_privilege_helpers(errors)
+    check_setup_native_lifecycle_contract(errors)
+    check_updater_native_package_contract(errors)
     check_recovery_service_manager_contract(errors)
 
     summary = [

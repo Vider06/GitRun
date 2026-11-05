@@ -75,6 +75,222 @@ pub enum ServiceManager {
     Runit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedService {
+    Scheduler,
+    Gsr,
+}
+
+impl ManagedService {
+    pub const fn systemd_unit(self) -> &'static str {
+        match self {
+            Self::Scheduler => "gitrun.service",
+            Self::Gsr => "gitrun-gsr.service",
+        }
+    }
+
+    pub const fn openrc_service(self) -> &'static str {
+        match self {
+            Self::Scheduler => "gitrun",
+            Self::Gsr => "gitrun-gsr",
+        }
+    }
+
+    pub const fn runit_service_path(self) -> &'static str {
+        match self {
+            Self::Scheduler => "/var/service/gitrun",
+            Self::Gsr => "/var/service/gitrun-gsr",
+        }
+    }
+
+    pub const fn systemd_unit_paths(self) -> &'static [&'static str] {
+        match self {
+            Self::Scheduler => &[
+                "/etc/systemd/system/gitrun.service",
+                "/usr/lib/systemd/system/gitrun.service",
+                "/lib/systemd/system/gitrun.service",
+            ],
+            Self::Gsr => &[
+                "/etc/systemd/system/gitrun-gsr.service",
+                "/usr/lib/systemd/system/gitrun-gsr.service",
+                "/lib/systemd/system/gitrun-gsr.service",
+            ],
+        }
+    }
+
+    pub const fn openrc_service_paths(self) -> &'static [&'static str] {
+        match self {
+            Self::Scheduler => &["/etc/init.d/gitrun", "/usr/local/etc/init.d/gitrun"],
+            Self::Gsr => &["/etc/init.d/gitrun-gsr", "/usr/local/etc/init.d/gitrun-gsr"],
+        }
+    }
+
+    pub const fn runit_service_paths(self) -> &'static [&'static str] {
+        match self {
+            Self::Scheduler => &["/etc/sv/gitrun/run", "/var/service/gitrun/run"],
+            Self::Gsr => &["/etc/sv/gitrun-gsr/run", "/var/service/gitrun-gsr/run"],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceAction {
+    Start,
+    Stop,
+    Restart,
+    Status,
+}
+
+pub struct ServiceCommand {
+    pub candidates: &'static [&'static str],
+    pub args: Vec<String>,
+}
+
+pub const fn service_command_candidates(manager: ServiceManager) -> &'static [&'static str] {
+    match manager {
+        ServiceManager::Systemd => &["/usr/bin/systemctl", "/bin/systemctl"],
+        ServiceManager::OpenRc => &[
+            "/sbin/rc-service",
+            "/usr/sbin/rc-service",
+            "/usr/bin/rc-service",
+        ],
+        ServiceManager::Runit => &["/usr/bin/sv", "/bin/sv", "/usr/sbin/sv"],
+    }
+}
+
+pub fn trusted_service_manager_binary(manager: ServiceManager) -> Option<std::path::PathBuf> {
+    service_command_candidates(manager)
+        .iter()
+        .map(Path::new)
+        .find(|path| trusted_service_definition(path, true))
+        .map(Path::to_path_buf)
+}
+
+pub const fn privilege_escalation_candidates() -> &'static [&'static str] {
+    &["/usr/bin/sudo", "/usr/bin/doas", "/usr/bin/pkexec"]
+}
+
+#[cfg(unix)]
+pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    privilege_escalation_candidates()
+        .iter()
+        .map(Path::new)
+        .find(|path| {
+            let Ok(metadata) = fs::symlink_metadata(path) else {
+                return false;
+            };
+            metadata.permissions().mode() & 0o4000 != 0 && trusted_service_definition(path, true)
+        })
+        .map(Path::to_path_buf)
+}
+
+#[cfg(not(unix))]
+pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
+    None
+}
+
+pub fn service_command(
+    manager: ServiceManager,
+    action: ServiceAction,
+    service: ManagedService,
+) -> ServiceCommand {
+    let args = match manager {
+        ServiceManager::Systemd => {
+            let action = match action {
+                ServiceAction::Start => "start",
+                ServiceAction::Stop => "stop",
+                ServiceAction::Restart => "restart",
+                ServiceAction::Status => "is-active",
+            };
+            if action == "is-active" {
+                vec![
+                    action.to_owned(),
+                    "--quiet".to_owned(),
+                    service.systemd_unit().to_owned(),
+                ]
+            } else {
+                vec![action.to_owned(), service.systemd_unit().to_owned()]
+            }
+        }
+        ServiceManager::OpenRc => {
+            let action = match action {
+                ServiceAction::Start => "start",
+                ServiceAction::Stop => "stop",
+                ServiceAction::Restart => "restart",
+                ServiceAction::Status => "status",
+            };
+            vec![service.openrc_service().to_owned(), action.to_owned()]
+        }
+        ServiceManager::Runit => {
+            let action = match action {
+                ServiceAction::Start => "up",
+                ServiceAction::Stop => "down",
+                ServiceAction::Restart => "restart",
+                ServiceAction::Status => "status",
+            };
+            vec![action.to_owned(), service.runit_service_path().to_owned()]
+        }
+    };
+    ServiceCommand {
+        candidates: service_command_candidates(manager),
+        args,
+    }
+}
+
+fn trusted_service_mode_is_safe(mode: u32, require_executable: bool) -> bool {
+    mode & 0o022 == 0 && (!require_executable || mode & 0o111 != 0)
+}
+
+#[cfg(unix)]
+fn trusted_service_definition(path: &Path, require_executable: bool) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.uid() != 0
+        || !trusted_service_mode_is_safe(metadata.permissions().mode(), require_executable)
+    {
+        return false;
+    }
+
+    let mut parent = path.parent();
+    while let Some(directory) = parent {
+        let Ok(metadata) = fs::symlink_metadata(directory) else {
+            return false;
+        };
+        if !metadata.is_dir() || metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
+            return false;
+        }
+        if directory == Path::new("/") {
+            break;
+        }
+        parent = directory.parent();
+    }
+    true
+}
+
+#[cfg(not(unix))]
+fn trusted_service_definition(_path: &Path, _require_executable: bool) -> bool {
+    false
+}
+
+pub fn service_is_installed(manager: ServiceManager, service: ManagedService) -> bool {
+    let paths = match manager {
+        ServiceManager::Systemd => service.systemd_unit_paths(),
+        ServiceManager::OpenRc => service.openrc_service_paths(),
+        ServiceManager::Runit => service.runit_service_paths(),
+    };
+    let require_executable = manager != ServiceManager::Systemd;
+    paths
+        .iter()
+        .any(|path| trusted_service_definition(Path::new(path), require_executable))
+}
+
 impl ServiceManager {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -528,6 +744,146 @@ mod tests {
                 expected,
                 "unexpected package-manager preference for {distribution}"
             );
+        }
+    }
+
+    #[test]
+    fn privilege_escalation_candidates_are_fixed_absolute_system_paths() {
+        assert_eq!(
+            privilege_escalation_candidates(),
+            ["/usr/bin/sudo", "/usr/bin/doas", "/usr/bin/pkexec"]
+        );
+        assert!(privilege_escalation_candidates()
+            .iter()
+            .all(|path| Path::new(path).is_absolute()));
+    }
+
+    #[test]
+    fn service_actions_map_to_native_manager_commands_without_shells() {
+        let systemd = service_command(
+            ServiceManager::Systemd,
+            ServiceAction::Restart,
+            ManagedService::Scheduler,
+        );
+        assert_eq!(systemd.args, ["restart", "gitrun.service"]);
+
+        let openrc = service_command(
+            ServiceManager::OpenRc,
+            ServiceAction::Start,
+            ManagedService::Gsr,
+        );
+        assert_eq!(openrc.args, ["gitrun-gsr", "start"]);
+
+        let runit = service_command(
+            ServiceManager::Runit,
+            ServiceAction::Stop,
+            ManagedService::Scheduler,
+        );
+        assert_eq!(runit.args, ["down", "/var/service/gitrun"]);
+    }
+
+    #[test]
+    fn service_status_actions_are_read_only_and_manager_specific() {
+        assert_eq!(
+            service_command(
+                ServiceManager::Systemd,
+                ServiceAction::Status,
+                ManagedService::Gsr
+            )
+            .args,
+            ["is-active", "--quiet", "gitrun-gsr.service"]
+        );
+        assert_eq!(
+            service_command(
+                ServiceManager::OpenRc,
+                ServiceAction::Status,
+                ManagedService::Scheduler
+            )
+            .args,
+            ["gitrun", "status"]
+        );
+        assert_eq!(
+            service_command(
+                ServiceManager::Runit,
+                ServiceAction::Status,
+                ManagedService::Gsr
+            )
+            .args,
+            ["status", "/var/service/gitrun-gsr"]
+        );
+    }
+
+    #[test]
+    fn trusted_service_definition_mode_rejects_writable_scripts() {
+        assert!(trusted_service_mode_is_safe(0o644, false));
+        assert!(trusted_service_mode_is_safe(0o755, true));
+        assert!(!trusted_service_mode_is_safe(0o666, false));
+        assert!(!trusted_service_mode_is_safe(0o777, true));
+        assert!(!trusted_service_mode_is_safe(0o644, true));
+    }
+
+    #[test]
+    fn managed_service_definitions_match_each_init_system() {
+        assert_eq!(ManagedService::Scheduler.systemd_unit(), "gitrun.service");
+        assert_eq!(ManagedService::Gsr.systemd_unit(), "gitrun-gsr.service");
+        assert_eq!(ManagedService::Scheduler.openrc_service(), "gitrun");
+        assert_eq!(ManagedService::Gsr.openrc_service(), "gitrun-gsr");
+        assert_eq!(
+            ManagedService::Scheduler.runit_service_path(),
+            "/var/service/gitrun"
+        );
+        assert_eq!(
+            ManagedService::Gsr.runit_service_path(),
+            "/var/service/gitrun-gsr"
+        );
+
+        assert!(ManagedService::Scheduler
+            .systemd_unit_paths()
+            .iter()
+            .any(|path| path.ends_with("gitrun.service")));
+        assert!(ManagedService::Gsr
+            .openrc_service_paths()
+            .iter()
+            .any(|path| path.ends_with("gitrun-gsr")));
+        assert!(ManagedService::Gsr
+            .runit_service_paths()
+            .iter()
+            .any(|path| path.ends_with("gitrun-gsr/run")));
+    }
+
+    #[test]
+    fn service_manager_candidates_are_absolute_and_specific() {
+        assert_eq!(
+            service_command_candidates(ServiceManager::Systemd),
+            ["/usr/bin/systemctl", "/bin/systemctl"]
+        );
+        assert!(service_command_candidates(ServiceManager::OpenRc)
+            .iter()
+            .any(|path| path.ends_with("rc-service")));
+        assert!(service_command_candidates(ServiceManager::Runit)
+            .iter()
+            .any(|path| path.ends_with("/sv")));
+        for manager in [
+            ServiceManager::Systemd,
+            ServiceManager::OpenRc,
+            ServiceManager::Runit,
+        ] {
+            assert!(service_command_candidates(manager)
+                .iter()
+                .all(|path| path.starts_with('/')));
+        }
+    }
+
+    #[test]
+    fn service_manager_commands_never_use_a_shell() {
+        for manager in [
+            ServiceManager::Systemd,
+            ServiceManager::OpenRc,
+            ServiceManager::Runit,
+        ] {
+            let command = service_command(manager, ServiceAction::Start, ManagedService::Scheduler);
+            assert!(!command.args.iter().any(|arg| arg.contains("sh -c")));
+            assert!(command.candidates.iter().all(|path| path.starts_with('/')));
         }
     }
 

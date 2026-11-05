@@ -355,17 +355,26 @@ fn write_setup_flag() -> Result<(), SetupError> {
     write_resource(&setup_flag_path(), &content, 0o600)
 }
 
-/// Removes GitRun runtime state and fully purges its Debian package, when present.
+/// Removes GitRun runtime state and purges its native Server package when present.
 /// Only GitRun-owned Docker objects and app-specific user state are removed; Docker
 /// itself and other host workloads are shared dependencies and are not purged.
 pub fn uninstall_linux() -> Result<(), SetupError> {
     validate_uninstall_host()?;
-    let package_registered = deb_package_registered();
-    cleanup_uninstall_resources(package_registered)?;
+    let registered_package = current_package_manager().ok().and_then(|manager| {
+        ["gitrun-server", "gitrun"]
+            .into_iter()
+            .find(|name| package_is_registered(manager, name))
+            .map(|name| (manager, name))
+    });
+    cleanup_uninstall_resources(registered_package.is_some())?;
 
-    if package_registered {
-        println!("[GitRun uninstall] Purging package registration with dpkg");
-        run_command(Command::new("/usr/bin/dpkg").args(["--purge", "gitrun"]))?;
+    if let Some((manager, name)) = registered_package {
+        println!(
+            "[GitRun uninstall] Removing registered package {name} through {}",
+            manager.as_str()
+        );
+        let (program, args) = package_remove_spec(manager, name)?;
+        run_command(Command::new(program).args(args))?;
     }
 
     // Catch leftovers from previous manual installs and old package layouts.
@@ -389,7 +398,7 @@ pub fn uninstall_linux_package_hook() -> Result<(), SetupError> {
 }
 
 fn validate_uninstall_host() -> Result<(), SetupError> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") || !supported_linux_architecture() {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -398,44 +407,114 @@ fn validate_uninstall_host() -> Result<(), SetupError> {
     Ok(())
 }
 
-fn deb_package_registered() -> bool {
-    let Ok(output) = Command::new("/usr/bin/dpkg-query")
-        .args(["-W", "-f=${db:Status-Status}", "gitrun"])
-        .output()
-    else {
+fn package_is_registered(manager: gitrun_platform::PackageManager, name: &str) -> bool {
+    let result = match manager {
+        gitrun_platform::PackageManager::Apt => Command::new("/usr/bin/dpkg-query")
+            .args(["-W", "-f=${db:Status-Status}", name])
+            .output(),
+        gitrun_platform::PackageManager::Dnf
+        | gitrun_platform::PackageManager::Zypper
+        | gitrun_platform::PackageManager::Rpm => {
+            Command::new("/usr/bin/rpm").args(["-q", name]).output()
+        }
+        gitrun_platform::PackageManager::Pacman => {
+            Command::new("/usr/bin/pacman").args(["-Q", name]).output()
+        }
+        gitrun_platform::PackageManager::Apk => Command::new("/sbin/apk")
+            .args(["info", "-e", name])
+            .output(),
+        gitrun_platform::PackageManager::Xbps => Command::new("/usr/bin/xbps-query")
+            .args(["-p", "pkgver", name])
+            .output(),
+        gitrun_platform::PackageManager::Emerge => return false,
+    };
+    let Ok(output) = result else {
         return false;
     };
-    output.status.success()
-        && matches!(
-            String::from_utf8_lossy(&output.stdout).trim(),
-            "installed"
-                | "config-files"
-                | "unpacked"
-                | "half-installed"
-                | "half-configured"
-                | "triggers-awaited"
-                | "triggers-pending"
-        )
+    if !output.status.success() {
+        return false;
+    }
+    if manager == gitrun_platform::PackageManager::Apt {
+        String::from_utf8_lossy(&output.stdout).trim() == "installed"
+    } else {
+        true
+    }
+}
+
+fn package_remove_spec(
+    manager: gitrun_platform::PackageManager,
+    name: &str,
+) -> Result<(&'static str, Vec<String>), SetupError> {
+    let (program, mut args): (&str, Vec<String>) = match manager {
+        gitrun_platform::PackageManager::Apt => {
+            ("/usr/bin/apt-get", vec!["purge".into(), "-y".into()])
+        }
+        gitrun_platform::PackageManager::Dnf => {
+            ("/usr/bin/dnf", vec!["remove".into(), "-y".into()])
+        }
+        gitrun_platform::PackageManager::Zypper => (
+            "/usr/bin/zypper",
+            vec!["--non-interactive".into(), "remove".into()],
+        ),
+        gitrun_platform::PackageManager::Pacman => {
+            ("/usr/bin/pacman", vec!["-Rns".into(), "--noconfirm".into()])
+        }
+        gitrun_platform::PackageManager::Apk => ("/sbin/apk", vec!["del".into()]),
+        gitrun_platform::PackageManager::Xbps => ("/usr/bin/xbps-remove", vec!["-y".into()]),
+        gitrun_platform::PackageManager::Emerge => {
+            return Err(SetupError::Command(
+                "automatic package removal is not configured for Gentoo".into(),
+            ));
+        }
+        gitrun_platform::PackageManager::Rpm => ("/usr/bin/rpm", vec!["-e".into()]),
+    };
+    args.push(name.to_owned());
+    Ok((program, args))
+}
+
+fn stop_gitrun_services() -> Result<(), SetupError> {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return Ok(());
+    };
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            for unit in [
+                "gitrun-control.service",
+                "gitrun-gsr.service",
+                "gitrun.service",
+            ] {
+                let _ = Command::new(&program)
+                    .args(["disable", "--now", unit])
+                    .status();
+            }
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            for service in ["gitrun-gsr", "gitrun"] {
+                let _ = Command::new(&program).args([service, "stop"]).status();
+                let _ = Command::new("/sbin/rc-update")
+                    .args(["del", service, "default"])
+                    .status();
+            }
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            for service in ["gitrun-gsr", "gitrun"] {
+                let path = format!("/var/service/{service}");
+                let _ = Command::new(&program).args(["down", &path]).status();
+            }
+        }
+    }
+    Ok(())
 }
 
 fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
-    println!("[GitRun uninstall] Stopping and disabling GitRun systemd units");
-    for unit in [
-        "gitrun-control.service",
-        "gitrun-gsr.service",
-        "gitrun.service",
-    ] {
-        let _ = Command::new("/usr/bin/systemctl")
-            .args(["disable", "--now", unit])
-            .status();
-        if Command::new("/usr/bin/systemctl")
-            .args(["is-active", "--quiet", unit])
-            .status()
-            .is_ok_and(|status| status.success())
-        {
-            run_command(Command::new("/usr/bin/systemctl").args(["stop", unit]))?;
-        }
-    }
+    println!("[GitRun uninstall] Stopping GitRun services through the active init system");
+    stop_gitrun_services()?;
 
     println!("[GitRun uninstall] Removing GitRun-owned Docker resources");
     remove_gitrun_docker_resources()?;
@@ -458,6 +537,13 @@ fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
         "/run/systemd/system/gitrun.service",
         "/run/systemd/system/gitrun-gsr.service",
         "/run/systemd/system/gitrun-control.service",
+        "/etc/init.d/gitrun",
+        "/etc/init.d/gitrun-gsr",
+        "/etc/sv/gitrun",
+        "/etc/sv/gitrun-gsr",
+        "/var/service/gitrun",
+        "/var/service/gitrun-gsr",
+        "/usr/libexec/gitrun/gitrun-service",
         "/etc/systemd/system/multi-user.target.wants/gitrun.service",
         "/etc/systemd/system/multi-user.target.wants/gitrun-gsr.service",
         "/etc/systemd/system/multi-user.target.wants/gitrun-control.service",
@@ -585,10 +671,14 @@ fn cleanup_temp_artifacts() -> Result<(), SetupError> {
 }
 
 fn reload_systemd() -> Result<(), SetupError> {
-    if !command_exists("systemctl") {
+    if gitrun_platform::detect_service_manager() != Some(gitrun_platform::ServiceManager::Systemd) {
         return Ok(());
     }
-    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))
+    let systemctl = gitrun_platform::trusted_service_manager_binary(
+        gitrun_platform::ServiceManager::Systemd,
+    )
+    .ok_or_else(|| SetupError::Command("trusted systemctl executable was not found".into()))?;
+    run_command(Command::new(systemctl).args(["daemon-reload"]))
 }
 
 fn verify_uninstall_complete() -> Result<(), SetupError> {
@@ -606,6 +696,13 @@ fn verify_uninstall_complete() -> Result<(), SetupError> {
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
         "/etc/systemd/system/gitrun-control.service",
+        "/etc/init.d/gitrun",
+        "/etc/init.d/gitrun-gsr",
+        "/etc/sv/gitrun",
+        "/etc/sv/gitrun-gsr",
+        "/var/service/gitrun",
+        "/var/service/gitrun-gsr",
+        "/usr/libexec/gitrun/gitrun-service",
     ] {
         if Path::new(path).exists() {
             return Err(SetupError::Command(format!(
@@ -626,28 +723,18 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
         .arg("info")
         .output()
         .is_ok_and(|output| output.status.success());
-    let docker_was_active = Command::new("/usr/bin/systemctl")
-        .args(["is-active", "--quiet", "docker.service"])
-        .status()
-        .is_ok_and(|status| status.success());
+    let docker_was_active = host_service_active("docker");
     let started_temporarily = if daemon_ready {
         false
     } else {
-        if !command_exists("systemctl") {
-            return Err(SetupError::Command(
-                "Docker daemon is unavailable and systemd cannot start it for cleanup".into(),
-            ));
-        }
-        run_command(Command::new("/usr/bin/systemctl").args(["start", "docker.service"]))?;
+        start_host_service_temporary("docker")?;
         let ready = Command::new("/usr/bin/docker")
             .arg("info")
             .output()
             .is_ok_and(|output| output.status.success());
         if !ready {
             if !docker_was_active {
-                let _ = Command::new("/usr/bin/systemctl")
-                    .args(["stop", "docker.service"])
-                    .status();
+                let _ = stop_host_service("docker");
             }
             return Err(SetupError::Command(
                 "Docker was started but its daemon is still unavailable; GitRun resources were not removed".into(),
@@ -704,7 +791,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     // Do not change Docker's pre-existing service state. If Docker was stopped
     // before uninstall, restore that state even when object cleanup fails.
     let restore_result = if started_temporarily {
-        run_command(Command::new("/usr/bin/systemctl").args(["stop", "docker.service"]))
+        stop_host_service("docker")
     } else {
         Ok(())
     };
@@ -830,7 +917,7 @@ pub fn reinstall_linux_with_auth(
     app_binary: &Path,
     owner_uid: Option<u32>,
 ) -> Result<SetupReport, SetupError> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") || !supported_linux_architecture() {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -846,21 +933,20 @@ pub fn reinstall_linux_with_auth(
     let existing_config = fs::read_to_string(config_path)?;
 
     println!("[GitRun reinstall] Stopping the existing GitRun services");
-    let _ = Command::new("/usr/bin/systemctl")
-        .args(["disable", "--now", "gitrun-control.service"])
-        .status();
-    let _ = Command::new("/usr/bin/systemctl")
-        .args(["disable", "--now", "gitrun-gsr.service"])
-        .status();
-    let _ = Command::new("/usr/bin/systemctl")
-        .args(["disable", "--now", "gitrun.service"])
-        .status();
+    stop_gitrun_services()?;
 
     remove_gitrun_docker_resources()?;
     for path in [
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
         "/etc/systemd/system/gitrun-control.service",
+        "/etc/init.d/gitrun",
+        "/etc/init.d/gitrun-gsr",
+        "/etc/sv/gitrun",
+        "/etc/sv/gitrun-gsr",
+        "/var/service/gitrun",
+        "/var/service/gitrun-gsr",
+        "/usr/libexec/gitrun/gitrun-service",
         "/usr/local/bin/gitrun-recovery",
         "/opt/gitrun",
     ] {
@@ -869,26 +955,13 @@ pub fn reinstall_linux_with_auth(
     let _ = Command::new("/usr/bin/docker")
         .args(["image", "rm", "-f", "gitrun-runner:latest"])
         .status();
-    let _ = Command::new("/usr/bin/systemctl")
-        .args(["daemon-reload"])
-        .status();
+    reload_systemd()?;
 
     let report = bootstrap_linux_with_auth(auth, repositories, app_binary, owner_uid)?;
 
     write_resource(config_path, &existing_config, 0o600)?;
     secure_system_config_file(config_path, None)?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun.service",
-    ]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun-gsr.service",
-    ]))?;
+    start_gitrun_services()?;
 
     println!("GitRun reinstall: PASS");
     Ok(report)
@@ -915,7 +988,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
             "unsupported runner profile: {runner_profile}"
         )));
     }
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") || !supported_linux_architecture() {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -940,9 +1013,13 @@ pub fn bootstrap_linux_with_auth_and_profile(
     }
     validate_bootstrap_auth(&auth)?;
 
-    ensure_control_manager_group()?;
-    if let Some(uid) = owner_uid {
-        add_user_to_control_group(uid)?;
+    let systemd_control_manager =
+        gitrun_platform::detect_service_manager() == Some(gitrun_platform::ServiceManager::Systemd);
+    if systemd_control_manager {
+        ensure_control_manager_group()?;
+        if let Some(uid) = owner_uid {
+            add_user_to_control_group(uid)?;
+        }
     }
 
     setup_progress(1, "Checking Docker and system prerequisites");
@@ -1004,26 +1081,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
         install_binary(source, installed_recovery, owner_uid)?;
     }
 
-    let service = if recovery_source.is_some() {
-        resources::SYSTEMD_SERVICE
-    } else {
-        resources::SYSTEMD_SERVICE_DIRECT
-    };
-    write_resource(
-        Path::new("/etc/systemd/system/gitrun.service"),
-        service,
-        0o644,
-    )?;
-    write_resource(
-        Path::new("/etc/systemd/system/gitrun-gsr.service"),
-        resources::SYSTEMD_GSR_SERVICE,
-        0o644,
-    )?;
-    write_resource(
-        Path::new("/etc/systemd/system/gitrun-control.service"),
-        resources::SYSTEMD_CONTROL_MANAGER_SERVICE,
-        0o644,
-    )?;
+    install_gitrun_service_definitions(recovery_source.is_some())?;
 
     setup_progress(4, "Writing GitRun configuration");
     let config_path = config_dir.join("gitrun.env");
@@ -1066,9 +1124,9 @@ pub fn bootstrap_linux_with_auth_and_profile(
 
     // Mark the installation complete before starting the scheduler. The
     // scheduler's recovery preflight requires this flag, so writing it only
-    // after systemctl reports the service active creates a bootstrap deadlock:
-    // the service cannot start until setup is complete, while setup waits for
-    // the service to start before declaring completion.
+    // after the service manager reports the service active creates a bootstrap
+    // deadlock: the service cannot start until setup is complete, while setup
+    // waits for the service to start before declaring completion.
     setup_progress(8, "Recording completed setup state");
     write_setup_flag()?;
     if !setup_flag_is_valid() {
@@ -1077,32 +1135,8 @@ pub fn bootstrap_linux_with_auth_and_profile(
         ));
     }
 
-    setup_progress(
-        9,
-        "Enabling and starting the GitRun Control Manager and services",
-    );
-    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-control.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-control.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun-control.service",
-    ]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun.service",
-    ]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-gsr.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun-gsr.service",
-    ]))?;
+    setup_progress(9, "Enabling and starting GitRun services");
+    start_gitrun_services()?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),
@@ -1208,23 +1242,247 @@ fn validate_env_value(value: &str, key: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
+fn current_package_manager() -> Result<gitrun_platform::PackageManager, SetupError> {
+    let release = ["/etc/os-release", "/usr/lib/os-release"]
+        .iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+        .unwrap_or_default();
+    let value = |key: &str| {
+        release
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .map(|value| value.trim_matches(&['"', '\''][..]).to_owned())
+            .unwrap_or_default()
+    };
+    let id = value("ID");
+    let id_like = value("ID_LIKE");
+    gitrun_platform::detect_package_manager(&id, &id_like).ok_or_else(|| {
+        SetupError::Command(format!(
+            "no supported package manager was detected for Linux distribution ID={id:?} ID_LIKE={id_like:?}"
+        ))
+    })
+}
+
+fn package_install_spec(
+    manager: gitrun_platform::PackageManager,
+    packages: &[&str],
+) -> Result<(&'static str, Vec<String>), SetupError> {
+    let (program, mut args): (&str, Vec<String>) = match manager {
+        gitrun_platform::PackageManager::Apt => {
+            ("/usr/bin/apt-get", vec!["install".into(), "-y".into()])
+        }
+        gitrun_platform::PackageManager::Dnf => {
+            ("/usr/bin/dnf", vec!["install".into(), "-y".into()])
+        }
+        gitrun_platform::PackageManager::Zypper => (
+            "/usr/bin/zypper",
+            vec![
+                "--non-interactive".into(),
+                "install".into(),
+                "--no-recommends".into(),
+            ],
+        ),
+        gitrun_platform::PackageManager::Pacman => (
+            "/usr/bin/pacman",
+            vec!["-S".into(), "--noconfirm".into(), "--needed".into()],
+        ),
+        gitrun_platform::PackageManager::Apk => {
+            ("/sbin/apk", vec!["add".into(), "--no-cache".into()])
+        }
+        gitrun_platform::PackageManager::Xbps => ("/usr/bin/xbps-install", vec!["-Sy".into()]),
+        gitrun_platform::PackageManager::Emerge => ("/usr/bin/emerge", vec!["--ask=n".into()]),
+        gitrun_platform::PackageManager::Rpm => {
+            return Err(SetupError::Command(
+                "the rpm query tool is not a package installer; install dnf or zypper".into(),
+            ));
+        }
+    };
+    args.extend(packages.iter().map(|package| (*package).to_owned()));
+    Ok((program, args))
+}
+
+fn install_distribution_packages(packages: &[&str]) -> Result<(), SetupError> {
+    let manager = current_package_manager()?;
+    if manager == gitrun_platform::PackageManager::Apt {
+        run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
+    }
+    let (program, args) = package_install_spec(manager, packages)?;
+    run_command(Command::new(program).args(args))
+}
+
+fn docker_packages(manager: gitrun_platform::PackageManager) -> &'static [&'static str] {
+    match manager {
+        gitrun_platform::PackageManager::Apt => &["docker.io", "docker-compose-v2"],
+        gitrun_platform::PackageManager::Dnf => &["moby-engine", "docker-compose"],
+        gitrun_platform::PackageManager::Zypper => &["docker", "docker-compose"],
+        gitrun_platform::PackageManager::Pacman => &["docker", "docker-compose"],
+        gitrun_platform::PackageManager::Apk => &["docker", "docker-cli-compose"],
+        gitrun_platform::PackageManager::Xbps => &["docker", "docker-compose"],
+        gitrun_platform::PackageManager::Emerge => {
+            &["app-containers/docker", "app-containers/docker-compose"]
+        }
+        gitrun_platform::PackageManager::Rpm => &[],
+    }
+}
+
+fn buildx_packages(manager: gitrun_platform::PackageManager) -> &'static [&'static [&'static str]] {
+    match manager {
+        gitrun_platform::PackageManager::Apt => &[&["docker-buildx-plugin"], &["docker-buildx"]],
+        gitrun_platform::PackageManager::Dnf => &[&["docker-buildx"]],
+        gitrun_platform::PackageManager::Zypper => &[&["docker-buildx"]],
+        gitrun_platform::PackageManager::Pacman => &[&["docker-buildx"]],
+        gitrun_platform::PackageManager::Apk => &[&["docker-cli-buildx"]],
+        gitrun_platform::PackageManager::Xbps => &[&["docker-buildx"]],
+        gitrun_platform::PackageManager::Emerge => &[&["app-containers/docker-buildx"]],
+        gitrun_platform::PackageManager::Rpm => &[],
+    }
+}
+
+fn host_service_active(service: &str) -> bool {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return false;
+    };
+    let Some(program) = gitrun_platform::trusted_service_manager_binary(manager) else {
+        return false;
+    };
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let unit = if service.ends_with(".service") {
+                service.to_owned()
+            } else {
+                format!("{service}.service")
+            };
+            Command::new(&program)
+                .args(["is-active", "--quiet", &unit])
+                .status()
+                .is_ok_and(|status| status.success())
+        }
+        gitrun_platform::ServiceManager::OpenRc => Command::new(&program)
+            .args([service, "status"])
+            .status()
+            .is_ok_and(|status| status.success()),
+        gitrun_platform::ServiceManager::Runit => {
+            let path = format!("/var/service/{service}");
+            Command::new(&program)
+                .args(["status", &path])
+                .status()
+                .is_ok_and(|status| status.success())
+        }
+    }
+}
+
+fn start_host_service_temporary(service: &str) -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let unit = if service.ends_with(".service") {
+                service.to_owned()
+            } else {
+                format!("{service}.service")
+            };
+            run_command(Command::new(&program).args(["start", &unit]))
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            run_command(Command::new(&program).args([service, "start"]))
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            let path = format!("/var/service/{service}");
+            if !Path::new(&path).exists() {
+                return Err(SetupError::Command(format!(
+                    "runit service {service} is not enabled at {path}; refusing to create a persistent service link during temporary cleanup"
+                )));
+            }
+            run_command(Command::new(&program).args(["up", &path]))
+        }
+    }
+}
+
+fn stop_host_service(service: &str) -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let unit = if service.ends_with(".service") {
+                service.to_owned()
+            } else {
+                format!("{service}.service")
+            };
+            run_command(Command::new(&program).args(["stop", &unit]))
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            run_command(Command::new(&program).args([service, "stop"]))
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            let path = format!("/var/service/{service}");
+            run_command(Command::new(&program).args(["down", &path]))
+        }
+    }
+}
+
+fn start_host_service(service: &str) -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let unit = if service.ends_with(".service") {
+                service.to_owned()
+            } else {
+                format!("{service}.service")
+            };
+            run_command(Command::new(&program).args(["enable", "--now", &unit]))
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            run_command(Command::new("/sbin/rc-update").args(["add", service, "default"]))?;
+            run_command(Command::new(&program).args([service, "start"]))
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            ensure_runit_service_link(service)?;
+            let link = Path::new("/var/service").join(service);
+            run_command(Command::new(&program).args(["up", link.to_string_lossy().as_ref()]))
+        }
+    }
+}
+
 fn ensure_docker() -> Result<(), SetupError> {
-    if command_exists("docker") && docker_daemon_ready() && compose_ready() {
-        return Ok(());
+    if command_exists("docker") {
+        let _ = start_host_service("docker");
+        if docker_daemon_ready() && compose_ready() {
+            return Ok(());
+        }
     }
 
-    if !command_exists("apt-get") {
-        return Err(SetupError::MissingCommand("apt-get".into()));
+    let manager = current_package_manager()?;
+    let packages = docker_packages(manager);
+    if packages.is_empty() {
+        return Err(SetupError::Command(format!(
+            "Docker installation is not configured for package manager {}",
+            manager.as_str()
+        )));
     }
-
-    run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
-    run_command(Command::new("/usr/bin/apt-get").args([
-        "install",
-        "-y",
-        "docker.io",
-        "docker-compose-v2",
-    ]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "--now", "docker"]))?;
+    install_distribution_packages(packages)?;
+    start_host_service("docker")?;
 
     if !docker_daemon_ready() || !compose_ready() {
         return Err(SetupError::Command(
@@ -1249,27 +1507,222 @@ fn ensure_buildx() -> Result<(), SetupError> {
         return Ok(());
     }
 
-    if !command_exists("apt-get") {
-        return Err(SetupError::MissingCommand(
-            "docker buildx (BuildKit support)".into(),
-        ));
+    let manager = current_package_manager()?;
+    let candidates = buildx_packages(manager);
+    if candidates.is_empty() {
+        return Err(SetupError::Command(format!(
+            "Docker Buildx installation is not configured for package manager {}",
+            manager.as_str()
+        )));
     }
 
     println!("[GitRun setup] Docker Buildx is missing; installing the distro plugin");
-    run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
-
-    let plugin_status = Command::new("/usr/bin/apt-get")
-        .args(["install", "-y", "docker-buildx-plugin"])
-        .status()?;
-    if !plugin_status.success() {
-        // Ubuntu/Debian may package the same plugin under this name instead.
-        run_command(Command::new("/usr/bin/apt-get").args(["install", "-y", "docker-buildx"]))?;
+    let mut installed = false;
+    for packages in candidates {
+        if install_distribution_packages(packages).is_ok() {
+            installed = true;
+            if docker_buildx_ready() {
+                break;
+            }
+        }
     }
 
-    if !docker_buildx_ready() {
+    if !installed || !docker_buildx_ready() {
         return Err(SetupError::Command(
             "Docker Buildx installation finished, but docker buildx version still fails".into(),
         ));
+    }
+    Ok(())
+}
+
+fn gitrun_service_environment_wrapper(recovery_installed: bool) -> String {
+    let executable = if recovery_installed {
+        "/usr/local/bin/gitrun-recovery"
+    } else {
+        "/usr/local/bin/gitrun"
+    };
+    format!(
+        r#"#!/bin/sh
+set -eu
+while IFS='=' read -r key value; do
+    case "$key" in
+        GITHUB_TOKEN|GITRUN_*) export "$key=$value" ;;
+    esac
+done < /etc/gitrun/gitrun.env
+exec "{executable}" "$@"
+"#
+    )
+}
+
+fn ensure_runit_service_link(service: &str) -> Result<(), SetupError> {
+    use std::os::unix::fs::symlink;
+
+    let source = Path::new("/etc/sv").join(service);
+    if !source.is_dir() {
+        return Err(SetupError::Command(format!(
+            "runit service definition {} is missing",
+            source.display()
+        )));
+    }
+    let service_dir = Path::new("/var/service");
+    fs::create_dir_all(service_dir)?;
+    let link = service_dir.join(service);
+    match fs::symlink_metadata(&link) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let target = fs::read_link(&link)?;
+            if target != source {
+                return Err(SetupError::Command(format!(
+                    "runit service link {} points to an unexpected target",
+                    link.display()
+                )));
+            }
+        }
+        Ok(_) => {
+            return Err(SetupError::Command(format!(
+                "runit service path {} already exists and is not a symbolic link",
+                link.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            symlink(&source, &link)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+fn install_gitrun_service_definitions(recovery_installed: bool) -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let scheduler = if recovery_installed {
+                resources::SYSTEMD_SERVICE
+            } else {
+                resources::SYSTEMD_SERVICE_DIRECT
+            };
+            write_resource(
+                Path::new("/etc/systemd/system/gitrun.service"),
+                scheduler,
+                0o644,
+            )?;
+            write_resource(
+                Path::new("/etc/systemd/system/gitrun-gsr.service"),
+                resources::SYSTEMD_GSR_SERVICE,
+                0o644,
+            )?;
+            write_resource(
+                Path::new("/etc/systemd/system/gitrun-control.service"),
+                resources::SYSTEMD_CONTROL_MANAGER_SERVICE,
+                0o644,
+            )?;
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            let wrapper = gitrun_service_environment_wrapper(recovery_installed);
+            write_resource(
+                Path::new("/usr/libexec/gitrun/gitrun-service"),
+                &wrapper,
+                0o755,
+            )?;
+            write_resource(
+                Path::new("/etc/init.d/gitrun"),
+                r#"#!/sbin/openrc-run
+name="GitRun scheduler"
+command="/usr/libexec/gitrun/gitrun-service"
+command_args="scheduler"
+command_background=true
+pidfile="/run/gitrun.pid"
+output_log="/var/log/gitrun/scheduler.log"
+error_log="/var/log/gitrun/scheduler.log"
+depend() {
+    need net docker
+}
+"#,
+                0o755,
+            )?;
+            write_resource(
+                Path::new("/etc/init.d/gitrun-gsr"),
+                r#"#!/sbin/openrc-run
+name="GitRun GSR watchdog"
+command="/usr/libexec/gitrun/gitrun-service"
+command_args="gsr-watchdog"
+command_background=true
+pidfile="/run/gitrun-gsr.pid"
+output_log="/var/log/gitrun/gsr.log"
+error_log="/var/log/gitrun/gsr.log"
+depend() {
+    need gitrun
+}
+"#,
+                0o755,
+            )?;
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            let wrapper = gitrun_service_environment_wrapper(recovery_installed);
+            write_resource(
+                Path::new("/usr/libexec/gitrun/gitrun-service"),
+                &wrapper,
+                0o755,
+            )?;
+            for (service, command) in [("gitrun", "scheduler"), ("gitrun-gsr", "gsr-watchdog")] {
+                let root = Path::new("/etc/sv").join(service);
+                write_resource(
+                    &root.join("run"),
+                    &format!("#!/bin/sh\nexec /usr/libexec/gitrun/gitrun-service {command}\n"),
+                    0o755,
+                )?;
+                let log_root = Path::new("/var/log/gitrun").join(service);
+                fs::create_dir_all(&log_root)?;
+                write_resource(
+                    &root.join("log/run"),
+                    &format!("#!/bin/sh\nexec svlogd -tt {}\n", log_root.display()),
+                    0o755,
+                )?;
+                ensure_runit_service_link(service)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn start_gitrun_services() -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            run_command(Command::new(&program).args(["daemon-reload"]))?;
+            for service in [
+                "gitrun-control.service",
+                "gitrun.service",
+                "gitrun-gsr.service",
+            ] {
+                run_command(Command::new(&program).args(["enable", service]))?;
+                run_command(Command::new(&program).args(["restart", service]))?;
+                run_command(Command::new(&program).args(["is-active", "--quiet", service]))?;
+            }
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            for service in ["gitrun", "gitrun-gsr"] {
+                run_command(Command::new("/sbin/rc-update").args(["add", service, "default"]))?;
+                run_command(Command::new(&program).args([service, "restart"]))?;
+                run_command(Command::new(&program).args([service, "status"]))?;
+            }
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            for service in ["gitrun", "gitrun-gsr"] {
+                let path = format!("/var/service/{service}");
+                run_command(Command::new(&program).args(["up", &path]))?;
+                run_command(Command::new(&program).args(["status", &path]))?;
+            }
+        }
     }
     Ok(())
 }
@@ -1871,7 +2324,12 @@ pub fn ensure_control_manager_service_with_binary(
     desktop_uid: Option<u32>,
     binary_path: &Path,
 ) -> Result<(), SetupError> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if gitrun_platform::detect_service_manager() != Some(gitrun_platform::ServiceManager::Systemd) {
+        // OpenRC and runit use the Dashboard's explicit pkexec fallback; the
+        // systemd-only Control Manager socket/service is intentionally absent.
+        return Ok(());
+    }
+    if !cfg!(target_os = "linux") || !supported_linux_architecture() {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -1924,16 +2382,20 @@ pub fn ensure_control_manager_service_with_binary(
         &control_service,
         0o644,
     )?;
-    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
+    let systemctl = gitrun_platform::trusted_service_manager_binary(
+        gitrun_platform::ServiceManager::Systemd,
+    )
+    .ok_or_else(|| SetupError::Command("trusted systemctl executable was not found".into()))?;
+    run_command(Command::new(&systemctl).args(["daemon-reload"]))?;
 
     for service in [
         "gitrun-control.service",
         "gitrun.service",
         "gitrun-gsr.service",
     ] {
-        run_command(Command::new("/usr/bin/systemctl").args(["enable", service]))?;
-        run_command(Command::new("/usr/bin/systemctl").args(["restart", service]))?;
-        run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", service]))?;
+        run_command(Command::new(&systemctl).args(["enable", service]))?;
+        run_command(Command::new(&systemctl).args(["restart", service]))?;
+        run_command(Command::new(&systemctl).args(["is-active", "--quiet", service]))?;
     }
     Ok(())
 }
@@ -2097,7 +2559,7 @@ pub fn validate_system_state_directory(directory: &Path) -> Result<(), SetupErro
 /// Repair ownership drift from older system installations without recursively
 /// changing user-owned settings, vault contents, or recovery journals.
 pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), SetupError> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") || !supported_linux_architecture() {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -2353,6 +2815,10 @@ fn valid_repo(value: &str) -> bool {
         && repo
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
+fn supported_linux_architecture() -> bool {
+    cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64")
 }
 
 fn running_as_root() -> bool {
@@ -2751,6 +3217,169 @@ fn validate_env_file_value(key: &str, value: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use gitrun_platform::PackageManager;
+
+    #[test]
+    fn non_systemd_service_wrapper_loads_environment_without_shell_evaluation() {
+        let wrapper = gitrun_service_environment_wrapper(true);
+        assert!(wrapper.contains("export \"$key=$value\""));
+        assert!(wrapper.contains("exec \"/usr/local/bin/gitrun-recovery\" \"$@\""));
+        assert!(!wrapper.contains(". /etc/gitrun/gitrun.env"));
+        assert!(!wrapper.contains("eval "));
+    }
+
+    #[test]
+    fn docker_engine_and_buildx_package_names_match_distribution_repositories() {
+        assert_eq!(
+            docker_packages(PackageManager::Dnf),
+            ["moby-engine", "docker-compose"]
+        );
+        assert_eq!(
+            buildx_packages(PackageManager::Dnf),
+            &[&["docker-buildx"][..]]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Apk),
+            ["docker", "docker-cli-compose"]
+        );
+        assert_eq!(
+            buildx_packages(PackageManager::Apk),
+            &[&["docker-cli-buildx"][..]]
+        );
+    }
+
+    #[test]
+    fn package_install_commands_are_native_to_each_supported_distribution() {
+        let cases = [
+            (
+                PackageManager::Apt,
+                "/usr/bin/apt-get",
+                vec!["install", "-y", "docker.io"],
+            ),
+            (
+                PackageManager::Dnf,
+                "/usr/bin/dnf",
+                vec!["install", "-y", "moby-engine"],
+            ),
+            (
+                PackageManager::Zypper,
+                "/usr/bin/zypper",
+                vec!["--non-interactive", "install", "--no-recommends", "docker"],
+            ),
+            (
+                PackageManager::Pacman,
+                "/usr/bin/pacman",
+                vec!["-S", "--noconfirm", "--needed", "docker"],
+            ),
+            (
+                PackageManager::Apk,
+                "/sbin/apk",
+                vec!["add", "--no-cache", "docker"],
+            ),
+            (
+                PackageManager::Xbps,
+                "/usr/bin/xbps-install",
+                vec!["-Sy", "docker"],
+            ),
+            (
+                PackageManager::Emerge,
+                "/usr/bin/emerge",
+                vec!["--ask=n", "docker"],
+            ),
+        ];
+
+        for (manager, expected_program, expected_args) in cases {
+            let packages = docker_packages(manager);
+            let (program, args) = package_install_spec(manager, packages).unwrap();
+            assert_eq!(program, expected_program, "wrong installer for {manager:?}");
+            let mut expected = expected_args;
+            expected.truncate(expected.len().saturating_sub(1));
+            expected.extend_from_slice(packages);
+            assert_eq!(
+                args.iter().map(String::as_str).collect::<Vec<_>>(),
+                expected,
+                "wrong package arguments for {manager:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn docker_package_names_match_native_package_managers() {
+        assert_eq!(
+            docker_packages(PackageManager::Apt),
+            ["docker.io", "docker-compose-v2"]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Dnf),
+            ["moby-engine", "docker-compose"]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Pacman),
+            ["docker", "docker-compose"]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Apk),
+            ["docker", "docker-cli-compose"]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Xbps),
+            ["docker", "docker-compose"]
+        );
+        assert!(docker_packages(PackageManager::Rpm).is_empty());
+    }
+
+    #[test]
+    fn package_removal_commands_are_native_to_each_supported_manager() {
+        let cases = [
+            (
+                PackageManager::Apt,
+                "/usr/bin/apt-get",
+                vec!["purge", "-y", "gitrun-server"],
+            ),
+            (
+                PackageManager::Dnf,
+                "/usr/bin/dnf",
+                vec!["remove", "-y", "gitrun-server"],
+            ),
+            (
+                PackageManager::Zypper,
+                "/usr/bin/zypper",
+                vec!["--non-interactive", "remove", "gitrun-server"],
+            ),
+            (
+                PackageManager::Pacman,
+                "/usr/bin/pacman",
+                vec!["-Rns", "--noconfirm", "gitrun-server"],
+            ),
+            (
+                PackageManager::Apk,
+                "/sbin/apk",
+                vec!["del", "gitrun-server"],
+            ),
+            (
+                PackageManager::Xbps,
+                "/usr/bin/xbps-remove",
+                vec!["-y", "gitrun-server"],
+            ),
+            (
+                PackageManager::Rpm,
+                "/usr/bin/rpm",
+                vec!["-e", "gitrun-server"],
+            ),
+        ];
+
+        for (manager, expected_program, expected_args) in cases {
+            let (program, args) = package_remove_spec(manager, "gitrun-server").unwrap();
+            assert_eq!(program, expected_program, "wrong remover for {manager:?}");
+            assert_eq!(
+                args.iter().map(String::as_str).collect::<Vec<_>>(),
+                expected_args,
+                "wrong removal arguments for {manager:?}"
+            );
+        }
+        assert!(package_remove_spec(PackageManager::Emerge, "gitrun-server").is_err());
+    }
+
     use super::*;
     use std::{
         fs,
@@ -2945,7 +3574,9 @@ mod tests {
             .next()
             .unwrap();
         assert!(!hook.contains("dpkg"));
-        assert!(uninstall.contains("args([\"--purge\", \"gitrun\"])"));
+        assert!(uninstall.contains("package_remove_spec(manager, name)"));
+        assert!(!hook.contains("package_remove_spec"));
+        assert!(!hook.contains("dpkg"));
     }
 
     #[test]

@@ -75,7 +75,7 @@ jobs:
   variables-verification:
     if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Repository CI variables
-    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -190,7 +190,7 @@ jobs:
     if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Runner environment
     needs: variables-verification
-    runs-on: &runner ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
+    runs-on: &runner ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -988,7 +988,7 @@ jobs:
   rust-lint:
     name: Rust lint (fmt, clippy, docs)
     needs: cargo-lock
-    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true' || needs.cargo-lock.outputs.workflows == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1397,9 +1397,11 @@ jobs:
             grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun control-manager' systemd/gitrun-control.service || return 1
-            grep -Fq 'systemctl").args(["enable", "gitrun.service"])' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'systemctl").args(["enable", "gitrun-gsr.service"])' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'systemctl").args(["enable", "gitrun-control.service"])' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'ServiceManager::Systemd' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'systemctl' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'gitrun.service' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'gitrun-control.service' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs || return 1
           }
@@ -1535,7 +1537,7 @@ jobs:
           path: |
             .gitrun-cargo
             target
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-
       - name: Record target cache restore
@@ -1618,7 +1620,7 @@ jobs:
           path: |
             .gitrun-cargo
             target
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}
       - name: Record target cache save result
         if: always()
         env:
@@ -1720,6 +1722,7 @@ jobs:
           rc=0
           ci_run "Test platform detection contracts" cargo test --locked -p gitrun-platform || rc=1
           ci_run "Test native recovery service-manager routing" cargo test --locked -p gitrun-recovery main_library_restore_routes_by_the_active_service_manager || rc=1
+          ci_run "Probe Tauri dependencies on Debian, Fedora, Arch and Alpine" python3 scripts/ci/check-dashboard-distro-dependencies.py || rc=1
           ci_run "Audit repository-wide multi-distro boundaries" python3 scripts/check-multidistro-contracts.py || rc=1
           exit "$rc"
       - *report
@@ -1768,6 +1771,17 @@ jobs:
               "new CLI has reinstall target unit coverage": "prefers_new_server_deb_when_both_targets_exist" in cli and "retains_legacy_target_fallback_for_old_manifests" in cli,
               "new CLI retains legacy manifest fallback": 'artifact_for("linux-x86_64-deb")' in cli and '"gitrun"' in cli,
               "Desktop package remains independent": "name: gitrun-desktop" in release,
+              "Dashboard release restores Cargo and npm caches": "Restore Dashboard Cargo and npm caches" in release and ".gitrun-cargo" in release and ".gitrun-npm-cache" in release,
+              "Dashboard has native x86_64 and ARM64 GNU build runners on the glibc compatibility baseline": "runner: ubuntu-22.04-arm" in release and "runner: ubuntu-22.04" in release and "target: aarch64-unknown-linux-gnu" in release and "target: x86_64-unknown-linux-gnu" in release,
+              "Dashboard release covers GNU and musl on x86_64 and ARM64": all(target in release for target in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]) and "build-dashboard-musl:" in release,
+              "Dashboard ARM64 musl build uses Void native WebKitGTK packages": "ghcr.io/void-linux/void-musl-full:20260801r1" in release and "libwebkit2gtk41-devel" in release and "rustup-init" in release,
+              "Dashboard GNU packages include DEB, RPM and Arch": all(token in release for token in ["-deb.deb", "-rpm.rpm", "-archlinux.pkg.tar.zst"]),
+              "Dashboard musl APK is limited to Alpine x86_64 while XBPS covers both architectures": all(token in release for token in ['if [ "$DESKTOP_ARCH" = "x86_64" ]', "-musl-apk.apk", "-musl-xbps.xbps", "linux-x86_64-musl-desktop-apk", "linux-x86_64-musl-desktop-xbps", "linux-aarch64-musl-desktop-xbps"]) and "linux-aarch64-musl-desktop-apk" not in release and "Alpine ARM64 Desktop APK must not be published" in release,
+              "Dashboard manifest maps every Desktop package to a unique target": all(token in release for token in ["linux-x86_64-desktop-rpm", "linux-aarch64-desktop-rpm", "linux-x86_64-desktop-arch", "linux-aarch64-desktop-arch", "linux-x86_64-musl-desktop-bin", "linux-aarch64-musl-desktop-bin", "linux-x86_64-musl-desktop-apk", "linux-x86_64-musl-desktop-xbps", "linux-aarch64-musl-desktop-xbps"]),
+              "Dashboard provenance declares architecture-specific package availability": "desktop_package_formats" in release and "desktop_package_arches" in release and "aarch64-unknown-linux-musl" in release,
+              "Dashboard cache key is isolated from Server builds": "-desktop-" in release and "hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json')" in release,
+              "Dashboard cache is saved after its artifact build": release.index("Upload independent Dashboard artifacts") < release.index("Save Dashboard Cargo and npm caches"),
+              "Dashboard uses the Node 24-compatible setup-node action": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in release,
               "Desktop excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,
               "release notes include per-architecture ABI tables": '["Architecture", "ABI", "Package format", "Artifact", "SHA-256"]' in release,
               "release notes are generated from signed manifest": "manifest = json.loads(manifest_path.read_text" in release,
@@ -2060,6 +2074,98 @@ jobs:
       - *npm_cache_save_report
       - *report
       - *logs
+
+  # ───────────────────────────────────────────── native ARM64 Dashboard ──
+  tauri-arm64:
+    name: Tauri GUI build and package · ARM64
+    needs: [cargo-lock, rust-lint, frontend]
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: "0"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Tauri Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf xdg-utils libwebkit2gtk-4.1-dev imagemagick
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Restore ARM64 Dashboard Cargo and npm caches
+        id: dashboard-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-ci/npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-aarch64-gnu-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-aarch64-gnu-${{ env.RUST_VERSION }}-
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Install Dashboard frontend dependencies
+        run: |
+          set -euo pipefail
+          mkdir -p "$NPM_CONFIG_CACHE"
+          npm --prefix crates/gitrun-dashboard-tauri ci
+      - name: Normalize ARM64 Tauri PNG icons
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+          (("${#icons[@]}" > 0))
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+            mv "$tmp" "$icon"
+          done
+      - name: Build native ARM64 Dashboard
+        run: |
+          set -euo pipefail
+          export TMPDIR="$RUNNER_TEMP/tauri-tmp" XDG_CACHE_HOME="$RUNNER_TEMP/tauri-cache"
+          mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
+          npm --prefix crates/gitrun-dashboard-tauri run tauri build -- --ci --no-bundle
+          npm --prefix crates/gitrun-dashboard-tauri run tauri bundle -- --bundles appimage --no-binary-patching
+          appimage="$(find target/release/bundle -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          file "$appimage"
+          install -Dm0755 "$appimage" "$RUNNER_TEMP/GitRun-Desktop-linux-aarch64.AppImage"
+      - name: Upload native ARM64 Dashboard artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: gitrun-dashboard-arm64-ci
+          path: ${{ runner.temp }}/GitRun-Desktop-linux-aarch64.AppImage
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save ARM64 Dashboard Cargo and npm caches
+        if: success() && steps.dashboard-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-ci/npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-aarch64-gnu-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
 
   # ─────────────────────────────────────────────────────── tauri-recovery ──
   tauri-recovery:
@@ -2408,6 +2514,7 @@ jobs:
       - multi-distro-contracts
       - release-contracts
       - tauri
+      - tauri-arm64
       - tauri-recovery
       - docker
     runs-on: *runner
@@ -2469,6 +2576,7 @@ jobs:
           multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
           release-contracts|Server, Desktop and migration release contracts|workflows|
           tauri|Tauri GUI|tauri|rust-lint frontend
+          tauri-arm64|Tauri GUI native ARM64 build|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
           JOBS

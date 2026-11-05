@@ -334,18 +334,28 @@ fn initialize_update_signing_environment(force_trusted_values: bool) {
     }
 }
 
+fn trusted_privilege_command() -> Result<std::process::Command, std::io::Error> {
+    let executable = gitrun_platform::trusted_privilege_escalation_binary().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no trusted sudo, doas or pkexec executable was found in a root-owned system path",
+        )
+    })?;
+    Ok(std::process::Command::new(executable))
+}
+
 fn elevate_system_update(
     manifest_url: Option<&str>,
     force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    // sudo writes its password prompt directly to the inherited TTY. End the
+    // Privilege helpers write their authorization prompt directly to the inherited TTY. End the
     // parent's Ratatui inline viewport first so its render thread cannot race
     // with raw child output and corrupt the cat/prompt layout.
     presenter.prepare_for_external_process();
 
     let executable = std::env::current_exe()?;
-    let mut command = std::process::Command::new("/usr/bin/sudo");
+    let mut command = trusted_privilege_command()?;
     for (key, value) in update_signing_environment() {
         command.arg("env").arg(format!("{key}={value}"));
     }
@@ -357,23 +367,18 @@ fn elevate_system_update(
         command.arg(url);
     }
     // Use an explicit CLI flag instead of an environment variable because
-    // sudo may filter custom environment variables.
+    // Privilege helpers may filter custom environment variables.
     let status = command.status()?;
     Ok(status.code().unwrap_or(1))
 }
 
 #[cfg(target_os = "linux")]
-fn run_embedded_privileged_helper(
-    prefix: &str,
-    script: &str,
-    presenter: &mut presenter::CatPresenter,
-) -> i32 {
+fn run_privileged_cli_action(action: &str, presenter: &mut presenter::CatPresenter) -> i32 {
     if system_install_paths().is_none() {
         eprintln!("GitRun: this operation requires the trusted system installation at /usr/bin/gitrun or /usr/local/bin/gitrun.");
         return 2;
     }
 
-    use std::os::unix::fs::OpenOptionsExt;
     let executable = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
@@ -381,49 +386,34 @@ fn run_embedded_privileged_helper(
             return 1;
         }
     };
-    let nonce = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(value) => value.as_nanos(),
-        Err(error) => {
-            eprintln!("GitRun: unable to create a private helper name: {error}");
-            return 1;
-        }
+    presenter.prepare_for_external_process();
+
+    let mut command = if running_as_root() {
+        std::process::Command::new(&executable)
+    } else {
+        let mut command = match trusted_privilege_command() {
+            Ok(command) => command,
+            Err(error) => {
+                eprintln!("GitRun: unable to request administrator authorization: {error}");
+                return 1;
+            }
+        };
+        command.arg(&executable);
+        command
     };
-    let script_path =
-        std::env::temp_dir().join(format!("{prefix}-{}-{nonce}.sh", std::process::id()));
-
-    let result = (|| -> Result<i32, Box<dyn std::error::Error>> {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o700)
-            .open(&script_path)?;
-        file.write_all(script.as_bytes())?;
-        file.sync_all()?;
-        presenter.prepare_for_external_process();
-        let status = std::process::Command::new("/bin/bash")
-            .arg(&script_path)
-            .arg(&executable)
-            .status()?;
-        Ok(status.code().unwrap_or(1))
-    })();
-
-    let _ = std::fs::remove_file(&script_path);
-    match result {
-        Ok(code) => code,
+    let status = command.arg("--no-cat").arg(action).status();
+    match status {
+        Ok(status) => status.code().unwrap_or(1),
         Err(error) => {
-            eprintln!("GitRun {prefix}: failed to launch privileged helper: {error}");
+            eprintln!("GitRun {action}: failed to launch privileged operation: {error}");
             1
         }
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_embedded_privileged_helper(
-    _prefix: &str,
-    _script: &str,
-    _presenter: &mut presenter::CatPresenter,
-) -> i32 {
-    eprintln!("GitRun uninstall/reinstall currently supports Linux x86_64 only.");
+fn run_privileged_cli_action(_action: &str, _presenter: &mut presenter::CatPresenter) -> i32 {
+    eprintln!("GitRun uninstall/reinstall currently supports Linux only.");
     2
 }
 
@@ -654,19 +644,7 @@ fn update_command(
         // no image refresh is needed, so a newly scheduled run cannot race the
         // executable replacement or the subsequent systemd reconciliation.
         println!("GitRun update: stopping scheduler before completing the system update");
-        if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
-            .args(["stop", "gitrun.service"])
-            .status()
-            .and_then(|status| {
-                if status.success() {
-                    Ok(())
-                } else {
-                    Err(std::io::Error::other(format!(
-                        "systemctl stop gitrun.service exited with status {status}"
-                    )))
-                }
-            })
-        {
+        if let Err(error) = stop_scheduler_service_for_update() {
             let rollback_error = rollback_installed_update_with_config(
                 &backup,
                 &artifacts,
@@ -909,20 +887,77 @@ fn verify_post_update_doctor(binary: &Path) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
-    if !cfg!(target_os = "linux") || !Path::new("/etc/systemd/system/gitrun.service").is_file() {
+fn run_managed_service_action(
+    service: gitrun_platform::ManagedService,
+    action: gitrun_platform::ServiceAction,
+) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or_else(|| std::io::Error::other("no supported active service manager was detected"))?;
+    if !gitrun_platform::service_is_installed(manager, service) {
+        return Err(std::io::Error::other(format!(
+            "GitRun service definition is not installed for {}",
+            manager.as_str()
+        ))
+        .into());
+    }
+    let spec = gitrun_platform::service_command(manager, action, service);
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        std::io::Error::other(format!(
+            "trusted {} service-control executable was not found",
+            manager.as_str()
+        ))
+    })?;
+    std::process::Command::new(program)
+        .args(spec.args)
+        .output()
+        .map_err(Into::into)
+}
+
+fn stop_scheduler_service_for_update() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return Ok(());
+    };
+    if !gitrun_platform::service_is_installed(manager, gitrun_platform::ManagedService::Scheduler) {
         return Ok(());
     }
-    let output = std::process::Command::new("systemctl")
-        .args(["restart", "gitrun.service"])
-        .output()?;
+    let output = run_managed_service_action(
+        gitrun_platform::ManagedService::Scheduler,
+        gitrun_platform::ServiceAction::Stop,
+    )?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if detail.is_empty() {
-            "systemctl restart gitrun.service failed".into()
+        return Err(std::io::Error::other(if detail.is_empty() {
+            format!("{} could not stop the GitRun scheduler", manager.as_str())
         } else {
-            detail.into()
-        });
+            detail
+        })
+        .into());
+    }
+    Ok(())
+}
+
+fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return Ok(());
+    };
+    if !gitrun_platform::service_is_installed(manager, gitrun_platform::ManagedService::Scheduler) {
+        return Ok(());
+    }
+    let output = run_managed_service_action(
+        gitrun_platform::ManagedService::Scheduler,
+        gitrun_platform::ServiceAction::Restart,
+    )?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(std::io::Error::other(if detail.is_empty() {
+            format!(
+                "{} could not restart the GitRun scheduler",
+                manager.as_str()
+            )
+        } else {
+            detail
+        })
+        .into());
     }
     Ok(())
 }
@@ -1402,7 +1437,7 @@ fn terminal_setup_command(
                 .arg(&path)
                 .status()?
         } else {
-            std::process::Command::new("/usr/bin/sudo")
+            trusted_privilege_command()?
                 .arg(&executable)
                 .arg("--no-cat")
                 .arg("--install-root")
@@ -1444,7 +1479,7 @@ fn connect_command(
 
     // On a protected system install, repository connection is routed through
     // the persistent Control Manager. This keeps the credential-bearing config
-    // root-only and avoids a per-connect sudo/pkexec prompt.
+    // root-only and avoids a per-connect privilege prompt.
     if gitrun_management::control_manager_enabled() && !running_as_root() {
         let result = gitrun_management::control_manager_request(
             "write",
@@ -1738,16 +1773,8 @@ fn main() {
             }
         },
         Command::Doctor => run_doctor(),
-        Command::Uninstall => run_embedded_privileged_helper(
-            "gitrun-uninstall",
-            include_str!("../../../scripts/uninstall.sh"),
-            &mut presenter,
-        ),
-        Command::Reinstall => run_embedded_privileged_helper(
-            "gitrun-reinstall",
-            include_str!("../../../scripts/reinstall-latest.sh"),
-            &mut presenter,
-        ),
+        Command::Uninstall => run_privileged_cli_action("--uninstall-root", &mut presenter),
+        Command::Reinstall => run_privileged_cli_action("--reinstall-latest-root", &mut presenter),
         Command::Update {
             manifest_url,
             check: true,
@@ -2889,12 +2916,30 @@ fn doctor_command_status(program: &str, args: &[&str]) -> Result<String, String>
 }
 
 fn doctor_service_check(service: &str) -> Result<String, String> {
-    match doctor_command_status("/usr/bin/systemctl", &["is-active", service]) {
-        Ok(state) if state == "active" => Ok("active".into()),
-        Ok(state) => Err(format!("reports {state}; expected active")),
-        Err(error) => Err(format!(
-            "not active ({error}); inspect systemctl status {service}"
-        )),
+    let managed = match service {
+        "gitrun.service" => gitrun_platform::ManagedService::Scheduler,
+        "gitrun-gsr.service" => gitrun_platform::ManagedService::Gsr,
+        _ => return Err(format!("unsupported GitRun service name: {service}")),
+    };
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or_else(|| "no supported active service manager was detected".to_owned())?;
+    if !gitrun_platform::service_is_installed(manager, managed) {
+        return Err(format!(
+            "{service} is not installed for the active {} service manager",
+            manager.as_str()
+        ));
+    }
+    let output = run_managed_service_action(managed, gitrun_platform::ServiceAction::Status)
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok("active".into())
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(if detail.is_empty() {
+            format!("{service} is not active according to {}", manager.as_str())
+        } else {
+            detail
+        })
     }
 }
 
@@ -2933,7 +2978,7 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             let detail = if doctor_expected_protected_json_permissions() {
                 format!(
-                    "INFO: protected system directory is not readable by this account; run `sudo gitrun doctor` for full JSON validation ({error})"
+                    "INFO: protected system directory is not readable by this account; run `gitrun doctor` as root for full JSON validation ({error})"
                 )
             } else {
                 format!(
@@ -3066,7 +3111,7 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
     }
     if skipped_protected > 0 {
         println!(
-            "[INFO] JSON scan under {} inspected {checked} file(s) and skipped {skipped_protected} protected path(s); run `sudo gitrun doctor` for full JSON validation",
+            "[INFO] JSON scan under {} inspected {checked} file(s) and skipped {skipped_protected} protected path(s); run `gitrun doctor` as root for full JSON validation",
             root.display()
         );
     } else {
@@ -3097,7 +3142,7 @@ fn doctor_json_file_check(
     }
     let content = std::fs::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::PermissionDenied && expected_protected_permissions {
-            "INFO: protected by system permissions; run `sudo gitrun doctor` to validate this file"
+            "INFO: protected by system permissions; run `gitrun doctor` as root to validate this file"
                 .to_owned()
         } else if error.kind() == std::io::ErrorKind::PermissionDenied {
             format!(
@@ -3396,7 +3441,7 @@ fn run_doctor() -> i32 {
             "Control Manager group",
             doctor_command_status("/usr/bin/getent", &["group", "gitrun-control"])
                 .map(|_| "gitrun-control exists".into())
-                .map_err(|_| "missing gitrun-control group; run sudo gitrun fix-update".into()),
+                .map_err(|_| "missing gitrun-control group; run gitrun fix-update as root".into()),
             &mut failures,
             &mut warnings,
         );
@@ -3420,7 +3465,7 @@ fn run_doctor() -> i32 {
             control_unit
                 .map(|path| Ok((*path).to_owned()))
                 .unwrap_or_else(|| {
-                    Err("missing gitrun-control.service; run sudo gitrun fix-update".into())
+                    Err("missing gitrun-control.service; run gitrun fix-update as root".into())
                 }),
             &mut failures,
             &mut warnings,
@@ -3571,7 +3616,13 @@ fn run_gtuu_command(
             }
         };
         presenter.prepare_for_external_process();
-        let mut command = std::process::Command::new("/usr/bin/sudo");
+        let mut command = match trusted_privilege_command() {
+            Ok(command) => command,
+            Err(error) => {
+                eprintln!("GitRun GTUU: unable to request administrator authorization: {error}");
+                return 1;
+            }
+        };
         command.arg(executable).args(["--no-cat", "gtuu"]);
         if check_only {
             command.arg("--check");
@@ -3713,12 +3764,13 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
             }
         };
         presenter.prepare_for_external_process();
-        let status = match std::process::Command::new("/usr/bin/sudo")
-            .arg(executable)
-            .arg("--no-cat")
-            .arg("--fix-update-root")
-            .status()
-        {
+        let status = match trusted_privilege_command().and_then(|mut command| {
+            command
+                .arg(executable)
+                .arg("--no-cat")
+                .arg("--fix-update-root")
+                .status()
+        }) {
             Ok(status) => status,
             Err(error) => {
                 eprintln!("GitRun fix-update: unable to start privileged repair: {error}");
@@ -3846,7 +3898,7 @@ fn run_update(
 ) -> i32 {
     // Installed-system invocations must never inherit caller-selected update
     // keys, signature policy, or config paths. Direct-root and --only-containers
-    // paths bypass sudo's normal signing-key hand-off, so initialize the fixed
+    // paths bypass the privilege helper's normal signing-key hand-off, so initialize the fixed
     // trust anchors and service config before branching.
     let system_install = system_install_paths().is_some();
     if system_install || only_containers {
@@ -3866,7 +3918,13 @@ fn run_update(
                 }
             };
             presenter.prepare_for_external_process();
-            let mut command = std::process::Command::new("/usr/bin/sudo");
+            let mut command = match trusted_privilege_command() {
+                Ok(command) => command,
+                Err(error) => {
+                    eprintln!("GitRun GTUU: FAIL — unable to request administrator authorization: {error}");
+                    return 1;
+                }
+            };
             command
                 .arg(executable)
                 .args(["--no-cat", "update", "--only-containers"]);
@@ -3901,7 +3959,7 @@ fn run_update(
     }
 
     if system_install_paths().is_some() && !running_as_root() {
-        // Resolve and verify the release before invoking sudo. This avoids an
+        // Resolve and verify the release before requesting administrator authorization. This avoids an
         // unnecessary password prompt when GitHub is unreachable or the
         // release cannot be applied on this host.
         println!(
@@ -4182,8 +4240,20 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("verified GitRun reinstall requires administrator privileges".into());
     }
-    if !cfg!(target_arch = "x86_64") {
-        return Err("the official Debian reinstall currently targets Linux x86_64".into());
+    let package_manager = gitrun_platform::inspect_linux()
+        .and_then(|platform| platform.package_manager)
+        .ok_or_else(|| {
+            "unable to identify a supported native Linux package manager for reinstall".to_owned()
+        })?;
+    if package_manager != gitrun_platform::PackageManager::Apt
+        || target_triple()? != "x86_64-unknown-linux-gnu"
+    {
+        return Err(format!(
+            "automatic package reinstall currently supports only x86_64 GNU/Linux with APT; detected {} on {}. Use the distribution's native package manager for reinstall.",
+            package_manager.as_str(),
+            target_triple()?
+        )
+        .into());
     }
     // Auto-reinstall is pinned to the official GitRun trust anchor.
     // Do not allow transient environment overrides to disable verification.

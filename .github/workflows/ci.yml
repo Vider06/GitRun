@@ -2107,6 +2107,7 @@ jobs:
       - name: Install Tauri Linux dependencies
         run: |
           set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \

@@ -723,28 +723,18 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
         .arg("info")
         .output()
         .is_ok_and(|output| output.status.success());
-    let docker_was_active = Command::new("/usr/bin/systemctl")
-        .args(["is-active", "--quiet", "docker.service"])
-        .status()
-        .is_ok_and(|status| status.success());
+    let docker_was_active = host_service_active("docker");
     let started_temporarily = if daemon_ready {
         false
     } else {
-        if !command_exists("systemctl") {
-            return Err(SetupError::Command(
-                "Docker daemon is unavailable and systemd cannot start it for cleanup".into(),
-            ));
-        }
-        run_command(Command::new("/usr/bin/systemctl").args(["start", "docker.service"]))?;
+        start_host_service_temporary("docker")?;
         let ready = Command::new("/usr/bin/docker")
             .arg("info")
             .output()
             .is_ok_and(|output| output.status.success());
         if !ready {
             if !docker_was_active {
-                let _ = Command::new("/usr/bin/systemctl")
-                    .args(["stop", "docker.service"])
-                    .status();
+                let _ = stop_host_service("docker");
             }
             return Err(SetupError::Command(
                 "Docker was started but its daemon is still unavailable; GitRun resources were not removed".into(),
@@ -801,7 +791,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     // Do not change Docker's pre-existing service state. If Docker was stopped
     // before uninstall, restore that state even when object cleanup fails.
     let restore_result = if started_temporarily {
-        run_command(Command::new("/usr/bin/systemctl").args(["stop", "docker.service"]))
+        stop_host_service("docker")
     } else {
         Ok(())
     };
@@ -1345,6 +1335,85 @@ fn buildx_packages(manager: gitrun_platform::PackageManager) -> &'static [&'stat
         gitrun_platform::PackageManager::Xbps => &[&["docker-buildx"]],
         gitrun_platform::PackageManager::Emerge => &[&["app-containers/docker-buildx"]],
         gitrun_platform::PackageManager::Rpm => &[],
+    }
+}
+
+fn host_service_active(service: &str) -> bool {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return false;
+    };
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let unit = if service.ends_with(".service") {
+                service.to_owned()
+            } else {
+                format!("{service}.service")
+            };
+            Command::new("/usr/bin/systemctl")
+                .args(["is-active", "--quiet", &unit])
+                .status()
+                .is_ok_and(|status| status.success())
+        }
+        gitrun_platform::ServiceManager::OpenRc => Command::new("/sbin/rc-service")
+            .args([service, "status"])
+            .status()
+            .is_ok_and(|status| status.success()),
+        gitrun_platform::ServiceManager::Runit => {
+            let path = format!("/var/service/{service}");
+            Command::new("/usr/bin/sv")
+                .args(["status", &path])
+                .status()
+                .is_ok_and(|status| status.success())
+        }
+    }
+}
+
+fn start_host_service_temporary(service: &str) -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let unit = if service.ends_with(".service") {
+                service.to_owned()
+            } else {
+                format!("{service}.service")
+            };
+            run_command(Command::new("/usr/bin/systemctl").args(["start", &unit]))
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            run_command(Command::new("/sbin/rc-service").args([service, "start"]))
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            if service == "docker" {
+                ensure_runit_service_link(service)?;
+            }
+            let path = format!("/var/service/{service}");
+            run_command(Command::new("/usr/bin/sv").args(["up", &path]))
+        }
+    }
+}
+
+fn stop_host_service(service: &str) -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let unit = if service.ends_with(".service") {
+                service.to_owned()
+            } else {
+                format!("{service}.service")
+            };
+            run_command(Command::new("/usr/bin/systemctl").args(["stop", &unit]))
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            run_command(Command::new("/sbin/rc-service").args([service, "stop"]))
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            let path = format!("/var/service/{service}");
+            run_command(Command::new("/usr/bin/sv").args(["down", &path]))
+        }
     }
 }
 

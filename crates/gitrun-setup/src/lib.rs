@@ -1347,18 +1347,18 @@ fn ensure_docker() -> Result<(), SetupError> {
         if docker_daemon_ready() && compose_ready() {
             return Ok(());
         }
-    } else {
-        let manager = current_package_manager()?;
-        let packages = docker_packages(manager);
-        if packages.is_empty() {
-            return Err(SetupError::Command(format!(
-                "Docker installation is not configured for package manager {}",
-                manager.as_str()
-            )));
-        }
-        install_distribution_packages(packages)?;
-        start_host_service("docker")?;
     }
+
+    let manager = current_package_manager()?;
+    let packages = docker_packages(manager);
+    if packages.is_empty() {
+        return Err(SetupError::Command(format!(
+            "Docker installation is not configured for package manager {}",
+            manager.as_str()
+        )));
+    }
+    install_distribution_packages(packages)?;
+    start_host_service("docker")?;
 
     if !docker_daemon_ready() || !compose_ready() {
         return Err(SetupError::Command(

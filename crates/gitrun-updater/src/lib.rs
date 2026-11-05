@@ -2183,7 +2183,8 @@ fn linux_dependency_packages(
         (P::Emerge, "Git") => &["dev-vcs/git"][..],
 
         (P::Apt, "Docker") => &["docker.io", "docker-compose-v2"][..],
-        (P::Dnf | P::Zypper | P::Pacman | P::Xbps, "Docker") => {
+        (P::Dnf, "Docker") => &["moby-engine", "docker-compose", "docker-buildx"][..],
+        (P::Zypper | P::Pacman | P::Xbps, "Docker") => {
             &["docker", "docker-compose", "docker-buildx"][..]
         }
         (P::Apk, "Docker") => &["docker", "docker-cli-compose", "docker-cli-buildx"][..],
@@ -3373,7 +3374,7 @@ mod tests {
         );
         assert_eq!(
             linux_dependency_packages(P::Dnf, "Docker").unwrap(),
-            ["docker", "docker-compose", "docker-buildx"]
+            ["moby-engine", "docker-compose", "docker-buildx"]
         );
         assert_eq!(
             linux_dependency_packages(P::Zypper, "Docker").unwrap(),

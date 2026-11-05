@@ -1573,8 +1573,11 @@ jobs:
                   for ending in ("-server.tar.gz", "-server.tar.zst"):
                       if suffix.endswith(ending):
                           triple = suffix[:-len(ending)]
-                          arch, _, abi = triple.partition("-unknown-linux-")
-                          return arch, abi
+                          if triple.startswith("linux-"):
+                              triple = triple[len("linux-"):]
+                          arch, separator, abi = triple.partition("-unknown-linux-")
+                          if separator and arch in {"x86_64", "aarch64"} and abi in {"gnu", "musl"}:
+                              return arch, abi
               match = re.search(r"linux-(x86_64|aarch64)(?:-(musl))?-(?:deb|rpm|apk|arch|xbps)", name)
               if match:
                   return match.group(1), match.group(2) or "gnu"

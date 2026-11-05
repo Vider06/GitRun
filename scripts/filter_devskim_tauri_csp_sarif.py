@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Precisely filter the documented Tauri local-IPC CSP false positives.
+"""Filter only two narrowly guarded classes of documented DevSkim false positives.
 
 Tauri's official v2 CSP example requires an HTTP loopback endpoint in
-`connect-src` alongside the `ipc:` scheme. DevSkim's generic transport and
-loopback rules misclassify that internal IPC origin. This exception is bound
-to one file, one line and two rule IDs; all other results are preserved.
+`connect-src` alongside the `ipc:` scheme. The release workflow also contains
+an isolated, disposable 1.8.23 migration-test HTTP fixture bound to loopback.
+Each exception is constrained to exact source locations and rule IDs; all
+other findings remain in SARIF. Both source guards fail closed on drift.
 
-If the CSP line changes, this script fails closed until the exception is
-re-reviewed. Reference: https://v2.tauri.app/security/csp/
+Reference: https://v2.tauri.app/security/csp/
 """
 
 from __future__ import annotations
@@ -33,6 +33,13 @@ EXPECTED_CSP_LINE = (
     + '; style-src \'self\'; img-src \'self\' data:"'
 )
 EXPECTED_RULE_IDS = {"DS137138", "DS162092"}
+
+# The release workflow embeds a disposable 1.8.23 migration-test fixture. Its
+# loopback-only HTTP endpoint is not shipped or enabled in production. Keep
+# this exception tied to the exact six source lines and DS137138 only.
+RELEASE_TARGET = ".github/workflows/release.yml"
+RELEASE_LOOPBACK_LINES = {1647, 1656, 1676, 1717, 1721, 1723}
+RELEASE_SUPPRESSION_MARKER = "DevSkim: ignore DS137138"
 
 
 def is_tauri_ipc_csp_false_positive(result: dict[str, Any]) -> bool:
@@ -64,13 +71,30 @@ def is_tauri_ipc_csp_false_positive(result: dict[str, Any]) -> bool:
     return False
 
 
+def is_release_migration_loopback_fixture(result: dict[str, Any]) -> bool:
+    """Match only DS137138 at one of the six guarded migration-test lines."""
+    if result.get("ruleId") != "DS137138":
+        return False
+
+    for location in result.get("locations", []):
+        physical = location.get("physicalLocation", {})
+        artifact = physical.get("artifactLocation", {})
+        uri = str(artifact.get("uri", "")).replace("\\", "/")
+        if not uri.endswith(RELEASE_TARGET):
+            continue
+        line = physical.get("region", {}).get("startLine")
+        if line in RELEASE_LOOPBACK_LINES:
+            return True
+    return False
+
+
 def filter_sarif(data: dict[str, Any]) -> int:
     """Remove only known false positives in-place; preserve all other results."""
     removed = 0
     for run in data.get("runs", []):
         kept = []
         for result in run.get("results", []):
-            if is_tauri_ipc_csp_false_positive(result):
+            if is_tauri_ipc_csp_false_positive(result) or is_release_migration_loopback_fixture(result):
                 removed += 1
             else:
                 kept.append(result)
@@ -79,6 +103,13 @@ def filter_sarif(data: dict[str, Any]) -> int:
 
 
 def main() -> None:
+    release_lines = Path(RELEASE_TARGET).read_text(encoding="utf-8").splitlines()
+    for line_number in RELEASE_LOOPBACK_LINES:
+        if len(release_lines) < line_number or RELEASE_SUPPRESSION_MARKER not in release_lines[line_number - 1]:
+            raise SystemExit(
+                "Release migration loopback fixture changed: re-review the narrow DevSkim exception."
+            )
+
     config_lines = Path(TARGET).read_text(encoding="utf-8").splitlines()
     if len(config_lines) < TARGET_LINE or config_lines[TARGET_LINE - 1] != EXPECTED_CSP_LINE:
         raise SystemExit(
@@ -86,6 +117,20 @@ def main() -> None:
         )
 
     data = json.loads(SARIF_PATH.read_text(encoding="utf-8"))
+    release_findings = []
+    for run in data.get("runs", []):
+        for result in run.get("results", []):
+            for location in result.get("locations", []):
+                physical = location.get("physicalLocation", {})
+                artifact = physical.get("artifactLocation", {})
+                uri = str(artifact.get("uri", "")).replace("\\", "/")
+                if uri.endswith(RELEASE_TARGET) or "release.yml" in uri:
+                    release_findings.append((
+                        result.get("ruleId"),
+                        uri,
+                        physical.get("region", {}).get("startLine"),
+                    ))
+    print(f"DevSkim release.yml findings before filtering: {release_findings}")
     removed = filter_sarif(data)
     if removed:
         # DevSkim's container may create a root-owned, read-only SARIF file.
@@ -110,7 +155,7 @@ def main() -> None:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
     print(
-        f"DevSkim Tauri IPC exception: filtered {removed} exact false-positive result(s); "
+        f"DevSkim narrow exceptions: filtered {removed} exact documented false-positive result(s); "
         "all other findings remain in SARIF."
     )
 

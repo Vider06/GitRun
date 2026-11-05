@@ -3,8 +3,11 @@ from typing import Any
 
 from scripts.filter_devskim_tauri_csp_sarif import (
     EXPECTED_RULE_IDS,
+    RELEASE_LOOPBACK_LINES,
+    RELEASE_TARGET,
     TARGET,
     filter_sarif,
+    is_release_migration_loopback_fixture,
     is_tauri_ipc_csp_false_positive,
 )
 
@@ -29,6 +32,33 @@ def finding(
 
 
 class DevSkimTauriCspFilterTests(unittest.TestCase):
+    def test_filters_only_guarded_release_migration_loopback_lines(self) -> None:
+        self.assertEqual(RELEASE_LOOPBACK_LINES, {1647, 1656, 1676, 1717, 1721, 1723})
+        for line in RELEASE_LOOPBACK_LINES:
+            with self.subTest(line=line):
+                self.assertTrue(
+                    is_release_migration_loopback_fixture(
+                        finding("DS137138", path=RELEASE_TARGET, line=line)
+                    )
+                )
+
+    def test_preserves_other_release_findings(self) -> None:
+        self.assertFalse(
+            is_release_migration_loopback_fixture(
+                finding("DS137138", path=RELEASE_TARGET, line=1648)
+            )
+        )
+        self.assertFalse(
+            is_release_migration_loopback_fixture(
+                finding("DS999999", path=RELEASE_TARGET, line=1647)
+            )
+        )
+        self.assertFalse(
+            is_release_migration_loopback_fixture(
+                finding("DS137138", path="src/network.rs", line=1647)
+            )
+        )
+
     def test_filters_only_the_two_expected_tauri_ipc_rules(self) -> None:
         self.assertEqual(EXPECTED_RULE_IDS, {"DS137138", "DS162092"})
         for rule_id in EXPECTED_RULE_IDS:

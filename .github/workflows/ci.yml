@@ -1750,6 +1750,13 @@ jobs:
 
           release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
           cli = Path("crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+          release_job = release.rsplit("  release:", 1)[1]
+          release_steps = [
+              line.split("name: ", 1)[1]
+              for line in release_job.splitlines()
+              if line.startswith("      - name: ")
+          ]
+          publish_index = release.index("      - name: Publish all release assets")
           checks = {
               "1.9.0-only migration allowlist": 'if [ "$number" = "1.9.0" ]' in release,
               "legacy Debian package identity": "Package: gitrun" in release and 'artifact="GitRun-$VERSION-linux-x86_64-deb.deb"' in release,
@@ -1759,10 +1766,13 @@ jobs:
               "actual legacy reinstall command is executed": '--no-cat --reinstall-latest-root' in release,
               "legacy updater uses latest manifest resolution": 'latest_manifest_download_url("Vider06/GitRun")' in release,
               "migration keeps 1.8.23 maintainer scripts": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release,
-              "legacy updater SHA verification": "download_and_verify(&download_url, &artifact.sha256" in release,
-              "migration release is staged as prerelease": "--prerelease" in release and "-F prerelease=true" in release,
-              "failed migration verification is demoted back to prerelease": "Revert failed migration verification to prerelease" in release and "-f make_latest=false" in release,
-              "migration is promoted only after package verification": release.index("legacy-updater-package/usr/share/gitrun/version.txt") < release.index("make_latest=true"),
+              "legacy updater SHA verification": "download_and_verify(" in release and "&artifact.sha256" in release,
+              "migration has GTK and GLib build dependencies": all(package in release for package in ["libglib2.0-dev", "libgtk-3-dev", "libwebkit2gtk-4.1-dev"]),
+              "migration uses a local staged-payload fixture": "GITRUN_MIGRATION_TEST_BASE_URL" in release and "python3 -m http.server" in release,
+              "migration is verified before publication": release.index("Verify migration with the actual 1.8.23 updater") < publish_index,
+              "release publication is the final release step": bool(release_steps) and release_steps[-1] == "Publish all release assets",
+              "no post-publication migration rollback remains": "Revert failed migration verification to prerelease" not in release and "make_latest=false" not in release,
+              "migration is promoted only after package verification": release.index("legacy-updater-package/usr/share/gitrun/version.txt") < publish_index and "-F prerelease=false -f make_latest=true" in release[publish_index:],
               "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
               "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
               "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,

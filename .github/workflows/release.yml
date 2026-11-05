@@ -415,8 +415,8 @@ jobs:
             -e NPM_CONFIG_CACHE=/workspace/.gitrun-npm-cache \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace/crates/gitrun-dashboard-tauri \
-            rust:1.99-alpine sh -ec '
-              apk add --no-cache build-base pkgconf nodejs npm curl wget file openssl-dev \
+            rust:1.99-alpine bash -ec '
+              apk add --no-cache bash build-base pkgconf nodejs npm curl wget file openssl-dev \
                 webkit2gtk-4.1-dev libayatana-appindicator-dev librsvg font-dejavu imagemagick \
                 openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
               node --version
@@ -444,13 +444,11 @@ jobs:
               done
               npm run tauri build -- --ci --no-bundle
               test -s /workspace/target/release/gitrun-dashboard-tauri
-              install -Dm0755 /workspace/target/release/gitrun-dashboard-tauri \
-                "/workspace/GitRun-Desktop-$VERSION-linux-${TARGET##*-linux-}.bin"
             '
           out="$RUNNER_TEMP/dashboard-musl-canonical"
           rm -rf "$out"
           mkdir -p "$out"
-          install -m 0755 "$GITHUB_WORKSPACE/GitRun-Desktop-$VERSION-linux-musl.bin" "$out/GitRun-Desktop-$VERSION-$TARGET.bin"
+          install -m 0755 "$GITHUB_WORKSPACE/target/release/gitrun-dashboard-tauri" "$out/GitRun-Desktop-$VERSION-$TARGET.bin"
       - name: Upload independent musl Dashboard executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

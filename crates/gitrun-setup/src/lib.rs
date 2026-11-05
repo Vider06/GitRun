@@ -3256,6 +3256,58 @@ mod tests {
         assert!(docker_packages(PackageManager::Rpm).is_empty());
     }
 
+    #[test]
+    fn package_removal_commands_are_native_to_each_supported_manager() {
+        let cases = [
+            (
+                PackageManager::Apt,
+                "/usr/bin/apt-get",
+                vec!["purge", "-y", "gitrun-server"],
+            ),
+            (
+                PackageManager::Dnf,
+                "/usr/bin/dnf",
+                vec!["remove", "-y", "gitrun-server"],
+            ),
+            (
+                PackageManager::Zypper,
+                "/usr/bin/zypper",
+                vec!["--non-interactive", "remove", "gitrun-server"],
+            ),
+            (
+                PackageManager::Pacman,
+                "/usr/bin/pacman",
+                vec!["-Rns", "--noconfirm", "gitrun-server"],
+            ),
+            (
+                PackageManager::Apk,
+                "/sbin/apk",
+                vec!["del", "gitrun-server"],
+            ),
+            (
+                PackageManager::Xbps,
+                "/usr/bin/xbps-remove",
+                vec!["-y", "gitrun-server"],
+            ),
+            (
+                PackageManager::Rpm,
+                "/usr/bin/rpm",
+                vec!["-e", "gitrun-server"],
+            ),
+        ];
+
+        for (manager, expected_program, expected_args) in cases {
+            let (program, args) = package_remove_spec(manager, "gitrun-server").unwrap();
+            assert_eq!(program, expected_program, "wrong remover for {manager:?}");
+            assert_eq!(
+                args.iter().map(String::as_str).collect::<Vec<_>>(),
+                expected_args,
+                "wrong removal arguments for {manager:?}"
+            );
+        }
+        assert!(package_remove_spec(PackageManager::Emerge, "gitrun-server").is_err());
+    }
+
     use super::*;
     use std::{
         fs,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "$RUNNER_TEMP/ci-lib.sh"
+# shellcheck disable=SC1090
 source "$RUNNER_TEMP/ci-lib.sh"
 chk_platform() {
   [ "$RUNNER_OS" = Linux ] || { echo "RUNNER_OS=$RUNNER_OS (Linux required)"; return 1; }

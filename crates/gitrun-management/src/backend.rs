@@ -2568,6 +2568,84 @@ fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
     }
 }
 
+fn run_service_log_command(
+    program: &std::path::Path,
+    args: &[String],
+) -> Result<std::process::Output, String> {
+    let mut command = if current_process_is_root() {
+        std::process::Command::new(program)
+    } else {
+        let pkexec = pkexec_path()
+            .ok_or("trusted pkexec was not found; administrator authorization is required to read service logs")?;
+        let mut command = std::process::Command::new(pkexec);
+        command.arg(program);
+        command
+    };
+    command
+        .args(args)
+        .output()
+        .map_err(|error| format!("unable to execute service log reader: {error}"))
+}
+
+fn read_service_log_files(paths: &[PathBuf]) -> Result<Vec<String>, String> {
+    let mut lines = Vec::new();
+    let mut protected = Vec::new();
+    for path in paths {
+        if !path.is_file() {
+            continue;
+        }
+        match std::fs::read(path) {
+            Ok(contents) => lines.extend(
+                String::from_utf8_lossy(&contents)
+                    .lines()
+                    .map(str::to_owned),
+            ),
+            Err(_) => protected.push(path.clone()),
+        }
+    }
+    if protected.is_empty() {
+        return Ok(lines);
+    }
+
+    if current_process_is_root() {
+        return Err(format!(
+            "unable to read GitRun service log {}",
+            protected[0].display()
+        ));
+    }
+    let cat = ["/usr/bin/cat", "/bin/cat"]
+        .iter()
+        .map(PathBuf::from)
+        .find_map(|path| trusted_privileged_binary(&path));
+    let (program, prefix) = if let Some(cat) = cat {
+        (cat, Vec::new())
+    } else {
+        let busybox = ["/bin/busybox", "/usr/bin/busybox"]
+            .iter()
+            .map(PathBuf::from)
+            .find_map(|path| trusted_privileged_binary(&path))
+            .ok_or("trusted cat or BusyBox executable was not found to read protected GitRun logs")?;
+        (busybox, vec!["cat".to_owned()])
+    };
+    let mut args = prefix;
+    args.extend(protected.iter().map(|path| path.to_string_lossy().into_owned()));
+    let output = run_service_log_command(&program, &args)?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            format!("privileged log reader exited with {}", output.status)
+        } else {
+            format!("unable to read protected GitRun logs: {detail}")
+        });
+    }
+    lines.extend(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned),
+    );
+    Ok(lines)
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
     if control_manager_enabled() && !current_process_is_root() {
@@ -2628,10 +2706,19 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
                 .iter()
                 .map(PathBuf::from)
                 .find_map(|path| trusted_privileged_binary(&path));
+            let logread = logread.or_else(|| {
+                ["/bin/busybox", "/usr/bin/busybox"]
+                    .iter()
+                    .map(PathBuf::from)
+                    .find_map(|path| trusted_privileged_binary(&path))
+            });
             let mut lines = if let Some(logread) = logread {
-                std::process::Command::new(logread)
-                    .args(["-l", &(limit.saturating_mul(8)).to_string()])
-                    .output()
+                let mut args = Vec::new();
+                if logread.file_name().is_some_and(|name| name == "busybox") {
+                    args.push("logread".to_owned());
+                }
+                args.extend(["-l".to_owned(), limit.saturating_mul(8).to_string()]);
+                run_service_log_command(&logread, &args)
                     .ok()
                     .filter(|output| output.status.success())
                     .map(|output| {
@@ -2656,14 +2743,7 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
                 if units.iter().any(|unit| *unit == "gitrun-gsr.service") {
                     paths.push(PathBuf::from("/var/log/gitrun/gsr.log"));
                 }
-                for path in paths {
-                    if path.is_file() {
-                        let contents = std::fs::read_to_string(&path).map_err(|error| {
-                            format!("unable to read OpenRC log {}: {error}", path.display())
-                        })?;
-                        lines.extend(contents.lines().map(str::to_owned));
-                    }
-                }
+                lines = read_service_log_files(&paths)?;
             }
             if lines.len() > limit {
                 lines.drain(..lines.len() - limit);
@@ -2684,22 +2764,9 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
                     PathBuf::from("/var/log/gitrun-gsr/current"),
                 ]);
             }
-            let mut entries = Vec::new();
-            for path in paths {
-                if !path.is_file() {
-                    continue;
-                }
-                let contents = std::fs::read(&path).map_err(|error| {
-                    format!("unable to read runit log {}: {error}", path.display())
-                })?;
-                // svlogd prefixes records with binary TAI64N timestamps; the
-                // payload is not guaranteed to be valid UTF-8.
-                entries.extend(
-                    String::from_utf8_lossy(&contents)
-                        .lines()
-                        .map(str::to_owned),
-                );
-            }
+            // svlogd prefixes records with binary TAI64N timestamps; the
+            // payload is not guaranteed to be valid UTF-8.
+            let mut entries = read_service_log_files(&paths)?;
             if entries.len() > limit {
                 entries.drain(..entries.len() - limit);
             }

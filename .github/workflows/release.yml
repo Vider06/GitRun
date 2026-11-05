@@ -886,7 +886,7 @@ jobs:
               dst: /usr/share/applications/gitrun-desktop.desktop
           NFPM
           nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
-          apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.apk' -print -quit)"
+          apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.apk' -print -quit)"
           test -n "$apk"
           mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
           apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
@@ -907,7 +907,7 @@ jobs:
             -n "gitrun-desktop-${VERSION_NUMBER}_1" -D "musl webkit2gtk polkit" \
             -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
             -s "GitRun Desktop for musl Linux" "$xbps_stage")
-          xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.xbps' -print -quit)"
+          xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.xbps' -print -quit)"
           test -n "$xbps"
           mv "$xbps" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
           "$xbps_rindex" -a "$out"/*.xbps
@@ -1092,8 +1092,8 @@ jobs:
             "GitRun-Desktop-$VERSION-linux-aarch64-archlinux.pkg.tar.zst" \
             "GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
             "GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
-            "GitRun-Desktop-$VERSION-linux-x86_64-unknown-linux-musl.bin" \
-            "GitRun-Desktop-$VERSION-linux-aarch64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin" \
             "GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk" \
             "GitRun-Desktop-$VERSION-linux-aarch64-musl-apk.apk" \
             "GitRun-Desktop-$VERSION-linux-x86_64-musl-xbps.xbps" \

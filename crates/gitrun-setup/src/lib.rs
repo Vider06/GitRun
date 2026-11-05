@@ -2888,7 +2888,6 @@ fn validate_env_file_value(key: &str, value: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{docker_packages, package_install_spec};
     use gitrun_platform::PackageManager;
 
     #[test]

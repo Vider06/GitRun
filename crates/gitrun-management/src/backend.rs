@@ -3345,15 +3345,6 @@ fn current_process_is_root() -> bool {
         .is_some_and(|effective_uid| effective_uid == 0)
 }
 
-fn trusted_service_command(
-    manager: gitrun_platform::ServiceManager,
-) -> Option<PathBuf> {
-    gitrun_platform::service_command_candidates(manager)
-        .iter()
-        .map(PathBuf::from)
-        .find_map(|path| trusted_privileged_binary(&path))
-}
-
 fn service_action_name(action: ServiceAction) -> &'static str {
     match action {
         ServiceAction::Start => "start",

@@ -2662,10 +2662,16 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
                 if !path.is_file() {
                     continue;
                 }
-                let contents = std::fs::read_to_string(&path).map_err(|error| {
+                let contents = std::fs::read(&path).map_err(|error| {
                     format!("unable to read runit log {}: {error}", path.display())
                 })?;
-                entries.extend(contents.lines().map(str::to_owned));
+                // svlogd prefixes records with binary TAI64N timestamps; the
+                // payload is not guaranteed to be valid UTF-8.
+                entries.extend(
+                    String::from_utf8_lossy(&contents)
+                        .lines()
+                        .map(str::to_owned),
+                );
             }
             if entries.len() > limit {
                 entries.drain(..entries.len() - limit);
@@ -3383,6 +3389,17 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
         return Err("GitRun service controls are currently available only on Linux".into());
     }
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or("no supported active service manager was detected on this host")?;
+    if !gitrun_platform::service_is_installed(
+        manager,
+        gitrun_platform::ManagedService::Scheduler,
+    ) {
+        return Err(format!(
+            "GitRun has no installed service definition for the active {} service manager; run the platform-specific setup before controlling the service.",
+            manager.as_str()
+        ));
+    }
     if control_manager_enabled() && !current_process_is_root() {
         let action_arg = service_action_name(action);
         let value = control_manager_request(
@@ -3396,8 +3413,6 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             .ok_or_else(|| "Control Manager returned an invalid service-control result".into());
     }
 
-    let manager = gitrun_platform::detect_service_manager()
-        .ok_or("no supported active service manager was detected on this host")?;
     let native_action = match action {
         ServiceAction::Start => gitrun_platform::ServiceAction::Start,
         ServiceAction::Stop => gitrun_platform::ServiceAction::Stop,

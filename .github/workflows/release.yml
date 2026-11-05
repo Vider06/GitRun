@@ -1498,6 +1498,7 @@ jobs:
           chmod 600 "$key"
           chmod 600 "$key"
           chmod 600 "$key"
+          chmod 600 "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
           echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"

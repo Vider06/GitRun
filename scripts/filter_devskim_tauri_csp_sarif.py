@@ -34,6 +34,19 @@ EXPECTED_CSP_LINE = (
 )
 EXPECTED_RULE_IDS = {"DS137138", "DS162092"}
 
+# The release workflow embeds a disposable 1.8.23 migration-test fixture. Its
+# loopback-only HTTP endpoint is not shipped or enabled in production. Keep
+# this exception tied to the exact six source lines and DS137138 only.
+RELEASE_TARGET = ".github/workflows/release.yml"
+RELEASE_LOOPBACK_LINES = {
+    1647: '                      && url.host_str() == Some("127.0.0.1") /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.8.23 migration-test checkout and accepts loopback only. */',
+    1656: '              if !base_url.starts_with("http://127.0.0.1:") { // DevSkim: ignore DS137138 because this URL is accepted only by the disposable migration-test checkout.',
+    1676: '              if !base_url.starts_with("http://127.0.0.1:") { // DevSkim: ignore DS137138 because this URL is accepted only by the disposable migration-test checkout.',
+    1717: '              sock.bind(("127.0.0.1", 0))  # DevSkim: ignore DS137138 because the ephemeral fixture server binds only to loopback.',
+    1721: '          python3 -m http.server "$port" --bind 127.0.0.1 --directory "$mock_root" > "$RUNNER_TEMP/migration-http.log" 2>&1 & # DevSkim: ignore DS137138 because this temporary server serves fixtures only to the local migration test.',
+    1723: '          base="http://127.0.0.1:$port" # DevSkim: ignore DS137138 because this URL is consumed only by the isolated migration test.',
+}
+
 
 def is_tauri_ipc_csp_false_positive(result: dict[str, Any]) -> bool:
     """Match only the two expected rule IDs at the exact local-IPC CSP line."""
@@ -64,13 +77,30 @@ def is_tauri_ipc_csp_false_positive(result: dict[str, Any]) -> bool:
     return False
 
 
+def is_release_migration_loopback_fixture(result: dict[str, Any]) -> bool:
+    """Match only DS137138 at one of the six guarded migration-test lines."""
+    if result.get("ruleId") != "DS137138":
+        return False
+
+    for location in result.get("locations", []):
+        physical = location.get("physicalLocation", {})
+        artifact = physical.get("artifactLocation", {})
+        uri = str(artifact.get("uri", "")).replace("\\\\", "/")
+        if not uri.endswith(RELEASE_TARGET):
+            continue
+        line = physical.get("region", {}).get("startLine")
+        if line in RELEASE_LOOPBACK_LINES:
+            return True
+    return False
+
+
 def filter_sarif(data: dict[str, Any]) -> int:
     """Remove only known false positives in-place; preserve all other results."""
     removed = 0
     for run in data.get("runs", []):
         kept = []
         for result in run.get("results", []):
-            if is_tauri_ipc_csp_false_positive(result):
+            if is_tauri_ipc_csp_false_positive(result) or is_release_migration_loopback_fixture(result):
                 removed += 1
             else:
                 kept.append(result)
@@ -79,6 +109,13 @@ def filter_sarif(data: dict[str, Any]) -> int:
 
 
 def main() -> None:
+    release_lines = Path(RELEASE_TARGET).read_text(encoding="utf-8").splitlines()
+    for line_number, expected in RELEASE_LOOPBACK_LINES.items():
+        if len(release_lines) < line_number or release_lines[line_number - 1] != expected:
+            raise SystemExit(
+                "Release migration loopback fixture changed: re-review the narrow DevSkim exception."
+            )
+
     config_lines = Path(TARGET).read_text(encoding="utf-8").splitlines()
     if len(config_lines) < TARGET_LINE or config_lines[TARGET_LINE - 1] != EXPECTED_CSP_LINE:
         raise SystemExit(
@@ -110,7 +147,7 @@ def main() -> None:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
     print(
-        f"DevSkim Tauri IPC exception: filtered {removed} exact false-positive result(s); "
+        f"DevSkim narrow exceptions: filtered {removed} exact documented false-positive result(s); "
         "all other findings remain in SARIF."
     )
 

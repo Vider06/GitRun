@@ -1583,6 +1583,16 @@ jobs:
                   return match.group(1), match.group(2) or "gnu"
               return "—", "—"
 
+          architecture_cases = (
+              (f"GitRun-Server-{version}-x86_64-unknown-linux-gnu-server.tar.gz", ("x86_64", "gnu")),
+              (f"GitRun-Server-{version}-linux-aarch64-unknown-linux-musl-server.tar.zst", ("aarch64", "musl")),
+              (f"GitRun-Server-{version}-linux-x86_64-musl-apk.apk", ("x86_64", "musl")),
+          )
+          for sample, expected in architecture_cases:
+              actual = arch_abi(sample)
+              if actual != expected:
+                  raise SystemExit(f"Release-note architecture parser mismatch for {sample}: {actual!r} != {expected!r}")
+
           updater_archives, portable_archives, native_packages = [], [], []
           desktop_assets, migration_assets, metadata_assets = [], [], []
           for name, item in sorted(by_name.items()):

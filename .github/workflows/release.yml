@@ -105,7 +105,7 @@ jobs:
             '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"GitRun",documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit),creationInfo:{created:$created,creators:["Tool: GitRun CI"]},packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
             "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
           jq -n --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
-            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],desktop_package_formats:["deb","rpm","archlinux","appimage","apk","xbps"]}' \
+            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],desktop_package_formats:["deb","rpm","archlinux","appimage","apk","xbps"],desktop_package_arches:{apk:["x86_64"],xbps:["x86_64","aarch64"]}}' \
             > "$root/provenance.json"
       - name: Upload shared inputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -135,6 +135,8 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
       TARGET: ${{ matrix.target }}
+      MUSL_DISTRO: ${{ matrix.musl_distro }}
+      CONTAINER_IMAGE: ${{ matrix.container_image }}
       CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "0"
@@ -374,9 +376,13 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
             docker_platform: linux/amd64
+            musl_distro: alpine
+            container_image: rust:1.99-alpine
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
             docker_platform: linux/arm64
+            musl_distro: void
+            container_image: ghcr.io/void-linux/void-musl-full:20260801R1
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
@@ -401,24 +407,44 @@ jobs:
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-
-      - name: Build native musl Dashboard in Alpine
+      - name: Build native musl Dashboard in distro-native environment
         env:
           DOCKER_PLATFORM: ${{ matrix.docker_platform }}
         run: |
           set -euo pipefail
           mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE"
-          docker run --rm --platform "$DOCKER_PLATFORM" \
+          docker run --rm --pull=always --platform "$DOCKER_PLATFORM" \
             -e VERSION_NUMBER="$VERSION_NUMBER" \
+            -e TARGET="$TARGET" \
+            -e RUST_VERSION="$RUST_VERSION" \
+            -e MUSL_DISTRO="$MUSL_DISTRO" \
             -e CARGO_HOME=/workspace/.gitrun-cargo \
+            -e RUSTUP_HOME=/workspace/.gitrun-cargo/rustup \
             -e CARGO_TARGET_DIR=/workspace/target \
             -e CARGO_INCREMENTAL=0 \
             -e NPM_CONFIG_CACHE=/workspace/.gitrun-npm-cache \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace/crates/gitrun-dashboard-tauri \
-            rust:1.99-alpine sh -ec '
-              apk add --no-cache build-base pkgconf nodejs npm curl wget file openssl-dev \
-                webkit2gtk-4.1-dev libayatana-appindicator-dev librsvg font-dejavu imagemagick \
-                openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
+            "$CONTAINER_IMAGE" sh -ec '
+              if [ "$MUSL_DISTRO" = "alpine" ]; then
+                apk add --no-cache build-base pkgconf nodejs npm curl wget file openssl-dev \
+                  webkit2gtk-4.1-dev libayatana-appindicator-dev librsvg font-dejavu imagemagick \
+                  openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
+              else
+                xbps-install -Suy
+                xbps-install -y base-devel pkg-config nodejs curl ca-certificates file ImageMagick \
+                  libwebkit2gtk41-devel libayatana-appindicator-devel librsvg-devel gtk+3-devel \
+                  openssl-devel cairo-devel harfbuzz-devel glib-devel wayland-devel zlib-devel
+                curl --fail --silent --show-error --location \
+                  "https://static.rust-lang.org/rustup/dist/${TARGET}/rustup-init" \
+                  -o /tmp/rustup-init
+                chmod 0755 /tmp/rustup-init
+                /tmp/rustup-init -y --no-modify-path --profile minimal \
+                  --default-toolchain "$RUST_VERSION" --default-host "$TARGET"
+                . "$CARGO_HOME/env"
+                test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
+                test "$(rustc --version | awk "{print \\$2}")" = "$RUST_VERSION"
+              fi
               node --version
               npm --version
               node --input-type=module - "$VERSION_NUMBER" <<NODE
@@ -427,12 +453,12 @@ jobs:
           for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
             const value = JSON.parse(fs.readFileSync(file, "utf8"));
             value.version = version;
-            fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
+            fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\\n");
           }
           const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
           lock.version = version;
           lock.packages[""].version = version;
-          fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n");
+          fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\\n");
           NODE
               npm ci
               for icon in src-tauri/icons/*.png; do
@@ -911,12 +937,14 @@ jobs:
             - src: $stage/usr/share/applications/gitrun-desktop.desktop
               dst: /usr/share/applications/gitrun-desktop.desktop
           NFPM
-          nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
-          apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.apk' -print -quit)"
-          test -n "$apk"
-          mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
-          apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
-          grep -Fq '.PKGINFO' <<< "$apk_contents"
+          if [ "$DESKTOP_ARCH" = "x86_64" ]; then
+            nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
+            apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.apk' -print -quit)"
+            test -n "$apk"
+            mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
+            apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_contents"
+          fi
 
           xbps_stage="$RUNNER_TEMP/dashboard-xbps-stage"
           cp -a "$stage" "$xbps_stage"
@@ -1375,7 +1403,7 @@ jobs:
               "linux-x86_64-desktop-rpm","linux-aarch64-desktop-rpm",
               "linux-x86_64-desktop-arch","linux-aarch64-desktop-arch",
               "linux-x86_64-musl-desktop-bin","linux-aarch64-musl-desktop-bin",
-              "linux-x86_64-musl-desktop-apk","linux-aarch64-musl-desktop-apk",
+              "linux-x86_64-musl-desktop-apk",
               "linux-x86_64-musl-desktop-xbps","linux-aarch64-musl-desktop-xbps",
               "linux-x86_64-server-deb","linux-aarch64-server-deb",
               "linux-x86_64-server-rpm","linux-aarch64-server-rpm",

@@ -355,17 +355,26 @@ fn write_setup_flag() -> Result<(), SetupError> {
     write_resource(&setup_flag_path(), &content, 0o600)
 }
 
-/// Removes GitRun runtime state and fully purges its Debian package, when present.
+/// Removes GitRun runtime state and purges its native Server package when present.
 /// Only GitRun-owned Docker objects and app-specific user state are removed; Docker
 /// itself and other host workloads are shared dependencies and are not purged.
 pub fn uninstall_linux() -> Result<(), SetupError> {
     validate_uninstall_host()?;
-    let package_registered = deb_package_registered();
-    cleanup_uninstall_resources(package_registered)?;
+    let registered_package = current_package_manager().ok().and_then(|manager| {
+        ["gitrun-server", "gitrun"]
+            .into_iter()
+            .find(|name| package_is_registered(manager, name))
+            .map(|name| (manager, name))
+    });
+    cleanup_uninstall_resources(registered_package.is_some())?;
 
-    if package_registered {
-        println!("[GitRun uninstall] Purging package registration with dpkg");
-        run_command(Command::new("/usr/bin/dpkg").args(["--purge", "gitrun"]))?;
+    if let Some((manager, name)) = registered_package {
+        println!(
+            "[GitRun uninstall] Removing registered package {name} through {}",
+            manager.as_str()
+        );
+        let (program, args) = package_remove_spec(manager, name)?;
+        run_command(Command::new(program).args(args))?;
     }
 
     // Catch leftovers from previous manual installs and old package layouts.
@@ -398,24 +407,75 @@ fn validate_uninstall_host() -> Result<(), SetupError> {
     Ok(())
 }
 
-fn deb_package_registered() -> bool {
-    let Ok(output) = Command::new("/usr/bin/dpkg-query")
-        .args(["-W", "-f=${db:Status-Status}", "gitrun"])
-        .output()
-    else {
+fn package_is_registered(
+    manager: gitrun_platform::PackageManager,
+    name: &str,
+) -> bool {
+    let result = match manager {
+        gitrun_platform::PackageManager::Apt => Command::new("/usr/bin/dpkg-query")
+            .args(["-W", "-f=${db:Status-Status}", name])
+            .output(),
+        gitrun_platform::PackageManager::Dnf
+        | gitrun_platform::PackageManager::Zypper
+        | gitrun_platform::PackageManager::Rpm => {
+            Command::new("/usr/bin/rpm").args(["-q", name]).output()
+        }
+        gitrun_platform::PackageManager::Pacman => {
+            Command::new("/usr/bin/pacman").args(["-Q", name]).output()
+        }
+        gitrun_platform::PackageManager::Apk => {
+            Command::new("/sbin/apk").args(["info", "-e", name]).output()
+        }
+        gitrun_platform::PackageManager::Xbps => {
+            Command::new("/usr/bin/xbps-query").args(["-p", "pkgver", name]).output()
+        }
+        gitrun_platform::PackageManager::Emerge => return false,
+    };
+    let Ok(output) = result else {
         return false;
     };
-    output.status.success()
-        && matches!(
-            String::from_utf8_lossy(&output.stdout).trim(),
-            "installed"
-                | "config-files"
-                | "unpacked"
-                | "half-installed"
-                | "half-configured"
-                | "triggers-awaited"
-                | "triggers-pending"
-        )
+    if !output.status.success() {
+        return false;
+    }
+    if manager == gitrun_platform::PackageManager::Apt {
+        String::from_utf8_lossy(&output.stdout).trim() == "installed"
+    } else {
+        true
+    }
+}
+
+fn package_remove_spec(
+    manager: gitrun_platform::PackageManager,
+    name: &str,
+) -> Result<(&'static str, Vec<String>), SetupError> {
+    let (program, mut args): (&str, Vec<String>) = match manager {
+        gitrun_platform::PackageManager::Apt => (
+            "/usr/bin/apt-get",
+            vec!["purge".into(), "-y".into()],
+        ),
+        gitrun_platform::PackageManager::Dnf => (
+            "/usr/bin/dnf",
+            vec!["remove".into(), "-y".into()],
+        ),
+        gitrun_platform::PackageManager::Zypper => (
+            "/usr/bin/zypper",
+            vec!["--non-interactive".into(), "remove".into()],
+        ),
+        gitrun_platform::PackageManager::Pacman => (
+            "/usr/bin/pacman",
+            vec!["-Rns".into(), "--noconfirm".into()],
+        ),
+        gitrun_platform::PackageManager::Apk => ("/sbin/apk", vec!["del".into()]),
+        gitrun_platform::PackageManager::Xbps => ("/usr/bin/xbps-remove", vec!["-y".into()]),
+        gitrun_platform::PackageManager::Emerge => {
+            return Err(SetupError::Command(
+                "automatic package removal is not configured for Gentoo".into(),
+            ));
+        }
+        gitrun_platform::PackageManager::Rpm => ("/usr/bin/rpm", vec!["-e".into()]),
+    };
+    args.push(name.to_owned());
+    Ok((program, args))
 }
 
 fn stop_gitrun_services() -> Result<(), SetupError> {

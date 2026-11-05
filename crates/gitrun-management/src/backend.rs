@@ -3541,8 +3541,11 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             .output()
             .map_err(|error| format!("unable to run {}: {error}", manager.as_str()))?
     } else {
-        let privilege_helper = gitrun_platform::trusted_privilege_escalation_binary()
-            .ok_or("trusted sudo, doas or pkexec executable was not found")?;
+        // Prefer PolicyKit for GUI-launched operations; fall back to a trusted
+        // terminal privilege helper when pkexec is not installed.
+        let privilege_helper = pkexec_path()
+            .or_else(gitrun_platform::trusted_privilege_escalation_binary)
+            .ok_or("trusted pkexec, sudo or doas executable was not found")?;
         std::process::Command::new(privilege_helper)
             .arg(&program)
             .args(&args)

@@ -1721,6 +1721,7 @@ name = "gitrun-setup"
 version = "0.9.17"
 dependencies = [
  "gitrun-core",
+ "gitrun-platform",
  "gitrun-updater",
  "libc",
  "reqwest 0.12.28",

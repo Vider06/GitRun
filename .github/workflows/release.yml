@@ -447,6 +447,7 @@ jobs:
                 test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
                 rustc --version | grep -Fq "rustc $RUST_VERSION "
               fi
+              pkg-config --exists gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1
               node --version
               npm --version
               node --input-type=module - "$VERSION_NUMBER" <<NODE
@@ -1376,6 +1377,8 @@ jobs:
                       elif name.endswith("-archlinux.pkg.tar.zst"):
                           target = f"linux-{arch}-desktop-arch"
                       elif name.endswith("-musl-apk.apk"):
+                          if arch != "x86_64":
+                              raise SystemExit("Alpine musl APK is only supported on x86_64; ARM64 uses XBPS")
                           target = f"linux-{arch}-musl-desktop-apk"
                       elif name.endswith("-musl-xbps.xbps"):
                           target = f"linux-{arch}-musl-desktop-xbps"

@@ -387,6 +387,8 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
       TARGET: ${{ matrix.target }}
+      MUSL_DISTRO: ${{ matrix.musl_distro }}
+      CONTAINER_IMAGE: ${{ matrix.container_image }}
       CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "0"
@@ -443,7 +445,7 @@ jobs:
                   --default-toolchain "$RUST_VERSION" --default-host "$TARGET"
                 . "$CARGO_HOME/env"
                 test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
-                test "$(rustc --version | awk "{print \\$2}")" = "$RUST_VERSION"
+                rustc --version | grep -Fq "rustc $RUST_VERSION "
               fi
               node --version
               npm --version

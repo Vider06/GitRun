@@ -466,7 +466,7 @@ jobs:
               npm ci
               for icon in src-tauri/icons/*.png; do
                 [ -f "$icon" ] || continue
-                tmp="$(mktemp --suffix=.png)"
+                tmp="$(mktemp)"
                 convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
                 mv "$tmp" "$icon"
               done

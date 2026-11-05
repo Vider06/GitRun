@@ -1111,7 +1111,9 @@ fn stream_privileged_command(
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
 async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
-    if !cfg!(target_os = "linux") || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64")) {
+    if !cfg!(target_os = "linux")
+        || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
+    {
         return Err("graphical uninstall currently targets Linux x86_64 and ARM64".into());
     }
     if control_manager_enabled() {
@@ -1257,7 +1259,9 @@ fn stream_unprivileged_command(
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
-    if !cfg!(target_os = "linux") || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64")) {
+    if !cfg!(target_os = "linux")
+        || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
+    {
         return Err("graphical reinstall currently targets Linux x86_64 and ARM64".into());
     }
     if control_manager_enabled() {
@@ -1356,7 +1360,9 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
         reinstall,
     } = request;
 
-    if !cfg!(target_os = "linux") || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64")) {
+    if !cfg!(target_os = "linux")
+        || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
+    {
         return Err("graphical first-run setup currently targets Linux x86_64 and ARM64".into());
     }
     if reinstall {

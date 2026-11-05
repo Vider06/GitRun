@@ -47,7 +47,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CARGO_HOME=/opt/cargo \
     PATH=/opt/cargo/bin:/usr/local/bin:$PATH
 
-# hadolint ignore=DL3008 -- Debian packages intentionally follow the pinned bookworm base image security stream.
+# hadolint ignore=DL3008
+# Runtime packages intentionally follow Debian Bookworm security updates instead of freezing stale versions.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl git jq tar gzip sudo python3 python3-pip \
@@ -138,7 +139,8 @@ RUN install -d -o root -g root -m 0755 /run/gitrun \
     && chown root:root /run/gitrun/gsr-policy.env \
     && chmod 0444 /run/gitrun/gsr-policy.env
 
-# hadolint ignore=DL3002 -- entrypoint must remain root to prepare the protected policy, Docker socket group, and runner ownership.
+# hadolint ignore=DL3002
+# PID 1 must bootstrap root-owned GSR policy and runner state; the GSR supervisor drops the workload to runner.
 USER 0
 
 # Install the GSR agent as both shell entry points. The original binaries are

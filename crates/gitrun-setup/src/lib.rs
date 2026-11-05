@@ -1411,6 +1411,195 @@ fn ensure_buildx() -> Result<(), SetupError> {
     Ok(())
 }
 
+fn gitrun_service_environment_wrapper() -> &'static str {
+    r#"#!/bin/sh
+set -eu
+while IFS='=' read -r key value; do
+    case "$key" in
+        GITHUB_TOKEN|GITRUN_*) export "$key=$value" ;;
+    esac
+done < /etc/gitrun/gitrun.env
+exec /usr/local/bin/gitrun "$@"
+"#
+}
+
+fn ensure_runit_service_link(service: &str) -> Result<(), SetupError> {
+    use std::os::unix::fs::symlink;
+
+    let source = Path::new("/etc/sv").join(service);
+    if !source.is_dir() {
+        return Err(SetupError::Command(format!(
+            "runit service definition {} is missing",
+            source.display()
+        )));
+    }
+    let service_dir = Path::new("/var/service");
+    fs::create_dir_all(service_dir)?;
+    let link = service_dir.join(service);
+    match fs::symlink_metadata(&link) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let target = fs::read_link(&link)?;
+            if target != source {
+                return Err(SetupError::Command(format!(
+                    "runit service link {} points to an unexpected target",
+                    link.display()
+                )));
+            }
+        }
+        Ok(_) => {
+            return Err(SetupError::Command(format!(
+                "runit service path {} already exists and is not a symbolic link",
+                link.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            symlink(&source, &link)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+fn install_gitrun_service_definitions(
+    recovery_installed: bool,
+) -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let scheduler = if recovery_installed {
+                resources::SYSTEMD_SERVICE
+            } else {
+                resources::SYSTEMD_SERVICE_DIRECT
+            };
+            write_resource(
+                Path::new("/etc/systemd/system/gitrun.service"),
+                scheduler,
+                0o644,
+            )?;
+            write_resource(
+                Path::new("/etc/systemd/system/gitrun-gsr.service"),
+                resources::SYSTEMD_GSR_SERVICE,
+                0o644,
+            )?;
+            write_resource(
+                Path::new("/etc/systemd/system/gitrun-control.service"),
+                resources::SYSTEMD_CONTROL_MANAGER_SERVICE,
+                0o644,
+            )?;
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            write_resource(
+                Path::new("/usr/libexec/gitrun/gitrun-service"),
+                gitrun_service_environment_wrapper(),
+                0o755,
+            )?;
+            write_resource(
+                Path::new("/etc/init.d/gitrun"),
+                r#"#!/sbin/openrc-run
+name="GitRun scheduler"
+command="/usr/libexec/gitrun/gitrun-service"
+command_args="scheduler"
+command_background=true
+pidfile="/run/gitrun.pid"
+output_log="/var/log/gitrun/scheduler.log"
+error_log="/var/log/gitrun/scheduler.log"
+depend() {
+    need net docker
+}
+"#,
+                0o755,
+            )?;
+            write_resource(
+                Path::new("/etc/init.d/gitrun-gsr"),
+                r#"#!/sbin/openrc-run
+name="GitRun GSR watchdog"
+command="/usr/libexec/gitrun/gitrun-service"
+command_args="gsr-watchdog"
+command_background=true
+pidfile="/run/gitrun-gsr.pid"
+output_log="/var/log/gitrun/gsr.log"
+error_log="/var/log/gitrun/gsr.log"
+depend() {
+    need gitrun
+}
+"#,
+                0o755,
+            )?;
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            write_resource(
+                Path::new("/usr/libexec/gitrun/gitrun-service"),
+                gitrun_service_environment_wrapper(),
+                0o755,
+            )?;
+            for (service, command) in [
+                ("gitrun", "scheduler"),
+                ("gitrun-gsr", "gsr-watchdog"),
+            ] {
+                let root = Path::new("/etc/sv").join(service);
+                write_resource(
+                    &root.join("run"),
+                    &format!(
+                        "#!/bin/sh\nexec /usr/libexec/gitrun/gitrun-service {command}\n"
+                    ),
+                    0o755,
+                )?;
+                let log_root = Path::new("/var/log/gitrun").join(service);
+                fs::create_dir_all(&log_root)?;
+                write_resource(
+                    &root.join("log/run"),
+                    &format!(
+                        "#!/bin/sh\nexec svlogd -tt {}\n",
+                        log_root.display()
+                    ),
+                    0o755,
+                )?;
+                ensure_runit_service_link(service)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn start_gitrun_services() -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
+        SetupError::Command("no supported active service manager was detected".into())
+    })?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
+            for service in [
+                "gitrun-control.service",
+                "gitrun.service",
+                "gitrun-gsr.service",
+            ] {
+                run_command(Command::new("/usr/bin/systemctl").args(["enable", service]))?;
+                run_command(Command::new("/usr/bin/systemctl").args(["restart", service]))?;
+                run_command(
+                    Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", service]),
+                )?;
+            }
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            for service in ["gitrun", "gitrun-gsr"] {
+                run_command(Command::new("/sbin/rc-update").args(["add", service, "default"]))?;
+                run_command(Command::new("/sbin/rc-service").args([service, "restart"]))?;
+                run_command(Command::new("/sbin/rc-service").args([service, "status"]))?;
+            }
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            for service in ["gitrun", "gitrun-gsr"] {
+                let path = format!("/var/service/{service}");
+                run_command(Command::new("/usr/bin/sv").args(["up", &path]))?;
+                run_command(Command::new("/usr/bin/sv").args(["status", &path]))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 const RUNNER_BUILD_FINGERPRINT_LABEL: &str = "io.gitrun.runner.build-input-sha256";
 const RUNNER_BUILD_PROFILE_LABEL: &str = "io.gitrun.runner.build-profile";
 

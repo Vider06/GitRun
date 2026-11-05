@@ -447,9 +447,7 @@ fn stop_gitrun_services() -> Result<(), SetupError> {
         gitrun_platform::ServiceManager::Runit => {
             for service in ["gitrun-gsr", "gitrun"] {
                 let path = format!("/var/service/{service}");
-                let _ = Command::new("/usr/bin/sv")
-                    .args(["down", &path])
-                    .status();
+                let _ = Command::new("/usr/bin/sv").args(["down", &path]).status();
             }
         }
     }
@@ -608,8 +606,7 @@ fn cleanup_temp_artifacts() -> Result<(), SetupError> {
 }
 
 fn reload_systemd() -> Result<(), SetupError> {
-    if gitrun_platform::detect_service_manager()
-        != Some(gitrun_platform::ServiceManager::Systemd)
+    if gitrun_platform::detect_service_manager() != Some(gitrun_platform::ServiceManager::Systemd)
         || !command_exists("systemctl")
     {
         return Ok(());
@@ -967,8 +964,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
     validate_bootstrap_auth(&auth)?;
 
     let systemd_control_manager =
-        gitrun_platform::detect_service_manager()
-            == Some(gitrun_platform::ServiceManager::Systemd);
+        gitrun_platform::detect_service_manager() == Some(gitrun_platform::ServiceManager::Systemd);
     if systemd_control_manager {
         ensure_control_manager_group()?;
         if let Some(uid) = owner_uid {
@@ -1448,9 +1444,7 @@ fn ensure_runit_service_link(service: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
-fn install_gitrun_service_definitions(
-    recovery_installed: bool,
-) -> Result<(), SetupError> {
+fn install_gitrun_service_definitions(recovery_installed: bool) -> Result<(), SetupError> {
     let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
         SetupError::Command("no supported active service manager was detected".into())
     })?;
@@ -1522,26 +1516,18 @@ depend() {
                 gitrun_service_environment_wrapper(),
                 0o755,
             )?;
-            for (service, command) in [
-                ("gitrun", "scheduler"),
-                ("gitrun-gsr", "gsr-watchdog"),
-            ] {
+            for (service, command) in [("gitrun", "scheduler"), ("gitrun-gsr", "gsr-watchdog")] {
                 let root = Path::new("/etc/sv").join(service);
                 write_resource(
                     &root.join("run"),
-                    &format!(
-                        "#!/bin/sh\nexec /usr/libexec/gitrun/gitrun-service {command}\n"
-                    ),
+                    &format!("#!/bin/sh\nexec /usr/libexec/gitrun/gitrun-service {command}\n"),
                     0o755,
                 )?;
                 let log_root = Path::new("/var/log/gitrun").join(service);
                 fs::create_dir_all(&log_root)?;
                 write_resource(
                     &root.join("log/run"),
-                    &format!(
-                        "#!/bin/sh\nexec svlogd -tt {}\n",
-                        log_root.display()
-                    ),
+                    &format!("#!/bin/sh\nexec svlogd -tt {}\n", log_root.display()),
                     0o755,
                 )?;
                 ensure_runit_service_link(service)?;
@@ -1565,9 +1551,11 @@ fn start_gitrun_services() -> Result<(), SetupError> {
             ] {
                 run_command(Command::new("/usr/bin/systemctl").args(["enable", service]))?;
                 run_command(Command::new("/usr/bin/systemctl").args(["restart", service]))?;
-                run_command(
-                    Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", service]),
-                )?;
+                run_command(Command::new("/usr/bin/systemctl").args([
+                    "is-active",
+                    "--quiet",
+                    service,
+                ]))?;
             }
         }
         gitrun_platform::ServiceManager::OpenRc => {
@@ -2185,9 +2173,7 @@ pub fn ensure_control_manager_service_with_binary(
     desktop_uid: Option<u32>,
     binary_path: &Path,
 ) -> Result<(), SetupError> {
-    if gitrun_platform::detect_service_manager()
-        != Some(gitrun_platform::ServiceManager::Systemd)
-    {
+    if gitrun_platform::detect_service_manager() != Some(gitrun_platform::ServiceManager::Systemd) {
         // OpenRC and runit use the Dashboard's explicit pkexec fallback; the
         // systemd-only Control Manager socket/service is intentionally absent.
         return Ok(());

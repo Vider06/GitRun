@@ -8,7 +8,7 @@ case "${1:-}" in
     # Operators who want a destructive cleanup must run the explicit
     # "gitrun uninstall" command before removing the package.
     if command -v systemctl >/dev/null 2>&1; then
-      systemctl disable --now gitrun-gsr.service gitrun.service >/dev/null 2>&1 || true
+      systemctl disable --now gitrun-control.service gitrun-gsr.service gitrun.service >/dev/null 2>&1 || true
       systemctl daemon-reload >/dev/null 2>&1 || true
     fi
     ;;

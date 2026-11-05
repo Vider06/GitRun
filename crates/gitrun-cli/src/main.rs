@@ -2937,12 +2937,30 @@ fn doctor_command_status(program: &str, args: &[&str]) -> Result<String, String>
 }
 
 fn doctor_service_check(service: &str) -> Result<String, String> {
-    match doctor_command_status("/usr/bin/systemctl", &["is-active", service]) {
-        Ok(state) if state == "active" => Ok("active".into()),
-        Ok(state) => Err(format!("reports {state}; expected active")),
-        Err(error) => Err(format!(
-            "not active ({error}); inspect systemctl status {service}"
-        )),
+    let managed = match service {
+        "gitrun.service" => gitrun_platform::ManagedService::Scheduler,
+        "gitrun-gsr.service" => gitrun_platform::ManagedService::Gsr,
+        _ => return Err(format!("unsupported GitRun service name: {service}")),
+    };
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or_else(|| "no supported active service manager was detected".to_owned())?;
+    if !gitrun_platform::service_is_installed(manager, managed) {
+        return Err(format!(
+            "{service} is not installed for the active {} service manager",
+            manager.as_str()
+        ));
+    }
+    let output = run_managed_service_action(managed, gitrun_platform::ServiceAction::Status)
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok("active".into())
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(if detail.is_empty() {
+            format!("{service} is not active according to {}", manager.as_str())
+        } else {
+            detail
+        })
     }
 }
 

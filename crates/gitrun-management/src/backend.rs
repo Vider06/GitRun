@@ -2746,10 +2746,10 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
             };
             if lines.is_empty() {
                 let mut paths = Vec::new();
-                if units.iter().any(|unit| *unit == "gitrun.service") {
+                if units.contains(&"gitrun.service") {
                     paths.push(PathBuf::from("/var/log/gitrun/scheduler.log"));
                 }
-                if units.iter().any(|unit| *unit == "gitrun-gsr.service") {
+                if units.contains(&"gitrun-gsr.service") {
                     paths.push(PathBuf::from("/var/log/gitrun/gsr.log"));
                 }
                 lines = read_service_log_files(&paths)?;
@@ -2761,13 +2761,13 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
         }
         gitrun_platform::ServiceManager::Runit => {
             let mut paths = Vec::new();
-            if units.iter().any(|unit| *unit == "gitrun.service") {
+            if units.contains(&"gitrun.service") {
                 paths.extend([
                     PathBuf::from("/var/log/gitrun/gitrun/current"),
                     PathBuf::from("/var/log/gitrun/current"),
                 ]);
             }
-            if units.iter().any(|unit| *unit == "gitrun-gsr.service") {
+            if units.contains(&"gitrun-gsr.service") {
                 paths.extend([
                     PathBuf::from("/var/log/gitrun/gitrun-gsr/current"),
                     PathBuf::from("/var/log/gitrun-gsr/current"),
@@ -3794,7 +3794,7 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
             } else if gsr_service_installed {
                 format!("The GSR service is installed but {service_manager_name} does not report it as active.")
             } else {
-                format!("The GSR service was not found in the active service manager's known locations; run GitRun setup to install it.")
+                "The GSR service was not found in the active service manager's known locations; run GitRun setup to install it.".into()
             },
         },
         DashboardHealthCheck {

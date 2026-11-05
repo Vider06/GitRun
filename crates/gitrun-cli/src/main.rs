@@ -1499,7 +1499,7 @@ fn connect_command(
 
     // On a protected system install, repository connection is routed through
     // the persistent Control Manager. This keeps the credential-bearing config
-    // root-only and avoids a per-connect sudo/pkexec prompt.
+    // root-only and avoids a per-connect privilege prompt.
     if gitrun_management::control_manager_enabled() && !running_as_root() {
         let result = gitrun_management::control_manager_request(
             "write",
@@ -3139,7 +3139,7 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
     }
     if skipped_protected > 0 {
         println!(
-            "[INFO] JSON scan under {} inspected {checked} file(s) and skipped {skipped_protected} protected path(s); run `sudo gitrun doctor` for full JSON validation",
+            "[INFO] JSON scan under {} inspected {checked} file(s) and skipped {skipped_protected} protected path(s); run `gitrun doctor` as root for full JSON validation",
             root.display()
         );
     } else {
@@ -3170,7 +3170,7 @@ fn doctor_json_file_check(
     }
     let content = std::fs::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::PermissionDenied && expected_protected_permissions {
-            "INFO: protected by system permissions; run `sudo gitrun doctor` to validate this file"
+            "INFO: protected by system permissions; run `gitrun doctor` as root to validate this file"
                 .to_owned()
         } else if error.kind() == std::io::ErrorKind::PermissionDenied {
             format!(
@@ -3469,7 +3469,7 @@ fn run_doctor() -> i32 {
             "Control Manager group",
             doctor_command_status("/usr/bin/getent", &["group", "gitrun-control"])
                 .map(|_| "gitrun-control exists".into())
-                .map_err(|_| "missing gitrun-control group; run sudo gitrun fix-update".into()),
+                .map_err(|_| "missing gitrun-control group; run gitrun fix-update as root".into()),
             &mut failures,
             &mut warnings,
         );

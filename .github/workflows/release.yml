@@ -1368,8 +1368,9 @@ jobs:
               "linux-x86_64-server-deb","linux-aarch64-server-deb",
               "linux-x86_64-server-rpm","linux-aarch64-server-rpm",
               "linux-x86_64-musl-server-apk","linux-aarch64-musl-server-apk",
-              "linux-x86_64-server-arch","linux-x86_64-server-xbps",
-              "linux-aarch64-server-xbps","linux-x86_64-musl-server-xbps",
+              "linux-x86_64-server-arch","linux-aarch64-server-arch",
+              "linux-x86_64-server-xbps","linux-aarch64-server-xbps",
+              "linux-x86_64-musl-server-xbps",
               "linux-aarch64-musl-server-xbps",
               "library-json-backup","cargo-metadata","sbom-spdx","provenance","sha256sums"
           }

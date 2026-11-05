@@ -1497,6 +1497,7 @@ jobs:
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
           chmod 600 "$key"
           chmod 600 "$key"
+          chmod 600 "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
           echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"
@@ -1653,7 +1654,7 @@ jobs:
               lib,
               r"    Ok\(format!\(\s*\"https://github\.com/\{\}/releases/latest/download/release-manifest\.json\",\s*repository\.trim_end_matches\('/'\)\s*\)\)",
               """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
-              if not base_url.startswith("http://127.0.0.1:"):
+              if !base_url.starts_with("http://127.0.0.1:") {
                   return Err(UpdateError::InvalidManifest(
                       "migration test URL must use loopback HTTP".into(),
                   ));

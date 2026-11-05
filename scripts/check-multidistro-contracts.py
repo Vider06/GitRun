@@ -148,6 +148,7 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "xbps_static_arch: aarch64",
         "XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}",
         "xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz",
+        '-D "musl libwebkit2gtk41 polkit"',
         'aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm archlinux"',
         '"GitRun-Server-$VERSION-linux-aarch64-arch.pkg.tar.zst"',
     )

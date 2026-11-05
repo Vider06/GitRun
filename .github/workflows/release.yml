@@ -421,7 +421,7 @@ jobs:
                 openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
               node --version
               npm --version
-              node --input-type=module - "$VERSION_NUMBER" <<'NODE'
+              node --input-type=module - "$VERSION_NUMBER" <<NODE
           import fs from "node:fs";
           const version = process.argv[2];
           for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {

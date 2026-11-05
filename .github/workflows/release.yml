@@ -777,7 +777,7 @@ jobs:
           depends: [libwebkit2gtk-4.1-0, policykit-1]
           overrides:
             rpm:
-              depends: [webkit2gtk4.1, polkit]
+              depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]
             archlinux:
               depends: [webkit2gtk-4.1, polkit]
           contents:
@@ -802,6 +802,7 @@ jobs:
           test "$(rpm -qp --queryformat '%{NAME}' "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")" = gitrun-desktop
           rpm_requires="$(rpm -qp --requires "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")"
           grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+          grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
 
           nfpm package --config "$config" --packager archlinux --target "$out"
           arch="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.pkg.tar.zst' -print -quit)"
@@ -1163,6 +1164,7 @@ jobs:
             test "$(rpm -qp --queryformat '%{NAME}' "$gui_rpm")" = gitrun-desktop
             rpm_requires="$(rpm -qp --requires "$gui_rpm")"
             grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+          grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
 
             gui_arch="$root/GitRun-Desktop-$VERSION-linux-$arch-archlinux.pkg.tar.zst"
             arch_pkginfo="$(tar --zstd -xOf "$gui_arch" .PKGINFO)"

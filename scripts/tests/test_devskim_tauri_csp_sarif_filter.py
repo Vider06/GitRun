@@ -33,7 +33,7 @@ def finding(
 
 class DevSkimTauriCspFilterTests(unittest.TestCase):
     def test_filters_only_guarded_release_migration_loopback_lines(self) -> None:
-        self.assertEqual(set(RELEASE_LOOPBACK_LINES), {1647, 1656, 1676, 1717, 1721, 1723})
+        self.assertEqual(RELEASE_LOOPBACK_LINES, {1647, 1656, 1676, 1717, 1721, 1723})
         for line in RELEASE_LOOPBACK_LINES:
             with self.subTest(line=line):
                 self.assertTrue(

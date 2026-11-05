@@ -104,7 +104,7 @@ def filter_sarif(data: dict[str, Any]) -> int:
 
 def main() -> None:
     release_lines = Path(RELEASE_TARGET).read_text(encoding="utf-8").splitlines()
-    for line_number, expected in RELEASE_LOOPBACK_LINES.items():
+    for line_number in RELEASE_LOOPBACK_LINES:
         if len(release_lines) < line_number or RELEASE_SUPPRESSION_MARKER not in release_lines[line_number - 1]:
             raise SystemExit(
                 "Release migration loopback fixture changed: re-review the narrow DevSkim exception."

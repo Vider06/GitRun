@@ -674,7 +674,7 @@ jobs:
           xbps_root="$RUNNER_TEMP/xbps"
           mkdir -p "$xbps_root"
           curl --fail --silent --show-error --location \
-            https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
             -o "$RUNNER_TEMP/xbps-static.tar.xz"
           tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
           xbps_create="$xbps_root/usr/bin/xbps-create"
@@ -923,7 +923,7 @@ jobs:
           xbps_root="$RUNNER_TEMP/xbps-static"
           mkdir -p "$xbps_root"
           curl --fail --silent --show-error --location \
-            https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
             -o "$RUNNER_TEMP/xbps-static.tar.xz"
           tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
           xbps_create="$xbps_root/usr/bin/xbps-create"

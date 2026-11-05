@@ -485,6 +485,9 @@ jobs:
                 exit 1
               fi
             '
+          # The container installs distro packages as root and writes to bind-mounted caches.
+          # Return cache ownership to the hosted runner before actions/cache/save reads them.
+          sudo chown -R "$(id -u):$(id -g)" "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE"
           out="$RUNNER_TEMP/dashboard-musl-canonical"
           rm -rf "$out"
           mkdir -p "$out"
@@ -1130,6 +1133,19 @@ jobs:
           fi
           cp -- "${release_binaries[@]}" release-assets/
           cp all-assets/library.zip all-assets/cargo-metadata.json all-assets/sbom.spdx.json all-assets/provenance.json release-assets/
+          # GitHub artifact ZIP downloads normalize regular files to 0644.
+          # Restore executable modes for the standalone Desktop payloads before validation/publication.
+          find release-assets -maxdepth 1 -type f \
+            \( -name 'GitRun-Desktop-*.AppImage' -o -name 'GitRun-Desktop-*-unknown-linux-musl.bin' \) \
+            -exec chmod 0755 {} +
+          for executable in \
+            "release-assets/GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
+            "release-assets/GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
+            "release-assets/GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
+            "release-assets/GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin"; do
+            test -s "$executable"
+            test -x "$executable"
+          done
       - name: Install release verification tools
         run: |
           set -euo pipefail

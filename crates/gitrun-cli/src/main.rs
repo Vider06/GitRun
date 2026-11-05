@@ -334,6 +334,16 @@ fn initialize_update_signing_environment(force_trusted_values: bool) {
     }
 }
 
+fn trusted_privilege_command() -> Result<std::process::Command, std::io::Error> {
+    let executable = gitrun_platform::trusted_privilege_escalation_binary().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no trusted sudo, doas or pkexec executable was found in a root-owned system path",
+        )
+    })?;
+    Ok(std::process::Command::new(executable))
+}
+
 fn elevate_system_update(
     manifest_url: Option<&str>,
     force: bool,
@@ -345,7 +355,7 @@ fn elevate_system_update(
     presenter.prepare_for_external_process();
 
     let executable = std::env::current_exe()?;
-    let mut command = std::process::Command::new("/usr/bin/sudo");
+    let mut command = trusted_privilege_command()?;
     for (key, value) in update_signing_environment() {
         command.arg("env").arg(format!("{key}={value}"));
     }
@@ -1447,7 +1457,7 @@ fn terminal_setup_command(
                 .arg(&path)
                 .status()?
         } else {
-            std::process::Command::new("/usr/bin/sudo")
+            trusted_privilege_command()?
                 .arg(&executable)
                 .arg("--no-cat")
                 .arg("--install-root")
@@ -3634,7 +3644,13 @@ fn run_gtuu_command(
             }
         };
         presenter.prepare_for_external_process();
-        let mut command = std::process::Command::new("/usr/bin/sudo");
+        let mut command = match trusted_privilege_command() {
+            Ok(command) => command,
+            Err(error) => {
+                eprintln!("GitRun GTUU: unable to request administrator authorization: {error}");
+                return 1;
+            }
+        };
         command.arg(executable).args(["--no-cat", "gtuu"]);
         if check_only {
             command.arg("--check");
@@ -3776,12 +3792,13 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
             }
         };
         presenter.prepare_for_external_process();
-        let status = match std::process::Command::new("/usr/bin/sudo")
-            .arg(executable)
-            .arg("--no-cat")
-            .arg("--fix-update-root")
-            .status()
-        {
+        let status = match trusted_privilege_command().and_then(|mut command| {
+            command
+                .arg(executable)
+                .arg("--no-cat")
+                .arg("--fix-update-root")
+                .status()
+        }) {
             Ok(status) => status,
             Err(error) => {
                 eprintln!("GitRun fix-update: unable to start privileged repair: {error}");
@@ -3929,7 +3946,13 @@ fn run_update(
                 }
             };
             presenter.prepare_for_external_process();
-            let mut command = std::process::Command::new("/usr/bin/sudo");
+            let mut command = match trusted_privilege_command() {
+                Ok(command) => command,
+                Err(error) => {
+                    eprintln!("GitRun GTUU: FAIL — unable to request administrator authorization: {error}");
+                    return 1;
+                }
+            };
             command
                 .arg(executable)
                 .args(["--no-cat", "update", "--only-containers"]);

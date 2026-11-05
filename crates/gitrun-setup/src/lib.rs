@@ -1379,10 +1379,12 @@ fn start_host_service_temporary(service: &str) -> Result<(), SetupError> {
             run_command(Command::new("/sbin/rc-service").args([service, "start"]))
         }
         gitrun_platform::ServiceManager::Runit => {
-            if service == "docker" {
-                ensure_runit_service_link(service)?;
-            }
             let path = format!("/var/service/{service}");
+            if !Path::new(&path).exists() {
+                return Err(SetupError::Command(format!(
+                    "runit service {service} is not enabled at {path}; refusing to create a persistent service link during temporary cleanup"
+                )));
+            }
             run_command(Command::new("/usr/bin/sv").args(["up", &path]))
         }
     }
@@ -1429,21 +1431,12 @@ fn start_host_service(service: &str) -> Result<(), SetupError> {
             run_command(Command::new("/sbin/rc-service").args([service, "start"]))
         }
         gitrun_platform::ServiceManager::Runit => {
-            use std::os::unix::fs::symlink;
-            let source = Path::new("/etc/sv").join(service);
-            if !source.is_dir() {
-                return Err(SetupError::Command(format!(
-                    "runit service definition {} is missing",
-                    source.display()
-                )));
-            }
-            let service_dir = Path::new("/var/service");
-            fs::create_dir_all(service_dir)?;
-            let link = service_dir.join(service);
-            if !link.exists() {
-                symlink(&source, &link)?;
-            }
-            run_command(Command::new("/usr/bin/sv").args(["up", link.to_string_lossy().as_ref()]))
+            ensure_runit_service_link(service)?;
+            let link = Path::new("/var/service").join(service);
+            run_command(Command::new("/usr/bin/sv").args([
+                "up",
+                link.to_string_lossy().as_ref(),
+            ]))
         }
     }
 }

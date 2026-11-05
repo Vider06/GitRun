@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # shellcheck shell=bash
 # ============================================================================
 # GitRun CI helper library. Written to $RUNNER_TEMP by every job's Bootstrap

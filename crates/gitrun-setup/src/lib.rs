@@ -3187,6 +3187,15 @@ mod tests {
     use gitrun_platform::PackageManager;
 
     #[test]
+    fn non_systemd_service_wrapper_loads_environment_without_shell_evaluation() {
+        let wrapper = gitrun_service_environment_wrapper(true);
+        assert!(wrapper.contains("export \"$key=$value\""));
+        assert!(wrapper.contains("exec \"/usr/local/bin/gitrun-recovery\" \"$@\""));
+        assert!(!wrapper.contains(". /etc/gitrun/gitrun.env"));
+        assert!(!wrapper.contains("eval "));
+    }
+
+    #[test]
     fn package_install_commands_are_native_to_each_supported_distribution() {
         let cases = [
             (

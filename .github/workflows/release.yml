@@ -761,6 +761,10 @@ jobs:
           description: GitRun Tauri Dashboard, independently installable from the server
           license: Apache-2.0
           depends: [libwebkit2gtk-4.1-0, policykit-1]
+          rpm:
+            depends: [webkit2gtk4.1, polkit]
+          archlinux:
+            depends: [webkit2gtk-4.1, polkit]
           contents:
             - src: $stage/opt/gitrun-desktop/GitRun.AppImage
               dst: /opt/gitrun-desktop/GitRun.AppImage
@@ -769,11 +773,26 @@ jobs:
             - src: $stage/usr/share/applications/gitrun-desktop.desktop
               dst: /usr/share/applications/gitrun-desktop.desktop
           NFPM
-          nfpm package --config "$RUNNER_TEMP/dashboard-nfpm.yaml" --packager deb --target "$out"
+          config="$RUNNER_TEMP/dashboard-nfpm.yaml"
+          nfpm package --config "$config" --packager deb --target "$out"
           deb="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop_*.deb' -print -quit)"
           test -n "$deb"
           mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb"
           test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Package)" = gitrun-desktop
+
+          nfpm package --config "$config" --packager rpm --target "$out"
+          rpm="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.rpm' -print -quit)"
+          test -n "$rpm"
+          mv "$rpm" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm"
+          test "$(rpm -qp --queryformat '%{NAME}' "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")" = gitrun-desktop
+          rpm -qp --requires "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm" | grep -Fq webkit2gtk4.1
+
+          nfpm package --config "$config" --packager archlinux --target "$out"
+          arch="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.pkg.tar.zst' -print -quit)"
+          test -n "$arch"
+          mv "$arch" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst"
+          tar --zstd -xOf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst" .PKGINFO | grep -Fq 'pkgname = gitrun-desktop'
+          tar --zstd -xOf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst" .PKGINFO | grep -Fq 'depend = webkit2gtk-4.1'
       - name: Upload separate Dashboard package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

@@ -1135,12 +1135,12 @@ jobs:
           cp all-assets/library.zip all-assets/cargo-metadata.json all-assets/sbom.spdx.json all-assets/provenance.json release-assets/
           # GitHub artifact ZIP downloads normalize regular files to 0644.
           # Restore executable modes for the standalone Desktop payloads before validation/publication.
-          find release-assets -maxdepth 1 -type f \\
-            \\( -name 'GitRun-Desktop-*.AppImage' -o -name 'GitRun-Desktop-*-unknown-linux-musl.bin' \\) \\
+          find release-assets -maxdepth 1 -type f \
+            \( -name 'GitRun-Desktop-*.AppImage' -o -name 'GitRun-Desktop-*-unknown-linux-musl.bin' \) \
             -exec chmod 0755 {} +
-          for executable in \\
-            "release-assets/GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \\
-            "release-assets/GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \\
+          for executable in \
+            "release-assets/GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
+            "release-assets/GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
             "release-assets/GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \\
             "release-assets/GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin"; do
             test -s "$executable"

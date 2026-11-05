@@ -117,6 +117,20 @@ def main() -> None:
         )
 
     data = json.loads(SARIF_PATH.read_text(encoding="utf-8"))
+    release_findings = []
+    for run in data.get("runs", []):
+        for result in run.get("results", []):
+            for location in result.get("locations", []):
+                physical = location.get("physicalLocation", {})
+                artifact = physical.get("artifactLocation", {})
+                uri = str(artifact.get("uri", "")).replace("\\\\", "/")
+                if uri.endswith(RELEASE_TARGET) or "release.yml" in uri:
+                    release_findings.append((
+                        result.get("ruleId"),
+                        uri,
+                        physical.get("region", {}).get("startLine"),
+                    ))
+    print(f"DevSkim release.yml findings before filtering: {release_findings}")
     removed = filter_sarif(data)
     if removed:
         # DevSkim's container may create a root-owned, read-only SARIF file.

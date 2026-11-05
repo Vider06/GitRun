@@ -3,7 +3,8 @@
 
 These are isolated dependency probes, not claims that package installation or
 service lifecycle is supported on every distribution. The probes use the
-package names documented by Tauri for Debian, Fedora, Arch, openSUSE and Alpine.
+package names documented by Tauri for Debian, Fedora, Arch, openSUSE and Alpine,
+plus the Void musl packages used for the ARM64 Desktop build.
 """
 from __future__ import annotations
 
@@ -38,11 +39,17 @@ PROBES = (
         "libappindicator3-1 librsvg-devel webkit2gtk3-devel",
     ),
     (
-        "Alpine Linux (musl)",
+        "Alpine Linux (musl, x86_64 APK)",
         "alpine:latest",
         "apk add --no-cache pkgconf build-base curl wget file openssl "
         "libayatana-appindicator-dev librsvg font-dejavu webkit2gtk-4.1-dev "
         "openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static",
+    ),
+    (
+        "Void Linux (musl, XBPS)",
+        "ghcr.io/void-linux/void-musl-full:20260801r1",
+        "xbps-install -Suy && xbps-install -y pkg-config curl ca-certificates "
+        "libwebkit2gtk41-devel libayatana-appindicator-devel librsvg-devel gtk+3-devel openssl-devel",
     ),
 )
 

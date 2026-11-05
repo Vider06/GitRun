@@ -1307,7 +1307,7 @@ fn install_distribution_packages(packages: &[&str]) -> Result<(), SetupError> {
 fn docker_packages(manager: gitrun_platform::PackageManager) -> &'static [&'static str] {
     match manager {
         gitrun_platform::PackageManager::Apt => &["docker.io", "docker-compose-v2"],
-        gitrun_platform::PackageManager::Dnf => &["docker", "docker-compose"],
+        gitrun_platform::PackageManager::Dnf => &["moby-engine", "docker-compose"],
         gitrun_platform::PackageManager::Zypper => &["docker", "docker-compose"],
         gitrun_platform::PackageManager::Pacman => &["docker", "docker-compose"],
         gitrun_platform::PackageManager::Apk => &["docker", "docker-cli-compose"],

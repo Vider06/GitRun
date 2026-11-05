@@ -31,6 +31,13 @@ PROBES = (
         "appmenu-gtk-module libappindicator-gtk3 librsvg xdotool webkit2gtk-4.1",
     ),
     (
+        "openSUSE (glibc)",
+        "opensuse/leap:latest",
+        "zypper --non-interactive refresh && zypper --non-interactive install --no-recommends "
+        "pkg-config gcc gcc-c++ make curl wget file libopenssl-devel "
+        "libappindicator3-1 librsvg-devel webkit2gtk3-devel",
+    ),
+    (
         "Alpine Linux (musl)",
         "alpine:latest",
         "apk add --no-cache pkgconf build-base curl wget file openssl "

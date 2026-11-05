@@ -230,10 +230,7 @@ fn trusted_service_definition(path: &Path, require_executable: bool) -> bool {
         let Ok(metadata) = fs::symlink_metadata(directory) else {
             return false;
         };
-        if !metadata.is_dir()
-            || metadata.uid() != 0
-            || metadata.permissions().mode() & 0o022 != 0
-        {
+        if !metadata.is_dir() || metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
             return false;
         }
         if directory == Path::new("/") {

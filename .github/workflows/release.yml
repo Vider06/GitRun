@@ -1187,6 +1187,8 @@ jobs:
             grep -Fq '.PKGINFO' <<< "$apk_listing"
             apk_metadata="$(tar -xOzf "$gui_apk" .PKGINFO)"
             grep -Fxq 'pkgname = gitrun-desktop' <<< "$apk_metadata"
+            grep -Fxq "arch = $arch" <<< "$apk_metadata"
+            grep -Fxq 'depend = musl' <<< "$apk_metadata"
             grep -Fxq 'depend = webkit2gtk-4.1' <<< "$apk_metadata"
             grep -Fxq 'depend = polkit' <<< "$apk_metadata"
             test -s "$root/GitRun-Desktop-$VERSION-linux-$arch-musl-xbps.xbps"

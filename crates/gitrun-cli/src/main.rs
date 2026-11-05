@@ -373,10 +373,7 @@ fn elevate_system_update(
 }
 
 #[cfg(target_os = "linux")]
-fn run_privileged_cli_action(
-    action: &str,
-    presenter: &mut presenter::CatPresenter,
-) -> i32 {
+fn run_privileged_cli_action(action: &str, presenter: &mut presenter::CatPresenter) -> i32 {
     if system_install_paths().is_none() {
         eprintln!("GitRun: this operation requires the trusted system installation at /usr/bin/gitrun or /usr/local/bin/gitrun.");
         return 2;
@@ -415,10 +412,7 @@ fn run_privileged_cli_action(
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_privileged_cli_action(
-    _action: &str,
-    _presenter: &mut presenter::CatPresenter,
-) -> i32 {
+fn run_privileged_cli_action(_action: &str, _presenter: &mut presenter::CatPresenter) -> i32 {
     eprintln!("GitRun uninstall/reinstall currently supports Linux only.");
     2
 }

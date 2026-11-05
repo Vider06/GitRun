@@ -181,8 +181,7 @@ pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
             let Ok(metadata) = fs::symlink_metadata(path) else {
                 return false;
             };
-            metadata.permissions().mode() & 0o4000 != 0
-                && trusted_service_definition(path, true)
+            metadata.permissions().mode() & 0o4000 != 0 && trusted_service_definition(path, true)
         })
         .map(Path::to_path_buf)
 }

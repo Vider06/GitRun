@@ -2298,11 +2298,9 @@ fn run_linux_package_command(program: &str, args: &[&str]) -> Result<(), UpdateE
     let mut command = if is_root() {
         Command::new(executable)
     } else {
-        let privilege_helper = gitrun_platform::trusted_privilege_escalation_binary()
-            .ok_or_else(|| {
-                UpdateError::Command(
-                    "no trusted sudo, doas or pkexec executable was found".into(),
-                )
+        let privilege_helper =
+            gitrun_platform::trusted_privilege_escalation_binary().ok_or_else(|| {
+                UpdateError::Command("no trusted sudo, doas or pkexec executable was found".into())
             })?;
         let mut command = Command::new(privilege_helper);
         command.arg(executable);

@@ -1508,16 +1508,23 @@ fn ensure_buildx() -> Result<(), SetupError> {
     Ok(())
 }
 
-fn gitrun_service_environment_wrapper() -> &'static str {
-    r#"#!/bin/sh
+fn gitrun_service_environment_wrapper(recovery_installed: bool) -> String {
+    let executable = if recovery_installed {
+        "/usr/local/bin/gitrun-recovery"
+    } else {
+        "/usr/local/bin/gitrun"
+    };
+    format!(
+        r#"#!/bin/sh
 set -eu
 while IFS='=' read -r key value; do
     case "$key" in
         GITHUB_TOKEN|GITRUN_*) export "$key=$value" ;;
     esac
 done < /etc/gitrun/gitrun.env
-exec /usr/local/bin/gitrun "$@"
+exec "{executable}" "$@"
 "#
+    )
 }
 
 fn ensure_runit_service_link(service: &str) -> Result<(), SetupError> {
@@ -1585,9 +1592,10 @@ fn install_gitrun_service_definitions(recovery_installed: bool) -> Result<(), Se
             )?;
         }
         gitrun_platform::ServiceManager::OpenRc => {
+            let wrapper = gitrun_service_environment_wrapper(recovery_installed);
             write_resource(
                 Path::new("/usr/libexec/gitrun/gitrun-service"),
-                gitrun_service_environment_wrapper(),
+                &wrapper,
                 0o755,
             )?;
             write_resource(
@@ -1624,9 +1632,10 @@ depend() {
             )?;
         }
         gitrun_platform::ServiceManager::Runit => {
+            let wrapper = gitrun_service_environment_wrapper(recovery_installed);
             write_resource(
                 Path::new("/usr/libexec/gitrun/gitrun-service"),
-                gitrun_service_environment_wrapper(),
+                &wrapper,
                 0o755,
             )?;
             for (service, command) in [("gitrun", "scheduler"), ("gitrun-gsr", "gsr-watchdog")] {

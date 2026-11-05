@@ -389,7 +389,7 @@ pub fn uninstall_linux_package_hook() -> Result<(), SetupError> {
 }
 
 fn validate_uninstall_host() -> Result<(), SetupError> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -830,7 +830,7 @@ pub fn reinstall_linux_with_auth(
     app_binary: &Path,
     owner_uid: Option<u32>,
 ) -> Result<SetupReport, SetupError> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -915,7 +915,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
             "unsupported runner profile: {runner_profile}"
         )));
     }
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -2008,7 +2008,7 @@ pub fn ensure_control_manager_service_with_binary(
     desktop_uid: Option<u32>,
     binary_path: &Path,
 ) -> Result<(), SetupError> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {
@@ -2234,7 +2234,7 @@ pub fn validate_system_state_directory(directory: &Path) -> Result<(), SetupErro
 /// Repair ownership drift from older system installations without recursively
 /// changing user-owned settings, vault contents, or recovery journals.
 pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), SetupError> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
+    if !cfg!(target_os = "linux") {
         return Err(SetupError::UnsupportedPlatform);
     }
     if !running_as_root() {

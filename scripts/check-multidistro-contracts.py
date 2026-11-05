@@ -135,6 +135,8 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk",
         "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps",
         "desktop_package_formats:[\"deb\",\"rpm\",\"archlinux\",\"appimage\",\"apk\",\"xbps\"]",
+        'depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]',
+        "grep -Fq libwebkit2gtk-4_1-0",
     )
     for target in desktop_targets:
         if target not in release:
@@ -237,6 +239,9 @@ def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
         "PackageManager::Apk",
         "PackageManager::Xbps",
         "PackageManager::Emerge",
+        "docker_packages(manager: gitrun_platform::PackageManager)",
+        "buildx_packages(manager: gitrun_platform::PackageManager)",
+        'PackageManager::Dnf => &["moby-engine", "docker-compose"]',
         "ServiceManager::Systemd",
         "ServiceManager::OpenRc",
         "ServiceManager::Runit",
@@ -264,6 +269,7 @@ def check_updater_native_package_contract(errors: list[str]) -> None:
         "PackageManager::Apk",
         "PackageManager::Xbps",
         "PackageManager::Emerge",
+        '(P::Dnf, "Docker") => &["moby-engine", "docker-compose", "docker-buildx"][..]',
     )
     missing = [item for item in required if item not in updater]
     if missing:

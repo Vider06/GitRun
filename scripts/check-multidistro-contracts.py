@@ -214,7 +214,6 @@ def check_dashboard_service_manager_contract(errors: list[str]) -> None:
         "gitrun_platform::detect_service_manager()",
         "gitrun_platform::service_command(",
         "gitrun_platform::service_is_installed(",
-        "gitrun_platform::trusted_privilege_escalation_binary()",
         "gitrun_platform::ManagedService::Scheduler",
         "gitrun_platform::ManagedService::Gsr",
     )
@@ -223,6 +222,10 @@ def check_dashboard_service_manager_contract(errors: list[str]) -> None:
     missing.extend(item for item in required_platform if item not in platform)
     if missing:
         errors.append("Dashboard service operations are missing native init-system routing: " + ", ".join(missing))
+    if "pkexec_path()" not in backend or "gitrun_platform::trusted_privilege_escalation_binary" not in backend:
+        errors.append(
+            "Dashboard service controls must retain a trusted pkexec/sudo/doas privilege fallback"
+        )
     if 'PathBuf::from("/usr/bin/systemctl")' in backend or 'PathBuf::from("/bin/systemctl")' in backend:
         errors.append("Dashboard service controls must not hardcode systemctl executable paths")
     if "detect_service_manager()" not in control or "ServiceManager::Systemd" not in control:

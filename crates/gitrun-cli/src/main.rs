@@ -392,21 +392,19 @@ fn run_privileged_cli_action(
     presenter.prepare_for_external_process();
 
     let mut command = if running_as_root() {
-        std::process::Command::new(executable)
+        std::process::Command::new(&executable)
     } else {
-        match trusted_privilege_command() {
+        let mut command = match trusted_privilege_command() {
             Ok(command) => command,
             Err(error) => {
                 eprintln!("GitRun: unable to request administrator authorization: {error}");
                 return 1;
             }
-        }
+        };
+        command.arg(&executable);
+        command
     };
-    let status = command
-        .arg(executable)
-        .arg("--no-cat")
-        .arg(action)
-        .status();
+    let status = command.arg("--no-cat").arg(action).status();
     match status {
         Ok(status) => status.code().unwrap_or(1),
         Err(error) => {

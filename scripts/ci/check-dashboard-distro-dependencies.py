@@ -40,7 +40,7 @@ PROBES = (
     ),
     (
         "Alpine Linux (musl, x86_64 APK)",
-        "alpine:latest",
+        "alpine:3.24",
         "apk add --no-cache pkgconf build-base curl wget file openssl "
         "libayatana-appindicator-dev librsvg font-dejavu webkit2gtk-4.1-dev "
         "openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static",

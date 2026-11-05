@@ -2653,13 +2653,13 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
             let mut paths = Vec::new();
             if units.iter().any(|unit| *unit == "gitrun.service") {
                 paths.extend([
-                    PathBuf::from("/var/service/gitrun/log/main/current"),
+                    PathBuf::from("/var/log/gitrun/gitrun/current"),
                     PathBuf::from("/var/log/gitrun/current"),
                 ]);
             }
             if units.iter().any(|unit| *unit == "gitrun-gsr.service") {
                 paths.extend([
-                    PathBuf::from("/var/service/gitrun-gsr/log/main/current"),
+                    PathBuf::from("/var/log/gitrun/gitrun-gsr/current"),
                     PathBuf::from("/var/log/gitrun-gsr/current"),
                 ]);
             }

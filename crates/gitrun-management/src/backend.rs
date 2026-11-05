@@ -3544,46 +3544,15 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
 
     let config = load_config()?;
     let config_path = configured_config_path();
-    let (docker_ok, service_active) = std::thread::scope(|scope| {
-        let docker_check = scope
-            .spawn(|| command_success_with_timeout("docker", &["info"], Duration::from_secs(5)));
-        let service_check = scope.spawn(|| {
-            command_success_with_timeout(
-                "/usr/bin/systemctl",
-                &["is-active", "--quiet", "gitrun.service"],
-                Duration::from_secs(3),
-            )
-        });
-        (
-            docker_check.join().unwrap_or(false),
-            service_check.join().unwrap_or(false),
-        )
-    });
+    let docker_ok = command_success_with_timeout("docker", &["info"], Duration::from_secs(5));
+    let (service_installed, service_active, service_manager) =
+        service_status(gitrun_platform::ManagedService::Scheduler);
     let gsr_process_seen = process_name_running("gitrun-gsr");
-    let (gsr_service_active, gsr_service_installed) = std::thread::scope(|scope| {
-        let active = scope.spawn(|| {
-            command_success_with_timeout(
-                "/usr/bin/systemctl",
-                &["is-active", "--quiet", "gitrun-gsr.service"],
-                Duration::from_secs(3),
-            )
-        });
-        let installed = [
-            "/etc/systemd/system/gitrun-gsr.service",
-            "/usr/lib/systemd/system/gitrun-gsr.service",
-            "/lib/systemd/system/gitrun-gsr.service",
-        ]
-        .iter()
-        .any(|path| std::path::Path::new(path).is_file());
-        (active.join().unwrap_or(false), installed)
-    });
-    let service_installed = [
-        "/etc/systemd/system/gitrun.service",
-        "/usr/lib/systemd/system/gitrun.service",
-        "/lib/systemd/system/gitrun.service",
-    ]
-    .iter()
-    .any(|path| std::path::Path::new(path).is_file());
+    let (gsr_service_installed, gsr_service_active, _) =
+        service_status(gitrun_platform::ManagedService::Gsr);
+    let service_manager_name = service_manager
+        .map(gitrun_platform::ServiceManager::as_str)
+        .unwrap_or("supported service manager");
     let vault_status = if config.vault_dir.trim().is_empty() {
         (
             true,
@@ -3624,11 +3593,11 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
             name: "GSR watchdog service".into(),
             ok: gsr_service_installed && gsr_service_active,
             detail: if gsr_service_active {
-                "systemd reports gitrun-gsr.service active.".into()
+                format!("{service_manager_name} reports the GSR service active.")
             } else if gsr_service_installed {
-                "The GSR unit exists but systemd does not report it as active.".into()
+                format!("The GSR service is installed but {service_manager_name} does not report it as active.")
             } else {
-                "The gitrun-gsr.service unit was not found in known systemd locations; run GitRun setup/reinstall to install it.".into()
+                format!("The GSR service was not found in the active service manager's known locations; run GitRun setup to install it.")
             },
         },
         DashboardHealthCheck {
@@ -3650,11 +3619,11 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
             name: "GitRun system service".into(),
             ok: service_installed && service_active,
             detail: if service_active {
-                "systemd reports gitrun.service active.".into()
+                format!("{service_manager_name} reports the GitRun service active.")
             } else if service_installed {
-                "The service unit exists but systemd does not report it as active.".into()
+                format!("The GitRun service is installed but {service_manager_name} does not report it as active.")
             } else {
-                "The gitrun.service unit was not found in known systemd locations.".into()
+                "The GitRun service was not found in the active service manager's known locations.".into()
             },
         },
         DashboardHealthCheck {

@@ -943,21 +943,20 @@ pub fn reinstall_linux_with_auth(
     let existing_config = fs::read_to_string(config_path)?;
 
     println!("[GitRun reinstall] Stopping the existing GitRun services");
-    let _ = Command::new("/usr/bin/systemctl")
-        .args(["disable", "--now", "gitrun-control.service"])
-        .status();
-    let _ = Command::new("/usr/bin/systemctl")
-        .args(["disable", "--now", "gitrun-gsr.service"])
-        .status();
-    let _ = Command::new("/usr/bin/systemctl")
-        .args(["disable", "--now", "gitrun.service"])
-        .status();
+    stop_gitrun_services()?;
 
     remove_gitrun_docker_resources()?;
     for path in [
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
         "/etc/systemd/system/gitrun-control.service",
+        "/etc/init.d/gitrun",
+        "/etc/init.d/gitrun-gsr",
+        "/etc/sv/gitrun",
+        "/etc/sv/gitrun-gsr",
+        "/var/service/gitrun",
+        "/var/service/gitrun-gsr",
+        "/usr/libexec/gitrun/gitrun-service",
         "/usr/local/bin/gitrun-recovery",
         "/opt/gitrun",
     ] {
@@ -966,26 +965,13 @@ pub fn reinstall_linux_with_auth(
     let _ = Command::new("/usr/bin/docker")
         .args(["image", "rm", "-f", "gitrun-runner:latest"])
         .status();
-    let _ = Command::new("/usr/bin/systemctl")
-        .args(["daemon-reload"])
-        .status();
+    reload_systemd()?;
 
     let report = bootstrap_linux_with_auth(auth, repositories, app_binary, owner_uid)?;
 
     write_resource(config_path, &existing_config, 0o600)?;
     secure_system_config_file(config_path, None)?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun.service",
-    ]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun-gsr.service",
-    ]))?;
+    start_gitrun_services()?;
 
     println!("GitRun reinstall: PASS");
     Ok(report)

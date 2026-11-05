@@ -62,6 +62,7 @@ CONTEXT_ALLOWLIST = {
     "crates/gitrun-platform/src/lib.rs": "native package-manager and service-manager detection",
     "crates/gitrun-core/src/compatibility.rs": "command compatibility classifier; strings are not executed",
     "crates/gitrun-scheduler/src/api_service.rs": "package installation runs as container root inside the pinned Debian runner image",
+    "scripts/ci/ci-lib.sh": "CI-only apt/dpkg helpers provision Debian-based GitHub Actions runners; they are not product runtime paths",
 }
 
 PREFIX_ALLOWLIST = (

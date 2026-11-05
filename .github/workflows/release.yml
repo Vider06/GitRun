@@ -240,15 +240,27 @@ jobs:
           retention-days: 3
 
   build-dashboard:
-    name: Independent GitRun Desktop
+    name: Independent GitRun Desktop · ${{ matrix.target }}
     needs: prepare
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            arch: aarch64
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      TARGET: ${{ matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
       CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "0"
@@ -277,9 +289,9 @@ jobs:
             .gitrun-cargo
             target
             .gitrun-npm-cache
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
           restore-keys: |
-            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ env.RUST_VERSION }}-
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -329,11 +341,11 @@ jobs:
           out="$RUNNER_TEMP/dashboard-canonical"
           rm -rf "$out"
           mkdir -p "$out"
-          install -m 0755 "$appimage" "$out/GitRun-Desktop-$VERSION-linux-x86_64.AppImage"
+          install -m 0755 "$appimage" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
       - name: Upload independent Dashboard artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: dashboard-linux-x86_64
+          name: dashboard-${{ matrix.target }}
           path: ${{ runner.temp }}/dashboard-canonical/*
           if-no-files-found: error
           retention-days: 3
@@ -346,7 +358,7 @@ jobs:
             .gitrun-cargo
             target
             .gitrun-npm-cache
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
 
   collect:
     name: Collect canonical target builds
@@ -376,6 +388,7 @@ jobs:
             test -s "$archive"
           done
           test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-aarch64.AppImage"
           test -s canonical-inputs/library.zip
           test -s canonical-inputs/cargo-metadata.json
           test -s canonical-inputs/sbom.spdx.json
@@ -571,15 +584,27 @@ jobs:
           retention-days: 3
 
   package-dashboard:
-    name: Package independent Desktop
+    name: Package independent Desktop · ${{ matrix.target }}
     needs: [prepare, collect]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+            package_arch: amd64
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+            package_arch: arm64
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
     steps:
       - name: Checkout packaging metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -600,7 +625,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          appimage="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-linux-x86_64.AppImage"
+          appimage="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
           test -s "$appimage"
           stage="$RUNNER_TEMP/dashboard-stage"
           out="$RUNNER_TEMP/dashboard-package"
@@ -621,7 +646,7 @@ jobs:
           export PATH="$RUNNER_TEMP/bin:$PATH"
           cat > "$RUNNER_TEMP/dashboard-nfpm.yaml" <<NFPM
           name: gitrun-desktop
-          arch: amd64
+          arch: $PACKAGE_ARCH
           platform: linux
           version: $VERSION_NUMBER
           maintainer: Vider06
@@ -644,7 +669,7 @@ jobs:
       - name: Upload separate Dashboard package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: dashboard-package
+          name: dashboard-package-${{ matrix.target }}
           path: ${{ runner.temp }}/dashboard-package/*
           if-no-files-found: error
           retention-days: 3

@@ -170,12 +170,26 @@ pub const fn privilege_escalation_candidates() -> &'static [&'static str] {
     &["/usr/bin/sudo", "/usr/bin/doas", "/usr/bin/pkexec"]
 }
 
+#[cfg(unix)]
 pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
     privilege_escalation_candidates()
         .iter()
         .map(Path::new)
-        .find(|path| trusted_service_definition(path, true))
+        .find(|path| {
+            let Ok(metadata) = fs::symlink_metadata(path) else {
+                return false;
+            };
+            metadata.permissions().mode() & 0o4000 != 0
+                && trusted_service_definition(path, true)
+        })
         .map(Path::to_path_buf)
+}
+
+#[cfg(not(unix))]
+pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
+    None
 }
 
 pub fn service_command(

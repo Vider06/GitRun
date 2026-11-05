@@ -3,7 +3,7 @@
 
 These are isolated dependency probes, not claims that package installation or
 service lifecycle is supported on every distribution. The probes use the
-package names documented by Tauri for Debian, Fedora, Arch and Alpine.
+package names documented by Tauri for Debian, Fedora, Arch, openSUSE and Alpine.
 """
 from __future__ import annotations
 

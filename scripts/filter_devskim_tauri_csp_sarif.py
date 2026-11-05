@@ -38,7 +38,7 @@ EXPECTED_RULE_IDS = {"DS137138", "DS162092"}
 # loopback-only HTTP endpoint is not shipped or enabled in production. Keep
 # this exception tied to the exact six source lines and DS137138 only.
 RELEASE_TARGET = ".github/workflows/release.yml"
-RELEASE_LOOPBACK_LINES = {1656, 1665, 1685, 1726, 1730, 1732}
+RELEASE_LOOPBACK_LINES = {1661, 1670, 1690, 1731, 1735, 1737}
 RELEASE_SUPPRESSION_MARKER = "DevSkim: ignore DS137138"
 
 

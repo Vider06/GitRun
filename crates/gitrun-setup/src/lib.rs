@@ -539,6 +539,13 @@ fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
         "/run/systemd/system/gitrun.service",
         "/run/systemd/system/gitrun-gsr.service",
         "/run/systemd/system/gitrun-control.service",
+        "/etc/init.d/gitrun",
+        "/etc/init.d/gitrun-gsr",
+        "/etc/sv/gitrun",
+        "/etc/sv/gitrun-gsr",
+        "/var/service/gitrun",
+        "/var/service/gitrun-gsr",
+        "/usr/libexec/gitrun/gitrun-service",
         "/etc/systemd/system/multi-user.target.wants/gitrun.service",
         "/etc/systemd/system/multi-user.target.wants/gitrun-gsr.service",
         "/etc/systemd/system/multi-user.target.wants/gitrun-control.service",
@@ -689,6 +696,13 @@ fn verify_uninstall_complete() -> Result<(), SetupError> {
         "/etc/systemd/system/gitrun.service",
         "/etc/systemd/system/gitrun-gsr.service",
         "/etc/systemd/system/gitrun-control.service",
+        "/etc/init.d/gitrun",
+        "/etc/init.d/gitrun-gsr",
+        "/etc/sv/gitrun",
+        "/etc/sv/gitrun-gsr",
+        "/var/service/gitrun",
+        "/var/service/gitrun-gsr",
+        "/usr/libexec/gitrun/gitrun-service",
     ] {
         if Path::new(path).exists() {
             return Err(SetupError::Command(format!(

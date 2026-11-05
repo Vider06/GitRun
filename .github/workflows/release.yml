@@ -301,7 +301,7 @@ jobs:
         working-directory: crates/gitrun-dashboard-tauri
         run: |
           set -euo pipefail
-          node --input-type=module - "$VERSION_NUMBER" <<'NODE'
+          node --input-type=module - "$VERSION_NUMBER" <<NODE
           import fs from "node:fs";
           const version = process.argv[2];
           for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {

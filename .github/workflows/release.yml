@@ -118,7 +118,7 @@ jobs:
   build-server:
     name: Server target matrix
     needs: prepare
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -126,24 +126,15 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
-            xbps_static_arch: x86_64
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
-            xbps_static_arch: aarch64
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-24.04
-            xbps_static_arch: x86_64
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-            xbps_static_arch: aarch64
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
       TARGET: ${{ matrix.target }}
-      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
       CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "0"
@@ -521,7 +512,7 @@ jobs:
   package-server:
     name: Package Server target matrix
     needs: [prepare, collect]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -529,15 +520,24 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            xbps_static_arch: aarch64
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            xbps_static_arch: aarch64
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
       TARGET: ${{ matrix.target }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
     steps:
       - name: Checkout packaging metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

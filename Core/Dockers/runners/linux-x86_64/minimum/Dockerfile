@@ -34,8 +34,8 @@ ARG RUNNER_SHA256
 ENV DEBIAN_FRONTEND=noninteractive \
     RUNNER_VERSION=${RUNNER_VERSION}
 
-# hadolint ignore=DL3008
 # Runtime packages intentionally follow Debian Bookworm security updates instead of freezing stale versions.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl git jq tar gzip sudo python3 unzip xz-utils \

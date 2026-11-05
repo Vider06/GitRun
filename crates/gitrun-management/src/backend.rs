@@ -3380,15 +3380,13 @@ fn service_status(
     }
     let spec =
         gitrun_platform::service_command(manager, gitrun_platform::ServiceAction::Status, service);
-    let active = spec.candidates.iter().any(|candidate| {
-        trusted_privileged_binary(Path::new(candidate)).is_some_and(|program| {
-            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-            command_success_with_timeout(
-                program.to_string_lossy().as_ref(),
-                &args,
-                Duration::from_secs(3),
-            )
-        })
+    let active = gitrun_platform::trusted_service_manager_binary(manager).is_some_and(|program| {
+        let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+        command_success_with_timeout(
+            program.to_string_lossy().as_ref(),
+            &args,
+            Duration::from_secs(3),
+        )
     });
     (installed, active, Some(manager))
 }
@@ -3429,17 +3427,12 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
         native_action,
         gitrun_platform::ManagedService::Scheduler,
     );
-    let program = spec
-        .candidates
-        .iter()
-        .map(PathBuf::from)
-        .find_map(|path| trusted_privileged_binary(&path))
-        .ok_or_else(|| {
-            format!(
-                "trusted {} service-control executable was not found",
-                manager.as_str()
-            )
-        })?;
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        format!(
+            "trusted {} service-control executable was not found",
+            manager.as_str()
+        )
+    })?;
     let action_arg = service_action_name(action);
     let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = if current_process_is_root() {

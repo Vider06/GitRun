@@ -105,7 +105,7 @@ jobs:
             '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"GitRun",documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit),creationInfo:{created:$created,creators:["Tool: GitRun CI"]},packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
             "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
           jq -n --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
-            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu"]}' \
+            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],desktop_package_formats:["deb","rpm","archlinux","appimage","apk","xbps"]}' \
             > "$root/provenance.json"
       - name: Upload shared inputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

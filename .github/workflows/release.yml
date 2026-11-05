@@ -266,7 +266,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
           package-manager-cache: false
@@ -331,7 +331,7 @@ jobs:
       contents: read
     steps:
       - name: Download immutable build outputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           path: canonical-inputs
           merge-multiple: true
@@ -388,7 +388,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download canonical target outputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: canonical
@@ -560,7 +560,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download canonical Dashboard build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: canonical
@@ -640,7 +640,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download new Server binary
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: canonical
@@ -726,25 +726,25 @@ jobs:
         with:
           persist-credentials: false
       - name: Download collected canonical inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: all-assets
       - name: Download all Server package targets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           pattern: server-packages-*
           path: all-assets
           merge-multiple: true
       - name: Download independent Dashboard package
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: dashboard-package
           path: all-assets
           merge-multiple: true
       - name: Download one-off legacy migration package
         if: env.MIGRATION_RELEASE == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: migration-deb-linux-x86_64
           path: all-assets
@@ -799,7 +799,8 @@ jobs:
             test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
             test "$(dpkg-deb -f "$deb" Conflicts)" = gitrun
             test "$(dpkg-deb -f "$deb" Replaces)" = gitrun
-            dpkg-deb -c "$deb" | grep -Fq '/usr/lib/systemd/system/gitrun.service'
+            deb_contents="$(dpkg-deb -c "$deb")"
+            grep -Fq '/usr/lib/systemd/system/gitrun.service' <<< "$deb_contents"
             control="$RUNNER_TEMP/$(basename "$deb").control"
             mkdir -p "$control"
             dpkg-deb --control "$deb" "$control"
@@ -810,13 +811,16 @@ jobs:
           done
           gui="$root/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb"
           test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
-          dpkg-deb -c "$gui" | grep -Fq '/opt/gitrun-desktop/GitRun.AppImage'
-          dpkg-deb -f "$gui" Depends | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -Fxq policykit-1
-          if dpkg-deb -c "$gui" | grep -Eq '/usr/bin/gitrun$'; then
+          gui_contents="$(dpkg-deb -c "$gui")"
+          grep -Fq '/opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_contents"
+          gui_dependencies="$(dpkg-deb -f "$gui" Depends | tr ',' '\n' | sed 's/^[[:space:]]*//')"
+          grep -Fxq policykit-1 <<< "$gui_dependencies"
+          if grep -Eq '/usr/bin/gitrun$' <<< "$gui_contents"; then
             echo "Desktop package unexpectedly contains /usr/bin/gitrun" >&2
             exit 1
           fi
-          if dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb" | grep -Eq '/GitRun\.AppImage$'; then
+          server_deb_contents="$(dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb")"
+          if grep -Eq '/GitRun\.AppImage$' <<< "$server_deb_contents"; then
             echo "Server package unexpectedly contains the Desktop AppImage" >&2
             exit 1
           fi
@@ -826,10 +830,14 @@ jobs:
             test "$(dpkg-deb -f "$legacy" Package)" = gitrun
             test "$(dpkg-deb -f "$legacy" Version)" = "$VERSION_NUMBER"
             expected_files+=("GitRun-$VERSION-linux-x86_64-deb.deb")
-            dpkg-deb -c "$legacy" | grep -Fq '/usr/libexec/gitrun/reinstall-latest.sh'
-            dpkg-deb -c "$legacy" | grep -Fq '/usr/bin/gitrun'
+            legacy_contents="$(dpkg-deb -c "$legacy")"
+            grep -Fq '/usr/libexec/gitrun/reinstall-latest.sh' <<< "$legacy_contents"
+            grep -Fq '/usr/bin/gitrun' <<< "$legacy_contents"
           else
-            if find "$root" -maxdepth 1 -type f -name 'GitRun-*-linux-x86_64-deb.deb' | grep -q .; then
+            shopt -s nullglob
+            legacy_candidates=("$root"/GitRun-*-linux-x86_64-deb.deb)
+            shopt -u nullglob
+            if (("${#legacy_candidates[@]}" > 0)); then
               echo "A legacy migration DEB was staged for a standard release" >&2
               exit 1
             fi
@@ -855,19 +863,23 @@ jobs:
           mapfile -d '' -t rpm_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-rpm.rpm" -print0)
           for rpm_file in "${rpm_files[@]}"; do
             rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
-            rpm -qpl "$rpm_file" | grep -Fxq /usr/bin/gitrun
-            rpm -qpl "$rpm_file" | grep -Fxq /usr/lib/systemd/system/gitrun.service
-            rpm -qp --requires "$rpm_file" | grep -Fxq glibc
-            rpm -qp --requires "$rpm_file" | grep -Fxq polkit
+            rpm_contents="$(rpm -qpl "$rpm_file")"
+            rpm_requirements="$(rpm -qp --requires "$rpm_file")"
+            grep -Fxq /usr/bin/gitrun <<< "$rpm_contents"
+            grep -Fxq /usr/lib/systemd/system/gitrun.service <<< "$rpm_contents"
+            grep -Fxq glibc <<< "$rpm_requirements"
+            grep -Fxq polkit <<< "$rpm_requirements"
           done
           mapfile -d '' -t apk_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-apk.apk" -print0)
           for apk_file in "${apk_files[@]}"; do
-            tar -tzf "$apk_file" | grep -Fxq .PKGINFO
+            apk_contents="$(tar -tzf "$apk_file")"
+            grep -Fxq .PKGINFO <<< "$apk_contents"
           done
           arch_file="$root/GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst"
-          tar --zstd -tf "$arch_file" | grep -Fxq .PKGINFO
-          tar --zstd -tf "$arch_file" | grep -Fxq usr/bin/gitrun
-          tar --zstd -tf "$arch_file" | grep -Fxq usr/lib/systemd/system/gitrun.service
+          arch_contents="$(tar --zstd -tf "$arch_file")"
+          grep -Fxq .PKGINFO <<< "$arch_contents"
+          grep -Fxq usr/bin/gitrun <<< "$arch_contents"
+          grep -Fxq usr/lib/systemd/system/gitrun.service <<< "$arch_contents"
           arch_pkginfo="$(tar --zstd -xOf "$arch_file" .PKGINFO)"
           grep -Fxq 'depend = glibc' <<< "$arch_pkginfo"
           grep -Fxq 'depend = polkit' <<< "$arch_pkginfo"
@@ -906,7 +918,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download validated release payload
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: validated-release-assets
           path: release-assets
@@ -1071,7 +1083,7 @@ jobs:
       MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
     steps:
       - name: Download signed release payload
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: signed-release-assets
           path: release-assets

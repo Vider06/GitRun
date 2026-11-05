@@ -1141,7 +1141,7 @@ jobs:
           for executable in \
             "release-assets/GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
             "release-assets/GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
-            "release-assets/GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \\
+            "release-assets/GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
             "release-assets/GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin"; do
             test -s "$executable"
             test -x "$executable"

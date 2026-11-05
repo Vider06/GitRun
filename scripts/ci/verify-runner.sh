@@ -79,4 +79,3 @@ for h in codeload.github.com release-assets.githubusercontent.com index.crates.i
 done
 ci_check warn "docker" chk_docker
 ci_checks_finish "Runner environment — $RUNNER_NAME ($RUNNER_ARCH)"
-
